@@ -441,6 +441,9 @@ class RtlSdrMixin:
         self._rtlsdr_check_overload(a, ex)
         prof = dict(self._profile)
         prof["level_unit"] = unit
+        # どの窓で測ったか。トレースはこの写しを持つので、マーカーの読み値の注意（Hann の格子の間の
+        # 読み落ち: 設計Q §6.4）をトレースごとに決められる
+        prof["fft_window"] = ex.get("window")
         return Frame(
             axis=a.axis,
             values=rtl_levels.to_linear(level),

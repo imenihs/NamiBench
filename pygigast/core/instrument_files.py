@@ -40,7 +40,7 @@ from .normalize import (
 from .storage import Cancelled, StorageError, WriterThread
 from .storage import adopted_to_dict as storage_conditions
 from .storage.export import export_traces_csv
-from .storage.h5file import FileHeader, H5Record, TraceData, save_snapshot
+from .storage.h5file import FileHeader, H5Record, TraceData, can_store, save_snapshot
 from .storage.recording import (
     WORK_PREFIX,
     WORK_SUFFIX,
@@ -59,7 +59,8 @@ WRITER_CLOSE_TIMEOUT_S = 10.0
 # 命令の結果を後で返す印（書き込みスレッドの仕事が終わってから Future に結果を入れる）
 DEFERRED = object()
 
-# 保存・記録の生の値に入れられる形（GigaSt の AD 値。機種のプロファイルの raw.encoding）
+# GigaSt の生の値の形（機種のプロファイルの raw.encoding）。保存・記録に入れられる形の一覧は
+# storage.h5file.RAW_ENCODINGS（GigaSt の AD 値と RTL-SDR のリニアの電力: 設計Q §6.1）
 GIGAST_RAW_ENCODING = "gigast_ad_u16"
 
 _SAFE = re.compile(r"[^0-9A-Za-z_-]")
@@ -527,9 +528,9 @@ class FilesMixin:
             raise self._error("path_required", "path")
         header = self._header(note)
         raw = self._last_raw
-        if raw is not None and raw.encoding != GIGAST_RAW_ENCODING:
-            # 保存ファイルの生の値は GigaSt の AD 値（uint16）の形だけ（設計H §7.1）。RTL-SDR の生の値
-            # （リニアの電力の float）は入れず、トレース（単位付き）だけを保存する
+        if raw is not None and not can_store(raw.encoding):
+            # 保存ファイルに持つ形を決めていない生の値は入れず、トレース（単位付き）だけを保存する。
+            # GigaSt・RTL-SDR はどちらも生の値を持つ（設計Q §6.1: RTL-SDR も GigaSt と同じ保存）
             raw = None
         traces = self._live_traces_data()
         markers = self._markers.to_defs()["markers"]
@@ -692,15 +693,17 @@ class FilesMixin:
         rec = self._recorder
         if rec is None or rec.stopped:
             return
-        if raw.encoding != GIGAST_RAW_ENCODING:
-            # 記録の形は GigaSt の AD 値（uint16）だけ。記録中に RTL-SDR へつなぎ替えたら、その掃引は入れずに1回知らせる
+        if not can_store(raw.encoding):
+            # 記録に持つ形を決めていない生の値は入れずに1回知らせる。GigaSt と RTL-SDR は記録できる
+            # （記録中につなぎ替えても続けて記録し、条件が変わるので区間が分かれる: 設計H §3）
             if not getattr(self, "_rec_skip_noticed", False):
                 self._rec_skip_noticed = True
                 self._notice("record_not_supported_for_device", {"encoding": raw.encoding})
             return
         try:
+            # 校正は測った機器のもの（GigaSt は設計D §5.2、RTL-SDR は個体の校正: _calibration_record）
             rec.append(raw, quantity=quantity, value_kind=value_kind, normalization=self._normalization_record(),
-                       calibration=None if self._cal is None else self._cal.to_dict())
+                       calibration=self._calibration_record())
         except (RuntimeError, ValueError, TypeError) as e:
             self._notice("record_error", {"message": str(e)})
 
@@ -727,8 +730,8 @@ class FilesMixin:
         if self._recorder is not None:
             raise self._error("already_recording")
         enc = (self._profile.get("raw") or {}).get("encoding")
-        if enc != GIGAST_RAW_ENCODING:
-            # 記録の作業ファイルは GigaSt の AD 値（uint16）の形（設計H §7.2）。RTL-SDR の記録は形を決めていない
+        if not can_store(enc):
+            # 作業ファイルに持つ形を決めていない機器（GigaSt・RTL-SDR 以外）は記録を始めない
             raise self._error("record_not_supported_for_device", None, {"encoding": enc})
         self._rec_skip_noticed = False
         path = new_recording_path(self._recordings_dir())

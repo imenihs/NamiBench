@@ -6,12 +6,16 @@
                           device（JSON: model・serial）, profile（JSON）, calibration（JSON。無ければ "null"）, note
     /segments/0000/       条件が同じ区間（連番）
         属性: conditions（採用済みの掃引条件の JSON: 設計C §5.8）, start_hz, step_hz, points,
-              quantity, value_kind, raw_encoding, raw_layout, normalization（JSON。無ければ "null"）
-        raw      [掃引, 点] uint16   chunk (256, 512)・gzip 1
+              quantity, value_kind, raw_encoding, raw_layout, normalization（JSON。無ければ "null"）,
+              raw_extra（JSON。換算に要る機器の値。RTL-SDR の利得など。要らない形では属性ごと無い）
+        raw      [掃引, 点] uint16   chunk (256, 512)・gzip 1。生の値の形（raw_encoding）で型が決まる:
+                                     gigast_ad_u16 は AD 値の uint16、rtlsdr_power_w はリニアの電力の float32
+                                     （値の無い点は NaN）。型はデータセット自身が持つので、読む側は属性を見ずに読める
         raw_b3   [掃引, 点] uint16   イメージキャンセルのときだけ。raw は b3=1、raw_b3 は b3=0 の回
         raw_hot / raw_cold           NF のとき。raw は raw_hot を指すソフトリンク（読む側の経路を1つにする）
         t_start  [掃引] float64      各掃引の開始時刻（UNIX 時刻）
-        overview/max_4 … max_1024    [ceil(掃引/k), 点] 連続する k 掃引ごとの最大値（採用した値で）
+        overview/max_4 … max_1024    [ceil(掃引/k), 点] 連続する k 掃引ごとの最大値（採用した値で。NaN は除いて取り、
+                                     全部 NaN の点だけ NaN）
     /traces/<番号>/       保存したときに表示していたトレース（設計F §5.1）
     /markers              属性 markers に JSON（設計G §3.1）
 
@@ -70,6 +74,48 @@ LAYOUT_NF = "nf"  # raw_hot・raw_cold。raw は raw_hot（RawSweep と同じ約
 _SECOND_NAME = {LAYOUT_IMAGE_CANCEL: "raw_b3", LAYOUT_NF: "raw_cold"}
 
 
+@dataclass(frozen=True)
+class RawEncoding:
+    """生の値の形（RawSweep.encoding）ごとの持ち方（設計H §7.1・設計Q §6.1）。
+
+    - dtype: ファイル（HDF5 のデータセット・SQLite の BLOB）に持つ型
+    - extra_keys: 換算に要るので区間の属性 raw_extra に持つ RawSweep.extra の項目。区間の中で同じ値
+      （利得を変えたら値の意味が変わる: 設計Q §6.5）なので、違えば新しい区間になる。掃引ごとに変わる
+      項目（振り切れの割合・中心を合わせ直した回数など）は換算に使わないので持たない
+    - nan_is_no_value: NaN を値の無い点とする形か（読み戻すとき extra の flags.no_value を作り直す）
+    """
+
+    dtype: np.dtype
+    extra_keys: tuple[str, ...] = ()
+    nan_is_no_value: bool = False
+
+
+ENCODING_GIGAST = "gigast_ad_u16"
+ENCODING_RTLSDR = "rtlsdr_power_w"
+RAW_ENCODINGS = {
+    ENCODING_GIGAST: RawEncoding(np.dtype(np.uint16)),
+    # 振り切れの正弦波を 1.0 とするリニアの電力（devices/rtlsdr/levels.py）。レベルへの換算に利得と
+    # 個体の校正（根か区間の calibration）が要る。どう測ったか（窓・FFT の点数・平均の回数・ppm）も残す
+    ENCODING_RTLSDR: RawEncoding(
+        np.dtype(np.float32),
+        extra_keys=("gain_db", "gain_mode", "ppm", "window", "fft_n", "averages", "sample_rate_hz",
+                    "dc_delta_hz", "passband_corrected", "half_usable_hz", "realtime", "fixed_center"),
+        nan_is_no_value=True,
+    ),
+}
+# 表に無い形は今までどおり uint16 として扱う（この表を作る前のファイルはすべて gigast_ad_u16）
+_DEFAULT_ENCODING = RAW_ENCODINGS[ENCODING_GIGAST]
+
+
+def encoding_info(name: str) -> RawEncoding:
+    return RAW_ENCODINGS.get(str(name), _DEFAULT_ENCODING)
+
+
+def can_store(name: str) -> bool:
+    """保存・記録に生の値を入れられる形か。"""
+    return str(name) in RAW_ENCODINGS
+
+
 # ---------------------------------------------------------------------------
 # 入れ物
 # ---------------------------------------------------------------------------
@@ -115,10 +161,15 @@ class SegmentMeta:
     raw_layout: str = LAYOUT_SINGLE
     normalization: Optional[dict] = None
     calibration: Optional[dict] = None
+    raw_extra: Optional[dict] = None  # 換算に要る機器の値（RawEncoding.extra_keys）。要らない形は None
 
     def key(self) -> str:
         """同じ区間かを比べるための文字列（どれか1つでも違えば新しい区間: 設計H §3）。"""
         return dumps(dataclasses.asdict(self))
+
+    @property
+    def dtype(self) -> np.dtype:
+        return encoding_info(self.raw_encoding).dtype
 
     def freqs(self, i0: int = 0, i1: Optional[int] = None) -> np.ndarray:
         i1 = self.points if i1 is None else i1
@@ -207,8 +258,8 @@ class MemorySegment(SegmentSource):
     def __init__(self, meta: SegmentMeta, t_start: np.ndarray, raw: np.ndarray, raw2: Optional[np.ndarray] = None):
         self.meta = meta
         self._t = np.asarray(t_start, dtype=np.float64).reshape(-1)
-        self._raw = np.asarray(raw, dtype=np.uint16).reshape(len(self._t), meta.points)
-        self._raw2 = None if raw2 is None else np.asarray(raw2, dtype=np.uint16).reshape(self._raw.shape)
+        self._raw = np.asarray(raw, dtype=meta.dtype).reshape(len(self._t), meta.points)
+        self._raw2 = None if raw2 is None else np.asarray(raw2, dtype=meta.dtype).reshape(self._raw.shape)
         self.n_sweeps = len(self._t)
 
     def blocks(self, rows: int):
@@ -231,10 +282,16 @@ def layout_of(raw: RawSweep) -> str:
     return LAYOUT_SINGLE
 
 
-def _u16(a: np.ndarray, n: int) -> np.ndarray:
+def _raw_values(a: np.ndarray, n: int, enc: RawEncoding) -> np.ndarray:
     arr = np.asarray(a)
-    if arr.dtype != np.uint16:
-        raise TypeError(f"生の値は uint16 で渡す（{arr.dtype} が来た）")
+    if enc.dtype == np.uint16:
+        # AD 値は整数のまま持つ（float から丸めて入れない）
+        if arr.dtype != np.uint16:
+            raise TypeError(f"生の値は uint16 で渡す（{arr.dtype} が来た）")
+    elif arr.dtype.kind != "f":
+        raise TypeError(f"生の値は浮動小数で渡す（{arr.dtype} が来た）")
+    else:
+        arr = arr.astype(enc.dtype)
     if arr.shape[0] < n:
         raise ValueError(f"生の値の点数 {arr.shape[0]} が保存する点数 {n} より少ない")
     return arr[:n]
@@ -244,16 +301,26 @@ def split_raw(raw: RawSweep) -> tuple[np.ndarray, Optional[np.ndarray]]:
     """保存する (raw, raw2)。Stop までで切る（設計C §5.3）。raw2 は持ち方ごとの2回目（無ければ None）。"""
     n = points_within_stop(raw.adopted)
     lay = layout_of(raw)
+    enc = encoding_info(raw.encoding)
     if lay == LAYOUT_NF:
         if raw.raw_hot is None or raw.raw_cold is None:
             raise ValueError("NF は raw_hot と raw_cold の両方が要る")
-        return _u16(raw.raw_hot, n), _u16(raw.raw_cold, n)
+        return _raw_values(raw.raw_hot, n, enc), _raw_values(raw.raw_cold, n, enc)
     if lay == LAYOUT_IMAGE_CANCEL:
         if raw.raw_b3_1 is None:
             raise ValueError("イメージキャンセルは raw_b3_0 と raw_b3_1 の両方が要る")
         # raw は b3=1 の回（イメージキャンセルなしのときと同じ回）。採用した値（min）は読むときに作り直せる
-        return _u16(raw.raw_b3_1, n), _u16(raw.raw_b3_0, n)
-    return _u16(raw.raw, n), None
+        return _raw_values(raw.raw_b3_1, n, enc), _raw_values(raw.raw_b3_0, n, enc)
+    return _raw_values(raw.raw, n, enc), None
+
+
+def raw_extra_for(raw: RawSweep) -> Optional[dict]:
+    """区間の属性 raw_extra に持つ RawSweep.extra の項目（RawEncoding.extra_keys）。要らない形は None。"""
+    keys = encoding_info(raw.encoding).extra_keys
+    if not keys:
+        return None
+    ex = raw.extra or {}
+    return {k: ex[k] for k in keys if k in ex}
 
 
 def segment_meta_for(
@@ -276,7 +343,13 @@ def segment_meta_for(
         raw_layout=layout_of(raw),
         normalization=normalization,
         calibration=calibration,
+        raw_extra=raw_extra_for(raw),
     )
+
+
+def max_ignoring_nan(a: np.ndarray, axis: int, keepdims: bool = False) -> np.ndarray:
+    """概観の最大値。値の無い点（NaN）は除いて取り、全部 NaN のときだけ NaN（整数の形では max と同じ）。"""
+    return np.fmax.reduce(a, axis=axis, keepdims=keepdims)
 
 
 def adopted_values(layout: str, raw: np.ndarray, raw2: Optional[np.ndarray]) -> np.ndarray:
@@ -330,17 +403,21 @@ def _write_segment(g: h5py.Group, src: SegmentSource, prog: Progress, done: int)
     g.attrs["normalization"] = dumps(m.normalization)
     if m.calibration is not None:
         g.attrs["calibration"] = dumps(m.calibration)
+    if m.raw_extra is not None:
+        # 要らない形（GigaSt）では属性を作らない（この属性の無い今までのファイルと同じ中身のまま）
+        g.attrs["raw_extra"] = dumps(m.raw_extra)
 
+    dt = m.dtype
     if m.raw_layout == LAYOUT_NF:
-        d1 = _ds(g, "raw_hot", n, p, np.uint16)
+        d1 = _ds(g, "raw_hot", n, p, dt)
         g["raw"] = h5py.SoftLink(d1.name)
-        d2 = _ds(g, "raw_cold", n, p, np.uint16)
+        d2 = _ds(g, "raw_cold", n, p, dt)
     else:
-        d1 = _ds(g, "raw", n, p, np.uint16)
-        d2 = _ds(g, _SECOND_NAME[m.raw_layout], n, p, np.uint16) if m.raw_layout in _SECOND_NAME else None
+        d1 = _ds(g, "raw", n, p, dt)
+        d2 = _ds(g, _SECOND_NAME[m.raw_layout], n, p, dt) if m.raw_layout in _SECOND_NAME else None
     t_ds = g.create_dataset("t_start", shape=(n,), dtype=np.float64)
     ov = g.create_group("overview")
-    ov_ds = {k: _ds(ov, f"max_{k}", -(-n // k), p, np.uint16) for k in OVERVIEW_LEVELS}
+    ov_ds = {k: _ds(ov, f"max_{k}", -(-n // k), p, dt) for k in OVERVIEW_LEVELS}
 
     row = 0
     for t, raw, raw2 in src.blocks(BLOCK_ROWS):
@@ -360,9 +437,9 @@ def _write_segment(g: h5py.Group, src: SegmentSource, prog: Progress, done: int)
             full = rows // k * k
             parts = []
             if full:
-                parts.append(adopted[:full].reshape(-1, k, p).max(axis=1))
+                parts.append(max_ignoring_nan(adopted[:full].reshape(-1, k, p), axis=1))
             if full < rows:  # 区間の最後の半端（その区間の最後のブロックでだけ起きる）
-                parts.append(adopted[full:].max(axis=0, keepdims=True))
+                parts.append(max_ignoring_nan(adopted[full:], axis=0, keepdims=True))
             vals = np.concatenate(parts, axis=0) if len(parts) > 1 else parts[0]
             r0 = row // k
             ds[r0 : r0 + len(vals)] = vals
@@ -593,6 +670,7 @@ class H5Record:
                     raw_layout=_attr_str(a, "raw_layout", LAYOUT_SINGLE),
                     normalization=_loads(a["normalization"]),
                     calibration=_loads(a["calibration"]) if "calibration" in a else None,
+                    raw_extra=_loads(a["raw_extra"]) if "raw_extra" in a else None,
                     index=i,
                     n_sweeps=n,
                     t_first=float(t[0]) if n else math.nan,
@@ -677,6 +755,8 @@ class H5Record:
         """掃引1回分を RawSweep に戻す（換算は呼び側が level の LevelConverter で行う）。
 
         adopted.axis は保存した点（Stop までで切ったもの）に合わせる。duration_s は保存していないので NaN。
+        extra は区間の raw_extra（RTL-SDR の利得など換算に要るもの）。NaN を値の無い点とする形では
+        flags.no_value を NaN から作り直す（機器の層が返したときと同じ形にする）。
         """
         s = self.segments[seg]
         b = self.read(seg, (i, i + 1))
@@ -684,6 +764,13 @@ class H5Record:
         adopted = dataclasses.replace(adopted, axis=FreqAxis(s.start_hz, s.step_hz, s.points))
         r1 = b.raw[0]
         r2 = None if b.raw2 is None else b.raw2[0]
+        enc = encoding_info(s.raw_encoding)
+        extra = dict(s.raw_extra or {})
+        if enc.dtype.kind == "f":
+            r1 = r1.astype(np.float64)
+            r2 = None if r2 is None else r2.astype(np.float64)
+        if enc.nan_is_no_value:
+            extra["flags"] = {"no_value": np.isnan(adopted_values(s.raw_layout, r1, r2))}
         kw: dict = {}
         if s.raw_layout == LAYOUT_IMAGE_CANCEL:
             kw = {"raw_b3_1": r1, "raw_b3_0": r2}
@@ -696,6 +783,7 @@ class H5Record:
             started_at=float(b.t_start[0]),
             duration_s=math.nan,
             transient_head_points=adopted.transient_head_points,
+            extra=extra,
             **kw,
         )
 
@@ -773,6 +861,7 @@ class _H5RangeSegment(SegmentSource):
             raw_layout=s.raw_layout,
             normalization=s.normalization,
             calibration=s.calibration,
+            raw_extra=s.raw_extra,
         )
         self.n_sweeps = sw[1] - sw[0]
 

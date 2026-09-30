@@ -20,6 +20,8 @@ from pygigast.core.devices.rtlsdr import dll
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
 from pygigast.core.instrument_common import CommandError
 from pygigast.core.instrument_rtlsdr import RtlSdrCalibrationStore
+from pygigast.core.devices.rtlsdr import levels as rtl_levels
+from pygigast.core.storage.h5file import H5Record
 
 FS = 2_048_000
 MHZ = 1_000_000
@@ -269,23 +271,100 @@ class TestConnectAndLevels(RtlSdrCase):
         self.assertEqual(len(self.notices("rtlsdr_overload")), 1)
         self.assertTrue(self.call("get_state")["rtlsdr"]["overload"])
 
-    def test_record_refused_and_save_without_raw(self):
-        self.connect_rtl()
-        self.single()
-        with self.assertRaises(CommandError) as cm:
-            self.call("record_start")
-        self.assertEqual(cm.exception.code, "record_not_supported_for_device")
-        # 保存はトレース（単位付き）だけ。生の値（float）は入れない
-        self.clear_events()
-        tid = self.call("save", path=str(self.root / "a.h5"))["task_id"]
+    def wait_task(self, task_id):
         n = self.wait_for(lambda k, p: k == "notice" and p["code"].startswith("task_")
-                          and p["detail"].get("task_id") == tid)
-        self.assertEqual(n["code"], "task_done")
-        opened = self.call("open", paths=[str(self.root / "a.h5")])
-        self.wait_for(lambda k, p: k == "notice" and p["code"] == "task_done"
-                      and p["detail"].get("task_id") == opened["task_id"])
+                          and p["detail"].get("task_id") == task_id)
+        self.assertEqual(n["code"], "task_done", n)
+        return n
+
+    def test_save_keeps_raw_and_levels_rebuild(self):
+        """1回分の保存に RTL-SDR の生の値（float32）と換算に要る利得を持つ（設計Q §6.1・設計H §7.1）。"""
+        self.lib.tones = [(84_700_000, 0.05)]
+        self.connect_rtl()
+        tr = self.single()
+        self.clear_events()
+        path = self.root / "a.h5"
+        self.wait_task(self.call("save", path=str(path))["task_id"])
+        with H5Record(path) as h:
+            s = h.segments[0]
+            self.assertEqual(s.raw_encoding, rtl_levels.ENCODING)
+            self.assertEqual(h.read(0).raw.dtype, np.float32)
+            r = h.raw_sweep(0, 0)
+            self.assertEqual(r.extra["gain_db"], s.raw_extra["gain_db"])
+            self.assertEqual(r.extra["window"], "hann")
+            # 読み戻した生の値から、画面のトレースと同じレベル（dB（未校正））を作り直せる
+            level, unit = rtl_levels.to_level(r.raw, r.extra["gain_db"])
+        self.assertEqual(unit, UNCAL)
+        live = np.array([np.nan if v is None else v for v in tr["values"]], dtype=np.float64)
+        n = min(live.size, level.size)
+        np.testing.assert_allclose(level[:n], live[:n], atol=1e-3, equal_nan=True)
+        opened = self.call("open", paths=[str(path)])
+        self.wait_task(opened["task_id"])
         f = self.call("get_state")["files"][0]
         self.assertEqual(f["traces"][0]["unit"], UNCAL)
+
+    def test_record_finish_and_open(self):
+        """RTL-SDR も記録でき、止めて HDF5 へまとめ、開ける（設計Q §6.1・設計H §4・§7.2）。"""
+        self.lib.tones = [(84_700_000, 0.05)]
+        self.connect_rtl()
+        self.call("record_start")
+        self.clear_events()
+        self.call("run", mode="continuous")
+        self.wait_for(lambda k, p: k == "state" and p["recording"].get("sweeps", 0) >= 3)
+        self.call("stop")
+        path = self.root / "rec.h5"
+        self.wait_task(self.call("record_finish", path=str(path))["task_id"])
+        self.assertEqual(self.notices("record_not_supported_for_device"), [])
+        self.assertEqual(self.notices("record_error"), [])
+        with H5Record(path) as h:
+            self.assertEqual(len(h.segments), 1)
+            s = h.segments[0]
+            self.assertGreaterEqual(s.n_sweeps, 3)
+            self.assertEqual(s.raw_encoding, rtl_levels.ENCODING)
+            self.assertEqual(s.raw_extra["gain_mode"], "manual")
+            self.assertEqual(h.read(0).raw.dtype, np.float32)
+            self.assertEqual(h.overview(0, 4).values.dtype, np.float32)
+            r = h.raw_sweep(0, s.n_sweeps - 1)
+            self.assertEqual(r.encoding, rtl_levels.ENCODING)
+            self.assertIsNotNone(r.extra["gain_db"])
+            peak = int(np.nanargmax(r.raw))
+            self.assertEqual(int(r.adopted.axis.freqs()[peak]), 84_700_000)
+            # 根の校正は RTL-SDR の個体の校正（無ければ null）。GigaSt の校正を写さない
+            self.assertNotEqual((h.header.calibration or {}).get("format"), "pygigast-calibration")
+        opened = self.call("open", paths=[str(path)])
+        self.wait_task(opened["task_id"])
+        self.assertEqual(len(self.call("get_state")["files"]), 1)
+
+
+class TestHannNote(RtlSdrCase):
+    """Hann 窓で測ったトレースのマーカーの読み値に注意を添える（設計Q §6.4・設計G §3.3）。"""
+
+    def marker_notes(self):
+        rows = self.call("get_state")["markers"]["markers"]
+        return rows[0]["notes"]
+
+    def test_hann_note_on_marker(self):
+        self.lib.tones = [(84_700_000, 0.05)]
+        self.connect_rtl()
+        self.single()
+        self.call("marker_add", kind="M", trace=1, freq_hz=84_700_000)
+        self.assertIn("hann_scalloping", self.marker_notes())
+
+    def test_no_note_with_flat_top(self):
+        self.lib.tones = [(84_700_000, 0.05)]
+        self.connect_rtl()
+        self.call("set_sweep", rbw_hz=1885)  # Flat top の RBW（profile.json の rbw.choices）
+        self.assertEqual(self.call("get_state")["sweep"]["rbw_hz"], 1885)
+        self.single()
+        self.call("marker_add", kind="M", trace=1, freq_hz=84_700_000)
+        self.assertNotIn("hann_scalloping", self.marker_notes())
+
+    def test_no_note_on_gigast(self):
+        self.call("connect", backend="simulator", serial=_SimulatorBackend.SERIAL)
+        self.call("set_sweep", start_hz=50_000_000, stop_hz=200_000_000)
+        self.single()
+        self.call("marker_add", kind="M", trace=1)
+        self.assertNotIn("hann_scalloping", self.marker_notes())
 
 
 class TestCalibration(RtlSdrCase):

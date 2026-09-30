@@ -8,6 +8,8 @@
 - 表: meta（キーと値）・segments（区間の番号と属性の JSON）・sweeps（番号・区間・区間の中の番号・開始時刻・
   raw・raw2）・overview_<k>（連続する k 掃引ごとの最大値。k が揃った塊だけを、その掃引と同じトランザクションで書く）
 - raw2 は2回目の生の値: イメージキャンセルは b3=0 の回（raw は b3=1 の回）、NF は COLD（raw は HOT）
+- BLOB の型は区間の生の値の形（raw_encoding: h5file.RAW_ENCODINGS）で決まる。GigaSt の AD 値は uint16、
+  RTL-SDR のリニアの電力は float32（値の無い点は NaN。概観の最大値は NaN を除いて取る）
 - 記録を止めたら HDF5 へまとめ、まとめ終わってから作業ファイルを消す。まとめる前に落ちたものは
   find_unfinished で見つけて、何の記録かを示して尋ねる（黙って消さない・黙って変換しない）
 """
@@ -115,15 +117,16 @@ def _header_from_json(s: str) -> FileHeader:
     return FileHeader(**json.loads(s))
 
 
-def _to_blob(a: np.ndarray) -> bytes:
-    return np.ascontiguousarray(a, dtype="<u2").tobytes()
+def _to_blob(a: np.ndarray, dtype: np.dtype) -> bytes:
+    # BLOB は機種の違う PC でも読めるようリトルエンディアンで持つ
+    return np.ascontiguousarray(a, dtype=np.dtype(dtype).newbyteorder("<")).tobytes()
 
 
-def _from_blob(b: bytes, points: int) -> np.ndarray:
-    arr = np.frombuffer(b, dtype="<u2")
+def _from_blob(b: bytes, points: int, dtype: np.dtype) -> np.ndarray:
+    arr = np.frombuffer(b, dtype=np.dtype(dtype).newbyteorder("<"))
     if arr.shape[0] != points:
         raise StorageError("corrupt_sweep", {"points": int(arr.shape[0]), "expected": points})
-    return arr.astype(np.uint16)
+    return arr.astype(dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +236,9 @@ class Recorder:
             calibration=None if cal == self.header.calibration else cal,
         )
         r1, r2 = split_raw(raw)
-        item = (meta, float(raw.started_at), _to_blob(r1), None if r2 is None else _to_blob(r2), np.array(
-            adopted_values(meta.raw_layout, r1, r2), dtype=np.uint16
+        dt = meta.dtype
+        item = (meta, float(raw.started_at), _to_blob(r1, dt), None if r2 is None else _to_blob(r2, dt), np.array(
+            adopted_values(meta.raw_layout, r1, r2), dtype=dt
         ))
         with self._lock:
             self._pending += 1
@@ -320,10 +324,11 @@ class Recorder:
                     a.vmax = adopted.copy()
                     a.t0 = t
                 else:
-                    np.maximum(a.vmax, adopted, out=a.vmax)
+                    # 値の無い点（NaN）は除いて最大を取る（h5file と同じ: max_ignoring_nan）
+                    np.fmax(a.vmax, adopted, out=a.vmax)
                 a.count += 1
                 if a.count == k:
-                    emits.append((k, a.block, a.t0, _to_blob(a.vmax)))
+                    emits.append((k, a.block, a.t0, _to_blob(a.vmax, meta.dtype)))
                     a.block += 1
                     a.count = 0
                     a.vmax = None
@@ -462,13 +467,14 @@ class RecordingReader:
         rows = self._conn.execute(sql + " ORDER BY idx", args).fetchall()
         i0, i1 = points if points is not None else (0, s.points)
         n = len(rows)
+        dt = s.dtype
         t = np.array([r[1] for r in rows], dtype=np.float64)
-        raw = np.empty((n, i1 - i0), dtype=np.uint16)
-        raw2 = np.empty((n, i1 - i0), dtype=np.uint16) if n and rows[0][3] is not None else None
+        raw = np.empty((n, i1 - i0), dtype=dt)
+        raw2 = np.empty((n, i1 - i0), dtype=dt) if n and rows[0][3] is not None else None
         for j, r in enumerate(rows):
-            raw[j] = _from_blob(r[2], s.points)[i0:i1]
+            raw[j] = _from_blob(r[2], s.points, dt)[i0:i1]
             if raw2 is not None:
-                raw2[j] = _from_blob(r[3], s.points)[i0:i1]
+                raw2[j] = _from_blob(r[3], s.points, dt)[i0:i1]
         s0 = int(rows[0][0]) if n else 0
         return RawBlock(s.index, s.raw_layout, s0, i0, t, s.freqs(i0, i1), raw, raw2)
 
@@ -481,9 +487,9 @@ class RecordingReader:
         rows = self._conn.execute(
             f"SELECT t_start, raw FROM overview_{k} WHERE segment = ? ORDER BY block", (s.index,)
         ).fetchall()
-        vals = np.empty((len(rows), i1 - i0), dtype=np.uint16)
+        vals = np.empty((len(rows), i1 - i0), dtype=s.dtype)
         for j, r in enumerate(rows):
-            vals[j] = _from_blob(r[1], s.points)[i0:i1]
+            vals[j] = _from_blob(r[1], s.points, s.dtype)[i0:i1]
         t = np.array([r[0] for r in rows], dtype=np.float64)
         return OverviewBlock(s.index, k, i0, t, s.freqs(i0, i1), vals)
 

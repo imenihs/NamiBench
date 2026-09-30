@@ -39,6 +39,8 @@ UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB"}
 
 # 生の値の形（機種のプロファイルの raw.encoding）が RTL-SDR のもの（instrument_rtlsdr.py で換算する）
 _RTLSDR_ENCODING = "rtlsdr_power_w"
+# マーカーの読み値の注意のコード: Hann 窓の FFT で測ったトレース（_trace_own_notes）
+NOTE_HANN_SCALLOPING = "hann_scalloping"
 
 
 def unit_for(quantity: Optional[Quantity], profile: Optional[dict]) -> Optional[str]:
@@ -262,6 +264,18 @@ class DisplayMixin:
                 notes.append("reference_power_cycled")
         return tuple(notes)
 
+    @staticmethod
+    def _trace_own_notes(profile: Optional[dict]) -> tuple[str, ...]:
+        """そのトレースを測った機器から決まる読み値の注意（設計G §3.3）。
+
+        hann_scalloping: FFT の機器（sweep_kind "fft"）を Hann 窓で測ったトレース。格子の間にある
+        連続波は最大約 1.4dB 低く読める（設計Q §6.4）。Flat top では出さない（その誤差が小さい窓なので）。
+        """
+        p = profile or {}
+        if p.get("sweep_kind") == "fft" and p.get("fft_window") == "hann":
+            return (NOTE_HANN_SCALLOPING,)
+        return ()
+
     def _rebuild_views(self) -> None:
         notes = self._trace_notes()
         views = {}
@@ -270,7 +284,7 @@ class DisplayMixin:
                 continue
             v = TraceView.build(
                 t.number, t.axis, t.values, t.quantity, int(t.display_start_hz), int(t.display_stop_hz),
-                t.flags, notes,
+                t.flags, notes + self._trace_own_notes(t.profile),
             )
             unit = unit_for(t.quantity, t.profile)
             if unit != v.unit:
