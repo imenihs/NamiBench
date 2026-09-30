@@ -1,0 +1,788 @@
+"""画像出力（設計I）。グラフを画面の外に描き直して PNG にする。
+
+画面を撮らない（I §3.1）。他のウィンドウもマウスのカーソルも写らず、大きさを画面と独立に決められる。
+描くもの: グラフ（見えているトレース・マーカー・目盛・凡例）、グラフの下のマーカー表、下端の帯（I §3.2）。
+PNG の tEXt に、帯と同じ内容の JSON を `pygigast` のキーで入れる（I §3.3）。
+保存は上書きしない名前で（I §3.4・M-08）、クリップボードへもコピーできる。
+
+render_png に渡す data の形（JSON にできる素の値だけ。numpy の配列は values_db にだけ使ってよい）::
+
+    {
+      "measured_at": "2026-10-01T09:15:30+09:00",   # ISO 8601。時差なしならこの PC の時差とみなす
+      "device": {"model": "GigaSt v5", "serial": "..."},   # 呼ぶ側が渡したものをそのまま出す
+      "app_version": "0.1.0",                        # 省略時は pygigast.__version__
+      "mode": "スペアナ",                             # 画面に出しているモードの名前
+      "conditions": {
+        "start_hz": 100_000_000, "stop_hz": 200_000_000,   # 表示の Start–Stop（横軸はこの範囲で切る）
+        "rbw_hz": 180_000,
+        "points": 1001, "step_hz": 100_000,
+        "image_cancel": True,                        # None なら出さない
+        "ref_level": 0.0, "db_per_div": 10.0,
+        "unit": "dBm",                               # 縦軸の単位（比のトレースなら "dB"）
+      },
+      "calibration": {"source": "...", "at": "2026-09-30 14:00"} | None,   # None は「校正データ: なし」
+      "normalization": {"name": "...", "at": "...", "applied": True,
+                        "before_power_cycle": False, "reason": ""} | None,   # None は出さない
+      "traces": [
+        {"number": 1, "start_hz": ..., "step_hz": ..., "points": 1001,    # points 省略時は len(values_db)
+         "values_db": [...],                         # list か numpy 配列。NaN は描かない
+         "color": "trace1",                          # 配色トークンの名前か "#rrggbb"
+         "action": "Clear/Write", "average": "電力平均" | None,
+         "count": 12, "count_target": 30 | None,     # count が None なら回数を出さない
+         "label": "..." | None,                      # 凡例の後ろに足す文字（任意）
+         "flags": [bool, ...] | None,                # 印の付いた点（前置き不足・範囲外）。控えめな色で描く
+         "visible": True},
+      ],
+      "markers": [                                    # マーカー表の行（G §3.3・§3.5）。表の並びもこの順
+        {"name": "M1", "kind": "marker",             # marker / freq_cursor / level_cursor
+         "trace": 1, "freq_hz": ..., "value": -12.3,
+         "ref": "P1" | None, "delta_freq_hz": ... | None, "delta_value": ... | None,
+         "child": False,                             # 親の下に出す子の行（オフセットのカーソル）
+         "note": "範囲外" | ""},
+      ],
+      "warnings": ["RBW 15kHz の1回の掃引（約2dB 高く出うる）", ...],   # 画面に出ている注意と同じ文
+      "note": "",                                    # 利用者のメモ（1行）。render_png の note が優先
+    }
+"""
+from __future__ import annotations
+
+import json
+import math
+import struct
+import zlib
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterable, Optional, Union
+
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMimeData, QPointF, QRectF, Qt
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QGuiApplication,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+)
+
+from .. import __version__ as APP_VERSION
+from ..core.units import format_freq
+
+META_KEY = "pygigast"
+META_FORMAT = 1
+DIVISIONS = 10
+
+# 配色の初期値（設計J §4.4 の表）。名前は main_window.DARK と同じ。
+# J §4.4 は「マーカー」の色を名前だけ挙げて値を決めていないので、文字の色と同じにしている。
+DARK_DEFAULT: dict[str, str] = {
+    "graph_bg": "#15181d",
+    "panel_bg": "#1e232b",
+    "text": "#e6e9ee",
+    "text_dim": "#aab3c0",
+    "accent": "#4fa3ff",
+    "warn": "#ffcc66",
+    "grid": "#2a313c",
+    "axis": "#3a4452",
+    "trace1": "#ffd24a",
+    "trace2": "#4fd1c5",
+    "trace3": "#ff7aa8",
+    "trace4": "#9fe870",
+    "zero_db": "#7fb3ff",
+    "running": "#1f6f3a",
+    "marker": "#e6e9ee",
+}
+LIGHT_DEFAULT: dict[str, str] = {
+    "graph_bg": "#ffffff",
+    "panel_bg": "#f4f6f9",
+    "text": "#1b1f24",
+    "text_dim": "#4a5562",
+    "accent": "#1f5fae",
+    "warn": "#6f4600",
+    "grid": "#d5dbe3",
+    "axis": "#5a6573",
+    "trace1": "#d18a00",
+    "trace2": "#00897b",
+    "trace3": "#c2185b",
+    "trace4": "#2e7d32",
+    "zero_db": "#1f5fae",
+    "running": "#2e7d32",
+    "marker": "#1b1f24",
+}
+
+# 配置（I §3.1: 帯の項目・順・文字の大きさ）。文字の大きさは画像の大きさに比例させる。
+# 基準は 1600×1000 で 16 画素。Web の canvas も同じ値を使う前提（いまは Qt だけ）。
+LAYOUT = {
+    "base_px_at_1600x1000": 16.0,
+    "min_px": 11.0,
+    "margin": 1.0,            # 画像の外周の余白（文字の高さに対する倍率。以下同じ）
+    "gap": 0.6,               # 区画どうしの間
+    "item_gap": 1.6,          # 帯の項目どうしの間（字幅の倍率）
+    "table_max_ratio": 0.30,  # マーカー表に使ってよい高さ（画像の高さに対する割合）
+    "table_two_columns_from": 7,  # この行数を超えたら2列に（I §3.2）
+    # 帯の段（I §3.2 の 1〜3・6・5 の順）。マーカー表（4）はグラフのすぐ下に置く
+    "band_rows": ("when", "conditions", "correction", "warnings", "note"),
+}
+
+JP_FONT_FALLBACKS = ("Yu Gothic UI", "Meiryo UI", "Meiryo", "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans")
+
+MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", "Δ周波数 (MHz)", "Δ値 (dB)", "")
+# 数える列は右寄せ（U-17）
+MARKER_RIGHT = (False, True, True, True, False, True, True, False)
+
+
+# ---------------------------------------------------------------- 配色
+
+def resolve_palette(palette: Union[str, dict, None]) -> dict[str, str]:
+    """"light" / "dark" / 色の組（ユーザー設定）から、全部の名前が揃った配色を返す。
+
+    ユーザー設定に欠けた名前があれば、ライトの初期値で埋める（画像が描けなくなるのを避ける）。
+    """
+    if palette is None or palette == "light":
+        return dict(LIGHT_DEFAULT)
+    if palette == "dark":
+        return dict(DARK_DEFAULT)
+    if isinstance(palette, dict):
+        out = dict(LIGHT_DEFAULT)
+        out.update({k: v for k, v in palette.items() if isinstance(v, str)})
+        return out
+    raise ValueError(f"palette は 'light'・'dark'・dict のどれか: {palette!r}")
+
+
+def _color(pal: dict[str, str], key_or_hex: Optional[str], fallback: str = "trace1") -> QColor:
+    if key_or_hex and key_or_hex.startswith("#"):
+        return QColor(key_or_hex)
+    return QColor(pal.get(key_or_hex or fallback, pal[fallback]))
+
+
+# ---------------------------------------------------------------- 帯の文字
+
+def format_measured_at(value: Union[str, datetime, None]) -> str:
+    """`2026-10-01 09:15:30 +09:00` の形（I §3.2）。時差の無い値はこの PC の時差とみなす。"""
+    if value is None:
+        dt = datetime.now().astimezone()
+    elif isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value))
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+    off = dt.strftime("%z")  # +0900
+    return dt.strftime("%Y-%m-%d %H:%M:%S ") + f"{off[:3]}:{off[3:]}"
+
+
+def _hz(v: Any) -> str:
+    return format_freq(int(round(float(v))))
+
+
+def _num(v: float) -> str:
+    return f"{float(v):g}"
+
+
+def band_rows(data: dict, note: str = "") -> list[tuple[str, list[str]]]:
+    """帯の段ごとの項目（(色の名前, 項目の並び)）。Qt と Web で同じものを出すため、描画と分けて持つ。"""
+    c = data.get("conditions") or {}
+    unit = c.get("unit", "dBm")
+    rows: dict[str, tuple[str, list[str]]] = {}
+
+    dev = data.get("device") or {}
+    dev_text = " ".join(str(x) for x in (dev.get("model"), f"S/N {dev['serial']}" if dev.get("serial") else None) if x)
+    when = [format_measured_at(data.get("measured_at"))]
+    if dev_text:
+        when.append(dev_text)
+    when.append(f"pyGigaSt {data.get('app_version') or APP_VERSION}")
+    rows["when"] = ("text", when)
+
+    cond: list[str] = []
+    if data.get("mode"):
+        cond.append(str(data["mode"]))
+    if "start_hz" in c and "stop_hz" in c:
+        start, stop = float(c["start_hz"]), float(c["stop_hz"])
+        cond += [f"Start {_hz(start)}", f"Stop {_hz(stop)}",
+                 f"Center {_hz((start + stop) / 2)}", f"Span {_hz(stop - start)}"]
+    if c.get("rbw_hz") is not None:
+        cond.append(f"RBW {_hz(c['rbw_hz'])}")
+    if c.get("points") is not None:
+        s = f"{int(c['points'])} 点"
+        if c.get("step_hz") is not None:
+            s += f"（Step {_hz(c['step_hz'])}）"
+        cond.append(s)
+    if c.get("image_cancel") is not None:
+        cond.append("イメージキャンセル " + ("ON" if c["image_cancel"] else "OFF"))
+    if c.get("ref_level") is not None:
+        cond.append(f"REF {_num(c['ref_level'])} {unit}")
+    if c.get("db_per_div") is not None:
+        cond.append(f"{_num(c['db_per_div'])} dB/div")
+    rows["conditions"] = ("text", cond)
+
+    corr: list[str] = []
+    cal = data.get("calibration")
+    if cal:
+        s = f"校正データ: {cal.get('source', '')}"
+        if cal.get("at"):
+            s += f"（{cal['at']}）"
+        corr.append(s)
+    else:
+        # 無いこと自体が情報（U-15）
+        corr.append("校正データ: なし")
+    nz = data.get("normalization")
+    if nz:
+        s = f"ノーマライズ: {nz.get('name', '')}"
+        if nz.get("at"):
+            s += f"（{nz['at']}）"
+        if nz.get("before_power_cycle"):
+            s += " 電源の入れ直し前の基準"
+        if nz.get("applied") is False:
+            s += " 当てていない"
+            if nz.get("reason"):
+                s += f": {nz['reason']}"
+        corr.append(s)
+    rows["correction"] = ("text", corr)
+
+    warns = [f"注意: {w}" for w in (data.get("warnings") or []) if w]
+    rows["warnings"] = ("warn", warns)
+    memo = (note or data.get("note") or "").strip()
+    rows["note"] = ("text", [f"メモ: {memo}"] if memo else [])
+
+    # 空の段は出さない（U-15）
+    return [rows[k] for k in LAYOUT["band_rows"] if rows[k][1]]
+
+
+def legend_text(tr: dict) -> str:
+    """凡例の1項目: トレースの番号・動作・平均の種類・回数（U-14: 動作は凡例の隣）。"""
+    parts = [str(tr.get("number", "")), str(tr.get("action") or "")]
+    if tr.get("average"):
+        parts.append(str(tr["average"]))
+    if tr.get("count") is not None:
+        cnt = str(tr["count"])
+        if tr.get("count_target"):
+            cnt += f"/{tr['count_target']}"
+        parts.append(cnt)
+    if tr.get("label"):
+        parts.append(str(tr["label"]))
+    return " ".join(p for p in parts if p)
+
+
+def _freq_decimals(values_hz: Iterable[float]) -> int:
+    """MHz で出すときの小数の桁。全部の値が桁を落とさずに出る最小の桁数（最大 6 = 1Hz）。"""
+    vals = [float(v) for v in values_hz if v is not None]
+    for d in range(7):
+        if all(abs(round(v / 1e6, d) - v / 1e6) < 1e-9 for v in vals):
+            return d
+    return 6
+
+
+def marker_table_rows(data: dict) -> list[list[str]]:
+    """マーカー表の行（G §3.3・§3.5 の列）。コピー用の表と同じ中身。"""
+    ms = data.get("markers") or []
+    freqs = [m.get("freq_hz") for m in ms] + [m.get("delta_freq_hz") for m in ms]
+    d = _freq_decimals(f for f in freqs if f is not None)
+    unit = (data.get("conditions") or {}).get("unit", "dBm")
+    out = []
+    for m in ms:
+        name = str(m.get("name", ""))
+        if m.get("child"):
+            name = "  " + name
+        f = m.get("freq_hz")
+        v = m.get("value")
+        df = m.get("delta_freq_hz")
+        dv = m.get("delta_value")
+        out.append([
+            name,
+            str(m["trace"]) if m.get("trace") is not None else "",
+            f"{f / 1e6:.{d}f}" if f is not None else "",
+            f"{v:.2f} {unit}" if v is not None else "",
+            str(m.get("ref") or ""),
+            f"{df / 1e6:+.{d}f}" if df is not None else "",
+            f"{dv:+.2f}" if dv is not None else "",
+            str(m.get("note") or ""),
+        ])
+    return out
+
+
+def png_metadata(data: dict, note: str = "") -> dict:
+    """tEXt に入れる JSON（I §3.3: 帯と同じ内容。トレースの値は入れない——データは保存で残す: I §2）。"""
+    keys = ("device", "mode", "conditions", "calibration", "normalization", "markers", "warnings")
+    meta: dict[str, Any] = {"format": META_FORMAT,
+                            "measured_at": format_measured_at(data.get("measured_at")),
+                            "app_version": data.get("app_version") or APP_VERSION}
+    for k in keys:
+        if data.get(k) is not None:
+            meta[k] = data[k]
+    meta["traces"] = [{k: t.get(k) for k in ("number", "action", "average", "count", "count_target", "label")}
+                      for t in data.get("traces") or [] if t.get("visible", True)]
+    memo = (note or data.get("note") or "").strip()
+    if memo:
+        meta["note"] = memo
+    return meta
+
+
+# ---------------------------------------------------------------- PNG の塊
+
+def _chunk(kind: bytes, body: bytes) -> bytes:
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+
+
+def iter_png_chunks(png: bytes):
+    """(種類, 中身) を順に返す。署名と CRC を確かめる。"""
+    if png[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("PNG ではない")
+    pos = 8
+    while pos < len(png):
+        (n,) = struct.unpack(">I", png[pos:pos + 4])
+        kind = png[pos + 4:pos + 8]
+        body = png[pos + 8:pos + 8 + n]
+        (crc,) = struct.unpack(">I", png[pos + 8 + n:pos + 12 + n])
+        if zlib.crc32(kind + body) & 0xFFFFFFFF != crc:
+            raise ValueError(f"CRC が合わない: {kind!r}")
+        yield kind, body
+        pos += 12 + n
+
+
+def add_text_chunk(png: bytes, key: str, text: str) -> bytes:
+    """IEND の前に tEXt を足す。tEXt は Latin-1 なので、text は ASCII にしてから渡す。"""
+    body = key.encode("latin-1") + b"\x00" + text.encode("latin-1")
+    iend = png.rfind(b"IEND") - 4
+    if iend < 8:
+        raise ValueError("IEND が無い")
+    return png[:iend] + _chunk(b"tEXt", body) + png[iend:]
+
+
+def read_png_metadata(png: bytes) -> Optional[dict]:
+    """tEXt の `pygigast` を JSON として読む。無ければ None。"""
+    for kind, body in iter_png_chunks(png):
+        if kind == b"tEXt":
+            key, _, value = body.partition(b"\x00")
+            if key == META_KEY.encode():
+                return json.loads(value.decode("latin-1"))
+    return None
+
+
+def _json_default(o: Any) -> Any:
+    if hasattr(o, "tolist"):
+        return o.tolist()
+    if isinstance(o, datetime):
+        return o.isoformat()
+    return str(o)
+
+
+# ---------------------------------------------------------------- 描画
+
+class _Painter:
+    """1枚の画像を描く。区画の高さは中身から決め、残りをグラフに使う（見切れを作らない）。"""
+
+    def __init__(self, img: QImage, data: dict, pal: dict[str, str], note: str) -> None:
+        self.img = img
+        self.data = data
+        self.pal = pal
+        self.note = note
+        self.w, self.h = img.width(), img.height()
+        px = LAYOUT["base_px_at_1600x1000"] * min(self.w / 1600.0, self.h / 1000.0)
+        self.px = max(LAYOUT["min_px"], px)
+        # 画面と同じ書体を先に。日本語の書体が無い環境でも豆腐にならないよう、候補を並べる
+        self.font = QFont(QGuiApplication.font())
+        self.font.setFamilies([QGuiApplication.font().family(), *JP_FONT_FALLBACKS])
+        self.font.setPixelSize(round(self.px))
+        self.small = QFont(self.font)
+        self.small.setPixelSize(round(self.px * 0.9))
+        self.fm = QFontMetricsF(self.font)
+        self.fms = QFontMetricsF(self.small)
+        self.lh = self.fm.height()
+        self.margin = self.lh * LAYOUT["margin"]
+        self.gap = self.lh * LAYOUT["gap"]
+        self.p = QPainter(img)
+        self.p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        self.p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+    def c(self, key: str) -> QColor:
+        return QColor(self.pal[key])
+
+    # ---- 区画の配分
+    def run(self) -> None:
+        inner_w = self.w - 2 * self.margin
+        band = self._flow_band(inner_w)
+        band_h = len(band) * self.lh + (2 * self.gap if band else 0)
+        table, cols, rows_per_col, table_h = self._fit_table(inner_w)
+
+        band_top = self.h - band_h
+        self.p.fillRect(QRectF(0, band_top, self.w, band_h), self.c("panel_bg"))
+        self.p.setPen(QPen(self.c("axis"), 1))
+        self.p.drawLine(QPointF(0, band_top), QPointF(self.w, band_top))
+        self._draw_band(band, band_top + self.gap)
+
+        table_top = band_top - self.gap - table_h
+        if table:
+            self._draw_table(table, cols, rows_per_col, QRectF(self.margin, table_top, inner_w, table_h))
+        graph_bottom = (table_top - self.gap) if table else (band_top - self.gap)
+        self._draw_graph(QRectF(self.margin, self.margin, inner_w, graph_bottom - self.margin))
+        self.p.end()
+
+    # ---- 下端の帯
+    def _flow_band(self, width: float) -> list[tuple[str, list[str]]]:
+        """段ごとに、項目の切れ目で折り返した行の並び。1項目が幅を超えるときは文字で切って折り返す。"""
+        lines: list[tuple[str, list[str]]] = []
+        sep = self.fm.horizontalAdvance("あ") * LAYOUT["item_gap"]
+        for color, items in band_rows(self.data, self.note):
+            cur: list[str] = []
+            cur_w = 0.0
+            for it in items:
+                for piece in self._split_to_width(it, width):
+                    iw = self.fm.horizontalAdvance(piece)
+                    if cur and cur_w + sep + iw > width:
+                        lines.append((color, cur))
+                        cur, cur_w = [], 0.0
+                    cur_w = iw if not cur else cur_w + sep + iw
+                    cur.append(piece)
+            if cur:
+                lines.append((color, cur))
+        return lines
+
+    def _split_to_width(self, text: str, width: float) -> list[str]:
+        out, cur = [], ""
+        for ch in text:
+            if cur and self.fm.horizontalAdvance(cur + ch) > width:
+                out.append(cur)
+                cur = ""
+            cur += ch
+        return out + [cur] if cur else out
+
+    def _draw_band(self, lines: list[tuple[str, list[str]]], top: float) -> None:
+        self.p.setFont(self.font)
+        sep = self.fm.horizontalAdvance("あ") * LAYOUT["item_gap"]
+        y = top
+        for color, items in lines:
+            self.p.setPen(self.c(color))
+            x = self.margin
+            for it in items:
+                self.p.drawText(QPointF(x, y + self.fm.ascent()), it)
+                x += self.fm.horizontalAdvance(it) + sep
+            y += self.lh
+
+    # ---- マーカー表
+    def _fit_table(self, width: float):
+        rows = marker_table_rows(self.data)
+        if not rows:
+            return [], 1, 0, 0.0
+        cols = 2 if len(rows) > LAYOUT["table_two_columns_from"] else 1
+        rows_per_col = math.ceil(len(rows) / cols)
+        max_rows = max(1, int((self.h * LAYOUT["table_max_ratio"]) / self.lh) - 1)  # 見出しの1行を除く
+        if rows_per_col > max_rows:
+            # 収まらない分は数を書いて知らせる（黙って切らない）。全行はデータの保存と tEXt に残る
+            keep = max_rows * cols - 1
+            rest = len(rows) - keep
+            rows = rows[:keep] + [[f"ほか {rest} 行", "", "", "", "", "", "", ""]]
+            rows_per_col = max_rows
+        return rows, cols, rows_per_col, (rows_per_col + 1) * self.lh
+
+    def _draw_table(self, rows: list[list[str]], cols: int, rows_per_col: int, rect: QRectF) -> None:
+        self.p.setFont(self.font)
+        pad = self.fm.horizontalAdvance("あ")
+        col_gap = pad * 2
+        block_w = (rect.width() - col_gap * (cols - 1)) / cols
+        # 列の幅は中身の最大幅（全ブロックで共通にして縦に揃える）
+        widths = [max(self.fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+        need = sum(widths) + pad * (len(widths) - 1)
+        scale_font = need > block_w
+        if scale_font:
+            # 幅が足りないときは表の文字だけ縮める（切らない）
+            f = QFont(self.font)
+            f.setPixelSize(max(8, int(self.font.pixelSize() * block_w / need)))
+            self.p.setFont(f)
+            fm = QFontMetricsF(f)
+            pad = fm.horizontalAdvance("あ")
+            widths = [max(fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+        else:
+            fm = self.fm
+        for b in range(cols):
+            chunk = rows[b * rows_per_col:(b + 1) * rows_per_col]
+            if not chunk:
+                continue
+            x0 = rect.left() + b * (block_w + col_gap)
+            self._draw_table_block([list(MARKER_COLUMNS)] + chunk, widths, pad, x0, rect.top(), fm)
+
+    def _draw_table_block(self, rows, widths, pad, x0, y0, fm: QFontMetricsF) -> None:
+        y = y0
+        for ri, row in enumerate(rows):
+            self.p.setPen(self.c("text_dim" if ri == 0 else "text"))
+            x = x0
+            for i, cell in enumerate(row):
+                tw = fm.horizontalAdvance(cell)
+                tx = x + widths[i] - tw if MARKER_RIGHT[i] else x
+                if i == len(row) - 1 and cell and ri > 0:
+                    self.p.setPen(self.c("warn"))
+                self.p.drawText(QPointF(tx, y + fm.ascent()), cell)
+                x += widths[i] + pad
+            if ri == 0:
+                self.p.setPen(QPen(self.c("grid"), 1))
+                self.p.drawLine(QPointF(x0, y + self.lh - 1), QPointF(x - pad, y + self.lh - 1))
+            y += self.lh
+
+    # ---- グラフ
+    def _draw_graph(self, rect: QRectF) -> None:
+        c = self.data.get("conditions") or {}
+        unit = c.get("unit", "dBm")
+        ref = float(c.get("ref_level", 0.0))
+        div = float(c.get("db_per_div", 10.0))
+        bottom = ref - DIVISIONS * div
+        start = float(c.get("start_hz", 0.0))
+        stop = float(c.get("stop_hz", start + 1.0))
+        if stop <= start:
+            stop = start + 1.0
+
+        y_labels = [_num(ref - i * div) for i in range(DIVISIONS + 1)]
+        axis_w = max(self.fm.horizontalAdvance(s) for s in y_labels + [unit]) + self.fm.horizontalAdvance("あ") * 0.6
+        legend_h = self.lh
+        # 一番上の目盛（REF）の数字が切れないよう、上に文字の半分の高さを空ける（J §4.3）
+        plot = QRectF(rect.left() + axis_w, rect.top() + legend_h + self.lh * 0.6,
+                      rect.width() - axis_w - self.fm.horizontalAdvance("0") * 3,
+                      0.0)
+        plot.setBottom(rect.bottom() - self.lh * 2.3)  # 横軸の数字と「周波数 (MHz)」
+        if plot.height() < self.lh * 3:
+            plot.setBottom(plot.top() + self.lh * 3)
+
+        def fx(f: float) -> float:
+            return plot.left() + (f - start) / (stop - start) * plot.width()
+
+        def fy(v: float) -> float:
+            return plot.top() + (ref - v) / (ref - bottom) * plot.height()
+
+        self.p.fillRect(plot, self.c("graph_bg"))
+        # 目盛線
+        self.p.setPen(QPen(self.c("grid"), 1))
+        for i in range(DIVISIONS + 1):
+            y = plot.top() + plot.height() * i / DIVISIONS
+            self.p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            x = plot.left() + plot.width() * i / DIVISIONS
+            self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+        # 0dB の線（比のトレースのとき）
+        if unit == "dB" and bottom <= 0.0 <= ref:
+            self.p.setPen(QPen(self.c("zero_db"), 1))
+            self.p.drawLine(QPointF(plot.left(), fy(0.0)), QPointF(plot.right(), fy(0.0)))
+        self.p.setPen(QPen(self.c("axis"), 1))
+        self.p.drawRect(plot)
+
+        # 縦軸の数字（絶対値: M-06）
+        self.p.setFont(self.font)
+        self.p.setPen(self.c("text"))
+        for i, s in enumerate(y_labels):
+            y = plot.top() + plot.height() * i / DIVISIONS
+            tw = self.fm.horizontalAdvance(s)
+            self.p.drawText(QPointF(plot.left() - tw - self.fm.horizontalAdvance("0") * 0.5,
+                                    y + (self.fm.ascent() - self.fm.descent()) / 2), s)
+        # 単位は縦軸の上（凡例と同じ段）
+        self.p.setPen(self.c("text_dim"))
+        self.p.drawText(QPointF(rect.left(), rect.top() + self.fm.ascent()), unit)
+
+        self._draw_x_axis(plot, start, stop)
+        self._draw_legend(QRectF(plot.left(), rect.top(), plot.width(), legend_h))
+
+        # トレースと印は枠の中だけに描く（横軸は表示の Start–Stop で切る）
+        self.p.save()
+        self.p.setClipRect(plot)
+        for tr in self.data.get("traces") or []:
+            if tr.get("visible", True):
+                self._draw_trace(tr, fx, fy, start, stop)
+        self.p.restore()
+        self._draw_markers(plot, fx, fy, start, stop, ref, bottom)
+
+    def _draw_x_axis(self, plot: QRectF, start: float, stop: float) -> None:
+        ticks = [start + (stop - start) * i / DIVISIONS for i in range(DIVISIONS + 1)]
+        d = _freq_decimals(ticks)
+        labels = [f"{t / 1e6:.{d}f}" for t in ticks]
+        step_px = plot.width() / DIVISIONS
+        widest = max(self.fm.horizontalAdvance(s) for s in labels) + self.fm.horizontalAdvance("0") * 1.5
+        every = next((n for n in (1, 2, 5, 10) if step_px * n >= widest), 10)
+        self.p.setFont(self.font)
+        self.p.setPen(self.c("text"))
+        y = plot.bottom() + self.fm.ascent() + self.lh * 0.15
+        for i in range(0, DIVISIONS + 1, every):
+            s = labels[i]
+            tw = self.fm.horizontalAdvance(s)
+            x = plot.left() + step_px * i - tw / 2
+            # 両端の数字は画像の外に出さない
+            x = min(max(x, 0.0), self.w - self.margin * 0.3 - tw)
+            self.p.drawText(QPointF(x, y), s)
+        title = "周波数 (MHz)"
+        tw = self.fm.horizontalAdvance(title)
+        self.p.setPen(self.c("text_dim"))
+        self.p.drawText(QPointF(plot.center().x() - tw / 2, y + self.lh), title)
+
+    def _draw_legend(self, rect: QRectF) -> None:
+        self.p.setFont(self.font)
+        x = rect.left()
+        sw = self.fm.horizontalAdvance("あ") * 1.4
+        for tr in self.data.get("traces") or []:
+            if not tr.get("visible", True):
+                continue
+            s = legend_text(tr)
+            col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")
+            yc = rect.top() + self.lh / 2
+            if x + sw + self.fm.horizontalAdvance(s) > rect.right() + 1:
+                break  # 凡例は1段。あふれる分は描かない（トレースは最大4本なので実際には起きない想定）
+            self.p.setPen(QPen(col, max(2.0, self.px / 6)))
+            self.p.drawLine(QPointF(x, yc), QPointF(x + sw * 0.8, yc))
+            self.p.setPen(self.c("text"))
+            self.p.drawText(QPointF(x + sw, rect.top() + self.fm.ascent()), s)
+            x += sw + self.fm.horizontalAdvance(s) + self.fm.horizontalAdvance("あ") * 2
+
+    def _draw_trace(self, tr: dict, fx, fy, start: float, stop: float) -> None:
+        vals = tr.get("values_db")
+        if vals is None:
+            return
+        vals = [float(v) for v in (vals.tolist() if hasattr(vals, "tolist") else vals)]
+        n = int(tr.get("points") or len(vals))
+        n = min(n, len(vals))
+        f0 = float(tr.get("start_hz", start))
+        st = float(tr.get("step_hz", (stop - start) / max(1, n - 1)))
+        flags = tr.get("flags")
+        flags = list(flags.tolist() if hasattr(flags, "tolist") else flags) if flags is not None else None
+        col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")
+        width = max(1.0, self.px / 12)
+        # 範囲の1点外側までは描いて、枠の端まで線をつなぐ
+        lo = max(0, int(math.floor((start - f0) / st)) - 1) if st > 0 else 0
+        hi = min(n, int(math.ceil((stop - f0) / st)) + 2) if st > 0 else n
+        segs: list[tuple[bool, QPainterPath]] = []
+        cur: Optional[QPainterPath] = None
+        cur_flag = None
+        prev: Optional[QPointF] = None
+        for i in range(lo, hi):
+            v = vals[i]
+            if math.isnan(v):
+                cur, prev = None, None
+                continue
+            pt = QPointF(fx(f0 + i * st), fy(v))
+            fl = bool(flags[i]) if flags is not None and i < len(flags) else False
+            if cur is None or fl != cur_flag:
+                cur = QPainterPath(prev if prev is not None else pt)
+                cur_flag = fl
+                segs.append((fl, cur))
+            cur.lineTo(pt)
+            prev = pt
+        for fl, path in segs:
+            self.p.setPen(QPen(self.c("text_dim") if fl else col, width))
+            self.p.setBrush(Qt.BrushStyle.NoBrush)
+            self.p.drawPath(path)
+
+    def _draw_markers(self, plot: QRectF, fx, fy, start, stop, top, bottom) -> None:
+        self.p.setFont(self.small)
+        mcol = self.c("marker")
+        size = max(8.0, self.px * 0.8)
+        for m in self.data.get("markers") or []:
+            kind = m.get("kind", "marker")
+            f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
+            if kind == "freq_cursor":
+                if f is None or not (start <= f <= stop):
+                    continue
+                x = fx(f)
+                self.p.setPen(QPen(mcol, 1, Qt.PenStyle.DashLine))
+                self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+                self._label(name.strip(), QPointF(x + 3, plot.top() + self.fms.ascent() + 2), plot)
+            elif kind == "level_cursor":
+                if v is None or not (bottom <= v <= top):
+                    continue
+                y = fy(v)
+                self.p.setPen(QPen(mcol, 1, Qt.PenStyle.DashLine))
+                self.p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+                tw = self.fms.horizontalAdvance(name.strip())
+                self._label(name.strip(), QPointF(plot.right() - tw - 3, y - 3), plot)
+            else:
+                if f is None or v is None or not (start <= f <= stop):
+                    continue
+                x = fx(f)
+                y = min(max(fy(v), plot.top()), plot.bottom())
+                tri = QPolygonF([QPointF(x, y - 1), QPointF(x - size / 2, y - 1 - size), QPointF(x + size / 2, y - 1 - size)])
+                self.p.setPen(QPen(self.c("graph_bg"), 1))
+                self.p.setBrush(QBrush(mcol))
+                self.p.drawPolygon(tri)
+                self.p.setBrush(Qt.BrushStyle.NoBrush)
+                tw = self.fms.horizontalAdvance(name)
+                ly = y - 1 - size - 3
+                if ly - self.fms.ascent() < plot.top():
+                    ly = y + self.fms.ascent() + 3  # 上に余地が無ければ点の下へ
+                self._label(name, QPointF(x - tw / 2, ly), plot)
+
+    def _label(self, text: str, at: QPointF, plot: QRectF) -> None:
+        """グラフの上の文字。背景を敷いてトレースと重なっても読めるようにし、枠からはみ出させない。"""
+        tw = self.fms.horizontalAdvance(text)
+        x = min(max(at.x(), plot.left() + 2), plot.right() - tw - 2)
+        box = QRectF(x - 2, at.y() - self.fms.ascent() - 1, tw + 4, self.fms.height() + 2)
+        bg = self.c("graph_bg")
+        bg.setAlpha(210)
+        self.p.fillRect(box, bg)
+        self.p.setPen(self.c("marker"))
+        self.p.drawText(QPointF(x, at.y()), text)
+
+
+def _ensure_app() -> None:
+    # 文字を描くには QGuiApplication が要る。アプリの中から呼ぶときは既にある
+    if QGuiApplication.instance() is None:
+        _ensure_app.app = QGuiApplication([])  # type: ignore[attr-defined]
+
+
+def render_png(data: dict, size: tuple[int, int] = (1600, 1000),
+               palette: Union[str, dict, None] = "light", note: str = "") -> bytes:
+    """data（冒頭の形）から PNG のバイト列を作る。画面は撮らない（I §3.1）。
+
+    palette: "light"（既定。資料に貼る・印刷する用事: J §4.4）／"dark"／ユーザー設定の色の組。
+    note: 利用者のメモ（1行）。空なら帯に出さない（U-15）。
+    """
+    _ensure_app()
+    w, h = int(size[0]), int(size[1])
+    if w < 320 or h < 240:
+        raise ValueError(f"画像が小さすぎる: {w}x{h}")
+    pal = resolve_palette(palette)
+    img = QImage(w, h, QImage.Format.Format_RGB32)
+    img.fill(QColor(pal["graph_bg"]))
+    _Painter(img, data, pal, note).run()
+
+    buf = QByteArray()
+    dev = QBuffer(buf)
+    dev.open(QIODevice.OpenModeFlag.WriteOnly)
+    if not img.save(dev, "PNG"):
+        raise RuntimeError("PNG に書けなかった")
+    dev.close()
+    meta = json.dumps(png_metadata(data, note), ensure_ascii=True, default=_json_default)
+    return add_text_chunk(bytes(buf.data()), META_KEY, meta)
+
+
+# ---------------------------------------------------------------- 保存とコピー
+
+def default_png_name(when: Optional[datetime] = None) -> str:
+    """`gigast_YYYYMMDD_HHMMSS.png`（I §3.4）。"""
+    return (when or datetime.now()).strftime("gigast_%Y%m%d_%H%M%S.png")
+
+
+def save_png(path: Union[str, Path], png_bytes: bytes, when: Optional[datetime] = None) -> Path:
+    """PNG を保存し、実際に書いたパスを返す。上書きしない（I §3.4・M-08）。
+
+    path がフォルダなら `gigast_YYYYMMDD_HHMMSS.png`（when、省略時は今）をその中に作る。
+    同じ名前があれば `_1`、`_2` … を付ける。作るのは排他で行い、同時に保存しても上書きしない。
+    """
+    p = Path(path)
+    if p.is_dir():
+        p = p / default_png_name(when)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    stem, suffix = p.stem, p.suffix or ".png"
+    i = 0
+    while True:
+        cand = p.with_name(f"{stem}{'' if i == 0 else f'_{i}'}{suffix}")
+        try:
+            with open(cand, "xb") as f:
+                f.write(png_bytes)
+            return cand
+        except FileExistsError:
+            i += 1
+
+
+def copy_png_to_clipboard(png_bytes: bytes) -> None:
+    """クリップボードへ画像として置く。貼り先が PNG を受け取れるなら tEXt 付きの PNG のまま渡る。"""
+    _ensure_app()
+    img = QImage.fromData(png_bytes, "PNG")
+    if img.isNull():
+        raise ValueError("PNG を読めない")
+    mime = QMimeData()
+    mime.setImageData(img)
+    mime.setData("image/png", QByteArray(png_bytes))
+    QGuiApplication.clipboard().setMimeData(mime)

@@ -10,13 +10,14 @@
 """
 from __future__ import annotations
 
+import math
 import time
 from typing import Callable, Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QAction, QFont, QKeySequence
+from PySide6.QtCore import QObject, QPoint, Qt, Signal
+from PySide6.QtGui import QCursor, QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -42,11 +44,23 @@ from PySide6.QtWidgets import (
 
 from ..api.local import LocalApi
 from ..core.units import format_freq
-from . import texts
-from .fields import DbField, FreqField, ValueField
+from . import menus, texts
+from .fields import DbField, FreqField, SpanLockButton, ValueField
+from .graph import make_plot
 
 DB_PER_DIV_CHOICES = (1.0, 2.0, 5.0, 10.0)
 DIVISIONS = 10
+# 周波数軸の上のホイール1段で Span を何倍にするか（奥へ回すと拡大 = Span を狭く）
+ZOOM_STEP = 0.8
+
+# モード（コード・ボタンの文字・名前・使えない理由）。並びが Ctrl+1〜5 の順（J §4.6）
+MODES = (
+    ("sa", "SA", "スペクトラムアナライザ", None),
+    ("tg", "TG", "伝送特性（TG 出力を被測定物へ）", None),
+    ("s11", "S11", "反射", "反射（方向性結合器）は次の回で実装します"),
+    ("sg", "SG", "信号源", None),
+    ("nf", "NF", "NF 測定", "NF 測定は次の回で実装します"),
+)
 
 # 配色（J §4.4 のダークの初期値。配色の編集は④以降）
 DARK = {
@@ -161,12 +175,15 @@ class MainWindow(QMainWindow):
         self._ref_dbm = 0.0
         self._db_div = 10.0
         self._last_trace: Optional[dict] = None
+        self._drag_ref0 = 0.0
+        self._markers_available = False
         self._bridge = _Bridge()
         self._bridge.event.connect(self._on_event, Qt.ConnectionType.QueuedConnection)
         self._bridge.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
 
-        self._build_menu()
         self._build_body()
+        self._build_menu()
+        self._wire_buttons()
         self._build_status()
         self._apply_style()
 
@@ -178,13 +195,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 命令を呼ぶ
 
     def _call(self, name: str, on_ok: Optional[Callable[[dict], None]] = None,
-              field: Optional[ValueField] = None, **kwargs) -> None:
+              field: Optional[ValueField] = None, quiet_codes: tuple[str, ...] = (), **kwargs) -> None:
+        """命令を呼ぶ。quiet_codes の失敗は何も出さない（コアにまだ無い命令など）。"""
         fut = self.api.call(name, **kwargs)
 
         def done(f) -> None:
             def in_gui() -> None:
                 exc = f.exception()
                 if exc is not None:
+                    if getattr(exc, "code", None) in quiet_codes:
+                        return
                     msg = texts.error_text(exc)
                     if field is not None:
                         field.flash_note(msg)
@@ -193,7 +213,7 @@ class MainWindow(QMainWindow):
                     return
                 result = f.result()
                 if isinstance(result, dict) and "adjustments" in result:
-                    self._show_adjustments(result["adjustments"])
+                    self._show_adjustments(result["adjustments"], result.get("alternative"))
                 if on_ok:
                     on_ok(result)
 
@@ -204,39 +224,79 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 画面を組む
 
     def _build_menu(self) -> None:
-        mb = self.menuBar()
-        m_file = mb.addMenu("ファイル(&F)")
-        act_quit = QAction("終了", self)
-        act_quit.setShortcut(QKeySequence.StandardKey.Quit)
-        act_quit.triggered.connect(self.close)
-        m_file.addAction(act_quit)
-
-        m_dev = mb.addMenu("機器(&D)")
-        act_conn = QAction("接続…", self)
-        act_conn.triggered.connect(self._connect_dialog)
-        m_dev.addAction(act_conn)
-        act_sim = QAction("シミュレータに接続", self)
-        act_sim.triggered.connect(lambda: self._call("connect", backend="simulator", serial="SIM00001"))
-        m_dev.addAction(act_sim)
-        act_disc = QAction("切断", self)
-        act_disc.triggered.connect(lambda: self._call("disconnect"))
-        m_dev.addAction(act_disc)
-
-        m_cal = mb.addMenu("校正(&C)")
-        act_legacy = QAction("旧校正ファイルを読み込む…", self)
-        act_legacy.triggered.connect(self._import_legacy)
-        m_cal.addAction(act_legacy)
-
-        m_run = mb.addMenu("掃引(&S)")
-        for label, key, fn in (
-            ("連続", "F5", lambda: self._call("run", mode="continuous")),
-            ("単発", "F6", lambda: self._call("run", mode="single")),
-            ("停止", "F7", lambda: self._call("stop")),
-        ):
-            act = QAction(label, self)
-            act.setShortcut(QKeySequence(key))
-            act.triggered.connect(fn)
-            m_run.addAction(act)
+        """メニューバー（J §4.3.1）とキー（J §4.6）。上段のボタンも同じ項目を呼ぶ。"""
+        I = menus.Item
+        mode_items = [
+            I(f"mode_{code}", f"{label}（{name}）", (f"Ctrl+{i + 1}",),
+              (lambda c=code: self._call("set_mode", mode=c)) if why is None else None, why)
+            for i, (code, label, name, why) in enumerate(MODES)
+        ]
+        table = [
+            ("ファイル(&F)", [
+                I("open", "開く…", ("Ctrl+O",), None, menus.NOT_YET_FILE),
+                I("save", "保存…", ("Ctrl+S",), None, menus.NOT_YET_FILE),
+                I("export", "書き出し…", ("Ctrl+E",), None, menus.NOT_YET_FILE),
+                None,
+                I("png_save", "PNG を保存…", ("Ctrl+P",), None, menus.NOT_YET_PNG),
+                I("png_copy", "PNG をクリップボードへ", ("Ctrl+Shift+C",), None, menus.NOT_YET_PNG),
+                None,
+                I("quit", "終了", ("Ctrl+Q",), self.close),
+            ]),
+            ("編集(&E)", [
+                I("undo", "条件の変更を戻す", ("Ctrl+Z",), lambda: self._undo_redo("undo")),
+                I("redo", "条件の変更をやり直す", ("Ctrl+Y",), lambda: self._undo_redo("redo")),
+            ]),
+            ("機器(&D)", [
+                I("connect", "接続…", (), self._connect_dialog),
+                I("connect_sim", "シミュレータに接続", (),
+                  lambda: self._call("connect", backend="simulator", serial="SIM00001")),
+                I("disconnect", "切断", (), lambda: self._call("disconnect")),
+                None,
+                I("self_test", "自己診断の結果", (), None, menus.NOT_YET_DIAG),
+            ]),
+            ("掃引(&S)", [
+                I("run_cont", "連続", ("F5",), lambda: self._call("run", mode="continuous")),
+                I("run_single", "単発", ("F6",), lambda: self._call("run", mode="single")),
+                I("stop", "停止", ("F7",), lambda: self._call("stop")),
+                I("pause", "連続 ⇔ 停止", ("Pause",), self._toggle_run),
+            ]),
+            ("モード(&M)", mode_items),
+            ("振幅(&A)", [
+                I("ref_auto", "REF レベルを波形に合わせる（自動）", (), self._ref_auto),
+            ]),
+            ("マーカー(&K)", [
+                I("marker_peak", "選んでいるマーカーをピークへ", ("P",), None, menus.NOT_YET_MARKER, True),
+                I("marker_peak_left", "次のピーク（左）", ("[",), None, menus.NOT_YET_MARKER, True),
+                I("marker_peak_right", "次のピーク（右）", ("]",), None, menus.NOT_YET_MARKER, True),
+                I("marker_left", "マーカーを左へ1点（Shift で10点）", ("Left", "Shift+Left"), None,
+                  menus.NOT_YET_MARKER, True),
+                I("marker_right", "マーカーを右へ1点（Shift で10点）", ("Right", "Shift+Right"), None,
+                  menus.NOT_YET_MARKER, True),
+                I("marker_here", "マウスの位置に M を置く", ("M",), self._marker_at_mouse,
+                  menus.NOT_YET_MARKER, True),
+            ]),
+            ("校正(&C)", [
+                I("cal_freq", "周波数特性…", (), None, menus.NOT_YET_CAL),
+                I("cal_rbw", "RBW…", (), None, menus.NOT_YET_CAL),
+                I("cal_nf", "NF の増幅度…", (), None, menus.NOT_YET_CAL),
+                None,
+                I("cal_legacy", "旧校正ファイルを読み込む…", (), self._import_legacy),
+            ]),
+            ("表示(&V)", [
+                I("view_colors", "配色…", (), None, menus.NOT_YET_VIEW),
+                I("view_waterfall", "ウォーターフォール", (), None, menus.NOT_YET_VIEW),
+                I("view_density", "密度表示", (), None, menus.NOT_YET_VIEW),
+            ]),
+            ("設定(&O)", [
+                I("settings", "アプリ設定…", (), None, menus.NOT_YET_SETTINGS),
+                I("settings_keys", "キー操作…", (), None, menus.NOT_YET_SETTINGS),
+            ]),
+            ("ヘルプ(&H)", [
+                I("help_keys", "キー操作の一覧", (), self._show_key_table),
+                I("help_about", "pyGigaSt について", (), self._show_about),
+            ]),
+        ]
+        self.actions = menus.build(self, self.plot, table)
 
     def _build_body(self) -> None:
         central = QWidget()
@@ -249,22 +309,15 @@ class MainWindow(QMainWindow):
         top = self.topbar.left
         self.mode_group = QButtonGroup(self)
         self.mode_buttons: dict[str, QPushButton] = {}
-        for code, label, enabled, why in (
-            ("sa", "SA", True, "スペクトラムアナライザ"),
-            ("tg", "TG", True, "伝送特性（TG 出力を被測定物へ）。ノーマライズは次の回で実装"),
-            ("s11", "S11", False, "反射（方向性結合器）は次の回で実装します"),
-            ("sg", "SG", True, "信号源"),
-            ("nf", "NF", False, "NF 測定は次の回で実装します"),
-        ):
+        for code, label, _name, why in MODES:
             b = QPushButton(label)
             b.setCheckable(True)
-            b.setEnabled(enabled)
-            b.setToolTip(why)
+            b.setEnabled(why is None)
             b.setMinimumHeight(40)
             f = QFont(b.font())
             f.setPointSize(12)
             b.setFont(f)
-            b.clicked.connect(lambda _=False, c=code: self._call("set_mode", mode=c))
+            b.clicked.connect(lambda _=False, c=code: self.actions[f"mode_{c}"].trigger())
             self.mode_group.addButton(b)
             self.mode_buttons[code] = b
             top.addWidget(b)
@@ -274,6 +327,13 @@ class MainWindow(QMainWindow):
         self.f_span = FreqField("Span", lambda hz: self._set_sweep(span_hz=hz, field=self.f_span))
         self.f_start = FreqField("Start", lambda hz: self._set_sweep(start_hz=hz, field=self.f_start))
         self.f_stop = FreqField("Stop", lambda hz: self._set_sweep(stop_hz=hz, field=self.f_stop))
+        # Span 固定の切り替え（設計C §5.11 の 2）。Span の欄に付けて、状態を欄の上で見せる
+        self.span_lock = SpanLockButton(DARK["accent"], DARK["text_dim"])
+        self.span_lock.setToolTip(
+            "ON: Center を変えても Span を保つ（範囲を超える分は Center が動く）\n"
+            "OFF: Center を保ち、範囲を超える分だけ Span を縮める")
+        self.span_lock.clicked.connect(lambda on: self._set_sweep(span_lock=bool(on), field=self.f_span))
+        self.f_span.add_header_widget(self.span_lock)
         for f in (self.f_center, self.f_span, self.f_start, self.f_stop):
             top.addWidget(f)
         top = self.topbar.right
@@ -290,6 +350,11 @@ class MainWindow(QMainWindow):
         top.addWidget(rbw_box)
 
         self.f_ref = DbField("REF レベル", "dBm", self._set_ref, big=False)
+        # いまの波形の最大値が上から1目盛下に来るよう REF を合わせる（J §4.1）
+        self.btn_ref_auto = QPushButton("自動")
+        self.btn_ref_auto.setObjectName("small")
+        self.btn_ref_auto.clicked.connect(lambda: self.actions["ref_auto"].trigger())
+        self.f_ref.add_header_widget(self.btn_ref_auto)
         top.addWidget(self.f_ref)
         div_box = ValueField("dB/div", big=False)
         self.div_combo = QComboBox()
@@ -305,16 +370,16 @@ class MainWindow(QMainWindow):
         self.btn_cont = QPushButton("連続")
         self.btn_single = QPushButton("単発")
         self.btn_stop = QPushButton("停止")
-        for b, tip in ((self.btn_cont, "F5"), (self.btn_single, "F6"), (self.btn_stop, "F7")):
+        for b in (self.btn_cont, self.btn_single, self.btn_stop):
             b.setMinimumSize(78, 44)
             f = QFont(b.font())
             f.setPointSize(13)
             b.setFont(f)
-            b.setToolTip(tip)
             top.addWidget(b)
-        self.btn_cont.clicked.connect(lambda: self._call("run", mode="continuous"))
-        self.btn_single.clicked.connect(lambda: self._call("run", mode="single"))
-        self.btn_stop.clicked.connect(lambda: self._call("stop"))
+        # ボタンとメニューは同じ項目を呼ぶ（J §4.3.1）
+        self.btn_cont.clicked.connect(lambda: self.actions["run_cont"].trigger())
+        self.btn_single.clicked.connect(lambda: self.actions["run_single"].trigger())
+        self.btn_stop.clicked.connect(lambda: self.actions["stop"].trigger())
         outer.addWidget(self.topbar)
 
         # 使っている RBW が好みと違う理由・信用できない条件（その場で出し続ける: U-02・U-08）
@@ -326,8 +391,24 @@ class MainWindow(QMainWindow):
         # ---- グラフと右のタブ
         split = QSplitter(Qt.Orientation.Horizontal)
         pg.setConfigOptions(antialias=False)
-        self.plot = pg.PlotWidget(background=DARK["graph_bg"])
+        self.plot, gsig = make_plot(DARK["graph_bg"])
+        gsig.range_selected.connect(self._on_range_selected)
+        gsig.freq_wheel.connect(self._on_freq_wheel)
+        gsig.level_wheel.connect(self._on_level_wheel)
+        gsig.level_drag.connect(self._on_level_drag)
+        gsig.context_requested.connect(self._on_context_requested)
+        self._graph_signals = gsig
         self.plot.setMenuEnabled(False)
+        # 軸の上の操作は軸のツールチップに書く（隠れた操作を作らない: U-12）
+        pi0 = self.plot.getPlotItem()
+        pi0.getAxis("bottom").setToolTip(
+            "ホイール: カーソルの位置を中心に拡大・縮小\n"
+            "グラフの中を横にドラッグ: その範囲を Start/Stop に\n"
+            "右クリック: この位置への操作（Center に・REF に）")
+        pi0.getAxis("left").setToolTip(
+            "ホイール: REF レベルを1目盛ずつ\n"
+            "Ctrl+ホイール: dB/div を1段\n"
+            "ドラッグ: REF レベルを連続で動かす")
         self.plot.setMouseEnabled(x=False, y=False)
         self.plot.hideButtons()
         pi = self.plot.getPlotItem()
@@ -413,6 +494,13 @@ class MainWindow(QMainWindow):
             QPushButton:disabled {{ color: {c['axis']}; }}
             QPushButton[running="true"] {{ background: {c['running']}; }}
             QLabel#note {{ color: {c['warn']}; }}
+            QFrame#notePopup {{ background: {c['panel_bg']}; border: 1px solid {c['warn']}; }}
+            QFrame#notePopup QLabel {{ background: transparent; }}
+            QPushButton#noteAction {{ color: {c['accent']}; border: 1px solid {c['accent']}; padding: 2px 8px; }}
+            QPushButton#small {{ padding: 0 6px; }}
+            QToolButton#spanLock {{ background: transparent; border: 1px solid {c['axis']}; padding: 0 4px;
+                                    color: {c['text_dim']}; }}
+            QToolButton#spanLock:checked {{ border: 1px solid {c['accent']}; color: {c['accent']}; }}
             QLabel#warn {{ color: {c['warn']}; }}
             QStatusBar QLabel {{ padding: 0 8px; }}
         """)
@@ -442,7 +530,166 @@ class MainWindow(QMainWindow):
     def _set_div(self, v: float) -> None:
         # dB/div を変えても REF レベルは動かない（J §4.1）
         self._db_div = v
+        i = self.div_combo.findData(v)
+        if i >= 0 and i != self.div_combo.currentIndex():
+            self.div_combo.setCurrentIndex(i)
         self._update_y_axis()
+
+    def _wire_buttons(self) -> None:
+        """ボタンのツールチップに、メニューと同じキーを出す（U-12）。"""
+        a = self.actions
+        self.btn_cont.setToolTip(menus.tooltip_for(a["run_cont"], "連続で掃引する"))
+        self.btn_single.setToolTip(menus.tooltip_for(a["run_single"], "単発で掃引する"))
+        self.btn_stop.setToolTip(menus.tooltip_for(a["stop"], "いまの掃引の終わりで止める"))
+        for code, _label, name, why in MODES:
+            self.mode_buttons[code].setToolTip(
+                menus.tooltip_for(a[f"mode_{code}"], name) + (f" — {why}" if why else ""))
+        self._update_ref_auto()
+
+    # ---- 元に戻す・やり直す（J §3。命令は設計A §4.3.1）
+
+    def _undo_redo(self, name: str) -> None:
+        # コアに命令がまだ無い間は何も出さない（unknown_command）
+        self._call(name, quiet_codes=("unknown_command",))
+
+    def _toggle_run(self) -> None:
+        """Pause キー: 連続 ⇔ 停止（J §4.6）。"""
+        state = self._state.get("run", {}).get("state")
+        if state in ("continuous", "single"):
+            self.actions["stop"].trigger()
+        elif state == "stopped":
+            self.actions["run_cont"].trigger()
+
+    # ---- 縦軸（J §4.1。表示だけの値なのでコアへ送らない）
+
+    def _ref_auto(self) -> None:
+        """いまの波形の最大値が上から1目盛下に来るよう REF レベルを合わせる。"""
+        peak = self._trace_max()
+        if peak is None:
+            self.f_ref.flash_note("合わせる波形がまだありません")
+            return
+        # 表示の桁（0.1dB）へ切り上げる。切り捨てると最大値が1目盛の線をわずかに超える
+        self._set_ref(math.ceil((peak + self._db_div) * 10 - 1e-9) / 10)
+
+    def _trace_max(self) -> Optional[float]:
+        t = self._last_trace
+        if not t:
+            return None
+        y = np.asarray(t["values"], dtype=np.float64)
+        ax = t["axis"]
+        stop = self._state.get("sweep", {}).get("stop_hz")
+        if ax["step_hz"] > 0 and stop is not None:
+            # Stop の先に出た最後の点（C §5.3）は表示の外なので数えない
+            x = ax["start_hz"] + ax["step_hz"] * np.arange(ax["points"], dtype=np.int64)
+            y = y[x <= stop]
+        y = y[np.isfinite(y)]
+        return float(y.max()) if y.size else None
+
+    def _update_ref_auto(self) -> None:
+        why = None if self._last_trace is not None else "波形がまだありません（掃引すると使えます）"
+        menus.set_reason(self.actions["ref_auto"], why)
+        self.btn_ref_auto.setEnabled(why is None)
+        self.btn_ref_auto.setToolTip(
+            "いまの波形の最大値が上から1目盛下に来るよう REF レベルを合わせる" + (f" — {why}" if why else ""))
+
+    def _on_level_wheel(self, steps: int, ctrl: bool) -> None:
+        if ctrl:
+            # Ctrl+ホイール: dB/div を1段（奥へ回すと大きく）
+            i = DB_PER_DIV_CHOICES.index(self._db_div) if self._db_div in DB_PER_DIV_CHOICES else 3
+            i = min(max(i + (1 if steps > 0 else -1), 0), len(DB_PER_DIV_CHOICES) - 1)
+            self._set_div(DB_PER_DIV_CHOICES[i])
+        else:
+            # ホイール1段で REF レベルを1目盛（奥へ回すと REF が上がる。数値の欄のホイールと同じ向き）
+            self._set_ref(self._ref_dbm + steps * self._db_div)
+
+    def _on_level_drag(self, start: bool, frac: float) -> None:
+        # つかんだ目盛がマウスに付いてくる: 下へ引くと、より上の値が見える（REF が上がる）
+        if start:
+            self._drag_ref0 = self._ref_dbm
+        self._set_ref(self._drag_ref0 + frac * DIVISIONS * self._db_div)
+
+    # ---- 周波数（J §3。範囲の収め方はコア: 設計C §5.1・§5.11）
+
+    def _freq_ops_reason(self) -> Optional[str]:
+        sw = self._state.get("sweep")
+        if not sw:
+            return "掃引条件がまだありません"
+        if sw["step_hz"] == 0:
+            return "ゼロスパンの横軸は周波数ではありません"
+        return None
+
+    def _on_range_selected(self, x0: float, x1: float) -> None:
+        # ドラッグは Start と Stop を同時に触ったものとして扱う（C §5.1）
+        if self._freq_ops_reason():
+            return
+        self._set_sweep(start_hz=int(round(x0)), stop_hz=int(round(x1)),
+                        edited=["start_hz", "stop_hz"], field=self.f_start)
+
+    def _on_freq_wheel(self, x: float, steps: int) -> None:
+        """カーソルの位置の周波数を画面上の同じ位置に保って拡大・縮小する。"""
+        sw = self._state.get("sweep")
+        if self._freq_ops_reason() or not sw:
+            return
+        k = ZOOM_STEP ** steps
+        start, stop = sw["start_hz"], sw["stop_hz"]
+        new_start = x - (x - start) * k
+        new_stop = x + (stop - x) * k
+        span = max(int(round(new_stop - new_start)), 1)
+        center = int(round(new_start)) + span // 2
+        # Center と Span を同時に触った命令として送る（範囲の端では C §5.11 の規則に従う）
+        self._set_sweep(center_hz=center, span_hz=span, edited=["center_hz", "span_hz"], field=self.f_span)
+
+    def _on_context_requested(self, x: float, y: float, screen_pos: QPoint) -> None:
+        self._context_menu(x, y).exec(screen_pos)
+
+    def _context_menu(self, x: float, y: float) -> QMenu:
+        """右クリックのメニュー。どれも名前の付いた操作として出す（J §3・U-12）。"""
+        m = QMenu(self)
+        m.setToolTipsVisible(True)
+        why = self._freq_ops_reason()
+        hz = int(round(x))
+        act = m.addAction("ここを Center に" + ("" if why else f"（{format_freq(hz)}）"))
+        act.setObjectName("ctx_center")
+        act.triggered.connect(lambda: self._set_sweep(center_hz=hz, field=self.f_center))
+        if why:
+            act.setEnabled(False)
+            act.setToolTip(why)
+        if self._markers_available and not why:
+            act = m.addAction("ここにマーカー")
+            act.setObjectName("ctx_marker")
+            act.triggered.connect(lambda: self._marker_add(hz))
+        level = round(y, 1)
+        act = m.addAction(f"REF をここに（{level:.1f} dBm）")
+        act.setObjectName("ctx_ref")
+        act.triggered.connect(lambda: self._set_ref(level))
+        return m
+
+    # ---- マーカー（命令は設計A §4.3.1。コアにまだ無い間は項目を出さない・無効にする）
+
+    def _marker_add(self, freq_hz: int) -> None:
+        # マーカーの表と、グラフの上の印はまだ無いので、置いたことを状態バーで知らせる
+        self._call("marker_add", kind="M", trace=1, freq_hz=freq_hz, quiet_codes=("unknown_command",),
+                   on_ok=lambda r: self._status_note(f"M マーカーを {format_freq(freq_hz)} に置きました"))
+
+    def _marker_at_mouse(self) -> None:
+        vb = self.plot.getPlotItem().getViewBox()
+        scene = self.plot.mapToScene(self.plot.mapFromGlobal(QCursor.pos()))
+        if not vb.sceneBoundingRect().contains(scene) or self._freq_ops_reason():
+            return
+        self._marker_add(int(round(vb.mapSceneToView(scene).x())))
+
+    # ---- ヘルプ
+
+    def _show_key_table(self) -> None:
+        rows = menus.key_table(self.actions)
+        rows += [("↑ / ↓・ホイール（数値の欄）", "カーソルのある桁を増減"),
+                 ("Enter / Tab / 欄を離れる", "確定"), ("Esc（数値の欄）", "打つ前の値に戻す")]
+        text = "\n".join(f"{k}\t{v}" for k, v in rows)
+        QMessageBox.information(self, "キー操作の一覧",
+                                text + "\n\n入力の欄にいる間は、文字・数字・矢印などのキーは欄に渡します。")
+
+    def _show_about(self) -> None:
+        QMessageBox.about(self, "pyGigaSt について", "pyGigaSt — GigaSt v5 を PC から操作・表示するアプリ")
 
     def _update_y_axis(self) -> None:
         top = self._ref_dbm
@@ -506,23 +753,41 @@ class MainWindow(QMainWindow):
         if kind == "state":
             self._apply_state(payload)
         elif kind == "trace":
-            self._draw_trace(payload)
+            # トレースは番号ごとに届く（設計A §4.3.1）。トレース2〜4と参照トレースの表示は次の回。
+            # いまは測定中のトレース1だけを描く（別のトレースで上書きして揺れないように）
+            if payload.get("trace", 1) == 1 and payload.get("source", "live") == "live":
+                self._draw_trace(payload)
         elif kind == "notice":
             self._status_note(texts.notice_text(payload))
         elif kind == "progress":
             if payload.get("kind") == "waiting_sweep_end":
                 self._status_note(f"いまの掃引の終わりを待っています（残り約 {payload['remaining_s']:.1f} 秒）")
 
-    def _show_adjustments(self, adjustments: list[dict]) -> None:
+    def _show_adjustments(self, adjustments: list[dict], alternative: Optional[dict] = None) -> None:
         fields = {"start_hz": self.f_start, "stop_hz": self.f_stop, "center_hz": self.f_center,
                   "span_hz": self.f_span, "rbw_hz": self.rbw_field, "sg_hz": self.f_sg}
         for adj in adjustments:
             w = fields.get(adj.get("field"))
             text = texts.adjustment_text(adj)
+            action = None
+            if alternative and adj.get("reason") in texts.RULE_REASONS and w is not None:
+                # 規則で動いた欄の知らせに、反対の規則の結果を「その1回だけ」のボタンで添える（C §5.11 の 3）
+                action = (texts.alternative_label(alternative),
+                          lambda alt=alternative, f=w: self._apply_alternative(alt, f))
             if w is not None:
-                w.flash_note(text)
+                w.flash_note(text, action)
             else:
                 self._status_note(f"{texts.FIELD_NAMES.get(adj.get('field'), adj.get('field'))}: {text}")
+
+    def _apply_alternative(self, alt: dict, field: ValueField) -> None:
+        """反対の規則の結果を、その1回だけの命令として送る（固定 Span は変わらない: C §5.11 の 3）。"""
+        def done(result: dict) -> None:
+            a = result.get("adopted") or {}
+            if "center_hz" in a:
+                field.flash_note(texts.alternative_done_text(a["center_hz"], a["span_hz"]))
+
+        self._call("set_sweep", on_ok=done, field=field, start_hz=alt["start_hz"], stop_hz=alt["stop_hz"],
+                   edited=["start_hz", "stop_hz"], one_shot=True)
 
     def _apply_state(self, st: dict) -> None:
         if st.get("version", -1) < self._state.get("version", -1):
@@ -562,6 +827,11 @@ class MainWindow(QMainWindow):
         self.image_cancel.blockSignals(False)
         self.source_note.setText(
             "SG モードで出力しています。" if sw["mode"] == "sg" else "SG 周波数は SG モードのときに使います。")
+        self.span_lock.show_lock(sw.get("span_lock_hz"), sw["span_hz"], format_freq)
+        self.plot.getPlotItem().getViewBox().freq_ops_enabled = self._freq_ops_reason() is None
+        # マーカーの命令があるか（状態に markers を持つコアなら置ける: 設計A §4.3.1）
+        self._markers_available = "markers" in st
+        menus.set_reason(self.actions["marker_here"], None if self._markers_available else menus.NOT_YET_MARKER)
         self._update_x_axis()
 
         conn = st["connection"]
@@ -602,7 +872,10 @@ class MainWindow(QMainWindow):
             self.plot.setXRange(sw["start_hz"], sw["stop_hz"], padding=0)
 
     def _draw_trace(self, t: dict) -> None:
+        first = self._last_trace is None
         self._last_trace = t
+        if first:
+            self._update_ref_auto()
         ax = t["axis"]
         y = np.asarray(t["values"], dtype=np.float64)
         if ax["step_hz"] == 0:

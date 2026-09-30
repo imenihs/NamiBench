@@ -35,7 +35,25 @@ REASONS = {
     "points_max": "点数の上限",
     "sg_range": "SG の範囲",
     "rbw_fixed": "この条件では RBW 180kHz 固定",
+    "keep_center": "Center を保つため、範囲に収まる最大の Span",
+    "keep_span": "Span 固定のため、Span を保って Center を移動",
 }
+
+# 範囲の規則で値を動かした理由（設計C §5.11）。この知らせには反対の規則のボタンを添える
+RULE_REASONS = {"keep_center", "keep_span"}
+
+
+def alternative_label(alt: dict) -> str:
+    """反対の規則の結果のボタンの文字（設計C §5.11 の 3）。"""
+    span = alt["stop_hz"] - alt["start_hz"]
+    center = alt["start_hz"] + span // 2
+    if alt.get("rule") == "keep_span":
+        return f"Span {format_freq(span)} を保って Center を {format_freq(center)} にする"
+    return f"Center {format_freq(center)} を保って Span を {format_freq(span)} にする"
+
+
+def alternative_done_text(center_hz: int, span_hz: int) -> str:
+    return f"Center {format_freq(center_hz)}・Span {format_freq(span_hz)} に置き換えました（この1回だけ）"
 
 WARNINGS = {
     "rbw180k_narrow_span": "RBW 180kHz で Span 0.3MHz 未満: 平らな上面しか見えません（レベルは正しい）",

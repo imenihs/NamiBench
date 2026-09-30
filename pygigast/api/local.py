@@ -19,7 +19,7 @@ class LocalApi:
         self._inst = instrument
 
     # 命令（名前と引数は Web の `POST /api/v1/{命令名}` と同じ）
-    def call(self, name: str, **kwargs) -> concurrent.futures.Future:
+    def call(self, name: str, /, **kwargs) -> concurrent.futures.Future:
         if name.startswith("_"):
             raise CommandError("unknown_command", None, {"name": name})
         return self._inst.submit(name, **kwargs)

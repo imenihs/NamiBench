@@ -3,13 +3,14 @@
 状態の正本は制御スレッド1本だけが触る（ロックを持たない）。
 命令は待ち行列に入れて Future を返し、結果は採用値と調整の一覧で返す（設計A §4.3）。
 機器との送受信は機器スレッドが行い、結果を制御スレッドの待ち行列へ戻す。
+ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
+トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
 """
 from __future__ import annotations
 
 import concurrent.futures
 import dataclasses
 import datetime
-import json
 import os
 import queue
 import threading
@@ -18,14 +19,16 @@ import traceback
 from pathlib import Path
 from typing import Callable, Optional
 
-import numpy as np
-
 from .devices.base import Device, load_profile
+from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
+from .instrument_display import DisplayMixin
+from .instrument_files import DEFERRED, FilesMixin
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
 from .settings import Settings
 from .level.legacy_cal import LegacyCalError, parse_legacy_cal
 from .sweep.model import SweepModel
+from .trace import ConditionChange
 from .types import (
     AdoptedSweep,
     DeviceDisconnected,
@@ -35,6 +38,9 @@ from .types import (
     SweepDiscarded,
     SweepRequest,
 )
+
+__all__ = ["Instrument", "CommandError", "DeviceBackend", "GIGAST_PROFILE_PATH", "adopted_to_dict",
+           "adjustments_to_list", "app_data_root"]
 
 GIGAST_PROFILE_PATH = Path(__file__).parent / "devices" / "gigast" / "profile.json"
 
@@ -46,56 +52,13 @@ WAIT_PROGRESS_THRESHOLD_S = 1.0
 EventCallback = Callable[[str, dict], None]
 
 
-class CommandError(Exception):
-    """命令の失敗。code は理由の種類。画面の文言は画面側が決める（設計A §4.3）。"""
-
-    def __init__(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> None:
-        super().__init__(code)
-        self.code = code
-        self.field = field
-        self.detail = detail or {}
-
-    def to_dict(self) -> dict:
-        return {"error": {"code": self.code, "field": self.field, "detail": self.detail}}
-
-
 def app_data_root() -> Path:
     """利用者のデータの場所（校正は設計D §5.2、覚えた機器は設計B §7.3）。"""
     base = os.environ.get("APPDATA")
     return Path(base) / "pyGigaSt" if base else Path.home() / ".pygigast"
 
 
-def adopted_to_dict(a: AdoptedSweep) -> dict:
-    """採用値を JSON に写せる形にする（周波数は Hz の整数のまま）。"""
-    return {
-        "start_hz": a.start_hz,
-        "stop_hz": a.stop_hz,
-        "center_hz": a.center_hz,
-        "span_hz": a.span_hz,
-        "step_hz": a.axis.step_hz,
-        "points": a.axis.points,
-        "points_setting": a.points_setting,
-        "rbw_hz": a.rbw_hz,
-        "rbw_preference_hz": a.rbw_preference_hz,
-        "mode": a.mode.value,
-        "sg_hz": a.sg_hz,
-        "image_cancel": a.image_cancel,
-        "preroll_points": a.preroll_points,
-        "transient_head_points": a.transient_head_points,
-        "estimated_sweep_s": a.estimated_sweep_s,
-        "tail_gap": a.tail_gap,
-        "warnings": list(a.warnings),
-        "span_lock_hz": a.span_lock_hz,
-    }
-
-
-def _sweep_key(a: AdoptedSweep) -> tuple:
-    """機器へ送る中身（これが同じなら測り直さなくてよい）。"""
-    return (a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.mode, a.sg_hz, a.image_cancel, a.preroll_points)
-
-
-def adjustments_to_list(a: AdoptedSweep) -> list[dict]:
-    return [dataclasses.asdict(x) for x in a.adjustments]
+_sweep_key = sweep_key
 
 
 class DeviceBackend:
@@ -188,7 +151,7 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument:
+class Instrument(DisplayMixin, FilesMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -207,9 +170,11 @@ class Instrument:
             timing_fn = gigast_timing_fn(self._profile)
         self._model = SweepModel(self._profile, timing_fn)
         root = data_root or app_data_root()
+        self._root = Path(root)
         self._settings = Settings(root / "settings.json")
         # 起動時は前回終了時の状態に戻る（設計O §1.2）。戻せない値は掃引条件モデルが直して知らせる
-        self._adopted = self._restore_state(self._settings.get("state"))
+        saved = self._settings.get("state")
+        self._adopted = self._restore_state(saved)
         self._cal_store = CalibrationStore(cal_root or default_root())
         self._cal: Optional[Calibration] = None
         self._converter = LevelConverter(self._profile, None)
@@ -237,6 +202,10 @@ class Instrument:
         self._discard_count = 0
         self._last_sweep_s: Optional[float] = None
         self._last_stop_reason: Optional[str] = None
+
+        # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
+        self._init_display(saved if isinstance(saved, dict) else None)
+        self._init_files(saved if isinstance(saved, dict) else None)
 
         self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
         self._running = True
@@ -276,7 +245,12 @@ class Instrument:
             "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
             "mode": a.mode.value, "sg_hz": a.sg_hz, "image_cancel": a.image_cancel,
             "span_lock_hz": a.span_lock_hz,
+            **self._display_state_to_save(),
+            **self._files_state_to_save(),
         }
+
+    def _error(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> CommandError:
+        return CommandError(code, field, detail)
 
     # ------------------------------------------------------------------ 外への口
 
@@ -292,7 +266,7 @@ class Instrument:
 
         return unsubscribe
 
-    def submit(self, name: str, **kwargs) -> concurrent.futures.Future:
+    def submit(self, name: str, /, **kwargs) -> concurrent.futures.Future:
         """命令を制御スレッドの待ち行列へ入れ、Future を返す（設計A §4.2）。"""
         fut: concurrent.futures.Future = concurrent.futures.Future()
         self._q.put(("cmd", name, kwargs, fut))
@@ -330,16 +304,23 @@ class Instrument:
             if not fut.set_running_or_notify_cancel():
                 return
             fn = getattr(self, "_cmd_" + name, None)
+            self._cur_fut = fut
             try:
                 if fn is None:
                     raise CommandError("unknown_command", None, {"name": name})
-                fut.set_result(fn(**kwargs))
+                res = fn(**kwargs)
+                if res is not DEFERRED:  # 書き込みスレッドの仕事が終わってから結果を入れる
+                    fut.set_result(res)
             except CommandError as e:
                 fut.set_exception(e)
             except TypeError as e:
                 fut.set_exception(CommandError("bad_arguments", None, {"message": str(e)}))
             except Exception as e:  # noqa: BLE001
                 fut.set_exception(e)
+            finally:
+                self._cur_fut = None
+        elif kind == "call":
+            item[1]()
         elif kind == "sweep":
             self._on_sweep(item[1], item[2])
         elif kind == "discarded":
@@ -348,6 +329,8 @@ class Instrument:
             self._on_disconnected(item[1])
         elif kind == "invalid":
             self._notice("invalid_sweep", {"message": item[2]})
+            if self._ref_job is not None:
+                self._abort_ref_job(CommandError("invalid_sweep", None, {"message": item[2]}))
             self._set_run("stopped", reason="invalid_sweep")
         elif kind == "worker_error":
             self._notice("device_error", {"message": item[1], "trace": item[2]})
@@ -403,6 +386,10 @@ class Instrument:
                 "last_stop_reason": self._last_stop_reason,
             },
             "calibration": cal,
+            **self._display_snapshot(),
+            "files": self._files_state(),
+            "recording": self._recording_state(),
+            "tasks": self._tasks_state(),
         }
 
     def _set_conn(self, state: str) -> None:
@@ -425,8 +412,15 @@ class Instrument:
         self._gen += 1
         if self._worker is None:
             return
-        wanted = self._run in ("continuous", "single") and self._conn == "connected"
         busy = self._worker.busy_since
+        job = self._ref_job
+        if job is not None:
+            # 基準を取っている間は、いまの条件とは別の条件で決めた回数だけ測る（設計E §6.2）
+            count = max(0, job.count - len(job.frames))
+            wanted = self._conn == "connected" and count > 0
+            self._worker.set_job(self._gen, job.adopted if wanted else None, count)
+            return
+        wanted = self._run in ("continuous", "single") and self._conn == "connected"
         count = max(0, self._single_target - self._single_done) if self._run == "single" else None
         if count == 0:
             wanted = False
@@ -447,29 +441,17 @@ class Instrument:
     def _on_sweep(self, gen: int, raw: RawSweep) -> None:
         if gen != self._gen:
             return  # 条件が変わる前の掃引（設計B §7.2.1: 結果は捨てる）
-        self._sweep_count += 1
         self._last_sweep_s = raw.duration_s
-        levels = self._converter.to_dbm(raw.adopted, raw.raw)
-        a = raw.adopted
-        self._emit(
-            "trace",
-            {
-                "trace": 1,
-                "sweep_no": self._sweep_count,
-                "time": raw.started_at,
-                "duration_s": raw.duration_s,
-                "axis": {"start_hz": a.axis.start_hz, "step_hz": a.axis.step_hz, "points": a.axis.points},
-                "display": {"start_hz": a.start_hz, "stop_hz": a.stop_hz, "tail_gap": a.tail_gap},
-                "quantity": "power",
-                "unit": "dBm",
-                "values": levels.dbm.astype(np.float32),
-                "flags": {
-                    "transient_head_points": raw.transient_head_points,
-                    "out_of_cal_range": levels.out_of_cal_range,
-                    "no_calibration": levels.no_calibration,
-                },
-            },
-        )
+        if self._ref_job is not None:
+            # 基準を取るための掃引。トレース・記録には入れない（設計E §6.2）
+            self._on_ref_sweep(raw)
+            return
+        self._sweep_count += 1
+        frame = self._build_frame(raw)
+        self._last_raw = raw
+        self._process_frame(frame)
+        # 記録は書き込みスレッドへ渡すだけで待たない（設計H §2・§7.2）
+        self._record_sweep(raw, self._last_quantity, frame.value_kind)
         if self._run == "single":
             self._single_done += 1
             if self._single_done >= self._single_target:
@@ -497,6 +479,7 @@ class Instrument:
         self._worker = _DeviceWorker(device, self._post)
         self._worker.start()
         self._load_calibration(ident.serial)
+        self._load_saved_reference()
         self._conn = "connected"
         self._push_job()
         self._changed()
@@ -509,6 +492,8 @@ class Instrument:
 
     def _on_disconnected(self, message: str) -> None:
         self._drop_device()
+        if self._ref_job is not None:
+            self._abort_ref_job(CommandError("disconnected", None, {"message": message}))
         self._notice("disconnected", {"message": message})
         self._next_reconnect = time.monotonic() + RECONNECT_POLL_S
         self._set_conn("reconnecting")
@@ -534,12 +519,15 @@ class Instrument:
         self._attach(device, self._backend_name)
 
     def _load_calibration(self, serial: str) -> None:
+        old = None if self._cal is None else self._cal.to_dict()
         try:
             self._cal = self._cal_store.load_current(serial)
         except Exception as e:  # noqa: BLE001 — 読めない校正は「無し」として知らせる
             self._cal = None
             self._notice("calibration_unreadable", {"message": str(e)})
         self._converter = LevelConverter(self._profile, self._cal)
+        if (None if self._cal is None else self._cal.to_dict()) != old:
+            self._on_condition(ConditionChange.CALIBRATION)  # 値の意味が変わる（設計F §5.3）
         if self._cal is None:
             self._notice("no_calibration", {"serial": serial})
 
@@ -547,6 +535,7 @@ class Instrument:
 
     def _cmd__shutdown(self) -> None:
         self._drop_device()
+        self._shutdown_files()
         self._settings.set("state", self._state_to_save())
         try:
             self._settings.save()
@@ -573,6 +562,8 @@ class Instrument:
         if b is None:
             raise CommandError("unknown_backend", "backend", {"backend": backend})
         if self._device is not None or self._conn == "reconnecting":
+            if self._ref_job is not None:
+                self._abort_ref_job(CommandError("disconnected"))
             self._drop_device()
             self._conn = "disconnected"
         known = self._settings.known_serials()
@@ -614,6 +605,8 @@ class Instrument:
         return {"identity": None}
 
     def _cmd_disconnect(self) -> dict:
+        if self._ref_job is not None:
+            self._abort_ref_job(CommandError("disconnected"))
         self._drop_device()
         self._identity = None
         self._backend_name = None
@@ -621,17 +614,30 @@ class Instrument:
         self._set_conn("disconnected")
         return {}
 
-    def _apply(self, request: SweepRequest) -> dict:
-        new = self._model.apply(request, self._adopted)
+    def _set_adopted(self, new: AdoptedSweep) -> None:
+        """採用値を置き換える。値の意味が変わる条件ならトレースの蓄積を捨てる（設計F §5.3）。"""
+        old = self._adopted
         # 機器へ送る中身が変わったときだけ掃引をやり直す（固定の切り替え・知らせだけの違いではやり直さない）
-        changed = _sweep_key(new) != _sweep_key(self._adopted)
+        changed = _sweep_key(new) != _sweep_key(old)
         self._adopted = new
         self._last_estimate = new.estimated_sweep_s
         if changed:
+            self._on_sweep_condition(old, new)
             if self._run == "single":
                 self._single_done = 0
             self._push_job()
         self._changed()
+
+    def _apply(self, request: SweepRequest) -> dict:
+        """条件を変える（set_sweep・set_mode・マーカーから）。元に戻せるように前の条件を積む（設計J §3）。"""
+        self._check_not_taking_reference()
+        before = self._undo_snapshot()
+        try:
+            new = self._model.apply(request, self._adopted)
+        except (ValueError, TypeError) as e:
+            raise CommandError("bad_value", None, {"message": str(e)}) from e
+        self._set_adopted(new)
+        self._record_undo(before)
         out = {"adopted": adopted_to_dict(new), "adjustments": adjustments_to_list(new)}
         if new.alternative is not None:
             # 反対の規則で作った結果。画面はこれを「その1回だけ」のボタンにする（設計C §5.11 の 3・4）
@@ -681,12 +687,15 @@ class Instrument:
     def _cmd_run(self, mode: str = "continuous", count: Optional[int] = None) -> dict:
         if self._conn != "connected":
             raise CommandError("not_connected")
+        self._check_not_taking_reference()
         if mode == "continuous":
             self._run = "continuous"
         elif mode == "single":
-            # 回数を持つトレースは④で作る。いまは無いので1回（設計F §5.2.1）
+            # 回数を持つトレースのうち最大の N 回、無ければ1回。1回目の前にそれらの蓄積を捨てる（設計F §5.2.1）。
+            # count は回数を直接決めたいとき（試験・将来の用途）だけ
             self._run = "single"
-            self._single_target = max(1, int(count or 1))
+            self._single_target = max(1, int(count)) if count else self._traces.single_target()
+            self._traces.reset_for_single()
             self._single_done = 0
         else:
             raise CommandError("unknown_run_mode", "mode", {"mode": mode})
@@ -732,6 +741,7 @@ class Instrument:
         if (self._identity or {}).get("serial") == serial:
             self._cal = cal
             self._converter = LevelConverter(self._profile, cal)
-            self._push_job()  # 校正が変わると値の意味が変わる（設計F §5.3）
+            self._on_condition(ConditionChange.CALIBRATION)  # 校正が変わると値の意味が変わる（設計F §5.3）
+            self._push_job()
         self._changed()
         return {"summary": cal.to_dict()}
