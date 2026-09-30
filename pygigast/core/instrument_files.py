@@ -520,7 +520,9 @@ class FilesMixin:
         )
 
     def _live_traces_data(self) -> list[TraceData]:
-        return [self._live_trace_data(t) for t in self._traces if t.values is not None]
+        """保存ファイルの /traces に入れるトレース。保存したときに表示していたもの（設計H §4・§7.1）だけで、
+        非表示のトレースは値があっても入れない。参照トレース（開いたファイル）は元のファイルにあるので入れない。"""
+        return [self._live_trace_data(t) for t in self._traces if t.visible and t.values is not None]
 
     def _cmd_save(self, path: Optional[str] = None, note: str = "") -> dict:
         """いまのトレースとマーカー・最後の掃引の生の値を1つのファイルへ（設計H §4・§7.1）。"""

@@ -167,6 +167,10 @@ class DisplayMixin:
             "count_reached": t.count_reached,
             "average_type_effective": None if eff is None else eff.value,
             "quantity": None if t.quantity is None else t.quantity.value,
+            # 値の種類（設計F §5.1）。ベクトル平均は複素数のときだけ選べる（設計F §5.2.1）ので、画面が選べる平均を
+            # 決めるのに使う。まだ値が無いトレースは、つないでいる機器のプロファイルの値の種類
+            "value_kind": (t.value_kind.value if t.value_kind is not None
+                           else self._profile.get("value_kind", "real")),
             "unit": unit_for(t.quantity, t.profile),
             "has_values": t.values is not None,
             "axis_differs": t.action == TraceAction.FIXED and t.axis_differs(self._adopted.axis),

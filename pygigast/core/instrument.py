@@ -412,6 +412,7 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin
                 "last_stop_reason": self._last_stop_reason,
             },
             "calibration": cal,
+            "source": self._source_state(),
             **self._display_snapshot(),
             "files": self._files_state(),
             "recording": self._recording_state(),
@@ -420,6 +421,24 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin
             "rtlsdr": self._rtlsdr_state(),
             "listen": self._listen_state(),
         }
+
+    # 信号源を出すモード（設計L §1.1）。S11 は機器から見れば TG と同じ掃引
+    _SOURCE_OF_MODE = {Mode.TG: "tg", Mode.S11: "tg", Mode.SG: "sg"}
+
+    def _source_state(self) -> dict:
+        """いま機器が TG・SG を出しているか（設計L: 出ていることが画面で分かるようにする）。
+        出しているとみなすのは、つないでいて掃引を機器へ渡している間（連続・単発・止まる途中・基準を取る間）だけ。
+        掃引を止めた後も機器が出し続けるかは設計に書かれていないので、止めたら出していないとして出す。"""
+        job = self._ref_job
+        if job is not None:
+            adopted, sweeping = job.adopted, True
+        else:
+            adopted, sweeping = self._adopted, self._run in ("continuous", "single", "stopping")
+        output = self._SOURCE_OF_MODE.get(adopted.mode, "none")
+        src = self._profile.get("source") or {}
+        if self._conn != "connected" or not sweeping or not src.get(output):
+            output = "none"
+        return {"output": output, "freq_hz": adopted.sg_hz if output == "sg" else None}
 
     def _set_conn(self, state: str) -> None:
         self._conn = state

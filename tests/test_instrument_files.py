@@ -127,7 +127,8 @@ class SaveOpenExportTest(InstrumentCase):
         self.assertEqual(n["code"], "task_done", n)
         with H5Record(path) as rec:
             self.assertEqual(rec.header.note, "メモ")
-            self.assertEqual([t.number for t in rec.traces()], [1, 2, 3, 4])
+            # 表示していたトレース（1 と 2）だけ。3・4 は非表示で値はあっても入れない（設計H §4・§7.1）
+            self.assertEqual([t.number for t in rec.traces()], [1, 2])
             self.assertEqual(rec.markers()[0]["target_hz"], 100_000_000)
             self.assertEqual(rec.segments[0].n_sweeps, 1)
 
@@ -170,6 +171,29 @@ class SaveOpenExportTest(InstrumentCase):
         self.assertEqual(self.call("get_state")["files"], [])
         with self.assertRaises(CommandError):
             self.call("close_file", file_id=fid)
+
+    def test_save_keeps_only_visible_traces_and_raw(self):
+        # 非表示にしたトレースは値があっても保存しない。生の値は表示に関係なく残す（設計H §4・§7.1）
+        self.connect()
+        self.call("set_trace", number=2, action="max_hold", visible=True)
+        self.single()
+        self.call("set_trace", number=1, visible=False)
+        st = self.call("get_state")
+        self.assertTrue(st["traces"][0]["has_values"])
+        path = self.root / "v.h5"
+        n = self.wait_task(self.call("save", path=str(path))["task_id"])
+        self.assertEqual(n["code"], "task_done", n)
+        with H5Record(path) as rec:
+            self.assertEqual([t.number for t in rec.traces()], [2])
+            self.assertEqual(rec.segments[0].n_sweeps, 1)
+        # 全部非表示でも、生の値があれば保存できる（トレースは空）
+        self.call("set_trace", number=2, visible=False)
+        path = self.root / "raw_only.h5"
+        n = self.wait_task(self.call("save", path=str(path))["task_id"])
+        self.assertEqual(n["code"], "task_done", n)
+        with H5Record(path) as rec:
+            self.assertEqual(rec.traces(), [])
+            self.assertEqual(rec.segments[0].n_sweeps, 1)
 
     def test_save_errors(self):
         with self.assertRaises(CommandError) as cm:
