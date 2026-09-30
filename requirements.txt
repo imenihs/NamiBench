@@ -1,0 +1,7 @@
+fastapi==0.142.1
+h5py==3.16.0
+numpy==2.5.3
+pyqtgraph==0.14.0
+pyserial==3.5
+PySide6==6.11.2
+uvicorn[standard]==0.54.0
