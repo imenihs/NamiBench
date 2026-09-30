@@ -9,6 +9,8 @@
     "unit_hz": 100,
     "min_hz": -100000000,
     "max_hz": 12100000000,
+    "default_start_hz": -100000000,
+    "default_stop_hz": 12100000000,
     "points_max": 12000,
     "points_device_max": 12500,
     "points_default": 500,

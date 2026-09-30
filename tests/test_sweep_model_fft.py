@@ -56,8 +56,27 @@ class TestFft(Base):
         for c in self.profile["rbw"]["choices"]:
             self.assertEqual(c["rbw_hz"], sp.rbw_hz(c["window"], c["fft_n"], 2_048_000), c)
 
-    def test_default_full_range_widens_rbw(self):
+    def test_default_uses_profile_default_range(self):
+        # 範囲いっぱいは1回の測定に約 117s かかるので、機種のプロファイルの既定の範囲（FM 放送帯）で始める
         s = self.cur
+        self.assertEqual((s.start_hz, s.stop_hz), (76 * MHZ, 95 * MHZ))
+        self.assertEqual((s.rbw_hz, s.axis.step_hz, s.axis.points), (1500, 1000, 19_001))
+        self.assertNotIn("rbw_hz", adj_map(s))
+        self.assertEqual(s.mode, Mode.SA)
+        self.assertAxisOk(s)
+
+    def test_default_range_outside_profile_rejected(self):
+        for a, b in ((FMIN - 1, 95 * MHZ), (76 * MHZ, FMAX + 1), (95 * MHZ, 95 * MHZ), (95 * MHZ, 76 * MHZ)):
+            p = driver.default_profile()
+            p["freq"]["default_start_hz"], p["freq"]["default_stop_hz"] = a, b
+            with self.assertRaises(ValueError, msg=(a, b)):
+                SweepModel(p, driver.timing_fn(p))
+
+    def test_default_full_range_widens_rbw(self):
+        # 既定の範囲を持たないプロファイルは範囲いっぱい
+        p = driver.default_profile()
+        del p["freq"]["default_start_hz"], p["freq"]["default_stop_hz"]
+        s = SweepModel(p, driver.timing_fn(p)).default()
         self.assertEqual((s.start_hz, s.stop_hz), (FMIN, FMAX))
         self.assertEqual(s.rbw_preference_hz, 1500)
         # 1500/3000/6000/12000Hz では点数が 20 万を超える。24kHz（格子 16kHz）で 108,876 点

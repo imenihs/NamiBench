@@ -5,6 +5,7 @@
   振り切れの正弦波（振幅 127.5）が 0dBFS（= 1.0）。CW のレベルは窓・N を変えても変わらない
 - 1つの位置の値は K 回の FFT の電力の平均（重ねない K 個の区間）
 - DC（チューナーの中心）から δ 未満の格子は使わない。使える幅（中心から ±h）の外も使わない
+- チューナーの通過帯域の形（中心から離れるほど落ちる）を、機種のプロファイルの表で割り戻す（Passband）
 - 周波数は Hz の整数の格子のまま扱う（設計A §2.1）
 """
 from __future__ import annotations
@@ -141,19 +142,67 @@ def plan(start_hz: int, last_hz: int, grid: int, half: int, delta: int,
     return Plan(centers, False, grid, half, delta)
 
 
+class Passband:
+    """チューナーの通過帯域の形: 中心からの離れ方（Hz）→ 中心に対する利得（dB。上側・下側別）。
+
+    表の点の間は dB で直線補間し、表の外は端の値のまま。値は中心の近くで 0dB に合わせてあるので、
+    中心の近くの CW のレベルは割り戻しても変わらない。
+    位置ごとの電力をこの利得で割ると、中心から離れた所（特に使える幅の端）の落ち込みが戻り、
+    継ぎ合わせの継ぎ目で、隣の位置の端から採った点との段差が小さくなる（設計Q §6.9 の実測で継ぎ目の段差が
+    1dB を超えたため）。
+    """
+
+    def __init__(self, offset_hz, upper_db, lower_db) -> None:
+        o = np.asarray(offset_hz, dtype=np.float64)
+        u = np.asarray(upper_db, dtype=np.float64)
+        lo = np.asarray(lower_db, dtype=np.float64)
+        if o.ndim != 1 or o.size < 2 or u.shape != o.shape or lo.shape != o.shape:
+            raise ValueError("通過帯域の表は同じ長さの offset_hz・upper_db・lower_db（2点以上）")
+        if o[0] != 0 or np.any(np.diff(o) <= 0):
+            raise ValueError("通過帯域の offset_hz は 0 から始めて増やす")
+        self._o, self._u, self._l = o, u, lo
+        self._cache: dict[tuple[int, int], np.ndarray] = {}
+
+    @classmethod
+    def from_profile(cls, profile: dict) -> Optional["Passband"]:
+        """機種のプロファイルの fft.passband から作る。無ければ None（割り戻さない）。"""
+        pb = profile.get("fft", {}).get("passband")
+        if not pb:
+            return None
+        return cls(pb["offset_hz"], pb["upper_db"], pb["lower_db"])
+
+    def db(self, offset_hz) -> np.ndarray:
+        """符号付きの離れ方（正 = 中心より上）での利得（dB）。"""
+        f = np.asarray(offset_hz, dtype=np.float64)
+        a = np.abs(f)
+        return np.where(f >= 0, np.interp(a, self._o, self._u), np.interp(a, self._o, self._l))
+
+    def gain_for_bins(self, n: int, grid: int) -> np.ndarray:
+        """averaged_power の並び（格子 −n/2 … n/2−1）に対するリニアの利得。"""
+        key = (n, grid)
+        g = self._cache.get(key)
+        if g is None:
+            k = np.arange(-(n // 2), n - n // 2, dtype=np.float64)
+            g = 10.0 ** (self.db(k * grid) / 10.0)
+            self._cache[key] = g
+        return g
+
+
 class Assembler:
     """位置ごとの電力を出力の格子へ継ぎ合わせる。
 
     各点は、中心からの離れ方が δ 以上・h 以下の位置のうち、中心に近い（帯域の端から遠い）位置の値を採る。
-    採れる位置が無い点は NaN のまま（値の無い点）。
+    採れる位置が無い点は NaN のまま（値の無い点）。passband があれば、採る前に各格子をその利得で割り戻す。
     """
 
-    def __init__(self, start_hz: int, grid: int, points: int, half: int, delta: int) -> None:
+    def __init__(self, start_hz: int, grid: int, points: int, half: int, delta: int,
+                 passband: Optional[Passband] = None) -> None:
         self.start_hz = start_hz
         self.grid = grid
         self.points = points
         self.half = half
         self.delta = delta
+        self.passband = passband
         self.values = np.full(points, np.nan, dtype=np.float64)
         self._best = np.full(points, np.inf, dtype=np.float64)
         self.source = np.full(points, -1, dtype=np.int32)
@@ -162,6 +211,8 @@ class Assembler:
     def add(self, center_hz: int, power: np.ndarray) -> None:
         """power は averaged_power の並び（格子 −n/2 … n/2−1）。"""
         n = power.size
+        if self.passband is not None:
+            power = power / self.passband.gain_for_bins(n, self.grid)
         off = center_hz - self.start_hz
         if off % self.grid:
             raise ValueError("中心が出力の格子に乗っていない")

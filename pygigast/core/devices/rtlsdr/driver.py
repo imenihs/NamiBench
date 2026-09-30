@@ -372,7 +372,8 @@ class RtlSdrDevice(Device):
         axis = sweep.axis
         fixed = self.fixed_center_hz
         p, pl = make_plan(self._profile, axis, sweep.rbw_hz, fixed)
-        asm = spectrum.Assembler(axis.start_hz, p.grid, axis.points, p.half, p.delta)
+        passband = spectrum.Passband.from_profile(self._profile)
+        asm = spectrum.Assembler(axis.start_hz, p.grid, axis.points, p.half, p.delta, passband)
         started_at = time.time()
         t0 = time.monotonic()
         hits = 0.0
@@ -410,6 +411,8 @@ class RtlSdrDevice(Device):
             "averages": p.averages,
             "sample_rate_hz": p.fs,
             "dc_delta_hz": p.delta,
+            # 通過帯域の形を割り戻したか（機種のプロファイルの fft.passband: 設計Q §6.9）
+            "passband_corrected": passband is not None,
             "half_usable_hz": p.half,
             "realtime": pl.realtime,
             "positions": len(pl.centers),

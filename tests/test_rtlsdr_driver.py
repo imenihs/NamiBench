@@ -76,6 +76,9 @@ class FakeHandle:
         z = (self.rng.normal(size=n) + 1j * self.rng.normal(size=n)) * self.lib.noise
         z = z + self.lib.dc  # 中心の DC の突起
         for f, a in self.lib.tones:
+            if self.lib.passband is not None:
+                # 合成の通過帯域の落ち込み（電力の dB → 振幅）
+                a = a * 10 ** (float(self.lib.passband.db(f - self.center)) / 20)
             z = z + a * np.exp(2j * np.pi * (f - self.center) * t / FS)
         if self.stale_center is not None and self.calls[-2][0] == "reset_buffer":
             # 中心を変えた直後の最初の塊は、古い周波数の強い信号（捨てないとレベルが狂う）
@@ -97,6 +100,7 @@ class FakeLib:
         self.noise = 1e-3
         self.dc = 0.02
         self.fail_read = False
+        self.passband = None  # sp.Passband なら CW にチューナーの通過帯域の形を掛ける
 
     def device_count(self):
         return len(self.strings)
@@ -126,6 +130,8 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.lib = FakeLib()
         self.profile = driver.default_profile()
+        # 偽物の機器の通過帯域は平ら（TestPassband 以外）。割り戻しの表を外して、CW のレベルをそのまま比べる
+        del self.profile["fft"]["passband"]
         self.model = SweepModel(self.profile, driver.timing_fn(self.profile))
         self.dev = driver.RtlSdrDevice(self.profile, lib=self.lib)
 
@@ -304,6 +310,69 @@ class TestLevels(unittest.TestCase):
         self.assertEqual(levels.offset_for_gain({"297": -12.0}, 297), -12.0)
         self.assertIsNone(levels.offset_for_gain({}, 297))
         np.testing.assert_allclose(levels.to_linear(np.array([30.0])), [1.0])
+
+
+# 合成の通過帯域（実機より強い落ち込み・上下で違う形）
+SYN_PASSBAND = {"offset_hz": [0, 300_000, 600_000, 820_000], "upper_db": [0.0, -0.5, -1.0, -3.0],
+                "lower_db": [0.0, 0.4, -1.5, -4.0]}
+
+
+class TestPassband(Base):
+    """チューナーの通過帯域の形を割り戻す（設計Q §6.9）。偽物の機器に合成の落ち込みを掛けて確かめる。"""
+
+    def setUp(self):
+        super().setUp()
+        self.lib.passband = sp.Passband(**SYN_PASSBAND)
+        self.lib.noise = 1e-4
+
+    def device(self, corrected):
+        p = driver.default_profile()
+        if corrected:
+            p["fft"]["passband"] = dict(SYN_PASSBAND)
+        else:
+            del p["fft"]["passband"]
+        # 開いた機器ごとに偽物の DLL を作り直す（偽物は閉じても「開いている」のまま）
+        lib = FakeLib()
+        lib.tones, lib.noise, lib.passband = self.lib.tones, self.lib.noise, self.lib.passband
+        return driver.RtlSdrDevice(p, lib=lib)
+
+    def test_cw_taken_from_band_edge_is_restored(self):
+        s = self.sweep(76 * MHZ, 80 * MHZ, 1500)
+        c = driver.make_plan(self.profile, s.axis, s.rbw_hz)[1].centers
+        # 中心ちょうど（δ 未満）の点は隣の位置の端（約 810kHz 離れた所）から採る。中心の間の点は約 400kHz
+        tones = [(c[2], 0.1), (c[3], 0.1), ((c[4] + c[5]) // 2, 0.1)]
+        self.lib.tones = tones
+        for corrected in (True, False):
+            dev = self.device(corrected)
+            dev.open(port="rtlsdr:0", gain_db=30)
+            r = dev.measure(s)
+            dev.close()
+            self.assertIs(r.extra["passband_corrected"], corrected)
+            for f, a in tones:
+                got = self.level_at(r.raw, s, f)
+                if corrected:
+                    self.assertAlmostEqual(got, db(a * a), delta=0.1, msg=f)
+                else:
+                    self.assertLess(got, db(a * a) - 0.5, msg=f)
+
+    def test_realtime_cw_across_the_band(self):
+        # リアルタイム（中心 = Start − δ）: 中心から 100〜800kHz の CW がどれも同じレベルに戻る
+        s = self.sweep(84_200_000, 85_000_000, 1500)
+        centre = 84_200_000 - 5000
+        tones = [(centre + o, 0.1) for o in (105_000, 405_000, 605_000, 805_000)]
+        self.lib.tones = tones
+        dev = self.device(True)
+        dev.open(port="rtlsdr:0", gain_db=30)
+        r = dev.measure(s)
+        self.assertEqual(r.extra["centers_hz"], [centre])
+        for f, a in tones:
+            self.assertAlmostEqual(self.level_at(r.raw, s, f), db(a * a), delta=0.1, msg=f)
+
+    def test_default_profile_keeps_cw_near_centre(self):
+        # 実機で測った表は中心の近くで 0dB: 中心の近くの CW のレベルは割り戻しても変わらない
+        pb = sp.Passband.from_profile(driver.default_profile())
+        off = np.arange(-50_000, 50_001, 1000)
+        self.assertLess(float(np.max(np.abs(pb.db(off)))), 0.05)
 
 
 if __name__ == "__main__":

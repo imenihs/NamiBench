@@ -110,6 +110,12 @@ class SweepModel:
         self._unit = int(f["unit_hz"])
         self._min = int(f["min_hz"])
         self._max = int(f["max_hz"])
+        # 起動時の既定の範囲（無ければ機種の範囲いっぱい）。RTL-SDR は範囲いっぱいだと1回の測定に
+        # 約 117s かかるので、機種のプロファイルに狭い範囲を持つ（設計Q §6.9）
+        self._default_start = int(f.get("default_start_hz", self._min))
+        self._default_stop = int(f.get("default_stop_hz", self._max))
+        if not (self._min <= self._default_start < self._default_stop <= self._max):
+            raise ValueError("freq.default_start_hz / default_stop_hz は機種の範囲の中で start < stop")
         self._points_max = int(f["points_max"])
         sg = (profile.get("source") or {}).get("sg")
         self._sg = (int(sg["min_hz"]), int(sg["max_hz"]), int(sg["unit_hz"])) if sg else None
@@ -174,10 +180,11 @@ class SweepModel:
     # ------------------------------------------------------------------ 公開の口
 
     def default(self) -> AdoptedSweep:
-        """既定の条件: SA・機種の周波数範囲いっぱい・点数は自動・RBW は既定・イメージキャンセル OFF。"""
+        """既定の条件: SA・機種の既定の範囲（無ければ周波数範囲いっぱい）・点数は自動・RBW は既定・
+        イメージキャンセル OFF。"""
         adj = _Adj()
         return self._finish(
-            start=self._min, stop=self._max, points_setting=None,
+            start=self._default_start, stop=self._default_stop, points_setting=None,
             rbw_pref=self._rbw_default, mode=Mode.SA, sg_hz=None, image_cancel=False,
             prev_rbw=None, rbw_requested=False, adj=adj,
         )

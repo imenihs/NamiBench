@@ -225,5 +225,48 @@ class TestPlan(unittest.TestCase):
         self.assertTrue(np.isnan(v[180]))
 
 
+class TestPassband(unittest.TestCase):
+    """チューナーの通過帯域の形の表と、継ぎ合わせでの割り戻し（設計Q §6.9）。"""
+
+    TABLE = {"offset_hz": [0, 400_000, 800_000], "upper_db": [0.0, -1.0, -3.0], "lower_db": [0.0, 1.0, -2.0]}
+
+    def test_interpolation_sides_and_clamp(self):
+        pb = sp.Passband(**self.TABLE)
+        np.testing.assert_allclose(pb.db([0, 200_000, 600_000, -200_000, -600_000, 900_000, -900_000]),
+                                   [0.0, -0.5, -2.0, 0.5, -0.5, -3.0, -2.0])
+
+    def test_invalid_table(self):
+        for t in ({"offset_hz": [0], "upper_db": [0], "lower_db": [0]},
+                  {"offset_hz": [10, 20], "upper_db": [0, 0], "lower_db": [0, 0]},
+                  {"offset_hz": [0, 20, 20], "upper_db": [0, 0, 0], "lower_db": [0, 0, 0]},
+                  {"offset_hz": [0, 20], "upper_db": [0], "lower_db": [0, 0]}):
+            with self.assertRaises(ValueError, msg=t):
+                sp.Passband(**t)
+
+    def test_from_profile(self):
+        self.assertIsNone(sp.Passband.from_profile({"fft": {}}))
+        pb = sp.Passband.from_profile({"fft": {"passband": self.TABLE}})
+        self.assertAlmostEqual(float(pb.db(400_000)), -1.0)
+
+    def test_synthetic_rolloff_is_divided_out(self):
+        # 合成の落ち込みを掛けた平らな電力を、2つの位置から継ぎ合わせる → どの点も 1.0 に戻る
+        grid, half, delta, n = 1000, 819_000, 5000, 2048
+        pb = sp.Passband(**self.TABLE)
+        k = np.arange(-(n // 2), n - n // 2)
+        rolled = 10 ** (pb.db(k * grid) / 10)
+        asm = sp.Assembler(0, grid, 2601, half, delta, pb)
+        asm.add(1_000_000, rolled)
+        asm.add(1_800_000, rolled)
+        ok = ~asm.no_value
+        self.assertGreater(int(ok.sum()), 2000)
+        np.testing.assert_allclose(asm.values[ok], 1.0, rtol=1e-12)
+        # 割り戻さないと、中心の近く（δ 未満）は隣の位置の端（800kHz 離れ、上側 −3dB）の値になる
+        plain = sp.Assembler(0, grid, 2601, half, delta)
+        plain.add(1_000_000, rolled)
+        plain.add(1_800_000, rolled)
+        self.assertAlmostEqual(db(plain.values[1_800]), -3.0, places=6)  # 1.0MHz の位置から +800kHz（上側）
+        self.assertAlmostEqual(db(plain.values[1_000]), -2.0, places=6)  # 1.8MHz の位置から −800kHz（下側）
+
+
 if __name__ == "__main__":
     unittest.main()
