@@ -1,0 +1,61 @@
+{
+  "format": "pygigast-device-profile",
+  "version": 1,
+  "model": "rtlsdr-r820t",
+  "display_name": "RTL-SDR (R820T)",
+  "value_kind": "real",
+  "measurements": ["sa"],
+  "sweep_kind": "fft",
+  "freq": {
+    "unit_hz": 1,
+    "min_hz": 24000000,
+    "max_hz": 1766000000,
+    "points_max": 200000,
+    "min_span_hz": 1000,
+    "range_basis": "general_knowledge_r820t"
+  },
+  "fft": {
+    "sample_rate_hz": 2048000,
+    "usable_fraction": 0.8,
+    "averages": 8,
+    "dc_exclusion": {"min_bins": 2, "min_hz": 5000, "basis": "provisional"},
+    "window_default": "hann"
+  },
+  "rbw": {
+    "default_hz": 1500,
+    "choices": [
+      {"rbw_hz": 188, "window": "hann", "fft_n": 16384},
+      {"rbw_hz": 375, "window": "hann", "fft_n": 8192},
+      {"rbw_hz": 750, "window": "hann", "fft_n": 4096},
+      {"rbw_hz": 1500, "window": "hann", "fft_n": 2048},
+      {"rbw_hz": 3000, "window": "hann", "fft_n": 1024},
+      {"rbw_hz": 6000, "window": "hann", "fft_n": 512},
+      {"rbw_hz": 12000, "window": "hann", "fft_n": 256},
+      {"rbw_hz": 24000, "window": "hann", "fft_n": 128},
+      {"rbw_hz": 471, "window": "flattop", "fft_n": 16384},
+      {"rbw_hz": 943, "window": "flattop", "fft_n": 8192},
+      {"rbw_hz": 1885, "window": "flattop", "fft_n": 4096},
+      {"rbw_hz": 3770, "window": "flattop", "fft_n": 2048},
+      {"rbw_hz": 7540, "window": "flattop", "fft_n": 1024},
+      {"rbw_hz": 15081, "window": "flattop", "fft_n": 512},
+      {"rbw_hz": 30162, "window": "flattop", "fft_n": 256},
+      {"rbw_hz": 60324, "window": "flattop", "fft_n": 128}
+    ],
+    "note": "rbw_hz = round(ENBW x fs / fft_n) for periodic windows (Hann ENBW 1.5 bins, flat top 3.7702 bins)"
+  },
+  "timing": {
+    "retune_settle_s": 0.053,
+    "note": "per tuner position: retune_settle_s + averages x fft_n / sample_rate_hz; realtime (one fixed position) skips the retune"
+  },
+  "gain": {
+    "default_db": 29.7,
+    "modes": ["manual", "auto"],
+    "steps_from_device": true
+  },
+  "source": {"tg": false, "sg": null, "level_adjustable": false},
+  "raw": {
+    "encoding": "rtlsdr_power_w",
+    "level_reference": "dbfs"
+  },
+  "rtl_tcp": {"mode": "iq"}
+}

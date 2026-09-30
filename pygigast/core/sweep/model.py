@@ -6,6 +6,9 @@
   機器に固有の定数（GigaSt の Sample など）はここに持たない。時間の見積もりは機器の層が渡す TimingFn
 - 変えた値は必ず Adjustment（理由のコード付き）で返す。画面の文言は画面側（U-22）
 - 純粋な計算だけ。スレッド・入出力を持たない
+- Step の決め方はプロファイルの sweep_kind で分ける（設計Q §6.4）: "stepped"（GigaSt。既定）は設計C §5.3〜§5.6、
+  "fft"（SDR）は Step = fs/N（RBW から決まる）・点数 = ceil(Span/Step)+1・前置きなし。
+  Start・Stop・Center・Span の規則（設計C §5.1・§5.2・§5.11）はどちらも同じ
 """
 from __future__ import annotations
 
@@ -17,6 +20,11 @@ from ..types import Adjustment, AdoptedSweep, Alternative, FreqAxis, Mode, Sweep
 
 # (step_hz, rbw_hz, mode) → (初バイトまでの秒, 1点あたりの秒)。機器の層が作る（設計B §7.2）
 TimingFn = Callable[[int, int, Mode], tuple[float, float]]  # (step_hz, rbw_hz, mode)
+# sweep_kind "fft" の見積もり: (測る点の軸, 実際の RBW) → 1回の測定の秒。位置の数を数えるのは機器の層（設計Q §6.4）
+FftTimingFn = Callable[[FreqAxis, int], float]
+
+SWEEP_STEPPED = "stepped"
+SWEEP_FFT = "fft"
 
 # 周波数の欄の名前（SweepRequest.edited に入れる名前。Adjustment.field と同じ）
 START = "start_hz"
@@ -93,12 +101,22 @@ class _Adj:
 class SweepModel:
     """掃引条件モデル。profile は機種のプロファイル（dict）、timing は機器の層の時間の見積もり。"""
 
-    def __init__(self, profile: dict, timing: TimingFn) -> None:
+    def __init__(self, profile: dict, timing) -> None:
+        """timing は sweep_kind が "stepped" なら TimingFn、"fft" なら FftTimingFn。"""
+        self._kind = profile.get("sweep_kind", SWEEP_STEPPED)
+        if self._kind not in (SWEEP_STEPPED, SWEEP_FFT):
+            raise ValueError(f"知らない sweep_kind: {self._kind}")
         f = profile["freq"]
         self._unit = int(f["unit_hz"])
         self._min = int(f["min_hz"])
         self._max = int(f["max_hz"])
         self._points_max = int(f["points_max"])
+        sg = (profile.get("source") or {}).get("sg")
+        self._sg = (int(sg["min_hz"]), int(sg["max_hz"]), int(sg["unit_hz"])) if sg else None
+        self._timing = timing
+        if self._kind == SWEEP_FFT:
+            self._init_fft(profile)
+            return
         self._points_device_max = int(f["points_device_max"])
         self._points_default = int(f["points_default"])
         auto = f["auto_step"]
@@ -123,11 +141,35 @@ class SweepModel:
                 raise ValueError(f"unreliable に知らないキー: {key}")
             self._unreliable.append((int(m.group(1)) * 1000, m.group(2), value))
 
-        sg = profile.get("source", {}).get("sg")
-        self._sg = (int(sg["min_hz"]), int(sg["max_hz"]), int(sg["unit_hz"])) if sg else None
-
         self._transient_s = float(profile.get("sweep_quirks", {}).get("transient_s", 0.0))
-        self._timing = timing
+
+    def _init_fft(self, profile: dict) -> None:
+        """sweep_kind "fft" の制約（設計Q §6.3・§6.4）。RBW の選択肢は (窓, FFT の点数 N) の表。"""
+        self._fs = int(profile["fft"]["sample_rate_hz"])
+        r = profile["rbw"]
+        self._fft_table: dict[int, tuple[str, int]] = {}
+        for c in r["choices"]:
+            n = int(c["fft_n"])
+            if self._fs % n:
+                # 格子 fs/N を Hz の整数にする（周波数軸は整数の格子: 設計Q §6.4・設計A §2.1）
+                raise ValueError(f"fs/N が整数でない: N={n}")
+            self._fft_table[int(c["rbw_hz"])] = (str(c["window"]), n)
+        self._rbw_choices = tuple(sorted(self._fft_table))
+        self._rbw_default = int(r["default_hz"])
+        if self._rbw_default not in self._fft_table:
+            raise ValueError("rbw.default_hz が選択肢に無い")
+        self._min_span_fft = int(profile["freq"]["min_span_hz"])
+        self._measurements = tuple(Mode(m) for m in profile["measurements"])
+        self._unreliable = []
+        self._transient_s = 0.0
+
+    @property
+    def sweep_kind(self) -> str:
+        return self._kind
+
+    def fft_setting(self, rbw_hz: int) -> tuple[str, int]:
+        """RBW に当たる (窓, FFT の点数 N)（sweep_kind "fft" のとき）。"""
+        return self._fft_table[rbw_hz]
 
     # ------------------------------------------------------------------ 公開の口
 
@@ -146,6 +188,8 @@ class SweepModel:
 
         mode = current.mode if request.mode is None else Mode(request.mode)
         image_cancel = current.image_cancel if request.image_cancel is None else bool(request.image_cancel)
+        if self._kind == SWEEP_FFT:
+            mode, image_cancel = self._fft_mode(mode, image_cancel, adj)
 
         # RBW の好み（設計C §5.4）。選択肢に無い値は受け付けない
         rbw_pref = current.rbw_preference_hz
@@ -191,8 +235,24 @@ class SweepModel:
 
     # ------------------------------------------------------------------ 点数・信号源
 
+    def _fft_mode(self, mode: Mode, image_cancel: bool, adj: _Adj) -> tuple[Mode, bool]:
+        """sweep_kind "fft" で測れないモード・イメージキャンセルは、測れる形に直して知らせる。"""
+        if mode not in self._measurements:
+            adj.add("mode", mode, self._measurements[0], "mode_unsupported")
+            mode = self._measurements[0]
+        if image_cancel:
+            adj.add("image_cancel", True, False, "image_cancel_unsupported")
+            image_cancel = False
+        return mode, image_cancel
+
     def _points_setting(self, request: SweepRequest, current: AdoptedSweep, adj: _Adj) -> Optional[int]:
         """利用者が選んだ点数（None は自動）。None の要求は前の値を引き継ぎ、POINTS_AUTO で自動へ戻す。"""
+        if self._kind == SWEEP_FFT:
+            # 点数は RBW（格子 fs/N）と Span で決まる。選んだ点数は受け付けず、自動のままにする
+            if request.points not in (None, POINTS_AUTO):
+                _check_int("points", request.points)
+                adj.add("points", request.points, None, "points_by_rbw")
+            return None
         if request.points is None:
             return current.points_setting
         _check_int("points", request.points)
@@ -231,6 +291,8 @@ class SweepModel:
 
     def _min_span(self, points_setting: Optional[int]) -> int:
         """受け付ける最小の Span（0 を除く）= 単位 ×（点数 − 1）（設計C §5.3 の1）。自動は既定の点数で数える。"""
+        if self._kind == SWEEP_FFT:
+            return self._min_span_fft
         n = self._points_default if points_setting is None else points_setting
         return self._unit * (n - 1)
 
@@ -328,6 +390,9 @@ class SweepModel:
             if span < 0:
                 # 負の Span は作れない。最小 Span にする（ゼロスパンへは明示の 0 でだけ入る）
                 span = adj.replace(SPAN, req_span, min_span, "min_span")
+            elif span == 0 and self._kind == SWEEP_FFT:
+                # sweep_kind "fft" はゼロスパン（設計N）を持たない。最小 Span にして知らせる
+                span = adj.replace(SPAN, req_span, min_span, "zero_span_unsupported")
             elif 0 < span < min_span:
                 span = adj.replace(SPAN, req_span, min_span, "min_span")
         elif 0 < span < min_span:
@@ -503,6 +568,11 @@ class SweepModel:
     def _finish(self, *, start, stop, points_setting, rbw_pref, mode, sg_hz, image_cancel,
                 prev_rbw, rbw_requested, adj: _Adj, span_lock_hz: Optional[int] = None,
                 alternative: Optional[Alternative] = None) -> AdoptedSweep:
+        if self._kind == SWEEP_FFT:
+            return self._finish_fft(
+                start=start, stop=stop, rbw_pref=rbw_pref, mode=mode, sg_hz=sg_hz, prev_rbw=prev_rbw,
+                rbw_requested=rbw_requested, adj=adj, span_lock_hz=span_lock_hz, alternative=alternative,
+            )
         span = stop - start
         step, points = self._step_points(span, points_setting, adj)
         tail_gap = False
@@ -544,3 +614,44 @@ class SweepModel:
             raise AssertionError(f"機器へ送る点数が外れた: {axis.points + preroll}")
         if axis.step_hz > self._step_max or axis.step_hz % self._unit or axis.start_hz % self._unit:
             raise AssertionError(f"Step・Start が制約の外: {axis.step_hz}, {axis.start_hz}")
+
+    # ------------------------------------------------------------------ sweep_kind "fft"（設計Q §6.4）
+
+    def _fft_points(self, span: int, rbw: int) -> tuple[int, int]:
+        step = self._fs // self._fft_table[rbw][1]
+        return step, _ceil_div(span, step) + 1
+
+    def _finish_fft(self, *, start, stop, rbw_pref, mode, sg_hz, prev_rbw, rbw_requested, adj: _Adj,
+                    span_lock_hz: Optional[int], alternative: Optional[Alternative]) -> AdoptedSweep:
+        span = stop - start
+        # 点数が上限を超えるときは、同じ窓の RBW を1段ずつ広げて収める。好みは消さない（設計C §5.4 と同じ扱い）
+        window = self._fft_table[rbw_pref][0]
+        ladder = [r for r in self._rbw_choices if self._fft_table[r][0] == window and r >= rbw_pref]
+        rbw = ladder[0]
+        step, points = self._fft_points(span, rbw)
+        for r in ladder[1:]:
+            if points <= self._points_max:
+                break
+            rbw = r
+            step, points = self._fft_points(span, rbw)
+        if points > self._points_max:
+            raise AssertionError(f"いちばん広い RBW でも点数が上限を超える: {points}")
+        if rbw != rbw_pref and (rbw_requested or prev_rbw != rbw):
+            adj.add("rbw_hz", rbw_pref, rbw, "rbw_points_max")
+
+        tail_gap = False
+        if points > 1 and start + step * (points - 1) > self._max:
+            # 超えた最後の点が機種の上限の外: 1点減らし、Stop の手前にデータの無い区間があると印を付ける
+            points -= 1
+            tail_gap = True
+        axis = FreqAxis(start_hz=start, step_hz=step, points=points)
+        if not (self._min <= axis.start_hz and axis.last_hz <= self._max):
+            raise AssertionError(f"測る範囲が外れた: {axis.start_hz}〜{axis.last_hz}")
+        est = float(self._timing(axis, rbw))
+        return AdoptedSweep(
+            start_hz=start, stop_hz=stop, axis=axis, rbw_hz=rbw, rbw_preference_hz=rbw_pref,
+            mode=mode, sg_hz=sg_hz, image_cancel=False, preroll_points=0,
+            transient_head_points=0, estimated_sweep_s=est, adjustments=adj.items(),
+            points_setting=None, tail_gap=tail_gap, warnings=(),
+            span_lock_hz=span_lock_hz, alternative=alternative,
+        )
