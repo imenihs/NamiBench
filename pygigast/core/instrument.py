@@ -5,11 +5,15 @@
 機器との送受信は機器スレッドが行い、結果を制御スレッドの待ち行列へ戻す。
 ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
-rtl_tcp の出口は instrument_rtltcp.py。
+rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
+機能は instrument_listen.py。
+機種のプロファイルと掃引条件モデルは、つないだ機器に合わせて切り替える（設計Q §2.1・§6.4: GigaSt と
+シミュレータは GigaSt のプロファイル、RTL-SDR は sweep_kind "fft" のプロファイル）。
 """
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import dataclasses
 import datetime
 import os
@@ -22,8 +26,11 @@ from typing import Callable, Optional
 
 from .devices.base import Device, load_profile
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
+from .devices.rtlsdr.dll import DllNotFound
 from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
+from .instrument_listen import ListenMixin
+from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
@@ -34,6 +41,7 @@ from .trace import ConditionChange
 from .types import (
     AdoptedSweep,
     DeviceDisconnected,
+    DeviceError,
     InvalidSweep,
     Mode,
     RawSweep,
@@ -153,7 +161,7 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
+class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -173,6 +181,9 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
         # 1回の掃引の見積もり（rtl_tcp の出口が点の時刻を出すのにも使う）
         self._timing_fn = timing_fn
         self._model = SweepModel(self._profile, timing_fn)
+        # 起動時のプロファイル（GigaSt）。同じ機種の機器をつないだときはこれと見積もりをそのまま使う
+        self._base_profile = self._profile
+        self._base_timing_fn = timing_fn
         root = data_root or app_data_root()
         self._root = Path(root)
         self._settings = Settings(root / "settings.json")
@@ -211,6 +222,8 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
         self._init_display(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
         self._init_rtltcp()
+        self._init_rtlsdr()
+        self._init_listen()
 
         self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
         self._running = True
@@ -235,7 +248,11 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
                 sg_hz=st.get("sg_hz"),
                 image_cancel=bool(st.get("image_cancel", False)),
             )
-            restored = self._model.apply(req, base)
+            try:
+                restored = self._model.apply(req, base)
+            except ValueError:
+                # 別の機種（RTL-SDR など）の RBW を覚えていた: RBW だけ既定にして範囲は戻す
+                restored = self._model.apply(dataclasses.replace(req, rbw_preference_hz=None), base)
             lock = st.get("span_lock_hz")
             if lock:
                 # 固定の状態は次回の起動で戻す（設計C §5.11 の 5）。固定 Span も戻す
@@ -381,6 +398,8 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
                 "identity": self._identity,
                 "connected_at": self._connected_at,
                 "profile_model": self._profile.get("model"),
+                "display_name": self._profile.get("display_name"),
+                "sweep_kind": self._profile.get("sweep_kind", "stepped"),
             },
             "sweep": adopted_to_dict(self._adopted),
             "run": {
@@ -398,6 +417,8 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
             "recording": self._recording_state(),
             "tasks": self._tasks_state(),
             "rtltcp": self._rtltcp_state(),
+            "rtlsdr": self._rtlsdr_state(),
+            "listen": self._listen_state(),
         }
 
     def _set_conn(self, state: str) -> None:
@@ -485,15 +506,102 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
         self._identity = {"model": ident.model, "serial": ident.serial, "port": ident.port}
         # 接続＝電源の入れ直し（USB 給電）。時刻を持つ（設計B §7.2.1）
         self._connected_at = time.time()
+        # 機種のプロファイルと掃引条件モデルを、つないだ機器のものにする（設計Q §2.1）
+        self._activate_profile(device)
+        if self._is_rtlsdr():
+            # 個体の校正（ppm）と利得は、最初の測定より前に入れる（設計Q §6.6）
+            self._rtlsdr_prepare(device)
         self._worker = _DeviceWorker(device, self._post)
         self._worker.start()
         self._load_calibration(ident.serial)
         self._load_saved_reference()
         self._conn = "connected"
+        self._rtltcp_update_header()
+        self._rtlsdr_on_clients()  # rtl_tcp の相手が先につながっていれば、中心を動かさない動きにする
         self._push_job()
         self._changed()
 
+    def _timing_for(self, profile: dict):
+        """機種のプロファイルに合う1回の掃引の見積もり（機器の層が作る: 設計C §5・設計Q §6.4）。"""
+        if profile.get("model") == self._base_profile.get("model"):
+            return self._base_timing_fn
+        if (profile.get("raw") or {}).get("encoding") == RTLSDR_ENCODING:
+            from .devices.rtlsdr.driver import timing_fn as rtlsdr_timing_fn
+
+            return rtlsdr_timing_fn(profile)
+        from .devices.gigast.driver import timing_fn as gigast_timing_fn
+
+        return gigast_timing_fn(profile)
+
+    def _activate_profile(self, device: Device) -> None:
+        """つないだ機器の機種のプロファイルへ切り替える。
+
+        同じ機種なら（GigaSt・シミュレータは起動時のプロファイルのまま）条件を変えない。機種が変わったら、
+        いまの条件を新しい掃引条件モデルに通し直して調整を知らせ、トレースの蓄積を捨てる（モードが変わるのと
+        同じ扱い: 設計F §5.3）。マーカーは残す。元に戻すの履歴は別の機種の条件なので捨てる。
+        """
+        try:
+            prof = device.profile() or self._profile
+        except Exception:  # noqa: BLE001 — 読めなければいまのプロファイルのまま
+            return
+        # 機器から読んだプロファイルは写して持つ（機器の層が持つ辞書を本体の状態にしない）
+        target = self._base_profile if prof.get("model") == self._base_profile.get("model") else copy.deepcopy(prof)
+        if target.get("model") == self._profile.get("model"):
+            if target is not self._base_profile:
+                self._profile = target  # 同じ機種でも機器から読んだ値（利得の段など）は新しくする
+            return
+        self._listen_end("device_changed", restore=False)
+        old_model = self._profile.get("model")
+        old = self._adopted
+        self._profile = target
+        self._timing_fn = self._timing_for(target)
+        self._model = SweepModel(target, self._timing_fn)
+        new, extra_adj = self._reapply_conditions(old)
+        self._undo.clear()
+        self._redo.clear()
+        self._adopted = new
+        self._last_estimate = new.estimated_sweep_s
+        self._on_condition(ConditionChange.MODE)
+        self._notice("device_profile_changed", {
+            "model": target.get("model"), "previous_model": old_model,
+            "sweep_kind": target.get("sweep_kind", "stepped"),
+            "adopted": adopted_to_dict(new),
+            "adjustments": extra_adj + adjustments_to_list(new),
+        })
+
+    def _reapply_conditions(self, old: AdoptedSweep) -> tuple[AdoptedSweep, list[dict]]:
+        """前の機種の条件を新しい掃引条件モデルに通す。
+
+        範囲が新しい機種の範囲に収まらないときは、新しい機種の既定の範囲にする（RTL-SDR は範囲いっぱいだと
+        1回の測定に約 117s かかる: 設計Q §6.9）。RBW が選択肢に無いときは既定にする。
+        """
+        base = self._model.default()
+        f = self._profile["freq"]
+        adj: list[dict] = []
+        start, stop = old.start_hz, old.stop_hz
+        if not (int(f["min_hz"]) <= start < stop <= int(f["max_hz"])):
+            adj.append({"field": "start_hz", "requested": start, "adopted": base.start_hz,
+                        "reason": "device_default_range"})
+            adj.append({"field": "stop_hz", "requested": stop, "adopted": base.stop_hz,
+                        "reason": "device_default_range"})
+            start, stop = base.start_hz, base.stop_hz
+        req = SweepRequest(start_hz=start, stop_hz=stop, edited=("start_hz", "stop_hz"),
+                           rbw_preference_hz=old.rbw_preference_hz, mode=old.mode,
+                           image_cancel=old.image_cancel)
+        try:
+            new = self._model.apply(req, base)
+        except (ValueError, TypeError):
+            adj.append({"field": "rbw_hz", "requested": old.rbw_hz, "adopted": base.rbw_hz,
+                        "reason": "device_changed"})
+            try:
+                new = self._model.apply(dataclasses.replace(req, rbw_preference_hz=None), base)
+            except (ValueError, TypeError):
+                new = base
+        return new, adj
+
     def _drop_device(self) -> None:
+        self._listen_end("device_lost")
+        self._rtlsdr_on_drop()
         if self._worker is not None:
             self._worker.close()
             self._worker = None
@@ -517,17 +625,23 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
             ports = backend.discover()
         except Exception:  # noqa: BLE001
             return
-        if not any(p.get("serial") == serial for p in ports):
+        matches = [p for p in ports if p.get("serial") == serial and p.get("available", True)]
+        if len(matches) != 1:
+            # 見つからない・同じシリアル番号が複数（RTL-SDR: どれが元の機器か分からない）なら繋がない（設計Q §6.6）
             return
         try:
             device = backend.open(serial, None)
-        except (DeviceDisconnected, OSError):
+        except (DeviceError, OSError):
             return
         self._notice("reconnected", {"serial": serial})
         # 直前の条件で掃引を再開する（T8: 待ち時間なしで正常に戻る）
         self._attach(device, self._backend_name)
 
     def _load_calibration(self, serial: str) -> None:
+        if (self._profile.get("raw") or {}).get("encoding") == RTLSDR_ENCODING:
+            # RTL-SDR の個体の校正は _rtlsdr_prepare で読んだ（GigaSt の校正の形は使わない）
+            self._cal = None
+            return
         old = None if self._cal is None else self._cal.to_dict()
         try:
             self._cal = self._cal_store.load_current(serial)
@@ -561,10 +675,18 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
         if b is None:
             raise CommandError("unknown_backend", "backend", {"backend": backend})
         known = self._settings.known_serials()
-        ports = b.discover()
+        ports = self._discover(b)
         for p in ports:
             p["known"] = p.get("serial") in known
         return {"devices": ports}
+
+    def _discover(self, b: DeviceBackend) -> list[dict]:
+        """機器の一覧。RTL-SDR の DLL が無ければ理由のコードで返す（GigaSt はそのまま使える: 設計Q §6.2）。"""
+        try:
+            return b.discover()
+        except DllNotFound as e:
+            raise CommandError("rtlsdr_dll_not_found", "dll_folder",
+                               {"message": str(e), "dll_folder": self._rtlsdr_cfg["dll_folder"]}) from e
 
     def _cmd_connect(self, backend: str = "gigast", serial: Optional[str] = None, port: Optional[str] = None) -> dict:
         """繋ぐ。初めての機器は確認の掃引で GigaSt と確かめてから覚える（設計B §7.3）。"""
@@ -580,20 +702,24 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
         if port is None and serial is None:
             raise CommandError("device_not_selected", "serial")
         if port is None:
-            ports = [p for p in b.discover() if p.get("serial") == serial]
+            ports = [p for p in self._discover(b) if p.get("serial") == serial and p.get("available", True)]
             if not ports:
                 raise CommandError("device_not_found", "serial", {"serial": serial})
+            if len(ports) > 1:
+                # 同じシリアル番号が複数（RTL-SDR）: 番号付きのポートで選んでもらう（設計Q §6.6）
+                raise CommandError("device_ambiguous", "port",
+                                   {"serial": serial, "ports": [p["port"] for p in ports]})
             port = ports[0]["port"]
             if serial not in known and not b.probe(port):
                 raise CommandError("probe_failed", "port", {"port": port})
         else:
-            match = [p for p in b.discover() if p.get("port") == port]
+            match = [p for p in self._discover(b) if p.get("port") == port]
             serial = match[0].get("serial") if match else serial
             if serial not in known and not b.probe(port):
                 raise CommandError("probe_failed", "port", {"port": port})
         try:
             device = b.open(serial, port)
-        except (DeviceDisconnected, OSError) as e:
+        except (DeviceError, OSError) as e:
             raise CommandError("open_failed", "port", {"port": port, "message": str(e)}) from e
         ident = device.identity()
         if ident.serial:
@@ -606,11 +732,12 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
         b = self._backends.get(backend)
         if b is None:
             raise CommandError("unknown_backend", "backend", {"backend": backend})
-        ports = b.discover()
+        ports = self._discover(b)
         last = self._settings.last_serial()
         order = ([last] if last else []) + self._settings.known_serials()
         for s in order:
-            if any(p.get("serial") == s for p in ports):
+            # 同じシリアル番号が1本だけのときに限る（RTL-SDR は全製品共通のことがある: 設計Q §6.6）
+            if len([p for p in ports if p.get("serial") == s and p.get("available", True)]) == 1:
                 return self._cmd_connect(backend=backend, serial=s)
         return {"identity": None}
 
@@ -646,6 +773,8 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
             new = self._model.apply(request, self._adopted)
         except (ValueError, TypeError) as e:
             raise CommandError("bad_value", None, {"message": str(e)}) from e
+        # RTL-SDR の中心を動かせない間は、継ぎ合わせの要る条件を受け付けない（設計Q §6.7）
+        self._rtlsdr_check_condition(new)
         self._set_adopted(new)
         self._record_undo(before)
         out = {"adopted": adopted_to_dict(new), "adjustments": adjustments_to_list(new)}
@@ -728,6 +857,10 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
         serial = serial or (self._identity or {}).get("serial")
         if not serial:
             raise CommandError("device_not_selected", "serial")
+        if (self._profile.get("raw") or {}).get("encoding") == RTLSDR_ENCODING \
+                and (self._identity or {}).get("serial") == serial:
+            # 旧校正ファイルは GigaSt の形（設計D §5.1）。RTL-SDR の校正は rtlsdr_calibrate_* で取る
+            raise CommandError("legacy_calibration_not_for_device", "serial", {"model": self._profile.get("model")})
         p = Path(path)
         try:
             data = p.read_bytes()

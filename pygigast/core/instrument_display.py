@@ -37,6 +37,21 @@ DB_PER_DIV_CHOICES = (1, 2, 5, 10)
 
 UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB"}
 
+# 生の値の形（機種のプロファイルの raw.encoding）が RTL-SDR のもの（instrument_rtlsdr.py で換算する）
+_RTLSDR_ENCODING = "rtlsdr_power_w"
+
+
+def unit_for(quantity: Optional[Quantity], profile: Optional[dict]) -> Optional[str]:
+    """トレースの値の単位。電力は、測った機器の単位（RTL-SDR の「dB（未校正）」など: Frame.profile の
+    level_unit）があればそれ、無ければ dBm。比は dB。"""
+    if quantity is None:
+        return None
+    if quantity == Quantity.POWER:
+        u = (profile or {}).get("level_unit")
+        if u:
+            return str(u)
+    return UNIT_OF[quantity]
+
 
 def _condition_kind(old: AdoptedSweep, new: AdoptedSweep) -> Optional[ConditionChange]:
     """値の意味が変わる条件の変更の種類（設計F §5.3）。複数が同時に変わっても捨てるのは1回なので最初の1つ。
@@ -150,7 +165,7 @@ class DisplayMixin:
             "count_reached": t.count_reached,
             "average_type_effective": None if eff is None else eff.value,
             "quantity": None if t.quantity is None else t.quantity.value,
-            "unit": None if t.quantity is None else UNIT_OF[t.quantity],
+            "unit": unit_for(t.quantity, t.profile),
             "has_values": t.values is not None,
             "axis_differs": t.action == TraceAction.FIXED and t.axis_differs(self._adopted.axis),
             "last_update_time": t.last_update_time,
@@ -176,7 +191,9 @@ class DisplayMixin:
     # ------------------------------------------------------------------ 1回の掃引
 
     def _build_frame(self, raw: RawSweep) -> Frame:
-        """生の値 → dBm（設計D §5.3）→ リニア W の Frame（設計F §5.1）。"""
+        """生の値 → dBm（設計D §5.3）→ リニア W の Frame（設計F §5.1）。RTL-SDR は instrument_rtlsdr.py。"""
+        if raw.encoding == _RTLSDR_ENCODING:
+            return self._build_rtlsdr_frame(raw)
         a = raw.adopted
         levels = self._converter.to_dbm(a, raw.raw)
         self._no_calibration = levels.no_calibration
@@ -251,14 +268,20 @@ class DisplayMixin:
         for t in self._traces:
             if t.values is None or t.axis is None or t.quantity is None:
                 continue
-            views[t.number] = TraceView.build(
+            v = TraceView.build(
                 t.number, t.axis, t.values, t.quantity, int(t.display_start_hz), int(t.display_stop_hz),
                 t.flags, notes,
             )
+            unit = unit_for(t.quantity, t.profile)
+            if unit != v.unit:
+                # 測った機器の単位（「dB（未校正）」など）でマーカーを読む。単位の違うトレース同士のデルタは作らない
+                v = dataclasses.replace(v, unit=unit)
+            views[t.number] = v
         self._views = views
 
     def _refresh_markers(self, emit: bool = True) -> None:
         self._marker_snap = self._markers.snapshot(self._views)
+        self._listen_follow_marker()  # 聞いているマーカーを動かしたら、聞く位置も動かす（設計Q §6.8）
         if emit:
             self._emit("markers", {"sweep_no": self._sweep_count, **self._marker_snap})
 
@@ -294,7 +317,7 @@ class DisplayMixin:
             "display": {"start_hz": t.display_start_hz, "stop_hz": t.display_stop_hz,
                         "tail_gap": self._adopted.tail_gap},
             "quantity": t.quantity.value,
-            "unit": UNIT_OF[t.quantity],
+            "unit": unit_for(t.quantity, t.profile),
             "values": db_values(t.values, t.quantity),
             "action": t.action.value,
             "visible": t.visible,
@@ -312,11 +335,15 @@ class DisplayMixin:
 
     # ------------------------------------------------------------------ 条件の変更
 
-    def _on_condition(self, kind: ConditionChange) -> None:
-        """値の意味が変わる条件の変更。蓄積を捨て、捨てたトレースを1回だけ知らせる（設計F §3・§5.3）。"""
+    def _on_condition(self, kind: ConditionChange, cause: Optional[str] = None) -> None:
+        """値の意味が変わる条件の変更。蓄積を捨て、捨てたトレースを1回だけ知らせる（設計F §3・§5.3）。
+
+        cause は知らせに書く原因（省略は kind の値）。RTL-SDR の利得・ppm のように、種類は校正と同じでも
+        原因を分けて見せたいときに渡す。
+        """
         resets = self._traces.on_condition_change(kind)
         if resets:
-            self._notice("trace_reset", {"traces": sorted(resets), "cause": kind.value,
+            self._notice("trace_reset", {"traces": sorted(resets), "cause": cause or kind.value,
                                          "codes": {str(k): v for k, v in resets.items()}})
 
     def _on_sweep_condition(self, old: AdoptedSweep, new: AdoptedSweep) -> None:
@@ -354,6 +381,7 @@ class DisplayMixin:
         if not self._undo:
             raise self._error("nothing_to_undo")
         self._check_not_taking_reference()
+        self._rtlsdr_check_condition(self._undo[-1]["adopted"])  # 取り出す前に確かめる（失敗で履歴を失わない）
         cur = self._undo_snapshot()
         self._restore_snapshot(self._undo.pop())
         self._redo.append(cur)
@@ -363,6 +391,7 @@ class DisplayMixin:
         if not self._redo:
             raise self._error("nothing_to_redo")
         self._check_not_taking_reference()
+        self._rtlsdr_check_condition(self._redo[-1]["adopted"])
         cur = self._undo_snapshot()
         self._restore_snapshot(self._redo.pop())
         self._undo.append(cur)

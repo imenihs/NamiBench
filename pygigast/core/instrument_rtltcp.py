@@ -13,7 +13,8 @@ Instrument（instrument.py）に混ぜて使う。ここの `_` で始まるメ�
   - 周波数: GigaSt はその周波数のゼロスパンに、IQ の機器はその周波数を Center に変え、条件が実際に変わったとき
     だけ「rtl_tcp から周波数が変わりました」を1回知らせる（黙って変えない: M-02）
   - サンプリング速度: GigaSt は EnvelopeToIQ の出力の速さを変える（間を埋める: 設計Q §4.3）
-  - 利得など: GigaSt は無視。IQ の機器は _rtltcp_device_command へ渡す（機器の層をつなぐときに中身を書く）
+  - 利得など: GigaSt は無視。IQ の機器は _rtltcp_device_command へ渡す（RTL-SDR は instrument_rtlsdr.py）
+- 先頭の 12 バイトのチューナーの種類・利得の段数は、つないでいる機器から読んだ値（RTL-SDR）。GigaSt は 0・0
 - 既定は出さない。設定（settings.json の `rtltcp`）で出すと決めていれば、起動時に始める。終了時に止める
 """
 from __future__ import annotations
@@ -152,12 +153,12 @@ class RtlTcpMixin:
 
     def _rtltcp_start(self) -> None:
         port, bind = self._rtl_cfg["port"], self._rtl_cfg["bind"]
+        tuner, gains = self._rtltcp_header()
         server = RtlTcpServer(
             on_command=self._rtltcp_from_socket_command,
             on_clients_changed=self._rtltcp_from_socket_clients,
-            # GigaSt はチューナーを持たないので種類 0（不明）・利得の段数 0（設計Q §6.8 の実装で決めたこと）
-            tuner_type=TUNER_UNKNOWN,
-            gain_count=0,
+            tuner_type=tuner,
+            gain_count=gains,
         )
         try:
             actual = server.start(port, bind)
@@ -176,6 +177,21 @@ class RtlTcpMixin:
                                             name="pygigast-rtltcp-tick", daemon=True)
         self._rtl_ticker.start()
         self._notice("rtltcp_started", {"port": actual, "bind": bind})
+
+    def _rtltcp_header(self) -> tuple[int, int]:
+        """先頭の 12 バイトのチューナーの種類と利得の段数（設計Q §6.7）。
+
+        RTL-SDR は機器から読んだ値。GigaSt はチューナーを持たないので種類 0（不明）・利得の段数 0
+        （設計Q §6.8 の実装で決めたこと）。
+        """
+        if self._is_rtlsdr():
+            return self._rtlsdr_rtltcp_header()
+        return TUNER_UNKNOWN, 0
+
+    def _rtltcp_update_header(self) -> None:
+        """機器をつないだとき: 次につながる相手に送る先頭の中身を変える（つながっている相手には送り直さない）。"""
+        if self._rtl_server is not None:
+            self._rtl_server.set_header(*self._rtltcp_header())
 
     def _rtltcp_stop(self, notify: bool = True) -> None:
         server = self._rtl_server
@@ -213,6 +229,8 @@ class RtlTcpMixin:
         # 相手がいなくなったら流れの時刻を捨てる（次の相手には、つながった時点から流す）
         if self._rtl_server is not None and self._rtl_server.client_count == 0:
             self._rtl_env.reset()
+        # RTL-SDR は相手がつながっている間チューナーの中心を動かさない（設計Q §6.7）
+        self._rtlsdr_on_clients()
         self._changed()
 
     def _rtltcp_tick(self) -> None:
@@ -299,6 +317,10 @@ class RtlTcpMixin:
 
     def _rtltcp_set_freq(self, freq_hz: int, content: Optional[str]) -> None:
         """周波数の命令: GigaSt はゼロスパン、IQ の機器はその周波数を Center に。変わったときだけ1回知らせる。"""
+        if self._is_rtlsdr():
+            # RTL-SDR はその周波数をチューナーの中心にしたリアルタイムの動き（instrument_rtlsdr.py）
+            self._rtlsdr_tcp_set_freq(freq_hz)
+            return
         before = self._adopted
         if content == CONTENT_ENVELOPE:
             req = SweepRequest(center_hz=freq_hz, span_hz=0, edited=("center_hz", "span_hz"))
@@ -319,10 +341,12 @@ class RtlTcpMixin:
         })
 
     def _rtltcp_device_command(self, name: str, value) -> None:
-        """IQ の機器への命令（サンプリング速度・利得など）。機器の層（RTL-SDR）をつなぐときに中身を書く。
+        """IQ の機器への命令（サンプリング速度・利得など）。RTL-SDR は instrument_rtlsdr.py が従う。
 
-        いまは受けた値を _rtl_requested に残すだけ。
+        ほかの IQ の機器は、受けた値を _rtl_requested に残すだけ。
         """
+        if self._is_rtlsdr():
+            self._rtlsdr_tcp_command(name, value)
 
     # ------------------------------------------------------------------ 機器の層から（どのスレッドからでもよい）
 

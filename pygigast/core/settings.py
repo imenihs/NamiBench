@@ -1,6 +1,6 @@
 """コアの設定ファイル（設計O §1.1）。
 
-覚えた機器・いまの状態（掃引条件など）・配色・rtl_tcp の送出の設定を1つの JSON に持つ。
+覚えた機器・いまの状態（掃引条件など）・配色・rtl_tcp の送出の設定・RTL-SDR の設定を1つの JSON に持つ。
 - 版を持つ
 - 読めない・壊れているときは初期値で始め、壊れたファイルは別名で残し、何を初期値にしたかを返す（黙って消さない）
 - 書くときは一時ファイルから置き換える（途中で落ちても前の内容が残る）
@@ -22,6 +22,8 @@ DEFAULTS: dict[str, Any] = {
     "state": {},
     "theme": {},
     "rtltcp": {"enabled": False, "port": 1234, "bind": "local"},
+    # RTL-SDR（設計Q §6.2・§6.5）: DLL のフォルダ（None は既定の探し方）・受信の利得（None は機種の既定）・AGC
+    "rtlsdr": {"dll_folder": None, "gain_db": None, "agc": False},
 }
 
 

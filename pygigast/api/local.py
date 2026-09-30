@@ -93,6 +93,50 @@ class _SimulatorBackend(DeviceBackend):
     speed = 1.0
 
 
+class _RtlSdrBackend(DeviceBackend):
+    """RTL-SDR（設計Q §6.2・§6.6）。DLL は設定で選んだフォルダから読む（本体が set_dll_folder で渡す）。
+
+    ポートは番号付き（"rtlsdr:N"）。シリアル番号が全製品共通のことがあるので、一覧の行に同じシリアル番号の
+    数（shared_serial）と、別のアプリが開いていて使えないか（available）を付ける。
+    確認の掃引は要らない（DLL が RTL-SDR と分かった機器だけを数える。知らない機器へは何も送らない）。
+    lib_factory は試験で DLL の偽物を渡すためのもの。
+    """
+
+    def __init__(self, profile: Optional[dict] = None, lib_factory: Optional[Callable[[], object]] = None) -> None:
+        self._profile = profile
+        self._lib_factory = lib_factory
+        self._folder: Optional[str] = None
+
+    def set_dll_folder(self, folder: Optional[str]) -> None:
+        self._folder = folder
+
+    def _lib(self):
+        if self._lib_factory is not None:
+            return self._lib_factory()
+        from ..core.devices.rtlsdr.dll import RtlSdrLib
+
+        return RtlSdrLib.load(self._folder)  # 見つからなければ DllNotFound
+
+    def discover(self) -> list[dict]:
+        from ..core.devices.rtlsdr.driver import discover
+
+        return [
+            {"port": r.port, "serial": r.serial,
+             "description": " ".join(x for x in (r.manufacturer, r.product) if x) or r.name,
+             "available": r.available, "shared_serial": r.shared_serial}
+            for r in discover(lib=self._lib())
+        ]
+
+    def probe(self, port: str) -> bool:
+        return True
+
+    def open(self, serial: Optional[str], port: Optional[str]):
+        from ..core.instrument_rtlsdr import open_rtlsdr_device
+
+        # 番号付きのポートがあればそれで開く（同じシリアル番号が複数でも選んだ1本を開く: 設計Q §6.6）
+        return open_rtlsdr_device(self._lib(), port=port, serial=None if port else serial, profile=self._profile)
+
+
 def create_default(traffic_log_dir=None) -> LocalApi:
     from ..core.devices.base import load_profile
     from ..core.instrument import GIGAST_PROFILE_PATH
@@ -101,5 +145,6 @@ def create_default(traffic_log_dir=None) -> LocalApi:
     backends = {
         "gigast": _GigaStBackend(profile, traffic_log_dir),
         "simulator": _SimulatorBackend(profile),
+        "rtlsdr": _RtlSdrBackend(),
     }
     return LocalApi(Instrument(backends, profile=profile))

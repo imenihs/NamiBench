@@ -22,7 +22,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from .instrument_common import CommandError
-from .instrument_display import NORMALIZED_MODES, UNIT_OF, db_values
+from .instrument_display import NORMALIZED_MODES, db_values, unit_for
 from .normalize import (
     KIND_FINE,
     KIND_WIDE,
@@ -58,6 +58,9 @@ WRITER_CLOSE_TIMEOUT_S = 10.0
 
 # 命令の結果を後で返す印（書き込みスレッドの仕事が終わってから Future に結果を入れる）
 DEFERRED = object()
+
+# 保存・記録の生の値に入れられる形（GigaSt の AD 値。機種のプロファイルの raw.encoding）
+GIGAST_RAW_ENCODING = "gigast_ad_u16"
 
 _SAFE = re.compile(r"[^0-9A-Za-z_-]")
 
@@ -477,13 +480,23 @@ class FilesMixin:
 
     # ------------------------------------------------------------------ 保存・開く・書き出し（設計H）
 
+    def _calibration_record(self) -> Optional[dict]:
+        """保存・書き出しに書く校正の写し。GigaSt は設計D §5.2 の形、RTL-SDR は個体の校正（ppm・レベルの補正。
+        format で見分ける）。無ければ None。"""
+        if self._cal is not None:
+            return self._cal.to_dict()
+        rc = getattr(self, "_rtlsdr_cal", None)
+        if rc is not None and (self._profile.get("raw") or {}).get("encoding") != GIGAST_RAW_ENCODING:
+            return rc.to_dict()
+        return None
+
     def _header(self, note: str = "") -> FileHeader:
         ident = self._identity or {}
         return FileHeader(
             device_model=str(ident.get("model") or self._profile.get("model", "")),
             device_serial=str(ident.get("serial") or ""),
             profile=copy.deepcopy(self._profile),
-            calibration=None if self._cal is None else self._cal.to_dict(),
+            calibration=self._calibration_record(),
             note=note or "",
         )
 
@@ -500,7 +513,7 @@ class FilesMixin:
             info={"action": t.action.value, "visible": t.visible, "count": t.count,
                   "current_count": t.current_count, "average_type": None if eff is None else eff.value,
                   "average_after": t.average_after.value, "hold_after": t.hold_after.value,
-                  "last_update_time": t.last_update_time, "unit": UNIT_OF[t.quantity]},
+                  "last_update_time": t.last_update_time, "unit": unit_for(t.quantity, t.profile)},
             flags={k: np.array(v, dtype=bool) for k, v in t.flags.items()},
             profile=copy.deepcopy(t.profile),
         )
@@ -514,6 +527,10 @@ class FilesMixin:
             raise self._error("path_required", "path")
         header = self._header(note)
         raw = self._last_raw
+        if raw is not None and raw.encoding != GIGAST_RAW_ENCODING:
+            # 保存ファイルの生の値は GigaSt の AD 値（uint16）の形だけ（設計H §7.1）。RTL-SDR の生の値
+            # （リニアの電力の float）は入れず、トレース（単位付き）だけを保存する
+            raw = None
         traces = self._live_traces_data()
         markers = self._markers.to_defs()["markers"]
         quantity = self._last_quantity
@@ -579,7 +596,7 @@ class FilesMixin:
         for tid, td in e["traces"].items():
             f = td.freqs()
             rows.append({"id": tid, "number": td.number, "quantity": td.quantity.value,
-                         "unit": UNIT_OF[td.quantity], "points": int(f.size),
+                         "unit": unit_for(td.quantity, td.profile), "points": int(f.size),
                          "start_hz": int(f[0]) if f.size else None, "stop_hz": int(f[-1]) if f.size else None,
                          "info": td.info})
         out["traces"] = rows
@@ -614,7 +631,7 @@ class FilesMixin:
             "display": {"start_hz": int(f[0]) if f.size else None, "stop_hz": int(f[-1]) if f.size else None,
                         "tail_gap": False},
             "quantity": td.quantity.value,
-            "unit": UNIT_OF[td.quantity],
+            "unit": unit_for(td.quantity, td.profile),
             "values": db_values(td.values, td.quantity),
             "action": td.info.get("action"),
             "average_type": td.info.get("average_type"),
@@ -652,7 +669,7 @@ class FilesMixin:
         meta = {
             "device": {"model": ident.get("model") or self._profile.get("model"), "serial": ident.get("serial")},
             "conditions": storage_conditions(self._adopted),
-            "calibration": None if self._cal is None else self._cal.to_dict(),
+            "calibration": self._calibration_record(),
             "normalization": self._normalization_record(),
             "exported_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
@@ -674,6 +691,12 @@ class FilesMixin:
         """掃引1回を記録の待ち行列へ入れる（待たない）。"""
         rec = self._recorder
         if rec is None or rec.stopped:
+            return
+        if raw.encoding != GIGAST_RAW_ENCODING:
+            # 記録の形は GigaSt の AD 値（uint16）だけ。記録中に RTL-SDR へつなぎ替えたら、その掃引は入れずに1回知らせる
+            if not getattr(self, "_rec_skip_noticed", False):
+                self._rec_skip_noticed = True
+                self._notice("record_not_supported_for_device", {"encoding": raw.encoding})
             return
         try:
             rec.append(raw, quantity=quantity, value_kind=value_kind, normalization=self._normalization_record(),
@@ -703,6 +726,11 @@ class FilesMixin:
     def _cmd_record_start(self) -> dict:
         if self._recorder is not None:
             raise self._error("already_recording")
+        enc = (self._profile.get("raw") or {}).get("encoding")
+        if enc != GIGAST_RAW_ENCODING:
+            # 記録の作業ファイルは GigaSt の AD 値（uint16）の形（設計H §7.2）。RTL-SDR の記録は形を決めていない
+            raise self._error("record_not_supported_for_device", None, {"encoding": enc})
+        self._rec_skip_noticed = False
         path = new_recording_path(self._recordings_dir())
         self._rec_stats = None
         self._recorder = Recorder(
