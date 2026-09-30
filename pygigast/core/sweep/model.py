@@ -13,9 +13,9 @@ import math
 import re
 from typing import Callable, Optional
 
-from ..types import Adjustment, AdoptedSweep, FreqAxis, Mode, SweepRequest
+from ..types import Adjustment, AdoptedSweep, Alternative, FreqAxis, Mode, SweepRequest
 
-# (step_hz, rbw_hz) → (初バイトまでの秒, 1点あたりの秒)。機器の層が作る（設計B §7.2）
+# (step_hz, rbw_hz, mode) → (初バイトまでの秒, 1点あたりの秒)。機器の層が作る（設計B §7.2）
 TimingFn = Callable[[int, int, Mode], tuple[float, float]]  # (step_hz, rbw_hz, mode)
 
 # 周波数の欄の名前（SweepRequest.edited に入れる名前。Adjustment.field と同じ）
@@ -24,6 +24,10 @@ STOP = "stop_hz"
 CENTER = "center_hz"
 SPAN = "span_hz"
 _FREQ_FIELDS = (START, STOP, CENTER, SPAN)
+
+# Center を触って範囲を超えたときの規則（設計C §5.11）。調整の理由のコードにも使う
+RULE_KEEP_CENTER = "keep_center"
+RULE_KEEP_SPAN = "keep_span"
 
 # 信用できない条件の知らせ（設計C §5.3 の2）のプロファイルのキー。コードは rbw{kHz}k_narrow_span
 # （Span が狭い）・rbw{kHz}k_fine_step（Step が細かい）・rbw{kHz}k_unstable（常に）
@@ -78,6 +82,9 @@ class _Adj:
 
     def has(self, field: str) -> bool:
         return any(a.field == field for a in self._items)
+
+    def reasons(self) -> set[str]:
+        return {a.reason for a in self._items}
 
     def items(self) -> tuple[Adjustment, ...]:
         return tuple(self._items)
@@ -151,12 +158,35 @@ class SweepModel:
         points_setting = self._points_setting(request, current, adj)
         sg_hz = self._sg_hz(request, current, mode, adj)
 
-        start, stop = self._resolve_range(request, current, self._min_span(points_setting), adj)
+        # Span 固定（設計C §5.11）: ON の間は固定 Span を守る。ON にした時点の Span が固定 Span
+        lock_on = current.span_lock_hz is not None if request.span_lock is None else bool(request.span_lock)
+        lock_hz = current.span_lock_hz if lock_on else None
+        rule = RULE_KEEP_SPAN if lock_on else RULE_KEEP_CENTER
+
+        min_span = self._min_span(points_setting)
+        start, stop = self._resolve_range(request, current, min_span, adj, rule, lock_hz)
+
+        alternative = None
+        edited = self._edited(request)
+        if CENTER in edited and adj.reasons() & {RULE_KEEP_CENTER, RULE_KEEP_SPAN}:
+            # 規則で値を動かした: 反対の規則の結果を1つ添える（その1回だけ選べる。設計C §5.11 の 3）
+            other = RULE_KEEP_CENTER if rule == RULE_KEEP_SPAN else RULE_KEEP_SPAN
+            a_start, a_stop = self._resolve_range(request, current, min_span, _Adj(), other, lock_hz)
+            if (a_start, a_stop) != (start, stop):
+                alternative = Alternative(rule=other, start_hz=a_start, stop_hz=a_stop)
+
+        if lock_on:
+            touched_span = bool(set(edited) & {START, STOP, SPAN})
+            if lock_hz is None or (touched_span and not request.one_shot):
+                # ON にした時点・利用者が Span を直接変えたときは、固定 Span を新しい Span にする。
+                # その1回だけの命令（反対の結果のボタン）は固定 Span を変えない（設計C §5.11 の 3）
+                lock_hz = stop - start
 
         return self._finish(
             start=start, stop=stop, points_setting=points_setting,
             rbw_pref=rbw_pref, mode=mode, sg_hz=sg_hz, image_cancel=image_cancel,
             prev_rbw=current.rbw_hz, rbw_requested=request.rbw_preference_hz is not None, adj=adj,
+            span_lock_hz=lock_hz, alternative=alternative,
         )
 
     # ------------------------------------------------------------------ 点数・信号源
@@ -226,12 +256,13 @@ class SweepModel:
             raise ValueError("Start/Stop と Center/Span を同時に変えられない")
         return edited
 
-    def _resolve_range(self, request: SweepRequest, current: AdoptedSweep, min_span: int, adj: _Adj) -> tuple[int, int]:
+    def _resolve_range(self, request: SweepRequest, current: AdoptedSweep, min_span: int, adj: _Adj,
+                       rule: str = RULE_KEEP_CENTER, lock_hz: Optional[int] = None) -> tuple[int, int]:
         edited = self._edited(request)
         if START in edited or STOP in edited:
             return self._resolve_start_stop(request, current, edited, min_span, adj)
         if CENTER in edited or SPAN in edited:
-            return self._resolve_center_span(request, current, edited, min_span, adj)
+            return self._resolve_center_span(request, current, edited, min_span, adj, rule, lock_hz)
         # 周波数を触っていない（点数だけ変えた等）: 点数で最小 Span が上がったときだけ Center を守って広げる
         span = current.span_hz
         if 0 < span < min_span:
@@ -281,9 +312,12 @@ class SweepModel:
         adj.add(START, current.start_hz, new_start, "min_span")
         return new_start, stop
 
-    def _resolve_center_span(self, request, current, edited, min_span, adj) -> tuple[int, int]:
+    def _resolve_center_span(self, request, current, edited, min_span, adj, rule, lock_hz) -> tuple[int, int]:
         center = current.center_hz
         span = current.span_hz
+        if CENTER in edited and SPAN not in edited and rule == RULE_KEEP_SPAN and lock_hz is not None:
+            # 固定中に Center を触ったら、守るのは固定 Span（いまの Span ではない。設計C §5.11 の 2）
+            span = lock_hz
         req_center = None
         if CENTER in edited:
             req_center = request.center_hz
@@ -299,7 +333,61 @@ class SweepModel:
         elif 0 < span < min_span:
             adj.add(SPAN, span, min_span, "min_span")
             span = min_span
+        if CENTER in edited:
+            return self._place_by_center(center, span, min_span, adj, req_center, rule)
         return self._place_center_span(center, span, edited, min_span, adj, requested_center=req_center)
+
+    def _place_by_center(self, center: int, span: int, min_span: int, adj: _Adj, req_center: int,
+                         rule: str) -> tuple[int, int]:
+        """Center を触ったときの範囲の収め方（設計C §5.11）。
+
+        keep_center（既定）: Center を守り、Span を範囲に収まる最大に縮める
+        keep_span（Span 固定の間）: Span を守り、Center を動かす。Span が範囲より広いときは範囲いっぱい
+        Center と Span を同時に触って両方守れるときは両方守る。
+        """
+        lo, hi = self._min, self._max
+        full = hi - lo
+        if span > full:
+            adj.replace(SPAN, adj.requested_of(SPAN, span), full, "upper_limit")
+            span = full
+        start, stop = self._around(center, span)
+        if lo <= start and stop <= hi:
+            new_center = start + span // 2
+            if new_center != req_center and not adj.has(CENTER):
+                # Span が単位の奇数倍のとき、Center は単位の半分だけずれる
+                adj.add(CENTER, req_center, new_center, "freq_unit")
+            return start, stop
+        if rule == RULE_KEEP_CENTER and span > 0:
+            c = min(max(center, lo), hi)
+            if c != center:
+                # Center 自体が範囲の外: 範囲の端に合わせてから Span を縮める
+                adj.replace(CENTER, adj.requested_of(CENTER, req_center), c,
+                            "lower_limit" if c == lo else "upper_limit")
+                center = c
+            room = min(center - lo, hi - center)
+            fit = max(2 * room, 0) // self._unit * self._unit
+            while fit > 0:
+                s2, e2 = self._around(center, fit)
+                if lo <= s2 and e2 <= hi:
+                    break
+                # Center が単位の半分ずれていると丸めで1単位はみ出す。1単位縮めて収める
+                fit -= self._unit
+            if fit >= min_span:
+                adj.replace(SPAN, adj.requested_of(SPAN, span), fit, RULE_KEEP_CENTER)
+                return self._around(center, fit)
+            # 縮めると最小 Span を割る: 最小 Span を守り、Center を内側へ動かす（下で行う）
+            adj.replace(SPAN, adj.requested_of(SPAN, span), min_span, "min_span")
+            span = min_span
+        start, stop = self._around(center, span)
+        if start < lo:
+            stop += lo - start
+            start = lo
+        elif stop > hi:
+            start -= stop - hi
+            stop = hi
+        new_center = start + span // 2
+        adj.replace(CENTER, adj.requested_of(CENTER, req_center), new_center, RULE_KEEP_SPAN)
+        return start, stop
 
     def _place_center_span(self, center: int, span: int, edited, min_span: int, adj: _Adj,
                            requested_center) -> tuple[int, int]:
@@ -413,7 +501,8 @@ class SweepModel:
         return n, min(want - n, points)
 
     def _finish(self, *, start, stop, points_setting, rbw_pref, mode, sg_hz, image_cancel,
-                prev_rbw, rbw_requested, adj: _Adj) -> AdoptedSweep:
+                prev_rbw, rbw_requested, adj: _Adj, span_lock_hz: Optional[int] = None,
+                alternative: Optional[Alternative] = None) -> AdoptedSweep:
         span = stop - start
         step, points = self._step_points(span, points_setting, adj)
         tail_gap = False
@@ -443,6 +532,7 @@ class SweepModel:
             transient_head_points=head, estimated_sweep_s=est, adjustments=adj.items(),
             points_setting=points_setting, tail_gap=tail_gap,
             warnings=self._warnings(rbw, span, step),
+            span_lock_hz=span_lock_hz, alternative=alternative,
         )
 
     def _check_device(self, axis: FreqAxis, preroll: int) -> None:

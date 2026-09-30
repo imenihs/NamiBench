@@ -1,0 +1,466 @@
+"""トレース（設計F）。
+
+- トレースは4本（1〜4）。値はリニアで持ち、dB は表示のときの表し方（設計F §2）
+- 動作（更新・最大保持・最小保持・平均・固定）と「表示するか」は別の設定（設計F §5.1）。
+  非表示でも処理は動作に従って続く
+- 平均・最大保持・最小保持は回数 N を持てる。単発はそのうち最大の N 回で止まる（設計F §5.2.1）
+- 値の意味が変わる条件の変更で蓄積を捨て、動作は OFF にしない。表示だけの変更では何も捨てない。
+  固定のトレースは捨てない（設計F §5.3）
+- 知らせはコードで返す。画面の文言は画面側が決める（U-22）
+純粋な計算だけ。スレッド・入出力を持たない。
+"""
+from __future__ import annotations
+
+import copy
+import enum
+from dataclasses import dataclass
+from typing import Optional, Union
+
+import numpy as np
+
+from ..types import FreqAxis, Frame, Quantity, ValueKind
+from .average import (
+    NOTICE_LOG_AVERAGE_READS_LOW,
+    AverageType,
+    allowed_average_types,
+    default_average_type,
+    from_domain,
+    to_domain,
+)
+
+TRACE_COUNT = 4
+
+
+class TraceAction(str, enum.Enum):
+    """トレースの動作（設計F §5.2）。非表示は動作ではなく visible で持つ（設計F §5.1）。"""
+
+    UPDATE = "update"
+    MAX_HOLD = "max_hold"
+    MIN_HOLD = "min_hold"
+    AVERAGE = "average"
+    FIXED = "fixed"
+
+
+# 蓄積を持つ動作（条件の変更で捨てる対象。設計F §5.3）
+ACCUMULATING_ACTIONS = (TraceAction.MAX_HOLD, TraceAction.MIN_HOLD, TraceAction.AVERAGE)
+
+
+class AverageAfterCount(str, enum.Enum):
+    """連続で平均が N 回に達した後（設計F §5.2.1）。"""
+
+    EXPONENTIAL = "exponential"  # 重み 1/N で平均し続ける（既定）
+    RESTART = "restart"  # N 回ごとに新しい平均を作る
+
+
+class HoldAfterCount(str, enum.Enum):
+    """最大・最小保持が回数 N に達した後（設計F §5.2.1）。"""
+
+    CONTINUE = "continue"  # 保持し続ける（既定）
+    STOP = "stop"  # それ以上は蓄積しない
+
+
+class ConditionChange(str, enum.Enum):
+    """値の意味が変わる条件の変更。蓄積を捨てる（設計F §5.3）。"""
+
+    AXIS = "axis"
+    RBW = "rbw"
+    MODE = "mode"
+    IMAGE_CANCEL = "image_cancel"
+    CALIBRATION = "calibration"
+    REFERENCE = "reference"  # ノーマライズの基準
+
+
+class DisplayChange(str, enum.Enum):
+    """表示だけの変更。何も捨てない（設計F §5.3）。"""
+
+    REF_LEVEL = "ref_level"
+    DB_PER_DIV = "db_per_div"
+    UNIT = "unit"
+    COLOR = "color"
+    VISIBLE = "visible"
+    WINDOW_SIZE = "window_size"
+
+
+# 知らせのコード（文言は画面側）
+# 条件の変更で蓄積を捨てた（トレースの一覧に1回だけ「条件変更でリセット」: 設計F §3）
+NOTICE_RESET_BY_CONDITION = "reset_by_condition"
+# 条件の変更を告げられないまま軸・量・値の種類の違う掃引が来たので蓄積を捨てた（設計に無い判断:
+# 違う軸の値は点ごとに比べられないため）
+NOTICE_RESET_BY_FRAME_MISMATCH = "reset_by_frame_mismatch"
+# 選んでいた平均の種類がこの掃引の値の種類では選べないので既定に戻した（設計に無い判断）
+NOTICE_AVERAGE_TYPE_RESET = "average_type_reset"
+
+
+@dataclass(frozen=True)
+class TraceUpdate:
+    """1回の掃引を受けたときに変わったこと。
+
+    changed: 表示する値が変わったか。count: いまの回数（「平均 12/16」の 12）。
+    count_target: 回数 N（回数を持たないときは None）。count_reached: いまの回数が N に達しているか。
+    notices: 知らせのコード。
+    """
+
+    number: int
+    changed: bool
+    count: int
+    count_target: Optional[int]
+    count_reached: bool
+    notices: tuple[str, ...] = ()
+
+
+_UNSET = object()
+
+
+def _flags_of(frame: Frame) -> dict[str, np.ndarray]:
+    """掃引の点ごとの印を、点数の長さの bool の配列にそろえて写す。"""
+    n = frame.axis.points
+    return {k: np.broadcast_to(np.asarray(v, dtype=bool), (n,)).copy() for k, v in frame.flags.items()}
+
+
+def _or_flags(acc: dict[str, np.ndarray], new: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """印の和。蓄積に1回でも印の付いた掃引が入った点は印を持つ（設計に無い判断: 最も慎重な扱い）。"""
+    out = {k: v.copy() for k, v in acc.items()}
+    for k, v in new.items():
+        out[k] = out[k] | v if k in out else v.copy()
+    return out
+
+
+class Trace:
+    """1本のトレース（設計F §5.1）。"""
+
+    def __init__(
+        self,
+        number: int,
+        action: TraceAction = TraceAction.UPDATE,
+        visible: bool = True,
+        count: Optional[int] = None,
+        average_type: Optional[AverageType] = None,
+        average_after: AverageAfterCount = AverageAfterCount.EXPONENTIAL,
+        hold_after: HoldAfterCount = HoldAfterCount.CONTINUE,
+    ) -> None:
+        if not isinstance(number, int) or not 1 <= number <= TRACE_COUNT:
+            raise ValueError(f"トレースの番号は 1〜{TRACE_COUNT}")
+        self.number = number
+        self.action = TraceAction(action)
+        self.visible = bool(visible)
+        self.count = count
+        # None は既定（量と値の種類で決まる: default_average_type）
+        self.average_type = None if average_type is None else AverageType(average_type)
+        self.average_after = AverageAfterCount(average_after)
+        self.hold_after = HoldAfterCount(hold_after)
+        self._validate()
+
+        # 表示する値と、その値の条件
+        self.axis: Optional[FreqAxis] = None
+        self.values: Optional[np.ndarray] = None
+        self.quantity: Optional[Quantity] = None
+        self.value_kind: Optional[ValueKind] = None
+        self.flags: dict[str, np.ndarray] = {}
+        self.profile: dict = {}
+        self.display_start_hz: Optional[int] = None
+        self.display_stop_hz: Optional[int] = None
+        self.last_update_time: Optional[float] = None
+
+        # 蓄積（平均は平均の領域の値、最大・最小保持はリニアの値）と回数
+        self._acc: Optional[np.ndarray] = None
+        self._acc_flags: dict[str, np.ndarray] = {}
+        self._acc_kind: Optional[AverageType] = None
+        self._k = 0
+        # N 回ごとにやり直す平均で、1回目の N 回が済んだか（済むまでは途中の平均を出す）
+        self._restart_published = False
+
+    # ---- 設定 ----
+
+    def _validate(self) -> None:
+        if self.count is not None and (not isinstance(self.count, int) or self.count < 1):
+            raise ValueError("回数は 1 以上の int か None")
+        if self.action == TraceAction.AVERAGE and self.count is None:
+            raise ValueError("平均は回数を持つ（設計F §2: 平均（回数指定））")
+
+    @property
+    def effective_count(self) -> Optional[int]:
+        """いまの動作で意味を持つ回数 N。平均・最大保持・最小保持だけが回数を持つ。"""
+        return self.count if self.action in ACCUMULATING_ACTIONS else None
+
+    def configure(
+        self,
+        action=_UNSET,
+        count=_UNSET,
+        average_type=_UNSET,
+        average_after=_UNSET,
+        hold_after=_UNSET,
+        visible=_UNSET,
+    ) -> tuple[str, ...]:
+        """設定を変える。渡した欄だけ変え、知らせのコードを返す。
+
+        動作・回数・平均の種類が変わったら蓄積を捨てる（蓄積の意味が変わるため。設計に無い判断）。
+        固定に変えたときは、いまの値を残す（比べるために残す: 設計F §5.2）。
+        表示するか・N 回に達した後の選び方は何も捨てない。
+        """
+        old = (self.action, self.count, self.average_type, self.average_after,
+               self.hold_after, self.visible)
+        if action is not _UNSET:
+            self.action = TraceAction(action)
+        if count is not _UNSET:
+            self.count = count
+        if average_type is not _UNSET:
+            self.average_type = None if average_type is None else AverageType(average_type)
+        if average_after is not _UNSET:
+            self.average_after = AverageAfterCount(average_after)
+        if hold_after is not _UNSET:
+            self.hold_after = HoldAfterCount(hold_after)
+        if visible is not _UNSET:
+            self.visible = bool(visible)
+        try:
+            self._validate()
+            if self.average_type is not None and self.value_kind is not None:
+                if self.average_type not in allowed_average_types(self.value_kind):
+                    raise ValueError("この値の種類では選べない平均の種類")
+        except ValueError:
+            (self.action, self.count, self.average_type, self.average_after,
+             self.hold_after, self.visible) = old
+            raise
+
+        notices: list[str] = []
+        if (self.action, self.count, self.average_type) != old[:3]:
+            if self.action != TraceAction.FIXED:
+                self._discard(clear_values=self.action in ACCUMULATING_ACTIONS)
+        if self.average_after != old[3]:
+            self._restart_published = False
+        if (self.action == TraceAction.AVERAGE and self.effective_average_type() == AverageType.LOG
+                and (old[0] != TraceAction.AVERAGE or old[2] != AverageType.LOG)):
+            notices.append(NOTICE_LOG_AVERAGE_READS_LOW)
+        return tuple(notices)
+
+    def effective_average_type(self) -> Optional[AverageType]:
+        """いま使う平均の種類。選んでいなければ量と値の種類の既定（値が来る前は選んだものか None）。"""
+        if self.average_type is not None:
+            return self.average_type
+        if self.quantity is None or self.value_kind is None:
+            return None
+        return default_average_type(self.quantity, self.value_kind)
+
+    @property
+    def current_count(self) -> int:
+        """いまの回数（「平均 12/16」の 12）。"""
+        return self._k
+
+    @property
+    def count_reached(self) -> bool:
+        n = self.effective_count
+        return n is not None and self._k >= n
+
+    # ---- 捨てる ----
+
+    def _discard(self, clear_values: bool) -> None:
+        self._acc = None
+        self._acc_flags = {}
+        self._acc_kind = None
+        self._k = 0
+        self._restart_published = False
+        if clear_values:
+            self.values = None
+            self.flags = {}
+
+    def discard(self) -> None:
+        """蓄積を捨てる（単発の前など）。動作はそのまま（設計F §5.2.1）。"""
+        if self.action == TraceAction.FIXED:
+            return
+        self._discard(clear_values=self.action in ACCUMULATING_ACTIONS)
+
+    def on_condition_change(self, kind: Union[ConditionChange, DisplayChange, str]) -> Optional[str]:
+        """条件が変わったことを受ける（設計F §5.3）。捨てたら知らせのコードを返す。
+
+        値の意味が変わる条件（ConditionChange）なら蓄積を捨てる。動作は OFF にしない。
+        表示だけの変更（DisplayChange）では何も捨てない。固定のトレースは何も捨てない。
+        知らない種類は ValueError（捨てるか捨てないかを決められないため）。
+        """
+        if isinstance(kind, DisplayChange):
+            return None
+        if not isinstance(kind, ConditionChange):
+            try:
+                kind = ConditionChange(kind)
+            except ValueError:
+                DisplayChange(kind)  # どちらでもなければ ValueError
+                return None
+        if self.action == TraceAction.FIXED:
+            return None
+        had = self.action in ACCUMULATING_ACTIONS and self._k > 0
+        self._discard(clear_values=self.action in ACCUMULATING_ACTIONS)
+        return NOTICE_RESET_BY_CONDITION if had else None
+
+    def axis_differs(self, current_axis: Optional[FreqAxis]) -> bool:
+        """持っている値の軸がいまの軸と違うか（固定のトレースの凡例に出す: 設計F §5.3）。"""
+        return self.axis is not None and current_axis is not None and self.axis != current_axis
+
+    # ---- 掃引を受ける ----
+
+    def apply(self, frame: Frame) -> TraceUpdate:
+        """1回の掃引を動作に従って取り込む（設計F §5.2）。"""
+        if frame.values.shape != (frame.axis.points,):
+            raise ValueError("values の長さが軸の点数と違う")
+        if self.action == TraceAction.FIXED:
+            return self._result(changed=False)
+
+        notices: list[str] = []
+        if self.axis is not None and (
+            self.axis != frame.axis or self.quantity != frame.quantity or self.value_kind != frame.value_kind
+        ):
+            if self.action in ACCUMULATING_ACTIONS and self._k > 0:
+                notices.append(NOTICE_RESET_BY_FRAME_MISMATCH)
+            self._discard(clear_values=True)
+        if self.average_type is not None and self.average_type not in allowed_average_types(frame.value_kind):
+            self.average_type = None
+            self._discard(clear_values=True)
+            notices.append(NOTICE_AVERAGE_TYPE_RESET)
+
+        self.axis = frame.axis
+        self.quantity = frame.quantity
+        self.value_kind = frame.value_kind
+        self.profile = copy.deepcopy(frame.profile)
+        self.display_start_hz = frame.display_start_hz
+        self.display_stop_hz = frame.display_stop_hz
+
+        dtype = np.complex128 if frame.value_kind == ValueKind.COMPLEX else np.float64
+        new = np.asarray(frame.values, dtype=dtype).copy()
+        new_flags = _flags_of(frame)
+
+        if self.action == TraceAction.UPDATE:
+            changed = self._apply_update(new, new_flags)
+        elif self.action == TraceAction.AVERAGE:
+            changed = self._apply_average(new, new_flags)
+        else:
+            changed = self._apply_hold(new, new_flags)
+        if changed:
+            self.last_update_time = frame.time
+        return self._result(changed=changed, notices=tuple(notices))
+
+    def _result(self, changed: bool, notices: tuple[str, ...] = ()) -> TraceUpdate:
+        return TraceUpdate(
+            number=self.number,
+            changed=changed,
+            count=self._k,
+            count_target=self.effective_count,
+            count_reached=self.count_reached,
+            notices=notices,
+        )
+
+    def _apply_update(self, new: np.ndarray, new_flags: dict) -> bool:
+        self.values = new
+        self.flags = new_flags
+        self._k = 1
+        return True
+
+    def _apply_hold(self, new: np.ndarray, new_flags: dict) -> bool:
+        n = self.effective_count
+        if n is not None and self._k >= n and self.hold_after == HoldAfterCount.STOP:
+            return False
+        if self._acc is None:
+            self._acc = new
+            self._acc_flags = new_flags
+        else:
+            a_new = np.abs(new)
+            a_acc = np.abs(self._acc)
+            # 複素数は振幅で比べ、その点の値（複素数）を持つ（設計F §5.2）。nan の点は新しい値で埋める
+            if self.action == TraceAction.MAX_HOLD:
+                take = (a_new > a_acc) | np.isnan(a_acc)
+            else:
+                take = (a_new < a_acc) | np.isnan(a_acc)
+            self._acc = np.where(take, new, self._acc)
+            self._acc_flags = _or_flags(self._acc_flags, new_flags)
+        # 回数を持つときは N で止める（「最大保持 16/16」）。持たないときは数え続ける
+        self._k = self._k + 1 if n is None else min(self._k + 1, n)
+        self.values = self._acc.copy()
+        self.flags = {k: v.copy() for k, v in self._acc_flags.items()}
+        return True
+
+    def _apply_average(self, new: np.ndarray, new_flags: dict) -> bool:
+        kind = self.effective_average_type()
+        n = self.count
+        assert kind is not None and n is not None and self.quantity is not None
+        if self._acc_kind != kind:
+            self._acc = None
+            self._k = 0
+        d = to_domain(new, self.quantity, kind)
+
+        if self._k >= n and self.average_after == AverageAfterCount.RESTART:
+            # N 回分の平均を出し終えたので、次の N 回で新しい平均を作る。出す値は前の平均のまま
+            self._acc = None
+            self._acc_flags = {}
+            self._k = 0
+            self._restart_published = True
+
+        if self._acc is None:
+            self._acc = d
+            self._acc_flags = new_flags
+            self._acc_kind = kind
+            self._k = 1
+        elif self._k < n:
+            # 累積平均
+            self._acc = self._acc + (d - self._acc) / (self._k + 1)
+            self._acc_flags = _or_flags(self._acc_flags, new_flags)
+            self._k += 1
+        else:
+            # 指数平均（重み 1/N）。回数は N のまま
+            self._acc = self._acc + (d - self._acc) / n
+            self._acc_flags = _or_flags(self._acc_flags, new_flags)
+
+        if self.average_after == AverageAfterCount.RESTART and self._restart_published and self._k < n:
+            return False
+        self.values = from_domain(self._acc, self.quantity, kind)
+        self.flags = {k: v.copy() for k, v in self._acc_flags.items()}
+        return True
+
+
+class TraceSet:
+    """4本のトレース（設計F §2）。
+
+    既定: トレース1 は表示する「更新」、2〜4 は表示しない「更新」（設計F §5.2 で更新が既定。
+    どれを表示するかは設計に無いので、1本だけを出す）。
+    """
+
+    def __init__(self) -> None:
+        self.traces: tuple[Trace, ...] = tuple(
+            Trace(i, TraceAction.UPDATE, visible=(i == 1)) for i in range(1, TRACE_COUNT + 1)
+        )
+
+    def __getitem__(self, number: int) -> Trace:
+        """番号（1〜4）でトレースを引く。"""
+        if not isinstance(number, int) or not 1 <= number <= TRACE_COUNT:
+            raise KeyError(number)
+        return self.traces[number - 1]
+
+    def __iter__(self):
+        return iter(self.traces)
+
+    def apply(self, frame: Frame) -> list[TraceUpdate]:
+        """4本すべてに掃引を渡す（非表示でも動作に従って処理する: 設計F §5.1）。"""
+        return [t.apply(frame) for t in self.traces]
+
+    def on_condition_change(self, kind: Union[ConditionChange, DisplayChange, str]) -> dict[int, str]:
+        """条件の変更を4本に渡し、捨てたトレースの番号と知らせのコードを返す（設計F §5.3）。"""
+        out: dict[int, str] = {}
+        for t in self.traces:
+            notice = t.on_condition_change(kind)
+            if notice is not None:
+                out[t.number] = notice
+        return out
+
+    def fixed_axis_differs(self, current_axis: FreqAxis) -> list[int]:
+        """いまの軸と違う軸の値を持つ固定のトレースの番号（凡例に出す: 設計F §5.3）。"""
+        return [t.number for t in self.traces if t.action == TraceAction.FIXED and t.axis_differs(current_axis)]
+
+    def single_target(self) -> int:
+        """単発で掃引する回数（設計F §5.2.1）。
+
+        回数を持つトレース（平均 N・回数付きの最大/最小保持）のうち最大の N。無ければ 1。
+        非表示のトレースも含める（非表示でも処理は続くため: 設計F §5.1）。
+        """
+        counts = [t.effective_count for t in self.traces if t.effective_count is not None]
+        return max(counts) if counts else 1
+
+    def reset_for_single(self) -> None:
+        """単発の1回目の前に、回数を持つトレースの蓄積を捨てる（設計F §5.2.1）。"""
+        for t in self.traces:
+            if t.effective_count is not None:
+                t.discard()

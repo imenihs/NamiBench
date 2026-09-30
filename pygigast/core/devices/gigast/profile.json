@@ -33,6 +33,7 @@
     "tg": true,
     "sg": {"min_hz": 1000000, "max_hz": 4000000000, "unit_hz": 1000},
     "band_edges_hz": [1000000000, 2000000000, 3000000000],
+    "tg_range_hz": [1000000, 4000000000],
     "level_adjustable": false
   },
   "sweep_quirks": {

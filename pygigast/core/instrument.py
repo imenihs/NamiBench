@@ -23,6 +23,7 @@ import numpy as np
 from .devices.base import Device, load_profile
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
+from .settings import Settings
 from .level.legacy_cal import LegacyCalError, parse_legacy_cal
 from .sweep.model import SweepModel
 from .types import (
@@ -84,36 +85,17 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
         "estimated_sweep_s": a.estimated_sweep_s,
         "tail_gap": a.tail_gap,
         "warnings": list(a.warnings),
+        "span_lock_hz": a.span_lock_hz,
     }
+
+
+def _sweep_key(a: AdoptedSweep) -> tuple:
+    """機器へ送る中身（これが同じなら測り直さなくてよい）。"""
+    return (a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.mode, a.sg_hz, a.image_cancel, a.preroll_points)
 
 
 def adjustments_to_list(a: AdoptedSweep) -> list[dict]:
     return [dataclasses.asdict(x) for x in a.adjustments]
-
-
-class KnownDevices:
-    """一度 GigaSt と確かめた機器のシリアル番号を覚える（設計B §7.3: 2回目からは自動で繋ぐ）。"""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def load(self) -> dict:
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            return {"serials": [], "last": None}
-
-    def remember(self, serial: str) -> None:
-        data = self.load()
-        if serial not in data["serials"]:
-            data["serials"].append(serial)
-        data["last"] = serial
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, self.path)
 
 
 class DeviceBackend:
@@ -224,9 +206,10 @@ class Instrument:
 
             timing_fn = gigast_timing_fn(self._profile)
         self._model = SweepModel(self._profile, timing_fn)
-        self._adopted = self._model.default()
         root = data_root or app_data_root()
-        self._known = KnownDevices(root / "devices.json")
+        self._settings = Settings(root / "settings.json")
+        # 起動時は前回終了時の状態に戻る（設計O §1.2）。戻せない値は掃引条件モデルが直して知らせる
+        self._adopted = self._restore_state(self._settings.get("state"))
         self._cal_store = CalibrationStore(cal_root or default_root())
         self._cal: Optional[Calibration] = None
         self._converter = LevelConverter(self._profile, None)
@@ -258,6 +241,42 @@ class Instrument:
         self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
         self._running = True
         self._thread.start()
+        if self._settings.load_problem:
+            # 設定が読めなかったことを1回知らせる（設計O §1.1。黙って初期値にしない）
+            self._q.put(("notice", "settings_reset", self._settings.load_problem))
+
+    def _restore_state(self, st: Optional[dict]) -> AdoptedSweep:
+        base = self._model.default()
+        if not st:
+            return base
+        try:
+            req = SweepRequest(
+                start_hz=int(st["start_hz"]), stop_hz=int(st["stop_hz"]),
+                edited=("start_hz", "stop_hz"),
+                rbw_preference_hz=st.get("rbw_preference_hz"),
+                points=st.get("points_setting") or 0,
+                mode=Mode(st.get("mode", "sa")),
+                sg_hz=st.get("sg_hz"),
+                image_cancel=bool(st.get("image_cancel", False)),
+            )
+            restored = self._model.apply(req, base)
+            lock = st.get("span_lock_hz")
+            if lock:
+                # 固定の状態は次回の起動で戻す（設計C §5.11 の 5）。固定 Span も戻す
+                restored = dataclasses.replace(self._model.apply(SweepRequest(span_lock=True), restored),
+                                               span_lock_hz=int(lock))
+            return restored
+        except (KeyError, ValueError, TypeError):
+            return base
+
+    def _state_to_save(self) -> dict:
+        a = self._adopted
+        return {
+            "start_hz": a.start_hz, "stop_hz": a.stop_hz,
+            "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
+            "mode": a.mode.value, "sg_hz": a.sg_hz, "image_cancel": a.image_cancel,
+            "span_lock_hz": a.span_lock_hz,
+        }
 
     # ------------------------------------------------------------------ 外への口
 
@@ -339,6 +358,8 @@ class Instrument:
                 self._set_run("stopped")
         elif kind == "worker_exit":
             pass
+        elif kind == "notice":
+            self._notice(item[1], item[2])
 
     # ---- 状態とイベント
 
@@ -526,6 +547,11 @@ class Instrument:
 
     def _cmd__shutdown(self) -> None:
         self._drop_device()
+        self._settings.set("state", self._state_to_save())
+        try:
+            self._settings.save()
+        except OSError as e:
+            self._notice("settings_unwritable", {"message": str(e)})
         self._running = False
 
     def _cmd_get_state(self) -> dict:
@@ -535,7 +561,7 @@ class Instrument:
         b = self._backends.get(backend)
         if b is None:
             raise CommandError("unknown_backend", "backend", {"backend": backend})
-        known = self._known.load()["serials"]
+        known = self._settings.known_serials()
         ports = b.discover()
         for p in ports:
             p["known"] = p.get("serial") in known
@@ -549,7 +575,7 @@ class Instrument:
         if self._device is not None or self._conn == "reconnecting":
             self._drop_device()
             self._conn = "disconnected"
-        known = self._known.load()["serials"]
+        known = self._settings.known_serials()
         if port is None and serial is None:
             raise CommandError("device_not_selected", "serial")
         if port is None:
@@ -570,7 +596,7 @@ class Instrument:
             raise CommandError("open_failed", "port", {"port": port, "message": str(e)}) from e
         ident = device.identity()
         if ident.serial:
-            self._known.remember(ident.serial)
+            self._settings.remember_device(ident.serial)
         self._attach(device, backend)
         return {"identity": self._identity}
 
@@ -579,9 +605,9 @@ class Instrument:
         b = self._backends.get(backend)
         if b is None:
             raise CommandError("unknown_backend", "backend", {"backend": backend})
-        known = self._known.load()
         ports = b.discover()
-        order = ([known["last"]] if known.get("last") else []) + known["serials"]
+        last = self._settings.last_serial()
+        order = ([last] if last else []) + self._settings.known_serials()
         for s in order:
             if any(p.get("serial") == s for p in ports):
                 return self._cmd_connect(backend=backend, serial=s)
@@ -597,7 +623,8 @@ class Instrument:
 
     def _apply(self, request: SweepRequest) -> dict:
         new = self._model.apply(request, self._adopted)
-        changed = new != self._adopted
+        # 機器へ送る中身が変わったときだけ掃引をやり直す（固定の切り替え・知らせだけの違いではやり直さない）
+        changed = _sweep_key(new) != _sweep_key(self._adopted)
         self._adopted = new
         self._last_estimate = new.estimated_sweep_s
         if changed:
@@ -605,7 +632,11 @@ class Instrument:
                 self._single_done = 0
             self._push_job()
         self._changed()
-        return {"adopted": adopted_to_dict(new), "adjustments": adjustments_to_list(new)}
+        out = {"adopted": adopted_to_dict(new), "adjustments": adjustments_to_list(new)}
+        if new.alternative is not None:
+            # 反対の規則で作った結果。画面はこれを「その1回だけ」のボタンにする（設計C §5.11 の 3・4）
+            out["alternative"] = dataclasses.asdict(new.alternative)
+        return out
 
     def _cmd_set_sweep(
         self,
@@ -618,6 +649,8 @@ class Instrument:
         points: Optional[int] = None,
         points_auto: bool = False,
         image_cancel: Optional[bool] = None,
+        span_lock: Optional[bool] = None,
+        one_shot: bool = False,
     ) -> dict:
         for name, v in (("start_hz", start_hz), ("stop_hz", stop_hz), ("center_hz", center_hz),
                         ("span_hz", span_hz), ("rbw_hz", rbw_hz), ("points", points)):
@@ -630,6 +663,7 @@ class Instrument:
             start_hz=start_hz, stop_hz=stop_hz, center_hz=center_hz, span_hz=span_hz,
             edited=tuple(edited), rbw_preference_hz=rbw_hz,
             points=points, image_cancel=image_cancel,
+            span_lock=span_lock, one_shot=bool(one_shot),
         )
         if points_auto:
             req = dataclasses.replace(req, points=0)

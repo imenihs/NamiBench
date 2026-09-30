@@ -92,6 +92,19 @@ class SweepRequest:
     mode: Optional[Mode] = None
     sg_hz: Optional[int] = None
     image_cancel: Optional[bool] = None
+    # Span 固定の ON/OFF（None は引き継ぐ）。ON にした時点の Span が固定 Span になる（設計C §5.11）
+    span_lock: Optional[bool] = None
+    # その1回だけの命令: 固定 Span を変えない（設計C §5.11 の 3）
+    one_shot: bool = False
+
+
+@dataclass(frozen=True)
+class Alternative:
+    """規則で値を動かしたとき、反対の規則で作った結果（設計C §5.11 の 3）。"""
+
+    rule: str  # "keep_span" | "keep_center"
+    start_hz: int
+    stop_hz: int
 
 
 @dataclass(frozen=True)
@@ -121,6 +134,10 @@ class AdoptedSweep:
     tail_gap: bool = False
     # 信用できない条件の知らせ（止めない。設計C §5.3 の2）。コードで持ち、文言は画面側
     warnings: tuple[str, ...] = ()
+    # 固定 Span（Span 固定が OFF のときは None。設計C §5.11）
+    span_lock_hz: Optional[int] = None
+    # この適用で規則により値を動かしたときの反対の結果（無ければ None）
+    alternative: Optional[Alternative] = None
 
     @property
     def center_hz(self) -> int:
@@ -164,6 +181,33 @@ class RawSweep:
     raw_cold: Optional[np.ndarray] = None
     transient_head_points: int = 0
     extra: dict = field(default_factory=dict)
+
+
+@dataclass
+class Frame:
+    """1掃引分の換算済みの値（トレース・マーカー・ノーマライズ・保存が受け取る形。設計F §5.1）。
+
+    values はリニア: 電力は W（float64）、比はリニアの振幅比（実数は float64、複素数は complex128）。
+    axis は機器が測った点（Stop を超える最後の点を含みうる）。表示・マーカー・保存・書き出しは
+    display_start_hz〜display_stop_hz で切る（設計C §5.3）。
+    flags は点ごとの印（bool の配列）: "transient"（前置き不足）・"out_of_cal_range"（補正の範囲外）・
+    "no_reference"（ノーマライズの基準が無い点）など。
+    profile は測った機器の機種のプロファイルの写し（設計Q §2.1）。
+    """
+
+    axis: FreqAxis
+    values: np.ndarray
+    quantity: Quantity
+    value_kind: ValueKind
+    time: float
+    duration_s: float
+    sweep_no: int
+    display_start_hz: int
+    display_stop_hz: int
+    adopted: Optional[AdoptedSweep] = None
+    raw: Optional[RawSweep] = None
+    flags: dict = field(default_factory=dict)
+    profile: dict = field(default_factory=dict)
 
 
 class DeviceError(Exception):

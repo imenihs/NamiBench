@@ -134,19 +134,88 @@ class TestEditedField(Base):
 class TestClamp(Base):
     """設計C §5.2 範囲に収める。"""
 
-    def test_center_over_upper_keeps_span(self):
+    def test_center_over_upper_keeps_center(self):
+        # 既定は Center を守って Span を縮める（設計C §5.11 の 1）
         cur = self.at(1000 * MHZ, 1100 * MHZ)
         s = self.req(cur, center_hz=12080 * MHZ, edited=("center_hz",))
-        self.assertEqual((s.start_hz, s.stop_hz), (12000 * MHZ, 12100 * MHZ))
-        a = adj_map(s)["center_hz"]
-        self.assertEqual((a.requested, a.adopted, a.reason), (12080 * MHZ, 12050 * MHZ, "upper_limit"))
+        self.assertEqual((s.start_hz, s.stop_hz), (12060 * MHZ, 12100 * MHZ))
+        a = adj_map(s)["span_hz"]
+        self.assertEqual((a.requested, a.adopted, a.reason), (100 * MHZ, 40 * MHZ, "keep_center"))
+        # 反対の結果（Span を守って Center を動かす）を1つ添える
+        self.assertEqual((s.alternative.rule, s.alternative.start_hz, s.alternative.stop_hz),
+                         ("keep_span", 12000 * MHZ, 12100 * MHZ))
         self.assertDeviceOk(s)
 
-    def test_center_below_lower_keeps_span(self):
+    def test_center_below_lower_keeps_min_span(self):
+        # Center 自体が範囲の外: 端に合わせ、縮めると最小 Span を割るので最小 Span を守って内側へ
         cur = self.at(1000 * MHZ, 1100 * MHZ)
         s = self.req(cur, center_hz=-130 * MHZ, edited=("center_hz",))
-        self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, 0))
-        self.assertEqual(adj_map(s)["center_hz"].reason, "lower_limit")
+        self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, MIN_HZ + 49_900))
+        self.assertDeviceOk(s)
+
+    def test_full_range_center_input_takes_effect(self):
+        # 範囲いっぱいで Center に 1200MHz → Center 1200MHz・Span 2600MHz（設計C §5.11 の例）
+        s = self.req(self.m.default(), center_hz=1200 * MHZ, edited=("center_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (-100 * MHZ, 2500 * MHZ))
+        self.assertEqual(s.center_hz, 1200 * MHZ)
+        # 反対の規則（Span を守る）の結果は範囲いっぱいのまま。いまの結果と違うのでボタンに出す
+        self.assertEqual((s.alternative.rule, s.alternative.start_hz, s.alternative.stop_hz),
+                         ("keep_span", MIN_HZ, MAX_HZ))
+
+    def test_span_1000_center_11900(self):
+        cur = self.req(self.m.default(), center_hz=6000 * MHZ, span_hz=1000 * MHZ,
+                       edited=("center_hz", "span_hz"))
+        s = self.req(cur, center_hz=11900 * MHZ, edited=("center_hz",))
+        self.assertEqual((s.center_hz, s.span_hz), (11900 * MHZ, 400 * MHZ))
+        self.assertEqual((s.alternative.start_hz, s.alternative.stop_hz), (11100 * MHZ, 12100 * MHZ))
+
+    def test_span_lock_keeps_span_and_lock_value(self):
+        cur = self.req(self.m.default(), center_hz=6000 * MHZ, span_hz=1000 * MHZ,
+                       edited=("center_hz", "span_hz"))
+        cur = self.req(cur, span_lock=True)
+        self.assertEqual(cur.span_lock_hz, 1000 * MHZ)
+        s = self.req(cur, center_hz=11900 * MHZ, edited=("center_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (11100 * MHZ, 12100 * MHZ))
+        self.assertEqual(adj_map(s)["center_hz"].reason, "keep_span")
+        self.assertEqual((s.alternative.rule, s.alternative.start_hz, s.alternative.stop_hz),
+                         ("keep_center", 11700 * MHZ, 12100 * MHZ))
+        # その1回だけの命令（反対の結果のボタン）は固定 Span を変えない
+        b = self.req(s, start_hz=s.alternative.start_hz, stop_hz=s.alternative.stop_hz,
+                     edited=("start_hz", "stop_hz"), one_shot=True)
+        self.assertEqual((b.span_hz, b.span_lock_hz), (400 * MHZ, 1000 * MHZ))
+        # 次に Center を触ると、固定した 1000MHz が守られる
+        n = self.req(b, center_hz=6000 * MHZ, edited=("center_hz",))
+        self.assertEqual(n.span_hz, 1000 * MHZ)
+        # 利用者が Span を直接変えると固定 Span も変わる
+        d = self.req(n, span_hz=200 * MHZ, edited=("span_hz",))
+        self.assertEqual(d.span_lock_hz, 200 * MHZ)
+        # OFF で固定 Span は無くなる
+        off = self.req(d, span_lock=False)
+        self.assertIsNone(off.span_lock_hz)
+
+    def test_span_lock_full_range_center(self):
+        # 固定中で Span が範囲いっぱい: Center は動けない。反対の結果は Center を守って縮めたもの
+        cur = self.req(self.m.default(), span_lock=True)
+        s = self.req(cur, center_hz=1200 * MHZ, edited=("center_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, MAX_HZ))
+        self.assertEqual((s.alternative.start_hz, s.alternative.stop_hz), (-100 * MHZ, 2500 * MHZ))
+
+    def test_center_boundaries_both_rules(self):
+        # 設計C §5.11 の 6: 下限 + 最小 Span/2 の前後・上限 − 最小 Span/2 の前後・端ちょうど・その外
+        half = 49_900 // 2
+        for lock in (False, True):
+            base = self.req(self.m.default(), center_hz=6000 * MHZ, span_hz=100 * MHZ,
+                            edited=("center_hz", "span_hz"))
+            base = self.req(base, span_lock=lock)
+            for c in (MIN_HZ + half - 100, MIN_HZ + half, MIN_HZ + half + 100, MIN_HZ, MIN_HZ - 100,
+                      MAX_HZ - half - 100, MAX_HZ - half, MAX_HZ - half + 100, MAX_HZ, MAX_HZ + 100):
+                s = self.req(base, center_hz=c, edited=("center_hz",))
+                self.assertGreaterEqual(s.start_hz, MIN_HZ, (lock, c))
+                self.assertLessEqual(s.stop_hz, MAX_HZ, (lock, c))
+                self.assertGreaterEqual(s.span_hz, 49_900, (lock, c))
+                if lock:
+                    self.assertEqual(s.span_hz, 100 * MHZ, (lock, c))
+                self.assertDeviceOk(s)
 
     def test_center_and_span_wider_than_range(self):
         s = self.req(center_hz=6000 * MHZ, span_hz=20000 * MHZ, edited=("center_hz", "span_hz"))
