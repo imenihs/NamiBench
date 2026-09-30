@@ -1,0 +1,58 @@
+{
+  "format": "pygigast-device-profile",
+  "version": 1,
+  "model": "gigast-v5",
+  "display_name": "GigaSt v5",
+  "value_kind": "real",
+  "measurements": ["sa", "tg", "s11", "sg", "nf"],
+  "freq": {
+    "unit_hz": 100,
+    "min_hz": -100000000,
+    "max_hz": 12100000000,
+    "points_max": 12000,
+    "points_device_max": 12500,
+    "points_default": 500,
+    "auto_step": {"span_threshold_hz": 500000000, "divisions": 500, "wide_step_hz": 1000000},
+    "step_max_hz": 1000000,
+    "zero_span_points_default": 500
+  },
+  "rbw": {
+    "choices_hz": [180000, 30000, 15000],
+    "default_hz": 180000,
+    "fixed_hz": 180000,
+    "selectable_modes": ["sa", "sg"],
+    "selectable_span_max_hz": 50000000,
+    "zero_span_default_hz": 180000
+  },
+  "unreliable": {
+    "rbw180k_span_below_hz": 300000,
+    "rbw30k_step_below_hz": 2000,
+    "rbw15k_always": true
+  },
+  "source": {
+    "tg": true,
+    "sg": {"min_hz": 1000000, "max_hz": 4000000000, "unit_hz": 1000},
+    "band_edges_hz": [1000000000, 2000000000, 3000000000],
+    "level_adjustable": false
+  },
+  "sweep_quirks": {
+    "transient_s": 0.030,
+    "transient_basis": "estimated_from_one_unit"
+  },
+  "timing": {
+    "first_byte_s": [0.022, 0.019],
+    "per_point_s": [0.00014, 0.00005],
+    "per_point_s_source": [0.000084, 0.0001015],
+    "note": "each pair is [a, b] meaning a + b * Sample; per_point_s_source applies while TG or SG output is on"
+  },
+  "internal_spurs_hz": {
+    "fixed": [956000000, 1480000000],
+    "sg_offset": [1480000000],
+    "basis": "estimated_from_one_unit"
+  },
+  "raw": {
+    "encoding": "gigast_ad_u16",
+    "ad_counts_per_80db": 1986
+  },
+  "rtl_tcp": {"mode": "envelope_only"}
+}
