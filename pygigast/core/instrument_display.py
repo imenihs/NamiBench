@@ -17,7 +17,7 @@ import numpy as np
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
-from .marker.markers import FreqOffset, LevelOffset, Marker
+from .marker.markers import Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .normalize import apply_reference
 from .trace import ConditionChange, TraceAction, TraceSet, to_db
@@ -79,53 +79,6 @@ def apply_trace_settings(t, d: dict) -> tuple[str, ...]:
     )
 
 
-def marker_to_def(m: Marker) -> dict:
-    """マーカー1本の置き方（読み値を含まない）。状態の保存と保存ファイル（設計H §7.1 /markers）に使う。"""
-    return {
-        "kind": m.kind.value,
-        "number": m.number,
-        "trace": m.trace,
-        "target_hz": int(m.target_hz),
-        "ref": m.ref,
-        "peak_track": m.peak_track,
-        "freq_offsets": [{"sign": o.sign.value, "delta_hz": int(o.delta_hz)} for o in m.freq_offsets],
-        "level_offsets": [{"sign": o.sign.value, "delta_db": float(o.delta_db)} for o in m.level_offsets],
-        "bandwidth_n_db": [float(x) for x in m.bandwidth_n_db],
-        "threshold": None if m.threshold is None else {"level": m.threshold.level, "side": m.threshold.side},
-    }
-
-
-def marker_from_def(d: dict) -> Marker:
-    th = d.get("threshold")
-    return Marker(
-        kind=Kind(d["kind"]),
-        number=int(d["number"]),
-        trace=int(d["trace"]),
-        target_hz=int(d["target_hz"]),
-        ref=d.get("ref"),
-        peak_track=bool(d.get("peak_track", False)),
-        freq_offsets=[FreqOffset(Sign(o["sign"]), int(o["delta_hz"])) for o in d.get("freq_offsets", [])],
-        level_offsets=[LevelOffset(Sign(o["sign"]), float(o["delta_db"])) for o in d.get("level_offsets", [])],
-        bandwidth_n_db=tuple(float(x) for x in d.get("bandwidth_n_db", [])),
-        threshold=None if th is None else ThresholdSetting(float(th["level"]), str(th["side"])),
-    )
-
-
-def restore_markers(table: MarkerTable, defs: list) -> None:
-    """保存した置き方からマーカー表を作り直す。番号とデルタの相手をそのまま戻すため表の中身へ直接入れる
-    （MarkerTable に戻す口が無いので。欲しい口は報告済み）。読めない行は飛ばす。"""
-    table.clear()
-    for d in defs or []:
-        try:
-            m = marker_from_def(d)
-        except (KeyError, TypeError, ValueError):
-            continue
-        table._markers[m.id] = m  # noqa: SLF001
-    for m in table.markers():
-        if m.ref is not None and m.ref not in table._markers:  # noqa: SLF001
-            m.ref = None
-
-
 def _finite_or_none(x) -> Optional[float]:
     return None if x is None or not np.isfinite(x) else float(x)
 
@@ -171,12 +124,8 @@ class DisplayMixin:
                 apply_trace_settings(self._traces[int(d["number"])], d)
             except (KeyError, TypeError, ValueError):
                 pass
-        restore_markers(self._markers, st.get("markers") or [])
-        xy = st.get("xy") or {}
-        try:
-            self._markers.set_xy(**{k: xy.get(k) for k in ("x1_hz", "x2_hz", "y1", "y2")})
-        except (KeyError, TypeError, ValueError):
-            pass
+        # 読めない行・読めない XY は飛ばす（MarkerTable.from_defs）
+        self._markers.from_defs({"markers": st.get("markers") or [], "xy": st.get("xy") or {}})
         amp = st.get("amplitude") or {}
         for k in self._amplitude:
             if k in amp:
@@ -186,8 +135,7 @@ class DisplayMixin:
     def _display_state_to_save(self) -> dict:
         return {
             "traces": [trace_settings(t) for t in self._traces],
-            "markers": [marker_to_def(m) for m in self._markers.markers()],
-            "xy": dataclasses.asdict(self._markers.xy),
+            **{k: v for k, v in self._markers.to_defs().items() if k in ("markers", "xy")},
             "amplitude": dict(self._amplitude),
         }
 
@@ -568,7 +516,7 @@ class DisplayMixin:
         result: dict = {"id": m.id}
         if trace is not _UNSET:
             self._trace_of(trace)
-            m.trace = trace
+            self._markers.set_trace(m.id, trace)
         try:
             if ref is not _UNSET:
                 self._markers.set_ref(m.id, ref)

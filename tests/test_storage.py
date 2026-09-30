@@ -289,6 +289,18 @@ class TestH5(TmpCase):
 
 
 class TestRecording(TmpCase):
+    def test_public_started_at_and_stopped(self):
+        before = time.time()
+        rec = Recorder(self.dir / "active_props.sqlite", header())
+        rec.wait_opened(5)
+        self.assertGreaterEqual(rec.started_at, before)
+        self.assertLessEqual(rec.started_at, time.time())
+        self.assertFalse(rec.stopped)
+        rec.stop().result(10)
+        self.assertTrue(rec.stopped)
+        with self.assertRaises(AttributeError):
+            rec.stopped = False  # 読むだけ
+
     def test_record_segments_and_convert(self):
         path = new_recording_path(self.dir)
         self.assertTrue(path.name.startswith("active_"))

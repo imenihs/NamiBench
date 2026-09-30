@@ -256,6 +256,72 @@ class MarkerTable:
     def clear(self) -> None:
         self._markers.clear()
 
+    def set_trace(self, marker_id: str, trace: int) -> None:
+        """載るトレースを替える。置いた周波数はそのまま（読むときに新しいトレースの最も近い点へ載る）。"""
+        if isinstance(trace, bool) or not isinstance(trace, int):
+            raise TypeError("trace は int")
+        self._markers[marker_id].trace = trace
+
+    # ---- 置き方の書き出し・読み戻し（状態の保存・保存ファイル: 設計O §1.2・設計H §7.1） ----
+
+    def to_defs(self) -> dict:
+        """表の置き方（読み値を含まない）を JSON にできる形で返す。
+
+        markers は表の並び（P・M を番号順）で、番号・種類・トレース・置いた周波数・デルタの基準・
+        ピーク追従・オフセット・機能を持つ。xy は XY カーソル、excursion_db・peak_threshold はピーク探索の設定。
+        """
+        return {
+            "markers": [marker_to_def(m) for m in self.markers()],
+            "xy": {"x1_hz": self.xy.x1_hz, "x2_hz": self.xy.x2_hz, "y1": self.xy.y1, "y2": self.xy.y2},
+            "excursion_db": float(self.excursion_db),
+            "peak_threshold": None if self.peak_threshold is None else float(self.peak_threshold),
+        }
+
+    def from_defs(self, defs) -> list[int]:
+        """to_defs の形から表を作り直す。番号とデルタの相手をそのまま戻す。
+
+        defs は to_defs の辞書か、markers の行の並びだけ（古い保存の形）。読めない行・番号が範囲の外の行・
+        同じ番号の2行目は飛ばし、飛ばした行の位置（0 始まり）を返す。相手のいないデルタの基準は外す。
+        xy が読めないときは XY カーソルを外したままにする。
+        """
+        if isinstance(defs, dict):
+            rows = defs.get("markers") or []
+            xy = defs.get("xy")
+            exc = defs.get("excursion_db")
+            thr = defs.get("peak_threshold", self.peak_threshold)
+        else:
+            rows, xy, exc, thr = defs or [], None, None, self.peak_threshold
+        self._markers.clear()
+        self.xy = XYCursors()
+        skipped: list[int] = []
+        for i, d in enumerate(rows):
+            try:
+                m = marker_from_def(d)
+            except (KeyError, TypeError, ValueError, AttributeError):
+                skipped.append(i)
+                continue
+            if not 1 <= m.number <= MAX_PER_KIND or m.id in self._markers:
+                skipped.append(i)
+                continue
+            if m.kind != Kind.PEAK:
+                m.peak_track = False  # ピーク追従は P だけ（set_peak_track と同じ決まり）
+            self._markers[m.id] = m
+        for m in self._markers.values():
+            if m.ref is not None and (m.ref not in self._markers or m.ref == m.id):
+                m.ref = None
+        if isinstance(xy, dict):
+            try:
+                self.set_xy(**{k: xy.get(k) for k in ("x1_hz", "x2_hz", "y1", "y2")})
+            except (KeyError, TypeError, ValueError):
+                self.xy = XYCursors()
+        try:
+            if exc is not None and float(exc) > 0:
+                self.excursion_db = float(exc)
+            self.peak_threshold = None if thr is None else float(thr)
+        except (TypeError, ValueError):
+            pass
+        return skipped
+
     # ---- 置き方・動かし方（設計G §3.2） ----
 
     def set_frequency(self, marker_id: str, freq_hz: int, view: TraceView) -> OpResult:
@@ -623,3 +689,41 @@ class MarkerTable:
         if lo == hi:
             return Command(ST_SAME_FREQUENCY)
         return Command(ST_OK, SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz")))
+
+
+# ---------------------------------------------------------------------------
+# マーカー1本の置き方の辞書（MarkerTable.to_defs・from_defs と保存ファイルの /markers が使う）
+# ---------------------------------------------------------------------------
+
+
+def marker_to_def(m: Marker) -> dict:
+    """マーカー1本の置き方（読み値を含まない）。"""
+    return {
+        "kind": m.kind.value,
+        "number": m.number,
+        "trace": m.trace,
+        "target_hz": int(m.target_hz),
+        "ref": m.ref,
+        "peak_track": m.peak_track,
+        "freq_offsets": [{"sign": o.sign.value, "delta_hz": int(o.delta_hz)} for o in m.freq_offsets],
+        "level_offsets": [{"sign": o.sign.value, "delta_db": float(o.delta_db)} for o in m.level_offsets],
+        "bandwidth_n_db": [float(x) for x in m.bandwidth_n_db],
+        "threshold": None if m.threshold is None else {"level": m.threshold.level, "side": m.threshold.side},
+    }
+
+
+def marker_from_def(d: dict) -> Marker:
+    """marker_to_def の逆。値の形が違えば KeyError・TypeError・ValueError。"""
+    th = d.get("threshold")
+    return Marker(
+        kind=Kind(d["kind"]),
+        number=int(d["number"]),
+        trace=int(d["trace"]),
+        target_hz=int(d["target_hz"]),
+        ref=d.get("ref"),
+        peak_track=bool(d.get("peak_track", False)),
+        freq_offsets=[FreqOffset(Sign(o["sign"]), int(o["delta_hz"])) for o in d.get("freq_offsets", [])],
+        level_offsets=[LevelOffset(Sign(o["sign"]), float(o["delta_db"])) for o in d.get("level_offsets", [])],
+        bandwidth_n_db=tuple(float(x) for x in d.get("bandwidth_n_db", [])),
+        threshold=None if th is None else ThresholdSetting(float(th["level"]), str(th["side"])),
+    )

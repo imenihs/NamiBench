@@ -5,6 +5,7 @@
 機器との送受信は機器スレッドが行い、結果を制御スレッドの待ち行列へ戻す。
 ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
+rtl_tcp の出口は instrument_rtltcp.py。
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from .devices.base import Device, load_profile
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
 from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
+from .instrument_rtltcp import RtlTcpMixin
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
 from .settings import Settings
@@ -151,7 +153,7 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, FilesMixin):
+class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -168,6 +170,8 @@ class Instrument(DisplayMixin, FilesMixin):
             from .devices.gigast.driver import timing_fn as gigast_timing_fn
 
             timing_fn = gigast_timing_fn(self._profile)
+        # 1回の掃引の見積もり（rtl_tcp の出口が点の時刻を出すのにも使う）
+        self._timing_fn = timing_fn
         self._model = SweepModel(self._profile, timing_fn)
         root = data_root or app_data_root()
         self._root = Path(root)
@@ -206,10 +210,13 @@ class Instrument(DisplayMixin, FilesMixin):
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
         self._init_display(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
+        self._init_rtltcp()
 
         self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
         self._running = True
         self._thread.start()
+        # rtl_tcp を出すと決めていれば起動時に始める（設計Q §4.3。既定は出さない）
+        self._q.put(("call", self._start_rtltcp_if_enabled))
         if self._settings.load_problem:
             # 設定が読めなかったことを1回知らせる（設計O §1.1。黙って初期値にしない）
             self._q.put(("notice", "settings_reset", self._settings.load_problem))
@@ -390,6 +397,7 @@ class Instrument(DisplayMixin, FilesMixin):
             "files": self._files_state(),
             "recording": self._recording_state(),
             "tasks": self._tasks_state(),
+            "rtltcp": self._rtltcp_state(),
         }
 
     def _set_conn(self, state: str) -> None:
@@ -448,6 +456,7 @@ class Instrument(DisplayMixin, FilesMixin):
             return
         self._sweep_count += 1
         frame = self._build_frame(raw)
+        self._rtltcp_on_sweep(raw, frame)  # 相手がいなければ何もしない（設計Q §4.3）
         self._last_raw = raw
         self._process_frame(frame)
         # 記録は書き込みスレッドへ渡すだけで待たない（設計H §2・§7.2）
@@ -534,6 +543,7 @@ class Instrument(DisplayMixin, FilesMixin):
     # ------------------------------------------------------------------ 命令
 
     def _cmd__shutdown(self) -> None:
+        self._shutdown_rtltcp()
         self._drop_device()
         self._shutdown_files()
         self._settings.set("state", self._state_to_save())

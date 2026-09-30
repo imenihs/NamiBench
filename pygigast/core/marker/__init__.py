@@ -29,6 +29,8 @@ from .markers import (
     Sign,
     ThresholdSetting,
     XYCursors,
+    marker_from_def,
+    marker_to_def,
     pick_trace,
     reading_at,
 )

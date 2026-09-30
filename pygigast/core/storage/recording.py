@@ -198,6 +198,16 @@ class Recorder:
         self._opened: concurrent.futures.Future = self._writer.submit(self._open)
 
     # ---- 呼ぶ側 ----
+    @property
+    def started_at(self) -> float:
+        """記録を始めた時刻（time.time() の秒）。読むだけ。"""
+        return self._started_at
+
+    @property
+    def stopped(self) -> bool:
+        """stop か finish を呼んだ後か（以後の append は受けない）。読むだけ。"""
+        return self._stopped
+
     def wait_opened(self, timeout: Optional[float] = None) -> None:
         """作業ファイルを作り終えるまで待つ（作れなければその例外）。試験と開始の確認に使う。"""
         self._opened.result(timeout)

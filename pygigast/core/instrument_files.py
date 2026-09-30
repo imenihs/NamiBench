@@ -22,7 +22,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from .instrument_common import CommandError
-from .instrument_display import NORMALIZED_MODES, UNIT_OF, db_values, marker_to_def
+from .instrument_display import NORMALIZED_MODES, UNIT_OF, db_values
 from .normalize import (
     KIND_FINE,
     KIND_WIDE,
@@ -138,7 +138,7 @@ class FilesMixin:
     def _shutdown_files(self) -> None:
         for t in self._tasks.values():
             t.cancel.set()
-        if self._recorder is not None and not self._recorder._stopped:  # noqa: SLF001
+        if self._recorder is not None and not self._recorder.stopped:
             # 記録中に閉じた: 作業ファイルは残り、次の起動でまとめるか尋ねる（設計H §4）
             self._recorder.stop()
         self._writer.close(WRITER_CLOSE_TIMEOUT_S)
@@ -515,7 +515,7 @@ class FilesMixin:
         header = self._header(note)
         raw = self._last_raw
         traces = self._live_traces_data()
-        markers = [marker_to_def(m) for m in self._markers.markers()]
+        markers = self._markers.to_defs()["markers"]
         quantity = self._last_quantity
         norm = self._normalization_record()
         if raw is None and not traces:
@@ -673,7 +673,7 @@ class FilesMixin:
     def _record_sweep(self, raw, quantity, value_kind) -> None:
         """掃引1回を記録の待ち行列へ入れる（待たない）。"""
         rec = self._recorder
-        if rec is None or rec._stopped:  # noqa: SLF001
+        if rec is None or rec.stopped:
             return
         try:
             rec.append(raw, quantity=quantity, value_kind=value_kind, normalization=self._normalization_record(),
@@ -687,11 +687,11 @@ class FilesMixin:
             return {"active": False, "stopped": False, "last": self._rec_last}
         s = self._rec_stats
         return {
-            "active": not rec._stopped,  # noqa: SLF001
-            "stopped": rec._stopped,  # noqa: SLF001
+            "active": not rec.stopped,
+            "stopped": rec.stopped,
             "path": str(rec.path),
-            "started_at": rec._started_at,  # noqa: SLF001
-            "elapsed_s": time.time() - rec._started_at,  # noqa: SLF001
+            "started_at": rec.started_at,
+            "elapsed_s": time.time() - rec.started_at,
             "sweeps": s.sweeps_committed if s else 0,
             "segments": s.segments if s else 0,
             "file_bytes": s.file_bytes if s else 0,
@@ -716,7 +716,7 @@ class FilesMixin:
     def _cmd_record_stop(self) -> dict:
         """記録を止める（作業ファイルは残る。まとめるのは record_finish）。"""
         rec = self._recorder
-        if rec is None or rec._stopped:  # noqa: SLF001
+        if rec is None or rec.stopped:
             raise self._error("not_recording")
         fut = rec.stop()
 
@@ -736,7 +736,7 @@ class FilesMixin:
         if not path:
             raise self._error("path_required", "path")
         traces = self._live_traces_data()
-        markers = [marker_to_def(m) for m in self._markers.markers()]
+        markers = self._markers.to_defs()["markers"]
         work = str(rec.path)
 
         def then(out) -> dict:
