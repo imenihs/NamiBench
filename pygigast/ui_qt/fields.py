@@ -293,6 +293,9 @@ class FreqField(ValueField):
         self._hz = hz
         self.edit.show_value(self._to_text(hz))
 
+    def hz(self) -> int:
+        return self._hz
+
     def _commit_text(self, text: str) -> None:
         try:
             hz = parse_freq_hz(text)
@@ -309,7 +312,7 @@ class FreqField(ValueField):
 
 
 class DbField(ValueField):
-    """dB の欄（REF レベルなど）。値は float。表示だけの値なのでコアへ送らない。"""
+    """dB の欄（REF レベルなど）。値は float。確定した値を on_commit へ渡す（どこへ送るかは呼び出し側）。"""
 
     def __init__(self, name: str, unit: str, on_commit: Callable[[float], None], big: bool = True) -> None:
         super().__init__(name, big)
@@ -321,11 +324,19 @@ class DbField(ValueField):
 
     def set_value(self, v: float) -> None:
         self._value = v
-        self.edit.show_value(f"{v:.1f} {self._unit}")
+        self.edit.show_value(f"{v:.1f} {self._unit}".rstrip())
+
+    def set_unit(self, unit: str) -> None:
+        if unit != self._unit:
+            self._unit = unit
+            self.set_value(self._value)
+
+    def value(self) -> float:
+        return self._value
 
     def _commit_text(self, text: str) -> None:
         try:
-            v = parse_db(text.replace(self._unit, ""))
+            v = parse_db(text.replace(self._unit, "") if self._unit else text)
         except ParseError:
             self.flash_note("読めない値です")
             self.set_value(self._value)

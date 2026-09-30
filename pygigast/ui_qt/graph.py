@@ -4,6 +4,7 @@
 - 周波数軸の上でホイール → カーソルの位置を中心に拡大・縮小
 - レベル軸の上でホイール → REF レベルを1目盛ずつ、Ctrl+ホイール → dB/div を1段
 - レベル軸をドラッグ → REF レベルを連続で動かす（つかんだ目盛がマウスに付いてくる）
+- クリック → その位置にマーカーを置く（近いトレースを選ぶのは画面側: 設計G §3.2）
 - 右クリック → 名前の付いた操作のメニュー（中身は画面側が決める。U-12）
 
 ここでは操作を読み取ってシグナルにするだけで、コアへは何も送らない（送るのは画面側）。
@@ -23,6 +24,7 @@ class GraphSignals(QObject):
     level_wheel = Signal(int, bool)             # ホイールの段数、Ctrl を押していたか
     level_drag = Signal(bool, float)            # ドラッグの始まりか、始まりからの移動（グラフの高さに対する割合。下へ +）
     context_requested = Signal(float, float, QPoint)  # 軸の値 x・y と、メニューを出す画面の位置
+    clicked = Signal(float, float)              # 左クリックした位置（軸の値 x・y）
 
 
 def _in_view(axis: pg.AxisItem, ev) -> bool:
@@ -122,6 +124,11 @@ class _GraphViewBox(pg.ViewBox):
             ev.accept()
             p = self.mapSceneToView(ev.scenePos())
             self._sig.context_requested.emit(p.x(), p.y(), ev.screenPos().toPoint())
+            return
+        if ev.button() == Qt.MouseButton.LeftButton and self.freq_ops_enabled:
+            ev.accept()
+            p = self.mapSceneToView(ev.scenePos())
+            self._sig.clicked.emit(p.x(), p.y())
             return
         super().mouseClickEvent(ev)
 

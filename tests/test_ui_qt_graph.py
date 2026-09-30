@@ -117,11 +117,12 @@ class GraphOperationTest(_Base):
         self.assertEqual(self.win.f_start.edit.text(), self.win.f_start._to_text(sw["start_hz"]))
 
     def test_short_drag_is_ignored(self):
+        """数画素のドラッグは範囲の選択にしない（クリックのぶれ）。クリックならマーカーを置くだけ（G §3.2）。"""
         self.set_sweep(start_hz=0, stop_hz=2_000_000_000)
-        v0 = self.api.get_state().result(5)["version"]
         p0 = self.view_to_widget(500e6, -50)
         self.drag(p0, p0 + QPoint(2, 0))
-        self.assertEqual(self.api.get_state().result(5)["version"], v0)
+        sw = self.sweep()
+        self.assertEqual((sw["start_hz"], sw["stop_hz"]), (0, 2_000_000_000))
 
     def test_freq_axis_wheel_zooms_around_cursor(self):
         self.set_sweep(start_hz=0, stop_hz=2_000_000_000)
@@ -137,7 +138,7 @@ class GraphOperationTest(_Base):
         self.assertAlmostEqual(frac0, frac1, delta=0.01)
 
     def test_level_axis_wheel_moves_ref_one_division(self):
-        v0 = self.api.get_state().result(5)["version"]
+        sw0 = self.sweep()
         self.win._set_ref(-20.0)
         self.wheel(self.axis_point("left"), clicks=1)
         self.assertAlmostEqual(self.win._ref_dbm, -10.0)
@@ -145,8 +146,9 @@ class GraphOperationTest(_Base):
         self.assertAlmostEqual(self.win._ref_dbm, -30.0)
         top = self.vb.viewRange()[1][1]
         self.assertAlmostEqual(top, -30.0, delta=0.1)
-        # 縦軸は表示だけの値。掃引条件は変わらない（J §4.1）
-        self.assertEqual(self.api.get_state().result(5)["version"], v0)
+        # 縦軸は表示だけの値。掃引条件は変わらず、コアの振幅が正本（J §4.1）
+        self.assertEqual(self.sweep(), sw0)
+        self.assertEqual(self.api.get_state().result(5)["amplitude"]["ref_level"], -30.0)
 
     def test_ctrl_wheel_changes_db_per_div_and_keeps_ref(self):
         self.win._set_ref(-10.0)
@@ -185,9 +187,9 @@ class GraphOperationTest(_Base):
         acts = {a.objectName(): a for a in m.actions()}
         self.assertIn("ctx_center", acts)
         self.assertIn("ctx_ref", acts)
-        # マーカーの項目は、コアがマーカーを持つとき（状態に markers がある）だけ出す
-        has_markers = "markers" in self.api.get_state().result(5)
-        self.assertEqual("ctx_marker" in acts, has_markers)
+        # 「ここにマーカー」はいつも出す（ゼロスパンでは無効にして理由）
+        self.assertIn("ctx_marker", acts)
+        self.assertTrue(acts["ctx_marker"].isEnabled())
         acts["ctx_center"].trigger()
         self.pump()
         self.assertEqual(self.sweep()["center_hz"], 700_000_000)

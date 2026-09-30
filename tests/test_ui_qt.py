@@ -84,13 +84,15 @@ class MainWindowInputTest(unittest.TestCase):
         self.assertEqual(e.text(), before)
 
     def test_ref_and_div_do_not_touch_sweep(self):
-        v0 = self.api.get_state().result(5)["version"]
+        """REF レベルは表示だけの値。掃引条件は変えず、コアの振幅（amplitude）へ送る（J §4.1）。"""
+        sw0 = self.api.get_state().result(5)["sweep"]
         self.type_into(self.win.f_ref, "-20")
         vb = self.win.plot.getPlotItem().getViewBox().viewRange()[1]
         self.assertAlmostEqual(vb[1], -20, delta=0.1)
         self.assertAlmostEqual(vb[0], -120, delta=0.1)
-        self.assertEqual(self.api.get_state().result(5)["version"], v0)
-
+        st = self.api.get_state().result(5)
+        self.assertEqual(st["sweep"], sw0)
+        self.assertEqual(st["amplitude"]["ref_level"], -20.0)
 
 if __name__ == "__main__":
     unittest.main()
