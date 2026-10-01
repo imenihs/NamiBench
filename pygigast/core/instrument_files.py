@@ -42,6 +42,8 @@ from .normalize import (
 from .storage import Cancelled, StorageError, WriterThread
 from .storage import adopted_to_dict as storage_conditions
 from .storage.export import export_traces_csv
+from .display_export import export_display_csv
+from .view_units import shift_values
 from .storage.h5file import FileHeader, H5Record, TraceData, can_store, save_snapshot
 from .storage.recording import (
     WORK_PREFIX,
@@ -627,7 +629,7 @@ class FilesMixin:
         for tid, td in e["traces"].items():
             f = td.freqs()
             rows.append({"id": tid, "number": td.number, "quantity": td.quantity.value,
-                         "unit": unit_for(td.quantity, td.profile), "points": int(f.size),
+                         "unit": self._level_shift(td.quantity, td.profile)[1], "points": int(f.size),
                          "start_hz": int(f[0]) if f.size else None, "stop_hz": int(f[-1]) if f.size else None,
                          "info": td.info})
         out["traces"] = rows
@@ -653,6 +655,8 @@ class FilesMixin:
         else:
             axis = {"freqs_hz": f.astype(np.int64), "points": int(f.size)}
         pts = {k: np.asarray(v, dtype=bool) for k, v in td.flags.items()}
+        # 表示の単位・外部補正の分だけずらす（測定中のトレースと同じ: core/view_units.py）
+        shift, unit = self._level_shift(td.quantity, td.profile)
         return {
             "trace": tid,
             "source": "file",
@@ -662,8 +666,8 @@ class FilesMixin:
             "display": {"start_hz": int(f[0]) if f.size else None, "stop_hz": int(f[-1]) if f.size else None,
                         "tail_gap": False},
             "quantity": td.quantity.value,
-            "unit": unit_for(td.quantity, td.profile),
-            "values": db_values(td.values, td.quantity),
+            "unit": unit,
+            "values": shift_values(db_values(td.values, td.quantity), shift),
             "action": td.info.get("action"),
             "average_type": td.info.get("average_type"),
             "count": td.info.get("current_count"),
@@ -708,9 +712,18 @@ class FilesMixin:
             "exported_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
 
-        def submit(progress, cancel):
-            return self._writer.submit(export_traces_csv, path, tds, meta=meta, unit=unit,
-                                       f_range_hz=(start_hz, stop_hz), progress=progress, cancel=cancel)
+        shifts = [self._level_shift(td.quantity, td.profile) for td in tds]
+        offset = int(self._view_opts.get("freq_offset_hz") or 0)
+        if unit is None and (offset or any(s for s, _u in shifts)):
+            # 表示の単位・外部補正・周波数オフセットを当てて書く（画面と同じ数: 設計O。core/display_export.py）
+            def submit(progress, cancel):
+                return self._writer.submit(export_display_csv, path, tds, meta=meta, shifts=[s for s, _u in shifts],
+                                           unit_label=shifts[0][1] or "dB", freq_offset_hz=offset,
+                                           f_range_hz=(start_hz, stop_hz), progress=progress, cancel=cancel)
+        else:
+            def submit(progress, cancel):
+                return self._writer.submit(export_traces_csv, path, tds, meta=meta, unit=unit,
+                                           f_range_hz=(start_hz, stop_hz), progress=progress, cancel=cancel)
 
         return self._start_task("export_csv", submit,
                                 lambda r: {"path": str(r.path), "rows": r.rows, "warnings": list(r.warnings)},

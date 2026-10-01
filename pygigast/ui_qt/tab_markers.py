@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import ParseError, format_freq, parse_db, parse_freq_hz
-from . import texts
+from . import texts, widget_sync
 from .fields import DbField, FreqField
 from .tab_traces import scroll, set_enabled
 from .theme import number_font
@@ -184,6 +184,11 @@ class MarkerTab(QWidget):
         row.addWidget(self.pk_trace)
         row.addWidget(self.pk_margin, 1)
         row.addWidget(self.pk_find)
+        # ピークの一覧だけを別の窓に出す（J §4.3.2。押したときの動きは main_window が docks につなぐ）
+        self.pk_detach = QPushButton(L["detach"])
+        self.pk_detach.setObjectName("small")
+        self.pk_detach.setToolTip(texts.w("detach_item", part=L["part_peaks"]))
+        row.addWidget(self.pk_detach)
         v.addLayout(row)
         self.pk_table = QTableWidget(0, 4)
         self.pk_table.setHorizontalHeaderLabels([L["col_freq_mhz"], L["level"], L["col_height_db"], ""])
@@ -212,6 +217,7 @@ class MarkerTab(QWidget):
         row.addStretch(1)
         v.addLayout(row)
         lay.addWidget(g)
+        self.peak_group = g
         lay.addStretch(1)
         self._num_font = number_font(self.pk_table.font())
 
@@ -240,6 +246,10 @@ class MarkerTab(QWidget):
                   self.g_offset, self.g_func):
             set_enabled(w, reason)
         unit = self.win.display_unit()
+        off = texts.freq_offset_of(self.win.state)  # 周波数の欄は換算後の周波数（設計O）
+        self.freq.set_offset(off)
+        for k in ("x1_hz", "x2_hz"):
+            self.xy_fields[k].set_offset(off)
         if marker is None:
             self.sel_label.setText(L["no_marker_selected"])
             set_enabled(self.track, reason)
@@ -250,43 +260,28 @@ class MarkerTab(QWidget):
             self.sel_label.setText(texts.w("selected_text", id=marker["id"], kind=kind, trace=marker["trace"], value=val))
             if marker.get("freq_hz") is not None:
                 self.freq.set_hz(int(marker["freq_hz"]))
-            self.trace.setCurrentIndex(max(0, self.trace.findData(marker["trace"])))
+            widget_sync.set_data(self.trace, marker["trace"])
             ids = [None] + [m["id"] for m in snap.get("markers", []) if m["id"] != marker["id"]]
-            self.ref.blockSignals(True)
-            self.ref.clear()
-            for i in ids:
-                self.ref.addItem(L["none"] if i is None else i, i)
-            self.ref.setCurrentIndex(max(0, self.ref.findData(marker.get("ref"))) if marker.get("ref") else 0)
-            self.ref.blockSignals(False)
+            # 一覧を開いている間は組み替えない（閉じたときに最新の状態で入れる）
+            widget_sync.set_items(self.ref, [(L["none"] if i is None else i, i) for i in ids])
+            widget_sync.set_data(self.ref, marker.get("ref") if marker.get("ref") else None)
             set_enabled(self.to_span, None if marker.get("ref") else texts.REASON_TEXTS["delta_ref"])
             set_enabled(self.track, None if marker["kind"] == "P" else REASON_TRACK_M)
-            self.track.blockSignals(True)
-            self.track.setChecked(bool(marker.get("peak_track")))
-            self.track.blockSignals(False)
+            widget_sync.set_checked(self.track, bool(marker.get("peak_track")))
             bws = marker.get("bandwidth") or []
             for cb, spin, i in ((self.bw1, self.bw1_n, 0), (self.bw2, self.bw2_n, 1)):
-                cb.blockSignals(True)
-                cb.setChecked(len(bws) > i)
-                cb.blockSignals(False)
+                widget_sync.set_checked(cb, len(bws) > i)
                 if len(bws) > i:
-                    spin.blockSignals(True)
-                    spin.setValue(float(bws[i]["n_db"]))
-                    spin.blockSignals(False)
+                    widget_sync.set_value(spin, float(bws[i]["n_db"]))
             th = marker.get("threshold")
-            self.th.blockSignals(True)
-            self.th.setChecked(th is not None)
-            self.th.blockSignals(False)
+            widget_sync.set_checked(self.th, th is not None)
             if th is not None:
-                self.th_level.blockSignals(True)
-                self.th_level.setValue(float(th["level"]))
-                self.th_level.blockSignals(False)
-                self.th_side.setCurrentIndex(max(0, self.th_side.findData(th["side"])))
+                widget_sync.set_value(self.th_level, float(th["level"]))
+                widget_sync.set_data(self.th_side, th["side"])
         xy = snap.get("xy") or {}
         for key, cb in self.xy_checks.items():
             v = xy.get(key)
-            cb.blockSignals(True)
-            cb.setChecked(v is not None)
-            cb.blockSignals(False)
+            widget_sync.set_checked(cb, v is not None)
             f = self.xy_fields[key]
             f.setEnabled(v is not None)
             if isinstance(f, DbField):
@@ -309,7 +304,8 @@ class MarkerTab(QWidget):
         def done(r: dict) -> None:
             # 最も近い点に移したら、入れた値と違うことを一度だけ知らせる（G §3.1・M-02）
             if r.get("snapped") and r.get("freq_hz") is not None:
-                self.freq.flash_note(texts.w("marker_snapped", freq=format_freq(int(r["freq_hz"]))))
+                self.freq.flash_note(texts.w("marker_snapped", freq=format_freq(
+                    int(r["freq_hz"]) + texts.freq_offset_of(self.win.state))))
 
         self.win.call("marker_set", on_ok=done, field=self.freq, id=self._marker["id"], freq_hz=int(hz))
 
@@ -368,7 +364,7 @@ class MarkerTab(QWidget):
             peaks = r.get("peaks") or []
             self.pk_table.setRowCount(len(peaks))
             for i, p in enumerate(peaks):
-                cells = (f"{p['freq_hz'] / 1e6:.6f}".rstrip("0").rstrip("."), f"{p['level']:.2f} {r.get('unit', '')}",
+                cells = (f"{(p['freq_hz'] + texts.freq_offset_of(self.win.state)) / 1e6:.6f}".rstrip("0").rstrip("."), f"{p['level']:.2f} {r.get('unit', '')}",
                          f"{p['height_db']:.1f}" if p.get("height_db") is not None else "")
                 for c, text in enumerate(cells):
                     it = QTableWidgetItem(text)

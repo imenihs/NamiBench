@@ -69,6 +69,12 @@ def set_reason(act: QAction, reason: Optional[str]) -> None:
     act.setStatusTip(reason or "")
 
 
+def set_keys(act: QAction, keys: tuple[str, ...]) -> None:
+    """キーを付け替え、項目の横とツールチップの表示も同じにする（J §4.6: 画面に出ない操作を作らない U-12）。"""
+    act.setShortcuts([QKeySequence(k) for k in keys])
+    set_reason(act, act.statusTip() or None)
+
+
 def shortcut_text(act: QAction) -> str:
     return "・".join(s.toString(QKeySequence.SequenceFormat.NativeText) for s in act.shortcuts())
 

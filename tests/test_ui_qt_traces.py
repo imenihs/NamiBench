@@ -137,11 +137,14 @@ class TraceTabTest(UiBase):
 class DisplayTabTest(UiBase):
     def test_later_features_disabled_with_reason(self):
         d = self.win.display_tab
-        for w in (d.view_waterfall, d.view_density, d.ext, d.colors):
+        for w in (d.view_waterfall, d.view_density):
             self.assertFalse(w.isEnabled())
             self.assertIn("まだ使えません", w.toolTip())
         self.assertTrue(d.view_spectrum.isChecked())
-        self.assertFalse(d.unit.model().item(1).isEnabled())
+        # 単位・外部補正・配色は作った（設計O・J §4.4）ので使える
+        for w in (d.ext, d.colors, d.unit, d.reset_light, d.reset_dark):
+            self.assertTrue(w.isEnabled())
+        self.assertEqual([d.unit.itemText(i) for i in range(d.unit.count())], ["dBm", "dBμV", "dBmV"])
 
 
 class StatusTest(UiBase):

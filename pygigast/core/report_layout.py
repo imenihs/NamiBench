@@ -35,7 +35,7 @@ import datetime as _dt
 import math
 from typing import Any, Iterable, Optional, Union
 
-from .units import format_freq
+from .units import format_freq, level_text
 
 META_KEY = "pygigast"
 META_FORMAT = 1
@@ -49,7 +49,7 @@ DARK_DEFAULT: dict[str, str] = {
     "panel_bg": "#1e232b",
     "text": "#e6e9ee",
     "text_dim": "#aab3c0",
-    "accent": "#4fa3ff",
+    "accent": "#56a7ff",
     "warn": "#ffcc66",
     "grid": "#2a313c",
     "axis": "#3a4452",
@@ -58,7 +58,7 @@ DARK_DEFAULT: dict[str, str] = {
     "trace3": "#ff7aa8",
     "trace4": "#9fe870",
     "zero_db": "#7fb3ff",
-    "running": "#1f6f3a",
+    "running": "#18572e",
     "marker": "#e6e9ee",
 }
 LIGHT_DEFAULT: dict[str, str] = {
@@ -66,7 +66,7 @@ LIGHT_DEFAULT: dict[str, str] = {
     "panel_bg": "#f4f6f9",
     "text": "#1b1f24",
     "text_dim": "#4a5562",
-    "accent": "#1f5fae",
+    "accent": "#1d58a2",
     "warn": "#6f4600",
     "grid": "#d5dbe3",
     "axis": "#5a6573",
@@ -75,7 +75,7 @@ LIGHT_DEFAULT: dict[str, str] = {
     "trace3": "#c2185b",
     "trace4": "#2e7d32",
     "zero_db": "#1f5fae",
-    "running": "#2e7d32",
+    "running": "#52bf57",
     "marker": "#1b1f24",
 }
 
@@ -101,6 +101,7 @@ MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", 
 MARKER_RIGHT = (False, True, True, True, False, True, True, False)
 X_AXIS_TITLE = "周波数 (MHz)"
 X_AXIS_TITLE_ZERO_SPAN = "点（ゼロスパン）"
+X_AXIS_TITLE_OFFSET = "周波数 (MHz)・換算後（測った周波数に {off} を足した値）"
 
 
 # ---------------------------------------------------------------- 配色
@@ -179,10 +180,14 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
     cond: list[str] = []
     if data.get("mode"):
         cond.append(str(data["mode"]))
+    off = int(c.get("freq_offset_hz") or 0)
     if c.get("start_hz") is not None and c.get("stop_hz") is not None:
-        start, stop = float(c["start_hz"]), float(c["stop_hz"])
+        # 周波数オフセットがあれば換算後の周波数（画面の横軸と同じ: 設計O）
+        start, stop = float(c["start_hz"]) + off, float(c["stop_hz"]) + off
         cond += [f"Start {_hz(start)}", f"Stop {_hz(stop)}",
                  f"Center {_hz((start + stop) / 2)}", f"Span {_hz(stop - start)}"]
+    if off:
+        cond.append(f"周波数オフセット {'+' if off > 0 else '−'}{_hz(abs(off))}（周波数は測った周波数に足した値）")
     if c.get("rbw_hz") is not None:
         cond.append(f"RBW {_hz(c['rbw_hz'])}")
     if c.get("points") is not None:
@@ -193,7 +198,7 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
     if c.get("image_cancel") is not None:
         cond.append("イメージキャンセル " + ("ON" if c["image_cancel"] else "OFF"))
     if c.get("ref_level") is not None:
-        cond.append(f"REF {_num(c['ref_level'])} {unit}")
+        cond.append(f"REF {level_text(c['ref_level'])} {unit}")
     if c.get("db_per_div") is not None:
         cond.append(f"{_num(c['db_per_div'])} dB/div")
     rows["conditions"] = ("text", cond)
@@ -220,6 +225,9 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
             if nz.get("reason"):
                 s += f": {nz['reason']}"
         corr.append(s)
+    ext = float(c.get("ext_db") or 0.0)
+    if ext:
+        corr.append(f"外部補正 {ext:+g} dB")
     rows["correction"] = ("text", corr)
 
     warns = [f"注意: {w}" for w in (data.get("warnings") or []) if w]
@@ -258,6 +266,8 @@ def freq_decimals(values_hz: Iterable[Optional[float]]) -> int:
 def marker_table_rows(data: dict) -> list[list[str]]:
     """マーカー表の行の文字（列は MARKER_COLUMNS）。コピー用の表と同じ中身。"""
     ms = data.get("markers") or []
+    off = int((data.get("conditions") or {}).get("freq_offset_hz") or 0)
+    ms = [{**m, "freq_hz": m["freq_hz"] + off} if m.get("freq_hz") is not None and off else m for m in ms]
     freqs = [m.get("freq_hz") for m in ms] + [m.get("delta_freq_hz") for m in ms]
     d = freq_decimals(f for f in freqs if f is not None)
     unit = (data.get("conditions") or {}).get("unit", "dBm")
@@ -303,8 +313,8 @@ def fit_table(rows: list[list[str]], height: float, line_h: float) -> tuple[list
 # ---------------------------------------------------------------- 目盛
 
 def y_labels(ref: float, div: float) -> list[str]:
-    """縦軸の数字（上から。REF が一番上: J §4.1）。"""
-    return [_num(ref - i * div) for i in range(DIVISIONS + 1)]
+    """縦軸の数字（上から。REF が一番上: J §4.1）。画面の目盛・REF の欄と同じ形（units.level_text）。"""
+    return [level_text(ref - i * div) for i in range(DIVISIONS + 1)]
 
 
 def x_labels(start: float, stop: float) -> list[str]:
@@ -354,6 +364,7 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
     stop = float(c.get("stop_hz") or start + 1.0)
     if stop <= start:
         stop = start + 1.0
+    off = int(c.get("freq_offset_hz") or 0)
     return {
         "size": [w, h],
         "font_px": px,
@@ -369,8 +380,10 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
                     "text": legend_text(t)}
                    for t in data.get("traces") or [] if t.get("visible", True)],
         "y_labels": y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0))),
-        "x_labels": x_labels(start, stop),
-        "x_title": X_AXIS_TITLE,
+        # 横軸の数字は換算後の周波数、見出しに換算中であることを書く（設計O: 軸の名前で示す）
+        "x_labels": x_labels(start + off, stop + off),
+        "x_title": X_AXIS_TITLE if not off else X_AXIS_TITLE_OFFSET.replace("{off}",
+                                                                             ("+" if off > 0 else "−") + _hz(abs(off))),
         "unit": c.get("unit", "dBm"),
         "meta": png_metadata(data, note, app_version),
         "meta_key": META_KEY,
@@ -422,6 +435,7 @@ def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, m
     sw = state.get("sweep") or {}
     conn = state.get("connection") or {}
     ident = conn.get("identity") or {}
+    view = state.get("view") or {}
     if measured_at is None:
         latest = max((t.get("last_update_time") or 0 for t in state.get("traces") or []
                       if t.get("visible") and t.get("has_values")), default=0)
@@ -436,7 +450,10 @@ def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, m
         "conditions": {"start_hz": sw.get("start_hz"), "stop_hz": sw.get("stop_hz"), "rbw_hz": sw.get("rbw_hz"),
                        "points": sw.get("points"), "step_hz": sw.get("step_hz"),
                        "image_cancel": None if conn.get("sweep_kind") == "fft" else sw.get("image_cancel"),
-                       "ref_level": ref_level, "db_per_div": db_per_div, "unit": unit},
+                       "ref_level": ref_level, "db_per_div": db_per_div, "unit": unit,
+                       # 表示の設定（設計O）: 周波数オフセット・外部補正。帯と横軸に出す
+                       "freq_offset_hz": int(view.get("freq_offset_hz") or 0),
+                       "ext_db": float(view.get("ext_db") or 0.0)},
         "calibration": calibration_of(state),
         "normalization": normalization_of(state, norm_reasons),
         "traces": traces,

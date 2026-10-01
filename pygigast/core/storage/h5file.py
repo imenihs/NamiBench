@@ -11,7 +11,10 @@
         raw      [掃引, 点] uint16   chunk (256, 512)・gzip 1。生の値の形（raw_encoding）で型が決まる:
                                      gigast_ad_u16 は AD 値の uint16、rtlsdr_power_w はリニアの電力の float32
                                      （値の無い点は NaN）。型はデータセット自身が持つので、読む側は属性を見ずに読める
-        raw_b3   [掃引, 点] uint16   イメージキャンセルのときだけ。raw は b3=1、raw_b3 は b3=0 の回
+        raw_passes [掃引, 4, 点] uint16  イメージキャンセル（4回: 設計F §6）のとき。b3=0・1・0・1 の順の生の値。
+                                     raw は4回を合わせた採用する値（合わせ方が機種のプロファイルの雑音の床に
+                                     よるので、表示した値をそのまま持つ）
+        raw_b3   [掃引, 点] uint16   前の2回の形のイメージキャンセル（読むだけ）。raw は b3=1、raw_b3 は b3=0 の回
         raw_hot / raw_cold           NF のとき。raw は raw_hot を指すソフトリンク（読む側の経路を1つにする）
         t_start  [掃引] float64      各掃引の開始時刻（UNIX 時刻）
         overview/max_4 … max_1024    [ceil(掃引/k), 点] 連続する k 掃引ごとの最大値（採用した値で。NaN は除いて取り、
@@ -68,10 +71,20 @@ BLOCK_ROWS = 1024
 
 # 生の値の持ち方（区間の属性 raw_layout）
 LAYOUT_SINGLE = "single"
-LAYOUT_IMAGE_CANCEL = "image_cancel"  # raw = b3=1 の回、raw_b3 = b3=0 の回。採用した値は点ごとの min
+# 前の2回の形（読むだけ。いまの機器の層は4回で返す）: raw = b3=1 の回、raw_b3 = b3=0 の回。採用した値は点ごとの min
+LAYOUT_IMAGE_CANCEL = "image_cancel"
+# 4回の形（設計F §6）: raw = 4回を合わせた採用する値、raw_passes = 4回の生の値 [掃引, 回, 点]（b3=0・1・0・1）
+LAYOUT_IMAGE_CANCEL_4 = "image_cancel_4"
 LAYOUT_NF = "nf"  # raw_hot・raw_cold。raw は raw_hot（RawSweep と同じ約束: 設計M）
 
-_SECOND_NAME = {LAYOUT_IMAGE_CANCEL: "raw_b3", LAYOUT_NF: "raw_cold"}
+_SECOND_NAME = {LAYOUT_IMAGE_CANCEL: "raw_b3", LAYOUT_NF: "raw_cold", LAYOUT_IMAGE_CANCEL_4: "raw_passes"}
+# raw2 が回の軸を持つ形とその回数（raw2 は [掃引, 回, 点]。それ以外の形の raw2 は [掃引, 点]）
+_PASSES = {LAYOUT_IMAGE_CANCEL_4: 4}
+
+
+def passes_of(layout: str) -> Optional[int]:
+    """raw2 が回の軸を持つ形ならその回数、持たない形なら None。"""
+    return _PASSES.get(layout)
 
 
 @dataclass(frozen=True)
@@ -243,7 +256,10 @@ class TraceData:
 
 
 class SegmentSource:
-    """書く区間の中身。blocks は (t_start, raw, raw2) を BLOCK_ROWS 行ずつ返す（raw2 は2回目の生の値か None）。"""
+    """書く区間の中身。blocks は (t_start, raw, raw2) を BLOCK_ROWS 行ずつ返す。
+
+    raw2 は持ち方ごとの残りの生の値か None: 2回の形は [掃引, 点]、4回の形は [掃引, 4, 点]（passes_of）。
+    """
 
     meta: SegmentMeta
     n_sweeps: int
@@ -259,7 +275,9 @@ class MemorySegment(SegmentSource):
         self.meta = meta
         self._t = np.asarray(t_start, dtype=np.float64).reshape(-1)
         self._raw = np.asarray(raw, dtype=meta.dtype).reshape(len(self._t), meta.points)
-        self._raw2 = None if raw2 is None else np.asarray(raw2, dtype=meta.dtype).reshape(self._raw.shape)
+        k = passes_of(meta.raw_layout)
+        shape2 = self._raw.shape if k is None else (len(self._t), k, meta.points)
+        self._raw2 = None if raw2 is None else np.asarray(raw2, dtype=meta.dtype).reshape(shape2)
         self.n_sweeps = len(self._t)
 
     def blocks(self, rows: int):
@@ -277,6 +295,8 @@ def layout_of(raw: RawSweep) -> str:
     # NF を先に見る（機器の層も NF とイメージキャンセルが両方立ったときは NF の2回を返す）
     if raw.raw_hot is not None or raw.raw_cold is not None:
         return LAYOUT_NF
+    if raw.raw_passes is not None:
+        return LAYOUT_IMAGE_CANCEL_4
     if raw.raw_b3_0 is not None:
         return LAYOUT_IMAGE_CANCEL
     return LAYOUT_SINGLE
@@ -298,7 +318,7 @@ def _raw_values(a: np.ndarray, n: int, enc: RawEncoding) -> np.ndarray:
 
 
 def split_raw(raw: RawSweep) -> tuple[np.ndarray, Optional[np.ndarray]]:
-    """保存する (raw, raw2)。Stop までで切る（設計C §5.3）。raw2 は持ち方ごとの2回目（無ければ None）。"""
+    """保存する (raw, raw2)。Stop までで切る（設計C §5.3）。raw2 は持ち方ごとの残りの回（無ければ None）。"""
     n = points_within_stop(raw.adopted)
     lay = layout_of(raw)
     enc = encoding_info(raw.encoding)
@@ -306,6 +326,16 @@ def split_raw(raw: RawSweep) -> tuple[np.ndarray, Optional[np.ndarray]]:
         if raw.raw_hot is None or raw.raw_cold is None:
             raise ValueError("NF は raw_hot と raw_cold の両方が要る")
         return _raw_values(raw.raw_hot, n, enc), _raw_values(raw.raw_cold, n, enc)
+    if lay == LAYOUT_IMAGE_CANCEL_4:
+        passes = np.asarray(raw.raw_passes)
+        if passes.ndim != 2 or passes.shape[0] != _PASSES[lay]:
+            raise ValueError(f"イメージキャンセルの生の値は [{_PASSES[lay]}, 点]: {passes.shape}")
+        if enc.dtype == np.uint16 and passes.dtype != np.uint16:
+            raise TypeError(f"生の値は uint16 で渡す（{passes.dtype} が来た）")
+        if passes.shape[1] < n:
+            raise ValueError(f"生の値の点数 {passes.shape[1]} が保存する点数 {n} より少ない")
+        # raw は表示した採用する値（4回の合わせ方は機種のプロファイルの雑音の床による: 設計F §6）
+        return _raw_values(raw.raw, n, enc), passes[:, :n].astype(enc.dtype)
     if lay == LAYOUT_IMAGE_CANCEL:
         if raw.raw_b3_1 is None:
             raise ValueError("イメージキャンセルは raw_b3_0 と raw_b3_1 の両方が要る")
@@ -353,7 +383,8 @@ def max_ignoring_nan(a: np.ndarray, axis: int, keepdims: bool = False) -> np.nda
 
 
 def adopted_values(layout: str, raw: np.ndarray, raw2: Optional[np.ndarray]) -> np.ndarray:
-    """採用した生の値（概観・表示に使う）。イメージキャンセルは点ごとの min（設計D §5.3: AD の段階で取る）。"""
+    """採用した生の値（概観・表示に使う）。前の2回の形のイメージキャンセルは点ごとの min（設計D §5.3: AD の
+    段階で取る）。4回の形は raw が合わせた値そのもの。"""
     if layout == LAYOUT_IMAGE_CANCEL and raw2 is not None:
         return np.minimum(raw, raw2)
     return raw
@@ -369,9 +400,15 @@ def _chunk(n_rows: int, n_cols: int) -> tuple[int, int]:
     return (max(1, min(CHUNK[0], n_rows)), max(1, min(CHUNK[1], n_cols)))
 
 
-def _ds(g: h5py.Group, name: str, rows: int, cols: int, dtype) -> h5py.Dataset:
+def _ds(g: h5py.Group, name: str, rows: int, cols: int, dtype, passes: Optional[int] = None) -> h5py.Dataset:
+    if passes is None:
+        shape, chunks = (rows, cols), _chunk(rows, cols)
+    else:
+        # 回の軸を持つ形（[掃引, 回, 点]）。1つの chunk の要素の数を2次元のときと同じくらいに抑える
+        r, c = _chunk(rows, cols)
+        shape, chunks = (rows, passes, cols), (max(1, r // passes), passes, c)
     return g.create_dataset(
-        name, shape=(rows, cols), dtype=dtype, chunks=_chunk(rows, cols), compression="gzip", compression_opts=GZIP_LEVEL
+        name, shape=shape, dtype=dtype, chunks=chunks, compression="gzip", compression_opts=GZIP_LEVEL
     )
 
 
@@ -414,7 +451,8 @@ def _write_segment(g: h5py.Group, src: SegmentSource, prog: Progress, done: int)
         d2 = _ds(g, "raw_cold", n, p, dt)
     else:
         d1 = _ds(g, "raw", n, p, dt)
-        d2 = _ds(g, _SECOND_NAME[m.raw_layout], n, p, dt) if m.raw_layout in _SECOND_NAME else None
+        d2 = (_ds(g, _SECOND_NAME[m.raw_layout], n, p, dt, passes_of(m.raw_layout))
+              if m.raw_layout in _SECOND_NAME else None)
     t_ds = g.create_dataset("t_start", shape=(n,), dtype=np.float64)
     ov = g.create_group("overview")
     ov_ds = {k: _ds(ov, f"max_{k}", -(-n // k), p, dt) for k in OVERVIEW_LEVELS}
@@ -429,6 +467,8 @@ def _write_segment(g: h5py.Group, src: SegmentSource, prog: Progress, done: int)
         if d2 is not None:
             if raw2 is None:
                 raise ValueError("2回目の生の値が無い")
+            if raw2.shape != (rows,) + d2.shape[1:]:
+                raise ValueError(f"残りの回の生の値の形が合わない: {raw2.shape} / {d2.shape}")
             d2[row : row + rows] = raw2
         t_ds[row : row + rows] = t
         # 概観: ブロックの始まりは BLOCK_ROWS の倍数なので、どの k でも区切りがそろう
@@ -555,7 +595,10 @@ def default_file_name(when: Optional[datetime] = None) -> str:
 
 @dataclass
 class RawBlock:
-    """区間から読んだ範囲。sweep0 / point0 は区間の中の先頭の掃引・点の番号。"""
+    """区間から読んだ範囲。sweep0 / point0 は区間の中の先頭の掃引・点の番号。
+
+    raw2 は持ち方ごとの残りの回: 2回の形は [掃引, 点]、4回の形は [掃引, 4, 点]。
+    """
 
     segment: int
     layout: str
@@ -714,7 +757,10 @@ class H5Record:
         i0, i1 = points if points is not None else (0, s.points)
         raw = g["raw"][s0:s1, i0:i1]
         second = _SECOND_NAME.get(s.raw_layout)
-        raw2 = g[second][s0:s1, i0:i1] if second and second in g else None
+        raw2 = None
+        if second and second in g:
+            ds2 = g[second]
+            raw2 = ds2[s0:s1, :, i0:i1] if ds2.ndim == 3 else ds2[s0:s1, i0:i1]
         return RawBlock(seg, s.raw_layout, s0, i0, g["t_start"][s0:s1], s.freqs(i0, i1), raw, raw2)
 
     def read_range(
@@ -772,7 +818,10 @@ class H5Record:
         if enc.nan_is_no_value:
             extra["flags"] = {"no_value": np.isnan(adopted_values(s.raw_layout, r1, r2))}
         kw: dict = {}
-        if s.raw_layout == LAYOUT_IMAGE_CANCEL:
+        if s.raw_layout == LAYOUT_IMAGE_CANCEL_4:
+            kw = {"raw_passes": r2}
+            extra.setdefault("pass_b3", [0, 1, 0, 1])
+        elif s.raw_layout == LAYOUT_IMAGE_CANCEL:
             kw = {"raw_b3_1": r1, "raw_b3_0": r2}
         elif s.raw_layout == LAYOUT_NF:
             kw = {"raw_hot": r1, "raw_cold": r2}

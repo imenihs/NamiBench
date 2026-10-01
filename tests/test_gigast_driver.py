@@ -165,16 +165,34 @@ class TestMeasure(unittest.TestCase):
         self.assertIsNone(raw.raw_b3_0)
         self.assertIs(raw.adopted, a)
 
-    def test_image_cancel_min(self):
+    def test_image_cancel_4_passes(self):
+        # b3=0 → 1 → 0 → 1 の4回（設計F §6 の 1）。同じ b3 の2回が同じなら平均はその値、そのあと両側の min
         a = adopted(points=4, preroll=1, image_cancel=True)
         r0 = [9, 100, 500, 50, 300]
         r1 = [9, 200, 400, 60, 100]
-        fake = FakeSerial([payload(r0) + TRAILER, payload(r1) + TRAILER])
+        fake = FakeSerial([payload(r0) + TRAILER, payload(r1) + TRAILER] * 2)
         raw = make_device(fake).measure(a)
-        self.assertEqual([w[14] for w in fake.written], [0x00, 0x08])
-        np.testing.assert_array_equal(raw.raw_b3_0, r0[1:])
-        np.testing.assert_array_equal(raw.raw_b3_1, r1[1:])
+        self.assertEqual([w[14] for w in fake.written], [0x00, 0x08, 0x00, 0x08])
+        self.assertEqual(raw.raw_passes.shape, (4, 4))
+        np.testing.assert_array_equal(raw.raw_passes[0], r0[1:])
+        np.testing.assert_array_equal(raw.raw_passes[1], r1[1:])
+        np.testing.assert_array_equal(raw.raw_passes[2], r0[1:])
+        np.testing.assert_array_equal(raw.raw_passes[3], r1[1:])
         np.testing.assert_array_equal(raw.raw, [100, 400, 50, 100])
+        self.assertEqual(raw.raw.dtype, np.uint16)
+        self.assertIsNone(raw.raw_b3_0)
+        self.assertEqual(raw.extra["passes"], 4)
+        self.assertEqual(raw.extra["pass_b3"], [0, 1, 0, 1])
+
+    def test_image_cancel_burst_on_floor_removed(self):
+        # 180kHz の床は AD 149。b3=0 の1回目に雑音の上の山（+10dB）が乗っても、2回目の低い方を採る
+        a = adopted(points=3, preroll=0, image_cancel=True)
+        burst = 120 + 248
+        p0a, p1a, p0b, p1b = [burst, 120, 2000], [130, 125, 1980], [120, 120, 2000], [128, 126, 1980]
+        fake = FakeSerial([payload(x) + TRAILER for x in (p0a, p1a, p0b, p1b)])
+        raw = make_device(fake).measure(a)
+        self.assertLessEqual(int(raw.raw[0]), 130)
+        self.assertEqual(int(raw.raw[2]), 1980)
 
     def test_image_cancel_pair_discarded_if_second_fails(self):
         a = adopted(points=4, preroll=0, image_cancel=True)
@@ -183,7 +201,19 @@ class TestMeasure(unittest.TestCase):
             make_device(fake).measure(a)
         self.assertEqual(cm.exception.reason, "silence")
         self.assertTrue(cm.exception.detail["pair_discarded"])
-        self.assertEqual(cm.exception.detail["pass"], "b3_1")
+        self.assertEqual(cm.exception.detail["pass"], "b3_1a")
+        self.assertEqual(len(fake.written), 2)  # 残りの2回は送らない
+
+    def test_image_cancel_4set_discarded_if_last_fails(self):
+        # 4回のどれかが捨てられたら、その組（4回）ごと捨てる（設計F §6 の 5）
+        a = adopted(points=4, preroll=0, image_cancel=True)
+        ok = payload([1, 2, 3, 4]) + TRAILER
+        fake = FakeSerial([ok, ok, ok, ("partial", payload([1, 2]))])
+        with self.assertRaises(SweepDiscarded) as cm:
+            make_device(fake).measure(a)
+        self.assertEqual(cm.exception.detail["pass"], "b3_1b")
+        self.assertEqual(cm.exception.detail["passes"], 4)
+        self.assertEqual(len(fake.written), 4)
 
     def test_image_cancel_pair_discarded_if_first_fails(self):
         a = adopted(points=4, preroll=0, image_cancel=True)

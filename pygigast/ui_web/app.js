@@ -18,7 +18,7 @@
   const HOVER_MS = 34;
   // 参照トレース（ファイル）の色。J §4.4 に無いので、トレースの色を順に使い点線で描く（設計に無い判断）
   const FILE_COLORS = ["trace2", "trace3", "trace4", "trace1"];
-  const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source"];
+  const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"];
 
   function nowName() {
     const d = new Date();
@@ -98,17 +98,19 @@
         }
         return this.amp.unit || this.ui.unit || "dBm";
       },
+      // Center・Start・Stop は周波数オフセットを足して出す（設計O。Span は幅、SG は機器が出す周波数なので足さない）
       freqText() {
         const s = this.sw;
         if (!s) return { center: "", span: "", start: "", stop: "", sg: "" };
+        const o = this.freqOff;
         return {
-          center: U.freqFieldText(s.center_hz), span: U.freqFieldText(s.span_hz),
-          start: U.freqFieldText(s.start_hz), stop: U.freqFieldText(s.stop_hz),
+          center: U.freqFieldText(s.center_hz + o), span: U.freqFieldText(s.span_hz),
+          start: U.freqFieldText(s.start_hz + o), stop: U.freqFieldText(s.stop_hz + o),
           sg: s.sg_hz != null ? U.freqFieldText(s.sg_hz) : "",
         };
       },
       // 負号は見間違えない字形「−」で出す（J §4.1）。打つときは「-」でも「−」でもよい
-      refText() { return U.minusSign(`${this.amp.ref.toFixed(1)} ${this.axisUnit}`); },
+      refText() { return `${U.levelText(this.amp.ref)} ${this.axisUnit}`; },
       // REF レベルの一覧（J §4.1: +20〜−120 を 10dB 刻み。Qt の fields.REF_CHOICES と同じ）
       refChoices() {
         const out = [];
@@ -146,7 +148,8 @@
         const legend = this.ui.legend || {};
         return ((this.st && this.st.traces) || []).map((t) => ({ ...t, color: this.palette["trace" + t.number], legend: legend[String(t.number)] || "" }));
       },
-      palette() { return (this.colors && this.colors.dark) || {}; },
+      // 画面の配色はコアの配色（ユーザー設定の1つ。Qt と共有: J §4.4）。状態が届くまではダークの初期値
+      palette() { return (this.st && this.st.palette && this.st.palette.colors) || (this.colors && this.colors.dark) || {}; },
       markerRows() { return this.markers.rows || []; },
       markerColumns() { return this.markers.columns || X.list("MARKER_TABLE_COLUMNS"); },
       selMarker() { return (this.markers.markers || []).find((m) => m.id === this.selectedMarker) || null; },
@@ -172,6 +175,7 @@
         this.colors = this.info.palettes;
       } catch (e) { this.note(null, String(e)); }
       if (this.part) document.title = `pyGigaSt — ${this.partTitle}`;
+      this.watchKeyStore();
       this.textsReady = true;
       this.$nextTick(() => this.makeGraph());
       this.stream = new GSApi.EventStream({
@@ -229,6 +233,8 @@
         let hz;
         try { hz = U.parseFreqHz(text); } catch (e) { this.note(field, W("bad_freq")); return; }
         if (key === "sg_hz") { this.cmd("set_mode", { mode: this.sw ? this.sw.mode : "sg", sg_hz: hz }, { field }); return; }
+        // 欄は換算後の周波数で打つので、機器の周波数へ戻して送る（Span は幅なので戻さない）
+        if (key !== "span_hz") hz = this.deviceHz(hz);
         this.sweep({ [key]: hz }, field);
       },
       stepFreq(field, key, exp, dir) {
@@ -358,6 +364,7 @@
           if (!this.running && this.run.state !== "stopping") this.waiting = "";
           this.onStateRtl(p);
           this.onStateDevices(p);
+          this.applyLook();
           this.applyX();
           this.applyY();
           this.redraw();
@@ -416,6 +423,7 @@
         if (!g || !s) return;
         if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true);
         else g.setX(s.start_hz, s.stop_hz, false);
+        g.setXOffset(s.step_hz === 0 ? 0 : this.freqOff, this.ui.freq_offset_text || "");
       },
       applyY() { if (this.$graph) this.$graph.setY(this.amp.ref, this.amp.div, this.axisUnit); },
       traceShown(n) {
@@ -453,7 +461,7 @@
         const zero = this.sw && this.sw.step_hz === 0 && !isFile;
         return {
           x: zero ? (i) => i : x, y: t.values, color, minHold: t.action === "min_hold",
-          head: isFile ? 0 : (t.flags && t.flags.transient_head_points) || 0,
+          head: isFile ? 0 : (t.flags && t.flags.transient_head_points) || 0, fill: !isFile && this.drawFill,
           dimColor: colors.text_dim, dash: isFile ? [6, 4] : null,
         };
       },
@@ -531,7 +539,7 @@
         const why = this.freqOpsReason;
         const hz = Math.round(x);
         const level = Math.round(y * 10) / 10;
-        const at = why ? "" : X.fmt("paren", { text: U.formatFreq(hz) });
+        const at = why ? "" : X.fmt("paren", { text: U.formatFreq(this.shownHz(hz)) });
         const items = [
           { label: W("ctx_center") + at, why, run: () => this.sweep({ center_hz: hz }, "center") },
           { label: W("ctx_marker") + at, why, run: () => this.markerAdd(x, y) },
@@ -609,14 +617,14 @@
       commitXY(key, text) {
         if (String(text).trim() === "") { this.cmd("set_xy", { [key]: null }); return; }
         try {
-          const v = key.endsWith("_hz") ? U.parseFreqHz(text) : U.parseDb(text);
+          const v = key.endsWith("_hz") ? this.deviceHz(U.parseFreqHz(text)) : U.parseDb(text);
           this.cmd("set_xy", { [key]: v }, { field: "xy" });
         } catch (e) { this.note("xy", W("bad_value")); }
       },
       xyText(key) {
         const v = (this.markers.xy || {})[key];
         if (v == null) return "";
-        return key.endsWith("_hz") ? U.freqFieldText(v) : `${v.toFixed(2)}`;
+        return key.endsWith("_hz") ? U.freqFieldText(this.shownHz(v)) : `${v.toFixed(2)}`;
       },
       async getPeakList() {
         const r = await this.cmd("peak_list", { trace: Number(this.peakTrace), floor_margin_db: Number(this.peakMargin) || 10 }, { field: "peaks" });
@@ -682,14 +690,17 @@
         m.ok(v, m);
       },
       // ------------------------------------------------------------ PNG（設計I。配置はサーバーの report_layout、描くのは canvas）
+      // 配色と大きさは設定の画面の「保存」で選んだもの（ブラウザごと。既定はライトの初期値・1600×1000: I §3.1）
       pngBlob(note) {
+        const colors = this.pngColors();
         return GSPng.render({
-          st: this.st, amp: { ...this.amp, unit: this.axisUnit }, colors: this.colors.light,
-          traces: (colors) => this.graphTraces(colors), markers: this.markers,
-          files: this.shownFiles(this.colors.light).map((f) => ({ label: f.label, color: f.colorKey })), note,
-        });
+          st: this.st, amp: { ...this.amp, unit: this.axisUnit }, colors,
+          traces: (c) => this.graphTraces(c), markers: this.markers,
+          files: this.shownFiles(colors).map((f) => ({ label: f.label, color: f.colorKey })), note,
+          offset: { hz: this.freqOff, text: this.ui.freq_offset_text || "" },
+        }, this.pngSizeWH());
       },
-      // 画像を作る前にメモ（1行）を打てる（I §3.2 の 5）。配色はライトの初期値（I §3.1 の既定）
+      // 画像を作る前にメモ（1行）を打てる（I §3.2 の 5）
       pngSave() {
         this.openModal(W("png_save_title"), [{ key: "note", label: W("png_memo"), value: "" }], async (v) => {
           try {
@@ -737,7 +748,11 @@
         if (changed) { this.detached = d; this.$nextTick(() => this.$graph && this.$graph.setSize(this.$refs.graph.clientWidth, this.$refs.graph.clientHeight)); }
       },
       show(p) { return this.part ? this.part === p : !this.detached[p]; },
-      showTab(t) { return this.part ? this.part === "tab-" + t : this.tab === t && !this.detached["tab-" + t]; },
+      // ピークの一覧だけの別ウィンドウは、マーカーのタブの中のピークの一覧の欄だけを出す（index.html）
+      showTab(t) {
+        if (this.part) return this.part === "tab-" + t || (t === "marker" && this.part === "peaks");
+        return this.tab === t && !this.detached["tab-" + t];
+      },
 
       // ------------------------------------------------------------ 分割（J §4.3.2。比は次に開いたときに戻す）
       startSplit(e, which) {
@@ -796,8 +811,15 @@
   merge(base, GSAppFiles);
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
+  // キーの割り当て（app_keys.js）と設定の画面・プリセット・表示の設定（app_settings.js）
+  merge(base, window.GSAppKeys || {});
+  merge(base, window.GSAppSettings || {});
 
   const app = createApp(base);
   app.component("num-field", GSFields.NumField);
+  // 状態を映す入力は、触っている間は書き直さない（fields.js の Steady）
+  app.directive("steady", GSFields.Steady);
+  // 設定の画面・プリセットの窓・確かめる窓（app_windows.js）
+  for (const [name, c] of Object.entries(window.GSWindows || {})) app.component(name, c);
   window.addEventListener("DOMContentLoaded", () => { window.gsApp = app.mount("#app"); });
 })();

@@ -10,8 +10,66 @@
   // ボタンを添えた知らせは、読んで押すまでの時間を取る。マウスが知らせの上にある間は消さない
   const NOTE_ACTION_SHOW_MS = 10000;
 
+  // 状態を映す入力の値（v-steady="値"。:value の代わりに使う。Qt の ui_qt/widget_sync.py と同じ決まり）。
+  // - フォーカスがある間は書き直さない（選んだ範囲・カーソル・打っている途中の文字を消さない）
+  // - 表示が変わらないときは書かない
+  // - 書かなかった値は、フォーカスが外れたときに最新の値で入れる（打って確定したときは確定の戻りを待つ）
+  // - この欄で確定した（Enter・change）・桁を送った値の戻りは、フォーカスがあっても映す。次に触ると解く
+  function steadyPut(el) {
+    const s = el._svValue == null ? "" : String(el._svValue);
+    if (el.value === s) return;
+    const doc = el.ownerDocument || (typeof document !== "undefined" ? document : null);
+    if (doc && doc.activeElement === el && el.selectionStart != null) {
+      // 送った桁の位置を保つ（値の文字数が変わったら右端からの位置で合わせる）
+      const fromEnd = el.value.length - el.selectionStart;
+      el.value = s;
+      const p = Math.max(0, s.length - fromEnd);
+      try { el.setSelectionRange(p, p); } catch (err) { /* 範囲を持たない欄 */ }
+      return;
+    }
+    el.value = s;
+  }
+  function steadyFocused(el) {
+    const doc = el.ownerDocument || (typeof document !== "undefined" ? document : null);
+    return !!doc && doc.activeElement === el;
+  }
+  const Steady = {
+    mounted(el, b) {
+      el._svValue = b.value;
+      el._svEcho = false;
+      el._svEdited = false;
+      steadyPut(el);
+      el.addEventListener("focus", () => { el._svEcho = false; el._svEdited = false; });
+      el.addEventListener("input", () => { el._svEcho = false; el._svEdited = true; });
+      el.addEventListener("mousedown", () => { el._svEcho = false; });
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === "ArrowUp" || e.key === "ArrowDown") return;
+        el._svEcho = false;
+      });
+      el.addEventListener("change", () => { el._svEcho = true; });
+      el.addEventListener("blur", () => {
+        const edited = el._svEdited;
+        el._svEcho = false;
+        el._svEdited = false;
+        // 打った値は確定した（change）。戻りの値は次に映すときに入る。打っていなければ最新の値を入れる
+        if (!edited) steadyPut(el);
+      });
+    },
+    updated(el, b) {
+      el._svValue = b.value;
+      if (!steadyFocused(el) || el._svEcho) steadyPut(el);
+    },
+  };
+  // 確定・桁の送りの戻りを、フォーカスがあっても映す（NumField が Enter・↑↓・ホイール・一覧で送ったとき）
+  function steadyEcho(el) {
+    if (!el) return;
+    el._svEcho = true;
+    el._svEdited = false;
+  }
+
   const NumField = {
     name: "num-field",
+    directives: { steady: Steady },
     props: {
       label: String,
       text: String, // いまの値の表示
@@ -47,6 +105,7 @@
       commit() {
         if (!this.editing) return;
         this.editing = false;
+        steadyEcho(this.$refs.input);
         const t = this.draft;
         this.draft = this.text;
         this.$emit("commit", t);
@@ -63,26 +122,26 @@
         if (this.disabled) return;
         e.preventDefault();
         const dir = e.deltaY < 0 ? 1 : -1;
-        if (this.wheelExp !== null) { this.editing = false; this.$emit("step", this.wheelExp, dir); return; }
+        if (this.wheelExp !== null) {
+          this.editing = false;
+          steadyEcho(this.$refs.input);
+          this.$emit("step", this.wheelExp, dir);
+          return;
+        }
         this.step(this.$refs.input, dir);
       },
       pick(e) {
         const t = e.target.value;
         e.target.value = "";
-        if (t !== "") { this.editing = false; this.$emit("commit", t); }
+        if (t !== "") { this.editing = false; steadyEcho(this.$refs.input); this.$emit("commit", t); }
       },
       step(input, dir) {
         const pos = input.selectionStart == null ? 0 : input.selectionStart;
         const exp = GSUnits.digitExponent(input.value, pos);
         if (exp === null) return;
         this.editing = false;
+        steadyEcho(input);  // 戻りの値を映すとき、桁の位置を右端からの位置で保つ（steadyPut）
         this.$emit("step", exp, dir);
-        // 桁の位置を保つ（値の文字数が変わったら右端からの位置で合わせる）
-        const fromEnd = input.value.length - pos;
-        this.$nextTick(() => {
-          const p = Math.max(0, input.value.length - fromEnd);
-          try { input.setSelectionRange(p, p); } catch (err) { /* 欄が消えた */ }
-        });
       },
       runAction() {
         const a = this.note && this.note.action;
@@ -94,7 +153,7 @@
       <div class="field" :class="{big}" :title="title">
         <div class="field-head"><span class="field-name">{{ label }}</span><slot name="head"></slot></div>
         <div class="field-line">
-          <input ref="input" class="field-input" :value="editing ? draft : text" :disabled="disabled" spellcheck="false"
+          <input ref="input" class="field-input" v-steady="editing ? draft : text" :disabled="disabled" spellcheck="false"
                  @input="onInput" @keydown="onKey" @blur="commit" @wheel="onWheel">
           <select v-if="choices" class="field-choices" :disabled="disabled" @change="pick" @wheel="onWheel">
             <option value="" hidden></option>
@@ -108,5 +167,5 @@
       </div>`,
   };
 
-  root.GSFields = { NumField };
+  root.GSFields = { NumField, Steady };
 })(window);

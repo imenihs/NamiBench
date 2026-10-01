@@ -4,11 +4,11 @@
   --panel-bg: #1e232b;
   --text: #e6e9ee;
   --text-dim: #aab3c0;
-  --accent: #4fa3ff;
+  --accent: #56a7ff;
   --warn: #ffcc66;
   --grid: #2a313c;
   --axis: #3a4452;
-  --running: #1f6f3a;
+  --running: #18572e;
   --split: 70%;
   --side: 340px;
   color-scheme: dark;
@@ -63,6 +63,10 @@ h3 { margin: 12px 0 4px; font-size: 13px; color: var(--text-dim); font-weight: 6
 .field-input { width: 11.5em; font-size: 15px; font-variant-numeric: tabular-nums; }
 .field.big .field-input { font-size: 20px; width: 9.4em; } /* 値が全部見える幅（-12100.0000 MHz） */
 .field-select { font-size: 15px; min-width: 7em; }
+/* 上段の RBW・REF・dB/div は同じ字の大きさ・同じ高さにそろえる */
+.field:not(.big) .field-input, .field-select { height: 30px; box-sizing: border-box; }
+/* 選択肢の文字を切らない（設計J §4.3）: ドロップダウンは一番長い選択肢の幅を取り、並びに押し縮められない */
+select { flex-shrink: 0; max-width: none; }
 .note-pop { position: absolute; top: 100%; left: 0; z-index: 20; background: var(--panel-bg); border: 1px solid var(--warn);
             color: var(--warn); padding: 3px 6px; white-space: nowrap; display: flex; gap: 8px; align-items: center; }
 .note-action { color: var(--accent); border-color: var(--accent); background: transparent; }
@@ -214,3 +218,33 @@ form.auth h1 { margin: 0 0 6px; font-size: 22px; }
 form.auth label { font-size: 15px; }
 form.auth input { font-size: 32px; letter-spacing: 8px; text-align: center; padding: 6px; }
 form.auth button { font-size: 18px; padding: 8px; }
+
+/* ---- アプリ設定・プリセット・確かめる窓（O §1.3・§1.2）。機器の一覧（45）と入力の窓（50）をこの上に重ねる */
+.settings-back { z-index: 44; }
+.confirm-back { z-index: 60; }
+.modal.setwin { width: min(760px, 100%); height: min(620px, 92vh); display: flex; flex-direction: column; overflow: hidden; }
+.setwin-tabs { padding: 0; margin: 4px 0 0; }
+.setwin-tabs button.small { margin-left: 0; }
+.setwin-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 2px 8px; }
+.setwin h4, .presetwin h4 { margin: 12px 0 4px; font-size: 13px; color: var(--text-dim); font-weight: 600; }
+.setwin .mtable td.grow { width: 100%; }
+.setwin-body[data-page=display] { display: flex; flex-direction: column; overflow: hidden; }
+.pal-scroll { flex: 1 1 auto; min-height: 90px; overflow: auto; border: 1px solid var(--grid); margin: 6px 0; }
+.mtable.pal td { padding: 1px 6px; }
+.mtable.pal td.mark { width: 1.2em; color: var(--accent); text-align: center; }
+.mtable.pal input[type=color] { width: 44px; height: 22px; padding: 0 2px; cursor: pointer; }
+.mtable.pal input.hex { width: 6.5em; font-variant-numeric: tabular-nums; }
+.keys-scroll { max-height: 46vh; overflow: auto; border: 1px solid var(--grid); margin: 6px 0; }
+.mtable.keys tbody tr { cursor: pointer; }
+.mtable.keys td { white-space: normal; }
+.keymsg { min-height: 1.4em; }
+.modal.presetwin { width: min(680px, 100%); }
+.preset-scroll { max-height: 40vh; overflow: auto; border: 1px solid var(--grid); margin: 6px 0; }
+.preset-scroll tbody tr { cursor: pointer; }
+.modal.confirm { width: min(520px, 100%); }
+.modal.confirm p { white-space: pre-line; }
+
+/* ---- ピークの一覧（マーカーのタブの中。別ウィンドウにできる: J §4.3.2） */
+.part-head { display: flex; align-items: center; gap: 8px; }
+.part-head button.small { margin-left: auto; }
+.partmode .peaks-part { padding-top: 4px; }

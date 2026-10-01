@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import format_freq
-from . import screen_model, texts
+from . import screen_model, texts, widget_sync
 from .theme import trace_color
 
 if TYPE_CHECKING:
@@ -44,7 +44,6 @@ REASON_AFTER = texts.REASON_TEXTS["after_only"]
 # ベクトル平均は位相（複素数の値）を持つ機器だけ
 REASON_VECTOR = texts.REASON_TEXTS["vector_only"]
 # 周波数オフセットは設計O。まだ作っていない
-REASON_FREQ_OFFSET = texts.NOT_YET["freq_offset"]
 L = texts.LABELS
 
 
@@ -79,7 +78,7 @@ class _TraceRow:
         self.n = number
         win = tab.win
         self.swatch = QLabel(f"■ {number}")
-        self.swatch.setStyleSheet(f"color: {trace_color(number)}; font-weight: bold;")
+        self.restyle()
         self.visible = QCheckBox(L["visible"])
         self.visible.toggled.connect(lambda on: win.call("set_trace", number=number, visible=bool(on)))
         self.action = QComboBox()
@@ -151,30 +150,40 @@ class _TraceRow:
         else:
             self.tab.win.call("set_trace", number=self.n, hold_after=code)
 
+    def restyle(self) -> None:
+        """トレースの色の印（配色を変えたとき: 設計J §4.4）。"""
+        self.swatch.setStyleSheet(f"color: {trace_color(self.n, self.tab.win.pal)}; font-weight: bold;")
+
     def apply(self, s: dict) -> None:
         self._state = s
         a = s["action"]
-        for w, v in ((self.visible, bool(s["visible"])),):
-            w.blockSignals(True)
-            w.setChecked(v)
-            w.blockSignals(False)
-        self.action.setCurrentIndex(max(0, self.action.findData(a)))
-        self.count.blockSignals(True)
-        self.count.setMinimum(1 if a == "average" else 0)
-        self.count.setValue(s.get("count") or 0)
-        self.count.blockSignals(False)
+        widget_sync.set_checked(self.visible, bool(s["visible"]))
+        widget_sync.set_data(self.action, a)
+        count = s.get("count") or 0
+        minimum = 1 if a == "average" else 0
+
+        def show_count() -> None:
+            # 打っている途中・範囲を選んでいる間は書き直さない（フォーカスが外れたら入れる）
+            if self.count.minimum() != minimum:
+                self.count.blockSignals(True)
+                self.count.setMinimum(minimum)
+                self.count.blockSignals(False)
+            widget_sync.set_value(self.count, max(count, minimum))
+        widget_sync.when_idle(self.count, "range", show_count)
         set_enabled(self.count, None if a in COUNTED else REASON_COUNT, L["count_n"])
-        self.avg.setCurrentIndex(max(0, self.avg.findData(s.get("average_type"))))
         eff = s.get("average_type_effective")
-        self.avg.setItemText(0, texts.w("default_with", type=texts.AVERAGE_TYPES.get(eff, eff)) if eff else L["default"])
+        default_text = texts.w("default_with", type=texts.AVERAGE_TYPES.get(eff, eff)) if eff else L["default"]
+
+        def show_avg() -> None:
+            if self.avg.itemText(0) != default_text:
+                self.avg.setItemText(0, default_text)
+            widget_sync.set_data(self.avg, s.get("average_type"))
+        widget_sync.when_idle(self.avg, "avg", show_avg)
         set_enabled(self.avg, None if a == "average" else REASON_AVG_TYPE, L["average_type"])
         choices = texts.AVERAGE_AFTER if a == "average" else texts.HOLD_AFTER
         cur = s.get("average_after") if a == "average" else s.get("hold_after")
-        if [self.after.itemData(i) for i in range(self.after.count())] != list(choices):
-            self.after.clear()
-            for code, name in choices.items():
-                self.after.addItem(name, code)
-        self.after.setCurrentIndex(max(0, self.after.findData(cur)))
+        widget_sync.set_items(self.after, [(name, code) for code, name in choices.items()])
+        widget_sync.set_data(self.after, cur)
         counted = a in COUNTED and s.get("count")
         set_enabled(self.after, None if counted else REASON_AFTER, L["after_n"])
         st = texts.TRACE_ACTIONS.get(a, a)
@@ -230,8 +239,14 @@ class TraceTab(QWidget):
         self.sweep_note.setWordWrap(True)
         self.sweep_note.hide()
         form.addRow(self.sweep_note)
-        self.freq_offset = QCheckBox(L["freq_offset"])
-        set_enabled(self.freq_offset, REASON_FREQ_OFFSET)
+        # 周波数オフセット（変換器の観測用: 設計O）。表示する周波数 = 測った周波数 + オフセット。0 で使わない
+        from .fields import FreqField
+
+        self.freq_offset = FreqField(texts.VIEW_TEXTS["freq_offset"],
+                                     lambda hz: win.call("set_view", field=self.freq_offset, freq_offset_hz=int(hz)),
+                                     big=False)
+        self.freq_offset.setToolTip(texts.VIEW_TEXTS["freq_offset_tip"])
+        self.freq_offset.edit.setPlaceholderText(texts.VIEW_TEXTS["freq_offset_placeholder"])
         form.addRow(self.freq_offset)
         lay.addWidget(g_sweep)
 
@@ -291,18 +306,15 @@ class TraceTab(QWidget):
             self.points_spin.setToolTip("")
             self.points_spin.setEnabled(not self.points_auto.isChecked())
         self.points_auto.blockSignals(False)
-        self.points_spin.blockSignals(True)
-        self.points_spin.setValue(sw["points"])
-        self.points_spin.blockSignals(False)
+        widget_sync.set_value(self.points_spin, sw["points"])
         self.step_label.setText(format_freq(sw["step_hz"]) + (L["zero_span_mark"] if sw["step_hz"] == 0 else ""))
         self.est_label.setText(texts.w("estimate_value", s=f"{sw['estimated_sweep_s']:.2f}", n=sw["preroll_points"]))
-        self.image_cancel.blockSignals(True)
-        self.image_cancel.setChecked(sw["image_cancel"])
-        self.image_cancel.blockSignals(False)
+        widget_sync.set_checked(self.image_cancel, sw["image_cancel"])
         set_enabled(self.image_cancel, why["image_cancel"])
         notes = [w for w in (why["points"], why["zero_span"]) if w]
         self.sweep_note.setText("\n".join(notes))
         self.sweep_note.setVisible(bool(notes))
+        self.freq_offset.set_hz(texts.freq_offset_of(st))  # 打っている間は欄が書き直さない（fields._Edit）
         self._apply_files(st.get("files") or [])
 
     def _apply_files(self, files: list[dict]) -> None:
@@ -341,6 +353,10 @@ class TraceTab(QWidget):
             self._file_rows[f["file_id"]] = w
         self.files_empty.setVisible(not files)
         self.update_file_checks()
+
+    def restyle(self) -> None:
+        for r in self.rows.values():
+            r.restyle()
 
     def update_file_checks(self) -> None:
         """単位がいまの縦軸と違う参照トレースは重ねない。消さずに無効にして理由を出す（U-08・E §6.4）。"""

@@ -25,7 +25,8 @@ def adopted(
         preroll = protocol.preroll_points_for(profile, step_hz, rbw_hz)
     axis = FreqAxis(start_hz, step_hz, points)
     first, per = protocol.timing(profile, step_hz, rbw_hz)
-    passes = 2 if (image_cancel or mode == Mode.NF) else 1
+    # 1画面の回数: NF は HOT/COLD の2回、イメージキャンセル ON は4回（設計F §6）
+    passes = 2 if mode == Mode.NF else 4 if image_cancel else 1
     return AdoptedSweep(
         start_hz=start_hz,
         stop_hz=stop_hz if stop_hz is not None else axis.last_hz,

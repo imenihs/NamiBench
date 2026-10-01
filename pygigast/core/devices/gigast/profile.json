@@ -39,6 +39,11 @@
     "level_adjustable": false
   },
   "image_cancel_default": true,
+  "image_cancel": {
+    "noise_floor_ad": {"180000": 149, "30000": 74, "15000": 74},
+    "noise_floor_basis": "measured_on_one_unit",
+    "noise_floor_note": "AD values with 1986 count = 80 dB (uncorrected dBm = AD*80/1986 - 80): 180k ~ -74 dBm, 30k ~ -77 dBm (SA, input open, 2026-10-01). 15k is provisional (same as 30k) until measured"
+  },
   "lo_leak_band_hz": [-5000000, 5000000],
   "lo_leak_basis": "measured_on_one_unit",
   "sweep_quirks": {

@@ -29,6 +29,7 @@ class MouseReading(QObject):
         self.plot = plot
         self._payloads = payloads
         self._zero_span = zero_span
+        self.offset_fn: Callable[[], int] = lambda: 0  # 周波数オフセット（設計O。画面が差し替える）
         self._scene_pos: QPointF | None = None
         self.text = ""  # いま出している文（出していなければ空）
         self._timer = QTimer(self)
@@ -66,7 +67,7 @@ class MouseReading(QObject):
                 QToolTip.hideText()
             return
         p = vb.mapSceneToView(pos)
-        r = screen_model.mouse_reading(self._payloads(), p.x(), p.y(), self._zero_span())
+        r = screen_model.mouse_reading(self._payloads(), p.x(), p.y(), self._zero_span(), self.offset_fn())
         self.text = r["text"]
         at = self.plot.mapToGlobal(self.plot.mapFromScene(pos)) + OFFSET
         QToolTip.showText(at, self.text, self.plot)

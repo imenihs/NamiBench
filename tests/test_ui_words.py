@@ -180,7 +180,7 @@ class PortNameTest(unittest.TestCase):
         return next(i["text"] for i in texts.status_items(st) if i["key"] == "conn")
 
     def test_status_bar(self):
-        self.assertIn("COM5", self.conn_text("gigast", "COM5"))
+        self.assertIn("COM7", self.conn_text("gigast", "COM7"))
         self.assertNotIn("rtlsdr:0", self.conn_text("rtlsdr", "rtlsdr:0"))
         self.assertNotIn("simulator", self.conn_text("simulator", "simulator"))
         self.assertIn("X 0001", self.conn_text("rtlsdr", "rtlsdr:0"))
@@ -192,7 +192,7 @@ class PortNameTest(unittest.TestCase):
         self.assertNotIn("rtlsdr-r820t", t)
 
     def test_device_details(self):
-        self.assertIn("COM5", texts.device_details({"kind": "gigast", "port": "COM5", "serial": "A"}))
+        self.assertIn("COM7", texts.device_details({"kind": "gigast", "port": "COM7", "serial": "A"}))
         self.assertNotIn("rtlsdr:0", texts.device_details({"kind": "rtlsdr", "port": "rtlsdr:0", "serial": "1"}))
 
 

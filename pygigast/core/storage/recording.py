@@ -7,7 +7,8 @@
   1掃引の確定は最悪 140ms かかりうる（`調査/保存形式_ベンチマーク.md`）ので、通信と画面を待たせない
 - 表: meta（キーと値）・segments（区間の番号と属性の JSON）・sweeps（番号・区間・区間の中の番号・開始時刻・
   raw・raw2）・overview_<k>（連続する k 掃引ごとの最大値。k が揃った塊だけを、その掃引と同じトランザクションで書く）
-- raw2 は2回目の生の値: イメージキャンセルは b3=0 の回（raw は b3=1 の回）、NF は COLD（raw は HOT）
+- raw2 は持ち方ごとの残りの生の値: イメージキャンセル（4回）は b3=0・1・0・1 の4回を続けたもの（raw は合わせた
+  採用する値: 設計F §6）、前の2回の形のイメージキャンセルは b3=0 の回（raw は b3=1 の回）、NF は COLD（raw は HOT）
 - BLOB の型は区間の生の値の形（raw_encoding: h5file.RAW_ENCODINGS）で決まる。GigaSt の AD 値は uint16、
   RTL-SDR のリニアの電力は float32（値の無い点は NaN。概観の最大値は NaN を除いて取る）
 - 記録を止めたら HDF5 へまとめ、まとめ終わってから作業ファイルを消す。まとめる前に落ちたものは
@@ -42,6 +43,7 @@ from .h5file import (
     SegmentSource,
     TraceData,
     adopted_values,
+    passes_of,
     segment_meta_for,
     split_raw,
     write_h5,
@@ -122,11 +124,14 @@ def _to_blob(a: np.ndarray, dtype: np.dtype) -> bytes:
     return np.ascontiguousarray(a, dtype=np.dtype(dtype).newbyteorder("<")).tobytes()
 
 
-def _from_blob(b: bytes, points: int, dtype: np.dtype) -> np.ndarray:
+def _from_blob(b: bytes, points: int, dtype: np.dtype, passes: Optional[int] = None) -> np.ndarray:
+    """BLOB を [点]（passes が None）か [回, 点] に戻す。"""
     arr = np.frombuffer(b, dtype=np.dtype(dtype).newbyteorder("<"))
-    if arr.shape[0] != points:
-        raise StorageError("corrupt_sweep", {"points": int(arr.shape[0]), "expected": points})
-    return arr.astype(dtype)
+    expected = points if passes is None else points * passes
+    if arr.shape[0] != expected:
+        raise StorageError("corrupt_sweep", {"points": int(arr.shape[0]), "expected": expected})
+    arr = arr.astype(dtype)
+    return arr if passes is None else arr.reshape(passes, points)
 
 
 # ---------------------------------------------------------------------------
@@ -470,11 +475,13 @@ class RecordingReader:
         dt = s.dtype
         t = np.array([r[1] for r in rows], dtype=np.float64)
         raw = np.empty((n, i1 - i0), dtype=dt)
-        raw2 = np.empty((n, i1 - i0), dtype=dt) if n and rows[0][3] is not None else None
+        k = passes_of(s.raw_layout)
+        shape2 = (n, i1 - i0) if k is None else (n, k, i1 - i0)
+        raw2 = np.empty(shape2, dtype=dt) if n and rows[0][3] is not None else None
         for j, r in enumerate(rows):
             raw[j] = _from_blob(r[2], s.points, dt)[i0:i1]
             if raw2 is not None:
-                raw2[j] = _from_blob(r[3], s.points, dt)[i0:i1]
+                raw2[j] = _from_blob(r[3], s.points, dt, k)[..., i0:i1]
         s0 = int(rows[0][0]) if n else 0
         return RawBlock(s.index, s.raw_layout, s0, i0, t, s.freqs(i0, i1), raw, raw2)
 

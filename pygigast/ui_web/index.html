@@ -19,7 +19,10 @@
 <script src="graph.js"></script>
 <script src="png.js"></script>
 <script src="audio.js"></script>
+<script src="app_keys.js"></script>
 <script src="app_menu.js"></script>
+<script src="app_settings.js"></script>
+<script src="app_windows.js"></script>
 <script src="app_rtl.js"></script>
 <script src="app_devices.js"></script>
 <script src="app_files.js"></script>
@@ -201,7 +204,7 @@
 
     <div class="vsplit" v-if="!part" @mousedown="startSplit($event, 'h')" :title="W('side_split_tip')"></div>
 
-    <aside class="side" v-if="!part || part.startsWith('tab-')">
+    <aside class="side" v-if="!part || part.startsWith('tab-') || part === 'peaks'">
       <nav class="tabs" v-if="!part">
         <button v-for="t in tabList" :key="t[0]" :class="{on: tab === t[0]}" @click="tab = t[0]; t[0] === 'source' && loadRefs()">{{ t[1] }}</button>
         <button class="small" @click="detach('tab-' + tab)" :title="W('detach_tab_tip')">{{ W('detach') }}</button>
@@ -217,11 +220,15 @@
           <div class="form" v-if="sw">
             <label>{{ W('points') }}</label>
             <div><label class="inline" :class="{disabled: !!sweepReasons.points}" :title="sweepReasons.points || ''"><input type="checkbox" :checked="!sw.points_setting" :disabled="!!sweepReasons.points" @change="setPointsAuto($event.target.checked)"> {{ F('points_auto') }}</label>
-              <input class="num" type="number" min="2" max="12000" :value="sw.points" :disabled="!sw.points_setting || !!sweepReasons.points" :title="sweepReasons.points || ''" @change="setPoints($event.target.value)">
+              <input class="num" type="number" min="2" max="12000" v-steady="sw.points" :disabled="!sw.points_setting || !!sweepReasons.points" :title="sweepReasons.points || ''" @change="setPoints($event.target.value)">
               <div class="fnote" v-if="notes.points">{{ notes.points.text }}</div></div>
             <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? W('zero_span_mark') : '' }}</div>
             <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(2), n: sw.preroll_points}) }}</div>
             <label></label><div><label class="inline" :class="{disabled: !!sweepReasons.image_cancel}" :title="sweepReasons.image_cancel || ''"><input type="checkbox" :checked="sw.image_cancel" :disabled="!!sweepReasons.image_cancel" @change="sweep({image_cancel: $event.target.checked})"> {{ W('image_cancel') }}</label></div>
+            <!-- 周波数オフセット（設計O・変換器の観測用）。表示だけを換算し、機器へ送る周波数は変えない -->
+            <label>{{ V('freq_offset') }}</label>
+            <div><input class="mid" data-field="freq_offset" v-steady="freqOffText" :placeholder="V('freq_offset_placeholder')" :title="V('freq_offset_tip')" @change="commitOffset($event.target.value)">
+              <div class="fnote" v-if="notes.offset">{{ notes.offset.text }}</div></div>
           </div>
           <div class="dim" v-for="r in [sweepReasons.points, sweepReasons.zero_span].filter((x) => x)" :key="r">{{ r }}</div>
         </section>
@@ -236,7 +243,7 @@
                   <td><input type="checkbox" :checked="t.visible" @change="setTrace(t.number, 'visible', $event.target.checked)"></td>
                   <td><select :value="t.action" @change="setTrace(t.number, 'action', $event.target.value)">
                     <option v-for="(l, c) in Td('TRACE_ACTIONS')" :key="c" :value="c">{{ l }}</option></select></td>
-                  <td class="nowrap"><input class="num" :value="t.count == null ? '' : t.count" placeholder="—"
+                  <td class="nowrap"><input class="num" v-steady="t.count == null ? '' : t.count" placeholder="—"
                       :disabled="!['average', 'max_hold', 'min_hold'].includes(t.action)" @change="setTraceCount(t.number, $event.target.value)">
                     <span class="dim" v-if="['average', 'max_hold', 'min_hold'].includes(t.action)"> {{ t.current_count }}{{ t.count_target ? '/' + t.count_target : '' }}</span></td>
                   <td><button class="small" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">{{ W('clear') }}</button></td>
@@ -244,8 +251,10 @@
                 <!-- 平均の種類と N 回の後（設計F §5.2.1）。平均・保持のときだけ出す -->
                 <tr v-if="t.action === 'average'" class="sub">
                   <td></td><td colspan="4">
-                    <select :value="t.average_type_effective || t.average_type" :title="W('average_type')" @change="setTrace(t.number, 'average_type', $event.target.value)">
-                      <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c">{{ l }}</option></select>
+                    <select :value="t.average_type || ''" :title="W('average_type')" @change="setTrace(t.number, 'average_type', $event.target.value || null)">
+                      <option value="">{{ t.average_type_effective ? W('default_with', { type: Td('AVERAGE_TYPES')[t.average_type_effective] }) : W('default') }}</option>
+                      <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c" :disabled="c === 'vector' && t.value_kind !== 'complex'"
+                              :title="c === 'vector' && t.value_kind !== 'complex' ? Td('REASON_TEXTS').vector_only : ''">{{ l }}</option></select>
                     <select :value="t.average_after" :title="W('after_n')" @change="setTrace(t.number, 'average_after', $event.target.value)">
                       <option v-for="(l, c) in Td('AVERAGE_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
                 </tr>
@@ -284,7 +293,7 @@
             <label></label>
             <button class="small" :disabled="!!rtlView.fit_reason || readOnly" :title="T('RTL_LABELS', 'fit_gain_tip') + (rtlView.fit_reason ? ' — ' + rtlView.fit_reason : '')" @click="cmd('rtlsdr_fit_gain', {}, {field: 'rtl'})">{{ T('RTL_LABELS', 'fit_gain') }}</button>
             <label>{{ T('RTL_LABELS', 'ppm') }}</label>
-            <input class="num" :value="rtlView.ppm" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'ppm_tip')" @change="setPpm($event.target.value)">
+            <input class="num" v-steady="rtlView.ppm" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'ppm_tip')" @change="setPpm($event.target.value)">
           </div>
           <div class="fnote" v-if="notes.rtl">{{ notes.rtl.text }}</div>
           <div class="dim">{{ rtlView.reason || rtlView.cal_text }}</div>
@@ -311,6 +320,8 @@
 
       <!-- ---- マーカー（J §4.5・設計G §3.5） ---- -->
       <div class="tab-body" v-show="showTab('marker')">
+        <!-- ピークの一覧だけを別ウィンドウにしたとき（J §4.3.2）は、そこにピークの一覧だけを出す -->
+        <template v-if="part !== 'peaks'">
         <h3>{{ W('selected_marker') }}</h3>
         <div class="form">
           <label>{{ W('marker') }}</label>
@@ -377,14 +388,18 @@
         <div class="form">
           <template v-for="k in ['x1_hz', 'x2_hz', 'y1', 'y2']" :key="k">
             <label>{{ k.replace('_hz', '').toUpperCase() }}</label>
-            <input :value="xyText(k)" :placeholder="W('empty_to_remove')" @change="commitXY(k, $event.target.value)">
+            <input v-steady="xyText(k)" :placeholder="W('empty_to_remove')" @change="commitXY(k, $event.target.value)">
           </template>
           <label>ΔX</label><div>{{ markers.xy && markers.xy.dx_hz != null ? fmtFreq(markers.xy.dx_hz) : '—' }}</div>
           <label>ΔY</label><div>{{ markers.xy && markers.xy.dy != null ? markers.xy.dy.toFixed(2) + ' dB' : '—' }}</div>
         </div>
         <div class="fnote" v-if="notes.xy">{{ notes.xy.text }}</div>
+        </template>
 
-        <h3>{{ W('peak_list') }}</h3>
+        <div class="detached-bar" v-if="!part && detached.peaks">{{ T('LAYOUT_TEXTS', 'peaks_detached') }} <button class="small" @click="reattach('peaks')">{{ W('reattach') }}</button></div>
+        <section class="peaks-part" v-show="part ? part === 'peaks' || part === 'tab-marker' : !detached.peaks">
+        <div class="part-head"><h3>{{ W('peak_list') }}</h3>
+          <button class="small" v-if="!part" @click="detach('peaks')" :title="W('detach_item', {part: W('part_peaks')})">{{ W('detach') }}</button></div>
         <div class="row">
           <span>{{ W('trace') }}</span><select v-model="peakTrace"><option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">{{ n }}</option></select>
           <span>{{ W('from_floor') }}</span><input class="num" v-model="peakMargin"><span>dB</span>
@@ -399,12 +414,13 @@
           <tbody>
             <tr v-if="!peakList.peaks.length"><td colspan="4" class="dim">{{ T('ERRORS', 'no_peak') }}</td></tr>
             <tr v-for="p in peakList.peaks" :key="p.freq_hz">
-              <td class="r">{{ fmtFreq(p.freq_hz) }}</td><td class="r">{{ fmtLevel(p.level, peakList.unit) }}</td>
+              <td class="r">{{ fmtFreq(shownHz(p.freq_hz)) }}</td><td class="r">{{ fmtLevel(p.level, peakList.unit) }}</td>
               <td class="r">{{ p.height_db != null ? p.height_db.toFixed(1) + ' dB' : '' }}</td>
               <td><button class="small" @click="cmd('marker_register_peak', {trace: peakList.trace, freq_hz: p.freq_hz})">{{ W('register_p') }}</button></td>
             </tr>
           </tbody>
         </table>
+        </section>
       </div>
 
       <!-- ---- 表示（J §4.5） ---- -->
@@ -414,11 +430,28 @@
           <label class="inline disabled" :title="T('NOT_YET', 'waterfall')"><input type="radio" disabled> {{ W('plus_waterfall') }}</label>
           <label class="inline disabled" :title="T('NOT_YET', 'density')"><input type="radio" disabled> {{ W('plus_density') }}</label></div>
         <div class="dim">{{ T('NOT_YET', 'view') }}</div>
+        <!-- 描き方（旧 Line/Dot・設計O）。測った値は変わらない。コアの表示の設定なので Qt と同じになる -->
+        <h3>{{ W('draw_style') }}</h3>
+        <div class="row"><label class="inline" v-for="d in ['line', 'fill']" :key="d">
+          <input type="radio" name="draw_style" :value="d" :checked="(viewOpts.draw_style || 'line') === d" @change="setView({draw_style: d})"> {{ W('draw_' + d) }}</label></div>
+        <!-- 振幅の詳細（設計O）: 単位と外部補正。換算はコア（グラフ・マーカー・CSV・PNG・REF が同じ単位） -->
         <h3>{{ W('amplitude_detail') }}</h3>
-        <div class="row"><span>{{ W('unit') }}</span><select disabled :title="W('unit_not_yet')"><option>{{ axisUnit }}</option></select></div>
-        <div class="dim">{{ W('amplitude_not_yet') }}</div>
+        <div class="form">
+          <label>{{ V('level_unit') }}</label>
+          <select :value="viewOpts.level_unit || 'dBm'" :title="V('level_unit_tip')" @change="setView({level_unit: $event.target.value})">
+            <option v-for="(l, c) in levelUnits" :key="c" :value="c">{{ l }}</option></select>
+          <label>{{ V('ext_db') }}</label>
+          <div class="row"><input class="num" data-field="ext_db" v-steady="extText" :placeholder="V('ext_db_placeholder')" :title="V('ext_db_tip')" @change="commitExt($event.target.value)"><span>dB</span></div>
+        </div>
+        <div class="fnote" v-if="notes.view">{{ notes.view.text }}</div>
+        <div class="dim">{{ V('level_unit_ratio') }}</div>
+        <div class="row"><button class="small" @click="setView({level_unit: null, ext_db: null})">{{ V('reset_amp') }}</button></div>
+        <!-- 配色（J §4.4）: ライト・ダークは初期値に戻すボタン（変えた色の数を言ってから聞く）と、編集の画面への入口 -->
         <h3>{{ W('colors') }}</h3>
-        <div class="row"><button disabled :title="T('NOT_YET', 'colors')">{{ W('reset_light') }}</button><button disabled :title="T('NOT_YET', 'colors')">{{ W('reset_dark') }}</button></div>
+        <div class="row"><button @click="resetPalette('light')">{{ S('palette_reset_light') }}</button><button @click="resetPalette('dark')">{{ S('palette_reset_dark') }}</button></div>
+        <div class="dim">{{ paletteView.base_text }}</div>
+        <div class="row"><button @click="openSettings('display')">{{ T('MENU_ITEMS', 'view_colors') }}</button>
+          <button disabled :title="T('NOT_YET', 'bandplan')">{{ W('show_bandplan') }}</button></div>
       </div>
 
       <!-- ---- 信号源（J §4.5） ---- -->
@@ -531,36 +564,17 @@
     </div>
   </div>
 
-  <!-- 入力の窓（保存先・開くファイル・アプリ設定など） -->
+  <!-- アプリ設定（O §1.3）とプリセット（O §1.2）の窓。機器の一覧・入力の窓はこの上に重ねる。形は app_windows.js -->
+  <gs-settings v-if="settingsWin"></gs-settings>
+  <gs-presets v-if="presetsWin"></gs-presets>
+
+  <!-- 入力の窓（保存先・開くファイル・名前など） -->
   <div class="modal-back" v-if="modal" @click="modal = null">
     <div class="modal" @click.stop>
       <h3>{{ modal.title }}</h3>
       <p v-if="modal.note" class="modal-note">{{ modal.note }}</p>
       <table v-if="modal.keys" class="mtable"><tbody><tr v-for="(r, i) in keyRows" :key="i"><td>{{ r[0] }}</td><td>{{ r[1] }}</td></tr></tbody></table>
       <p v-if="modal.keys" class="modal-note">{{ W('keys_note') }}{{ W('keys_note_browser') }}</p>
-      <!-- アプリ設定（O §1.3。Qt の settings_dialog.py と同じ欄。変えたらすぐ効く） -->
-      <template v-if="modal.settings">
-        <p class="modal-note">{{ T('SETTINGS_LABELS', 'note') }}</p>
-        <h3>{{ T('SETTINGS_LABELS', 'rtltcp_group') }}</h3>
-        <div class="form">
-          <label></label><label class="inline"><input type="checkbox" :checked="rtltcpView.enabled" @change="setRtltcp({enabled: $event.target.checked})"> {{ T('SETTINGS_LABELS', 'rtltcp_enable') }}</label>
-          <label>{{ T('SETTINGS_LABELS', 'rtltcp_port') }}</label><input class="num" :value="rtltcpView.port" @change="setRtltcpPort($event.target.value)">
-          <label>{{ T('SETTINGS_LABELS', 'rtltcp_bind') }}</label>
-          <select :value="rtltcpView.bind" @change="setRtltcp({bind: $event.target.value})"><option v-for="(l, c) in Td('RTLTCP_BINDS')" :key="c" :value="c">{{ l }}</option></select>
-        </div>
-        <div>{{ rtltcpView.text }}</div>
-        <div class="dim" v-if="rtltcpView.dropped_text">{{ rtltcpView.dropped_text }}</div>
-        <div class="warn" v-if="rtltcpView.error_text">{{ rtltcpView.error_text }}</div>
-        <div class="fnote" v-if="notes.rtltcp">{{ notes.rtltcp.text }}</div>
-        <div class="row"><button class="small" @click="setRtltcp({enabled: false, port: 1234, bind: 'local'})">{{ T('SETTINGS_LABELS', 'rtltcp_default') }}</button></div>
-        <p class="dim">{{ T('SETTINGS_LABELS', 'rtltcp_note') }}</p>
-        <h3>{{ T('SETTINGS_LABELS', 'rtlsdr_group') }}</h3>
-        <div :class="rtlView.dll_found ? '' : 'warn'">{{ rtlView.dll_found ? T('SETTINGS_LABELS', 'rtlsdr_found') : T('SETTINGS_LABELS', 'rtlsdr_missing') }}</div>
-        <div class="dim">{{ rtlView.dll_text }}</div>
-        <p class="dim">{{ W('dll_folder_web') }}</p>
-        <h3>{{ T('SETTINGS_LABELS', 'other_group') }}</h3>
-        <p class="dim">{{ T('SETTINGS_LABELS', 'other_note') }}</p>
-      </template>
       <div v-for="f in modal.fields" :key="f.key" class="modal-field">
         <label>{{ f.label }}</label>
         <textarea v-if="f.multiline" v-model="f.value" rows="4"></textarea>
@@ -572,6 +586,9 @@
       </div>
     </div>
   </div>
+
+  <!-- 確かめる窓（何が失われるか・何とぶつかるかを言ってから聞く）。ほかの窓の上に重ねる。形は app_windows.js -->
+  <gs-confirm v-if="confirmBox"></gs-confirm>
 </div>
 </div>
 </body>

@@ -77,6 +77,7 @@ class TraceLayer:
         self.pi.addItem(self.zero_line, ignoreBounds=True)
         self.zero_line.hide()
         self._bands: list[pg.LinearRegionItem] = []
+        self._band_ranges: list = []
         self.legend = pg.LegendItem(offset=(-8, 6), brush=pg.mkBrush(_alpha(pal["graph_bg"], 200)),
                                     pen=pg.mkPen(pal["axis"]), labelTextColor=pal["text"], labelTextSize="9pt")
         self.legend.setParentItem(self.pi.getViewBox())
@@ -262,11 +263,30 @@ class TraceLayer:
     def set_zero_line(self, shown: bool) -> None:
         self.zero_line.setVisible(shown)
 
+    def restyle(self) -> None:
+        """配色を変えたとき（設計J §4.4: 変えた結果はその場で画面に出る）。self.pal は画面と同じ辞書を見ている。"""
+        for n in LIVE_TRACES:
+            e = self.live[n]
+            e["curve"].setPen(pg.mkPen(trace_color(n, self.pal), width=1))
+            e["mark"].setPen(pg.mkPen(self.pal["text_dim"], width=1))
+            self._apply_fill(e["curve"], n)
+        for i, e in enumerate(self.files.values()):
+            e["color"] = trace_color(i + 1, self.pal)
+            e["curve"].setPen(pg.mkPen(e["color"], width=1, style=Qt.PenStyle.DashLine))
+        self.zero_line.setPen(pg.mkPen(self.pal["zero_db"], width=1.5))
+        self.legend.setBrush(pg.mkBrush(_alpha(self.pal["graph_bg"], 200)))
+        self.legend.setPen(pg.mkPen(self.pal["axis"]))
+        self.legend.setLabelTextColor(self.pal["text"])
+        self._legend_key = ()
+        self._update_legend()
+        self.set_bands(self._band_ranges)
+
     def set_bands(self, ranges: list) -> None:
         """基準の範囲外の区間（E §6.4: 値なしの区間を色の帯で示す）。"""
         for b in self._bands:
             self.pi.removeItem(b)
         self._bands = []
+        self._band_ranges = list(ranges or [])
         for lo, hi in ranges or []:
             b = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=pg.mkBrush(_alpha(self.pal["warn"], 35)),
                                     pen=pg.mkPen(_alpha(self.pal["warn"], 90)))
@@ -329,6 +349,15 @@ class MarkerLayer:
         for it in self._items:
             self.pi.removeItem(it)
         self._items = []
+
+    def restyle(self) -> None:
+        """配色を変えたとき。印と名前は次の update で新しい色になる（画面が続けて呼ぶ）。"""
+        self.scatter.setPen(pg.mkPen(self.pal["graph_bg"]))
+        for line in self.xy.values():
+            line.setPen(pg.mkPen(self.pal["accent"], width=1))
+            line.setHoverPen(pg.mkPen(self.pal["accent"], width=3))
+            line.label.setColor(self.pal["accent"])
+            line.label.fill = pg.mkBrush(_alpha(self.pal["graph_bg"], 200))
 
     def update(self, rows: list[dict], selected: Optional[str], xy: dict) -> None:
         self._clear()

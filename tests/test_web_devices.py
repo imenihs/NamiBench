@@ -14,7 +14,7 @@ from pygigast.ui_qt import texts
 from tests.device_helpers import FakeGigaBackend
 from tests.test_web_server import WebServerTest, _Server
 
-SERIAL = "A9016WJ9"
+SERIAL = "FT00AB12"
 
 
 class WebDevicesTest(unittest.TestCase):
@@ -42,24 +42,24 @@ class WebDevicesTest(unittest.TestCase):
         self.assertEqual(body["rows"], [])
         self.assertEqual(body["simulator"]["kind"], "simulator")
         with self.ws() as ws:
-            self.giga.plug("COM5", SERIAL)
+            self.giga.plug("COM7", SERIAL)
             p = self.recv_until(ws, lambda k, p: k == "devices" and p["rows"])
         self.assertFalse(p["empty"])
         row = p["rows"][0]
-        self.assertEqual(row["view"]["name"], "GigaSt v5 6WJ9")
+        self.assertEqual(row["view"]["name"], "GigaSt v5 AB12")
         self.assertEqual(row["view"]["state_text"], texts.DEVICE_STATES["first_time_needs_probe"])
-        self.assertIn("COM5", row["view"]["details"])
+        self.assertIn("COM7", row["view"]["details"])
 
     def test_connect_failure_has_next_step(self):
-        self.giga.plug("COM5", SERIAL)
+        self.giga.plug("COM7", SERIAL)
         self.giga.probe_result = False
-        st, body = self.post("connect", {"backend": "gigast", "port": "COM5"})
+        st, body = self.post("connect", {"backend": "gigast", "port": "COM7"})
         self.assertEqual((st, body["error"]["code"]), (400, "probe_failed"))
         self.assertEqual(body["error"]["text_next"],
                          texts.connect_failed_text("", texts.ERRORS["probe_failed"], "probe_failed"))
         self.giga.probe_result = True
-        self.giga.busy.add("COM5")
-        st, body = self.post("connect", {"backend": "gigast", "port": "COM5"})
+        self.giga.busy.add("COM7")
+        st, body = self.post("connect", {"backend": "gigast", "port": "COM7"})
         self.assertEqual(body["error"]["code"], "port_in_use")
         self.assertIn("GS5.exe", body["error"]["text"])
 

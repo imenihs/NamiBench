@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from ... import __version__
 from ..local import CommandError, LocalApi
 from ...core import report_layout as rl
-from ...ui_qt import screen_model
+from ...ui_qt import screen_model, texts
 from . import view
 from .access import KIND_OPERATE, Access
 from .guard import Guard
@@ -288,7 +288,8 @@ class _Hub:
                 del self.latest_traces[key]
             payload = view.state_view(payload)
         elif kind == "markers":
-            payload = view.markers_view(payload, view.default_unit(self.last_state))
+            payload = view.markers_view(payload, view.default_unit(self.last_state),
+                                        texts.freq_offset_of(self.last_state))
         elif kind == "notice":
             if self.files is not None and payload.get("code") in _TASK_END:
                 # Web の口で名前を付けて作らせたファイル: 終わったらダウンロードの番号を知らせに足す（A §4.3.2 の 3）
@@ -462,7 +463,8 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
             return fail("bad_value", None, {"message": str(e)})
         payloads = await hub.shown_traces()
         zero = ((hub.last_state or {}).get("sweep") or {}).get("step_hz") == 0
-        return JSONResponse(to_jsonable(screen_model.mouse_reading(payloads, x, y, zero)))
+        return JSONResponse(to_jsonable(screen_model.mouse_reading(payloads, x, y, zero,
+                                                                   texts.freq_offset_of(hub.last_state))))
 
     from .routes_access import add_access_routes
 
@@ -492,7 +494,9 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         except Exception as e:  # noqa: BLE001
             tr.on_error()
             return JSONResponse(error_body(e), status_code=500)
-        return JSONResponse(to_jsonable(view.result_view(command, args, {} if result is None else result)))
+        # 調整の知らせの周波数は欄と同じく換算後（周波数オフセット: 設計O）
+        return JSONResponse(to_jsonable(view.result_view(command, args, {} if result is None else result,
+                                                         texts.freq_offset_of(hub.last_state))))
 
     @app.websocket("/api/v1/events")
     async def events(ws: WebSocket) -> None:

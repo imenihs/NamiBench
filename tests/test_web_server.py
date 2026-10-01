@@ -353,7 +353,7 @@ class AppJsWheelTest(unittest.TestCase):
 
     SCRIPT = r"""
 globalThis.window = globalThis; window.addEventListener = () => {};
-let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() {}, mount() {} }; }, markRaw: (x) => x };
+let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() {}, directive() {}, mount() {} }; }, markRaw: (x) => x };
 globalThis.GSUnits = {}; globalThis.GSTexts = { w: (k) => "W:" + k, get: () => "", dict: () => ({}), fmt: (k) => k };
 globalThis.GSApi = { call: async () => ({}) };
 for (const n of ["GSAppMenu", "GSAppFiles", "GSAppRtl", "GSAppDevices"]) globalThis[n] = {};

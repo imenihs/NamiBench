@@ -33,6 +33,7 @@ from .instrument_files import DEFERRED, FilesMixin
 from .instrument_listen import ListenMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
+from .instrument_view import ViewMixin
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
 from .settings import Settings
@@ -162,7 +163,7 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin):
+class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -221,6 +222,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
 
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
         self._init_display(saved if isinstance(saved, dict) else None)
+        # 表示の設定・配色・プリセット（設計O・J §4.4）。トレースの値を出す前に要る
+        self._init_view(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
         self._init_diff(saved if isinstance(saved, dict) else None)  # トレースと参照トレースの後（2本を探すため）
         self._init_rtltcp()
@@ -275,6 +278,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             **self._display_state_to_save(),
             **self._files_state_to_save(),
             **self._diff_state_to_save(),
+            **self._view_state_to_save(),
         }
 
     def _error(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> CommandError:
@@ -428,6 +432,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             "rtltcp": self._rtltcp_state(),
             "rtlsdr": self._rtlsdr_state(),
             "listen": self._listen_state(),
+            **self._view_snapshot(),
         }
 
     # 信号源を出すモード（設計L §1.1）。S11 は機器から見れば TG と同じ掃引
@@ -688,6 +693,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         self._drop_device()
         self._shutdown_files()
         self._settings.set("state", self._state_to_save())
+        self._save_palette_setting()
         try:
             self._settings.save()
         except OSError as e:

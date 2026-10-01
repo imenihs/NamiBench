@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.units import MINUS, ParseError, minus_sign, parse_db, parse_freq_hz
+from ..core.units import MINUS, ParseError, level_text, minus_sign, parse_db, parse_freq_hz
 from .texts_labels import LABELS
 
 NOTE_SHOW_MS = 4000
@@ -43,22 +43,50 @@ class _Edit(QLineEdit):
     def __init__(self) -> None:
         super().__init__()
         self._shown = ""
+        # この欄で確定した・桁を増減した値の戻りを待っている。フォーカスがあっても戻りの値は映す
+        # （Enter で確定した値・↑↓ で送った値がその場で見える）。利用者が次に触ると解く
+        self._echo = False
         # ホイールで増減する桁を決めておく欄（REF レベル: 1目盛で 1dB）。None はカーソルのある桁
         self.wheel_exp: Optional[int] = None
         self.editingFinished.connect(self._on_finished)
 
     def show_value(self, text: str) -> None:
+        """状態の値を映す。フォーカスがある間は書かない（選んだ範囲・カーソル・打っている途中の文字を消さない）。
+
+        書かなかった値はフォーカスが外れたときに入れる（focusOutEvent）。表示が同じなら書かない。
+        """
         self._shown = text
-        if not self.hasFocus() or not self.isModified():
-            pos = self.cursorPosition()
-            self.setText(text)
-            self.setModified(False)
-            self.setCursorPosition(min(pos, len(text)))
+        if self.hasFocus() and not self._echo:
+            return
+        if self.isModified() or self.text() == text:
+            return
+        pos = self.cursorPosition()
+        self.setText(text)
+        self.setModified(False)
+        self.setCursorPosition(min(pos, len(text)))
 
     def _on_finished(self) -> None:
         if self.isModified():
             self.setModified(False)
+            self._echo = True
             self.committed.emit(self.text())
+
+    def focusInEvent(self, e) -> None:
+        self._echo = False
+        super().focusInEvent(e)
+
+    def focusOutEvent(self, e) -> None:
+        committing = self.isModified()
+        super().focusOutEvent(e)  # 打った値はここで確定する（editingFinished）
+        self._echo = False
+        if not committing and not self.isModified() and self.text() != self._shown:
+            # フォーカスがある間に届いた最新の値を入れる
+            self.setText(self._shown)
+            self.setModified(False)
+
+    def mousePressEvent(self, e) -> None:
+        self._echo = False  # 範囲を選び始めた。以後は書き直さない
+        super().mousePressEvent(e)
 
     def event(self, e) -> bool:
         # 打っている途中の Ctrl+Z / Ctrl+Y は欄の文字を戻す（キーは欄に渡す: J §4.6）。
@@ -77,11 +105,13 @@ class _Edit(QLineEdit):
         if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             self._step(+1 if e.key() == Qt.Key.Key_Up else -1)
             return
+        self._echo = False  # 打つ・範囲を選ぶ・カーソルを動かす。以後は書き直さない（Enter は確定で戻る）
         super().keyPressEvent(e)
 
     def wheelEvent(self, e: QWheelEvent) -> None:
         dy = e.angleDelta().y()
         if dy and self.wheel_exp is not None:
+            self._echo = True
             self.stepped.emit(self.wheel_exp, +1 if dy > 0 else -1)
         elif dy:
             self._step(+1 if dy > 0 else -1)
@@ -90,6 +120,7 @@ class _Edit(QLineEdit):
     def _step(self, direction: int) -> None:
         exp = self._digit_exponent()
         if exp is not None:
+            self._echo = True
             self.stepped.emit(exp, direction)
 
     def _digit_exponent(self) -> Optional[int]:
@@ -255,6 +286,11 @@ class SpanLockButton(QToolButton):
         self._icons = {True: _lock_icon(on_color, True), False: _lock_icon(off_color, False)}
         self.show_lock(None, None)
 
+    def set_colors(self, on_color: str, off_color: str) -> None:
+        """配色を変えたとき（設計J §4.4）。"""
+        self._icons = {True: _lock_icon(on_color, True), False: _lock_icon(off_color, False)}
+        self.setIcon(self._icons[self.isChecked()])
+
     def show_lock(self, lock_hz: Optional[int], span_hz: Optional[int], fmt: Callable[[int], str] = str) -> None:
         on = lock_hz is not None
         self.blockSignals(True)
@@ -279,6 +315,8 @@ class FreqField(ValueField):
         widest = self.edit.fontMetrics().horizontalAdvance("-12100.0000 MHz")
         self.edit.setMinimumWidth(widest + 16)
         self._hz = 0
+        # 周波数オフセット（設計O）: 欄は「測った周波数 + これ」を出し、打った値からこれを引いて渡す
+        self.offset_hz = 0
         self._on_commit = on_commit
         self.edit.committed.connect(self._commit_text)
         self.edit.stepped.connect(self._stepped)
@@ -297,7 +335,12 @@ class FreqField(ValueField):
 
     def set_hz(self, hz: int) -> None:
         self._hz = hz
-        self.edit.show_value(self._to_text(hz))
+        self.edit.show_value(self._to_text(hz + self.offset_hz))
+
+    def set_offset(self, offset_hz: int) -> None:
+        if offset_hz != self.offset_hz:
+            self.offset_hz = int(offset_hz)
+            self.edit.show_value(self._to_text(self._hz + self.offset_hz))
 
     def hz(self) -> int:
         return self._hz
@@ -307,9 +350,9 @@ class FreqField(ValueField):
             hz = parse_freq_hz(text)
         except ParseError:
             self.flash_note(LABELS["bad_freq"])
-            self.edit.show_value(self._to_text(self._hz))
+            self.edit.show_value(self._to_text(self._hz + self.offset_hz))
             return
-        self._on_commit(hz)
+        self._on_commit(hz - self.offset_hz)
 
     def _stepped(self, exp: int, direction: int) -> None:
         # 欄の数字は MHz なので、10^exp MHz = 10^(exp+6) Hz
@@ -375,6 +418,7 @@ class _RefCombo(QComboBox):
     def wheelEvent(self, e: QWheelEvent) -> None:
         dy = e.angleDelta().y()
         if dy:
+            self._edit._echo = True
             self._edit.stepped.emit(0, +1 if dy > 0 else -1)
         e.accept()
 
@@ -412,11 +456,12 @@ class RefLevelField(DbField):
     def _chosen(self, i: int) -> None:
         v = self.combo.itemData(i)
         if v is not None:
+            self.edit._echo = True  # 選んだ値の戻りはフォーカスがあっても映す
             self._on_commit(float(v))
 
     def set_value(self, v: float) -> None:
         self._value = v
-        self.edit.show_value(minus_sign(f"{v:.1f} {self._unit}".rstrip()))
+        self.edit.show_value(f"{level_text(v)} {self._unit}".rstrip())
 
     def set_unit(self, unit: str) -> None:
         if unit != self._unit:

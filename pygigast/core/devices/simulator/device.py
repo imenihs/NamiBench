@@ -6,6 +6,7 @@
 
 - 再生: ref/capture の実機の応答を、要求（32バイト）が一致するものから返す。一致が無ければ合成に落ちる
 - 合成: ノイズフロア（AD 90〜130）＋指定した信号＋0Hz の局発の漏れ＋プロファイルの内部スプリアス。
+  掃引ごとに位置の変わる山（T16）を足す設定を持つ（既定は出さない。イメージキャンセルの4回の試験用）
   時間は設計B §7.2 の見積もりの式で流す（speed で縮められる）
 - 異常系: 欠けた応答・末尾の無い応答・応答なし・余計な1バイト・切断を、次の要求に起こせる
 """
@@ -60,6 +61,12 @@ class SynthConfig:
     sg_dbm: float = -15.0  # SG・TG の出力（直結で受けたときのレベル）
     b3_level_db: float = -1.0  # b3=1 は b3=0 より約1dB 低い（T2）
     nf_hot_db: float = 3.0  # NF の HOT でノイズフロアが上がる量
+    # 掃引ごとに位置の変わる山（T16: 雑音の上に幅 10〜30kHz・高さ約 10dB の平らな山。0〜1000MHz で出る）。
+    # 1回の掃引に出す数（0 は出さない）・幅・雑音の上の高さ・出る帯。値は T16 の観察に近い仮の値
+    bursts_per_sweep: int = 0
+    burst_width_hz: int = 20_000
+    burst_db: float = 10.0
+    burst_band_hz: tuple[int, int] = (0, 1_000_000_000)
 
 
 class Synth:
@@ -95,10 +102,27 @@ class Synth:
             df = np.where(f > fs, f - fs, np.maximum(0, fs - (f + width)))
             shape_db = -3.0 * (df / (ds.rbw_hz / 2)) ** 2
             ad = np.maximum(ad, dbm_to_ad(lv + np.maximum(shape_db, -120.0)))
+        if c.bursts_per_sweep > 0:
+            ad = self._add_bursts(ad, f)
         if ds.mode_bits & protocol.MODE_TG:
             ad = np.maximum(ad, dbm_to_ad(c.sg_dbm + (c.b3_level_db if b3 else 0.0))
                             + self.rng.normal(0, 3, size=n))
         return np.clip(np.rint(ad), 0, AD_MAX).astype("<u2")
+
+
+    def _add_bursts(self, ad: np.ndarray, f: np.ndarray) -> np.ndarray:
+        """雑音の床に、掃引ごとに違う位置の平らな山を乗せる（T16。信号の上には乗らない: max で重ねる）。"""
+        c = self.config
+        lo_band, hi_band = c.burst_band_hz
+        lo = max(int(f[0]), lo_band)
+        hi = min(int(f[-1]), hi_band)
+        if hi <= lo:
+            return ad
+        top = c.noise_ad[1] + c.burst_db * AD_PER_DB
+        for center in self.rng.integers(lo, hi + 1, size=c.bursts_per_sweep):
+            inside = np.abs(f - int(center)) <= c.burst_width_hz // 2
+            ad = np.where(inside, np.maximum(ad, top), ad)
+        return ad
 
 
 class ReplayIndex:

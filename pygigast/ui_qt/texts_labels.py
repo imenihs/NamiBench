@@ -124,8 +124,6 @@ LABELS = {
     "plus_density": "＋密度",
     "amplitude_detail": "振幅の詳細",
     "unit": "単位",
-    "unit_not_yet": "dBμV・dBmV への切り替えはまだ使えません",
-    "amplitude_not_yet": "dBμV・dBmV・外部補正はまだ使えません。REF レベルと dB/div は上段で変えます",
     "colors": "配色",
     "reset_light": "ライトの初期値に戻す",
     "reset_dark": "ダークの初期値に戻す",

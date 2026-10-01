@@ -19,7 +19,7 @@ from . import texts
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-KEYS = ("conn", "run", "time", "discard", "cal", "norm", "src", "listen", "rtltcp", "rec", "tasks")
+KEYS = ("conn", "run", "time", "discard", "cal", "ext", "offset", "norm", "src", "listen", "rtltcp", "rec", "tasks")
 
 
 class StatusBar:

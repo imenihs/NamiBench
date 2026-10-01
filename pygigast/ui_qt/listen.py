@@ -13,7 +13,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QGridLayout, QGroupBox, QLabel, QPushButton, QSlider
 
-from . import screen_model, texts
+from . import screen_model, texts, widget_sync
 from .tab_traces import set_enabled
 
 if TYPE_CHECKING:
@@ -132,7 +132,7 @@ class ListenControl:
         # IQ を持つ機器に繋いでいるときだけ出す（設計J §4.5。受信の欄と同じ決まり）
         self.panel.setVisible(bool(v.get("shown")))
         if v["active"] and v.get("mode"):
-            self.mode.setCurrentIndex(max(0, self.mode.findData(v["mode"])))
+            widget_sync.set_data(self.mode, v["mode"])
         self.refresh()
         if not v["active"]:
             self.player.close()

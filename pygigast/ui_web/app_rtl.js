@@ -16,7 +16,6 @@
         listenMode: "am",
         volume: 50,
         audioBlocked: false,
-        settingsOpen: false,
       };
     },
     computed: {
@@ -105,8 +104,7 @@
         const b = this.$audio.blocked;
         if (b !== this.audioBlocked) this.audioBlocked = b;
       },
-      // ---- アプリ設定（O §1.3。変えたらすぐ効く）
-      settingsDialog() { this.modal = { title: X.get("SETTINGS_LABELS", "title"), settings: true, fields: [] }; },
+      // ---- アプリ設定の rtl_tcp のページ（O §1.3。変えたらすぐ効く。窓の形は app_windows.js）
       setRtltcp(args) { this.cmd("rtltcp_set", args, { field: "rtltcp" }); },
       setRtltcpPort(text) {
         const v = Number(String(text).trim());

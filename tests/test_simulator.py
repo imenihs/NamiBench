@@ -50,11 +50,27 @@ class TestSynth(unittest.TestCase):
         r = d.measure(a)
         i956 = (956_000_000 - 900_000_000) // 200_000
         i946 = (946_000_000 - 900_000_000) // 200_000
-        self.assertGreater(r.raw_b3_0[i956], 1000)
-        self.assertGreater(r.raw_b3_1[i946], 1000)
+        # 4回（b3=0・1・0・1: 設計F §6）。b3=0 の回は 956MHz、b3=1 の回は 946MHz にスプリアスが出る
+        self.assertEqual(r.raw_passes.shape, (4, 500))
+        self.assertEqual([w[14] for w in d.port.requests], [0x00, 0x08, 0x00, 0x08])
+        for k in (0, 2):
+            self.assertGreater(r.raw_passes[k][i956], 1000)
+        for k in (1, 3):
+            self.assertGreater(r.raw_passes[k][i946], 1000)
         self.assertLess(r.raw[i956], 200)
         self.assertLess(r.raw[i946], 200)
-        np.testing.assert_array_equal(r.raw, np.minimum(r.raw_b3_0, r.raw_b3_1))
+
+    def test_image_cancel_4_removes_bursts(self):
+        # 掃引ごとに位置の変わる山（T16）を出しても、4回の合わせ方で雑音の床に残らない
+        cfg = SynthConfig(bursts_per_sweep=5)
+        d = sim(config=cfg, seed=3)
+        a = adopted(start_hz=84_200_000, step_hz=2_000, points=501, preroll=0, image_cancel=True)
+        r = d.measure(a)
+        top = cfg.noise_ad[1] + cfg.burst_db * 1986 / 80
+        self.assertTrue((r.raw_passes >= top - 1).any())  # 生の値には山がある
+        self.assertLessEqual(int(r.raw.max()), cfg.noise_ad[1])
+        # 山の無い雑音だけの点は平均か min なので、雑音の範囲の中
+        self.assertGreaterEqual(int(r.raw.min()), cfg.noise_ad[0])
 
     def test_nf_pair(self):
         r = sim().measure(adopted(mode=Mode.NF, preroll=0))
@@ -110,7 +126,18 @@ class TestFaults(unittest.TestCase):
         with self.assertRaises(SweepDiscarded) as cm:
             d.measure(adopted(preroll=0, image_cancel=True))
         self.assertTrue(cm.exception.detail["pair_discarded"])
+        self.assertEqual(cm.exception.detail["passes"], 4)
         self.assertEqual(len(d.port.requests), 1)
+
+    def test_image_cancel_4set_discarded_if_last_pass_fails(self):
+        # 4回のどれかが捨てられたら、その組（4回）ごと捨てる（設計F §6 の 5）
+        d = sim()
+        d.port.faults.extend(["", "", ""])  # 1〜3回目は正常（空の文字列は異常なし）
+        d.port.faults.append("truncate")
+        with self.assertRaises(SweepDiscarded) as cm:
+            d.measure(adopted(preroll=0, image_cancel=True))
+        self.assertEqual(cm.exception.detail["pass"], "b3_1b")
+        self.assertEqual(len(d.port.requests), 4)
 
     def test_disconnect_and_plug(self):
         d = sim()
@@ -149,7 +176,7 @@ class TestReplay(unittest.TestCase):
         self.assertIn(want, recorded)
         r = d.measure(a)
         self.assertEqual(d.port.last_source, "synth")  # b3=1 側は記録に無いので合成
-        self.assertIn(r.raw_b3_0.tobytes(), [x[:751 * 2] for x in recorded])
+        self.assertIn(r.raw_passes[0].tobytes(), [x[:751 * 2] for x in recorded])
 
     def test_falls_back_to_synth(self):
         d = sim(replay=ReplayIndex.from_paths([CAPTURE]))

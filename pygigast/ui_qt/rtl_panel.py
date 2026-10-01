@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QComboBox, QFormLayout, QGroupBox, QLabel, QPushButton, QSpinBox
 
-from . import screen_model, texts
+from . import screen_model, texts, widget_sync
 from .fields import DbField, FreqField
 from .tab_traces import set_enabled
 
@@ -90,22 +90,8 @@ class RtlPanel(QGroupBox):
         v = screen_model.rtl_view(st)
         self._view = v
         self.setVisible(v["shown"])
-        key = tuple(g["value"] for g in v["gains"])
-        if key != self._gains_key:
-            self._gains_key = key
-            self.gain.clear()
-            for g in v["gains"]:
-                self.gain.addItem(g["text"], g["value"])
-        want = None if v["agc"] else v["gain_db"]
-        idx = self.gain.findData(want) if want is not None else 0
-        if want is not None and idx < 0 and self.gain.count() > 1:
-            # 設定の値が段に無いとき（別の機器の値など）は一番近い段を見せる
-            vals = [self.gain.itemData(i) for i in range(1, self.gain.count())]
-            idx = 1 + min(range(len(vals)), key=lambda i: abs(vals[i] - want))
-        self.gain.setCurrentIndex(max(0, idx))
-        self.ppm.blockSignals(True)
-        self.ppm.setValue(int(v["ppm"] or 0))
-        self.ppm.blockSignals(False)
+        widget_sync.when_idle(self.gain, "gain", lambda: self._show_gain(v))
+        widget_sync.set_value(self.ppm, int(v["ppm"] or 0))
         set_enabled(self.gain, v["reason"], texts.RTL_LABELS["gain_tip"])
         set_enabled(self.ppm, v["reason"], texts.RTL_LABELS["ppm_tip"])
         set_enabled(self.fit_btn, v["fit_reason"], texts.RTL_LABELS["fit_gain_tip"])
@@ -116,19 +102,32 @@ class RtlPanel(QGroupBox):
         self.shared_text.setVisible(bool(v["shared_text"]))
         self.refresh_markers()
 
+    def _show_gain(self, v: dict) -> None:
+        """利得の一覧と選んでいる段（一覧を開いている間は呼ばれない: widget_sync）。"""
+        key = tuple(g["value"] for g in v["gains"])
+        if key != self._gains_key:
+            self._gains_key = key
+            self.gain.blockSignals(True)
+            self.gain.clear()
+            for g in v["gains"]:
+                self.gain.addItem(g["text"], g["value"])
+            self.gain.blockSignals(False)
+        want = None if v["agc"] else v["gain_db"]
+        idx = self.gain.findData(want) if want is not None else 0
+        if want is not None and idx < 0 and self.gain.count() > 1:
+            # 設定の値が段に無いとき（別の機器の値など）は一番近い段を見せる
+            vals = [self.gain.itemData(i) for i in range(1, self.gain.count())]
+            idx = 1 + min(range(len(vals)), key=lambda i: abs(vals[i] - want))
+        widget_sync.set_index(self.gain, max(0, idx))
+
     def refresh_markers(self) -> None:
         """マーカーの一覧（表のマーカーの行）。選んでいるマーカーを既定にする。"""
         ids = [m["id"] for m in self.win.marker_snap.get("markers", [])]
         cur = self.marker.currentData() or self.win.selected_marker
-        if [self.marker.itemData(i) for i in range(self.marker.count())] != ids:
-            self.marker.blockSignals(True)
-            self.marker.clear()
-            for i in ids:
-                self.marker.addItem(i, i)
-            self.marker.blockSignals(False)
+        widget_sync.set_items(self.marker, [(i, i) for i in ids])
         if self.win.selected_marker in ids:
             cur = self.win.selected_marker
-        self.marker.setCurrentIndex(max(0, self.marker.findData(cur)))
+        widget_sync.set_data(self.marker, cur)
         if self.true_freq.hz() <= 0:
             # 本当の周波数の欄は、初めはマーカーの周波数（そこから直して入れる）
             row = next((m for m in self.win.marker_snap.get("markers", []) if m["id"] == self.marker.currentData()), None)

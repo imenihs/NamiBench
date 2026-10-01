@@ -102,6 +102,15 @@ class Settings:
             kd["last_backend"] = backend
         self.save()
 
+    def forget_device(self, serial: str) -> None:
+        """覚えた機器から外す（設定の画面の「接続」）。前回の機器だったら前回も外す。"""
+        kd = self.data["known_devices"]
+        kd["serials"] = [s for s in kd.get("serials", []) if s != serial]
+        if kd.get("last") == serial:
+            kd["last"] = None
+            kd.pop("last_backend", None)
+        self.save()
+
     # 機器の名前（設計J §4.7）
     def device_name(self, key: str) -> Optional[str]:
         v = self.data["device_names"].get(key)

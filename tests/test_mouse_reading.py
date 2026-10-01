@@ -242,7 +242,7 @@ class WebHoverJsTest(unittest.TestCase):
 
     SCRIPT = r"""
 globalThis.window = globalThis; window.addEventListener = () => {}; window.innerWidth = 1280; window.innerHeight = 720;
-let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() {}, mount() {} }; }, markRaw: (x) => x };
+let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() {}, directive() {}, mount() {} }; }, markRaw: (x) => x };
 globalThis.GSUnits = {}; globalThis.GSTexts = { w: (k) => "W:" + k, get: () => "", dict: () => ({}), fmt: (k) => k };
 const sent = [];
 globalThis.GSApi = { call: async (name, args) => { sent.push([name, args]); return { lines: ["L" + sent.length] }; } };

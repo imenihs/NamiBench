@@ -46,6 +46,20 @@ class _FreqAxis(pg.AxisItem):
     def __init__(self, sig: GraphSignals, **kw) -> None:
         super().__init__("bottom", **kw)
         self._sig = sig
+        # 周波数オフセット（設計O）。グラフは測った周波数で描き、目盛の数字だけ「測った周波数 + これ」にする
+        # （ドラッグ・ホイール・クリックは測った周波数のまま。機器へ送るものは変わらない）
+        self.offset_hz = 0
+
+    def set_offset(self, offset_hz: int) -> None:
+        if offset_hz != self.offset_hz:
+            self.offset_hz = int(offset_hz)
+            self.picture = None
+            self.update()
+
+    def tickStrings(self, values, scale, spacing):  # noqa: N802 — pyqtgraph の名前
+        if self.offset_hz:
+            values = [v + self.offset_hz for v in values]
+        return super().tickStrings(values, scale, spacing)
 
     def wheelEvent(self, ev) -> None:
         if _in_view(self, ev):

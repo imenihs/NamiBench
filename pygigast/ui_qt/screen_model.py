@@ -238,11 +238,12 @@ MARK_COLORS = {"outside_tg_range": "warn", "lo_leak": "warn", "negative_mirror":
 def marks_view(st: dict) -> list[dict]:
     """グラフに描く帯 [{kind, start_hz, stop_hz, label, tip, color}]。区間はコアの display_marks（表示範囲で切ってある）。"""
     out = []
+    off = texts.freq_offset_of(st)  # 説明の区間は横軸と同じ換算後の周波数（設計O）
     for m in st.get("display_marks") or []:
         label = texts.DISPLAY_MARKS.get(m["kind"], m["kind"])
         out.append({**m, "label": label, "color": MARK_COLORS.get(m["kind"], "warn"),
-                    "tip": tpl("mark_range", label=label, start=format_freq(int(m["start_hz"])),
-                               stop=format_freq(int(m["stop_hz"])))})
+                    "tip": tpl("mark_range", label=label, start=format_freq(int(m["start_hz"]) + off),
+                               stop=format_freq(int(m["stop_hz"]) + off))})
     return out
 
 
@@ -269,6 +270,59 @@ def ref_auto_view(st: dict, shown: list[str], unit: str, db_per_div: float,
     return {"level": level, "reason": None if level is not None else texts.REASON_TEXTS["no_auto_points"]}
 
 
+# ---------------------------------------------------------------- 配色の編集（設計J §4.4）
+
+def palette_view(st: dict) -> dict:
+    """配色の編集の画面の中身。行ごとの名前・色・初期値・変えた印と、読みにくさの知らせ（止めはしない）。"""
+    from ..core.palette import BASES, DEFAULT_BASE, NAMES
+
+    S = texts.SETTINGS_TEXTS
+    p = st.get("palette") or {}
+    base = p.get("base") or DEFAULT_BASE
+    colors = p.get("colors") or dict(BASES[base])
+    defaults = BASES.get(base, BASES[DEFAULT_BASE])
+    changed = set(p.get("changed") or [])
+    rows = [{"name": k, "label": texts.PALETTE_NAMES.get(k, k), "color": colors.get(k, defaults[k]),
+             "default": defaults[k], "changed": k in changed,
+             "tip": S["palette_changed_tip"].replace("{default}", defaults[k]) if k in changed else ""}
+            for k in NAMES]
+    warns = []
+    for w in p.get("warnings") or []:
+        if w.get("code") == "low_contrast":
+            warns.append(S["palette_warn_contrast"].replace("{fg}", texts.PALETTE_NAMES.get(w["fg"], w["fg"]))
+                         .replace("{bg}", texts.PALETTE_NAMES.get(w["bg"], w["bg"])).replace("{ratio}", f"{w['ratio']:.1f}"))
+        elif w.get("code") == "similar_traces":
+            warns.append(S["palette_warn_similar"].replace("{a}", texts.PALETTE_NAMES.get(w["a"], w["a"]))
+                         .replace("{b}", texts.PALETTE_NAMES.get(w["b"], w["b"])).replace("{d}", f"{w['delta_e']:.0f}"))
+    base_name = texts.PALETTE_BASES.get(base, base)
+    return {"rows": rows, "base": base, "changed_n": len(changed), "warnings": warns,
+            "base_text": S["palette_base"].replace("{base}", base_name).replace("{n}", str(len(changed))),
+            "ok_text": "" if warns else S["palette_ok"]}
+
+
+def palette_reset_question(st: dict, base: str) -> Optional[str]:
+    """ライト・ダークの初期値にするときの確認の文。変えた色が無ければ None（聞かずにすぐ切り替える: J §4.4）。"""
+    n = len((st.get("palette") or {}).get("changed") or [])
+    if n == 0:
+        return None
+    return texts.SETTINGS_TEXTS["palette_reset_confirm"].replace("{n}", str(n)).replace(
+        "{base}", texts.PALETTE_BASES.get(base, base))
+
+
+def preset_rows(presets: list[dict]) -> list[dict]:
+    """プリセットの一覧の行（名前と中身の要約）。"""
+    out = []
+    for p in presets or []:
+        s = p.get("summary") or {}
+        summary = ""
+        if s.get("start_hz") is not None:
+            summary = tpl("preset_summary", mode=texts.MODE_LABELS.get(s.get("mode"), s.get("mode") or ""),
+                          start=format_freq(int(s["start_hz"])), stop=format_freq(int(s["stop_hz"])),
+                          rbw=format_freq(int(s["rbw_hz"])) if s.get("rbw_hz") else "")
+        out.append({"id": p["id"], "name": p["name"], "summary": summary})
+    return out
+
+
 # ---------------------------------------------------------------- まとめ（Web の口が state に付ける）
 
 def ui_view(st: dict) -> dict:
@@ -287,6 +341,9 @@ def ui_view(st: dict) -> dict:
         "normalization": texts.normalization_text(st.get("normalization") or {}),
         "ref_quick": ref_quick_view(st),
         "marks": marks_view(st),
+        "palette": palette_view(st),
+        # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う
+        "freq_offset_text": texts.offset_text(texts.freq_offset_of(st)) if texts.freq_offset_of(st) else "",
     }
 
 
@@ -347,18 +404,21 @@ def point_note_codes(payload: dict, i: int) -> list[str]:
     return sorted(codes)
 
 
-def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = False) -> dict:
+def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = False,
+                  freq_offset_hz: int = 0) -> dict:
     """グラフの上のマウスの位置の読み値（設計G §2: マウスの縦の位置ではなく波形の値を出す）。
 
     payloads は画面が表示している測定中のトレース（イベント trace の形）、x・y はマウスの位置の軸の値。
     読むのは最も近いトレースの最も近い点（マーカーをクリックで置くときと同じ選び方）で、周波数はその点の
     周波数（値はその点のもの）。印の付いた点はマーカーと同じ注意を添える（G §3.3）。
     トレースが無いときはマウスの位置の周波数だけ。Qt はツールチップに、Web の口は `mouse_reading` で返す。
+    周波数の文字は表示の周波数オフセット（設計O）を足した値。freq_hz は測った周波数のまま。
     """
+    off = int(freq_offset_hz or 0)
     hit = nearest_point(payloads, x, y)
     if hit is None:
         pos = int(round(x))
-        lines = [tpl("mouse_point", n=pos) if zero_span else format_freq(pos)]
+        lines = [tpl("mouse_point", n=pos) if zero_span else format_freq(pos + off)]
         return {"trace": None, "freq_hz": None if zero_span else pos, "point": pos if zero_span else None,
                 "level": None, "unit": None, "notes": [], "lines": lines, "text": "\n".join(lines)}
     k, i = hit
@@ -371,7 +431,7 @@ def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = Fa
     freq = None if zero else int(round(float(trace_x(p)[i])))
     codes = point_note_codes(p, i)
     value_text = f"{level:.2f} {unit}" if level is not None else texts.MARKER_STATUS["no_value"]
-    lines = [tpl("mouse_point", n=i) if zero else format_freq(freq),
+    lines = [tpl("mouse_point", n=i) if zero else format_freq(freq + off),
              tpl("trace_note", n=p.get("trace"), text=value_text), *marker_rows.note_texts(codes)]
     return {"trace": p.get("trace"), "freq_hz": freq, "point": i if zero else None, "level": level, "unit": unit,
             "notes": codes, "lines": lines, "text": "\n".join(lines)}

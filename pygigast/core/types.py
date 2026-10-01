@@ -166,7 +166,8 @@ class RawSweep:
     """機器が返した1回分の生の値（設計B §7.1）。
 
     raw は機器ごとの形（encoding で区別）。GigaSt は AD 値の uint16。
-    raw_b3 はイメージキャンセルの b3=0 側の生の値（ON のときだけ）。raw は採用した値（min 済み）。
+    イメージキャンセル ON は4回（b3=0・1・0・1。設計F §6）: raw_passes に4回の生の値を [回, 点] で、
+    raw に合わせた採用する値を入れる。raw_b3_0 / raw_b3_1 は前の2回の形（保存ファイルから読んだもの）で使う。
     NF の HOT/COLD は raw_hot / raw_cold に入れ、raw は HOT とする（設計M）。
     """
 
@@ -177,6 +178,7 @@ class RawSweep:
     duration_s: float
     raw_b3_0: Optional[np.ndarray] = None
     raw_b3_1: Optional[np.ndarray] = None
+    raw_passes: Optional[np.ndarray] = None
     raw_hot: Optional[np.ndarray] = None
     raw_cold: Optional[np.ndarray] = None
     transient_head_points: int = 0

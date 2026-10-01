@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import pyqtgraph as pg
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QCursor, QFont, QGuiApplication
+from PySide6.QtCore import QObject, QPoint, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QCursor, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QColorDialog,
     QComboBox,
     QFileDialog,
     QInputDialog,
@@ -27,15 +28,14 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QSplitter,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from ..api.local import LocalApi
-from ..core.units import format_freq
-from . import device_menu, marker_rows, menu_table, menus, png_data, screen_model, texts
+from ..core.units import format_freq, level_text
+from . import device_menu, look, marker_rows, menu_table, menus, png_data, screen_model, texts, widget_sync
+from .docks import Parts
 from .fields import FreqField, RefLevelField, SpanLockButton, ValueField
 from .files import FileActions
 from .graph import make_plot
@@ -55,6 +55,7 @@ from .tab_source import SourceTab
 from .tab_traces import TraceTab, disable_item
 from .tasks import TaskPanel
 from .theme import DARK, stylesheet
+from .presets_dialog import PresetsDialog, save_new
 from .ref_quick import RefQuick
 from .topbar import TopBar
 
@@ -64,8 +65,6 @@ DEFAULT_REF = 0.0
 DEFAULT_DIV = 10.0
 # 周波数軸の上のホイール1段で Span を何倍にするか（奥へ回すと拡大 = Span を狭く）
 ZOOM_STEP = 0.8
-# マーカー表に使う高さの既定（グラフとの分割。境目を動かすまではこの割合を保つ）
-TABLE_RATIO = 0.24
 
 # モード（コード・ボタンの文字・名前・使えない理由）は texts.MODES（Web と同じ）
 MODES = texts.MODES
@@ -89,7 +88,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.api = api
         self.prefs = prefs or UiPrefs()
-        self.pal = DARK
+        # 画面の配色（コアの配色を写す: 設計J §4.4）。部品は同じ辞書を見るので、中身だけを入れ替える
+        self.pal = dict(DARK)
         self.setWindowTitle("pyGigaSt")
         self.state: dict = {}
         self._ref_dbm = DEFAULT_REF
@@ -106,6 +106,7 @@ class MainWindow(QMainWindow):
         self._bridge.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
         self.files = FileActions(self)
         self.device_window = None  # 機器の一覧の窓（J §4.7。device_menu.open_list が作る）
+        self._presets: Optional[PresetsDialog] = None
 
         self._build_plot()
         self._build_menu()
@@ -176,6 +177,17 @@ class MainWindow(QMainWindow):
 
     def ask_folder(self, title: str) -> Optional[str]:
         return QFileDialog.getExistingDirectory(self, title) or None
+
+    def ask_color(self, title: str, current: str) -> Optional[str]:
+        c = QColorDialog.getColor(QColor(current), self, title)
+        return c.name() if c.isValid() else None
+
+    def ask_key(self, title: str) -> Optional[str]:
+        """押したキーを1つ受け取る（キーの割り当て: J §4.6）。やめたら None。"""
+        from .settings_keys import KeyCaptureDialog
+
+        d = KeyCaptureDialog(self, title)
+        return d.key if d.exec() else None
 
     # ------------------------------------------------------------------ 画面を組む
 
@@ -278,6 +290,15 @@ class MainWindow(QMainWindow):
         div_box.layout().replaceWidget(div_box.edit, self.div_combo)
         div_box.edit.hide()
         top.addWidget(div_box)
+        # RBW・REF・dB/div の欄は同じ字の大きさ・同じ高さにそろえ、幅は値が全部見える幅（J §4.3）
+        top_font = self.f_ref.edit.font()
+        for c in (self.rbw_combo, self.div_combo):
+            c.setFont(top_font)
+            widget_sync.fit_combo(c)
+        widget_sync.fit_combo(self.f_ref.combo)
+        h = max(c.sizeHint().height() for c in (self.rbw_combo, self.div_combo, self.f_ref.combo))
+        for c in (self.rbw_combo, self.div_combo, self.f_ref.combo):
+            c.setMinimumHeight(h)
         top.addStretch(1)
         self.btn_cont = QPushButton(texts.MENU_ITEMS["run_cont"])
         self.btn_single = QPushButton(texts.MENU_ITEMS["run_single"])
@@ -303,15 +324,8 @@ class MainWindow(QMainWindow):
         self.cond_label.setWordWrap(True)
         outer.addWidget(self.cond_label)
 
-        # ---- グラフとマーカー表（縦の分割。境目をドラッグできる: J §4.3.2）と右のタブ
+        # ---- グラフ・マーカー表・右のタブ。どれも切り離せる部分（J §4.3.2: docks.py）
         self.marker_panel = MarkerPanel(self)
-        self.vsplit = QSplitter(Qt.Orientation.Vertical)
-        self.vsplit.addWidget(self.plot)
-        self.vsplit.addWidget(self.marker_panel)
-        self.vsplit.setCollapsible(0, False)
-        self.vsplit.setCollapsible(1, False)
-        self.vsplit.setStretchFactor(0, 4)
-        self.vsplit.setStretchFactor(1, 1)
         self.marker_panel.setMinimumHeight(90)
 
         self.trace_tab = TraceTab(self)
@@ -323,47 +337,44 @@ class MainWindow(QMainWindow):
         self._settings: Optional[SettingsDialog] = None
         self.display_tab = DisplayTab(self)
         self.source_tab = SourceTab(self)
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self.trace_tab, texts.LABELS["tab_trace"])
-        self.tabs.addTab(self.marker_tab, texts.LABELS["tab_marker"])
-        self.tabs.addTab(self.display_tab, texts.LABELS["tab_view"])
-        self.tabs.addTab(self.source_tab, texts.LABELS["tab_source"])
-        self.tabs.tabBar().setExpanding(False)
-        self.tabs.tabBar().setUsesScrollButtons(True)
-        self.hsplit = QSplitter(Qt.Orientation.Horizontal)
-        self.hsplit.addWidget(self.vsplit)
-        self.hsplit.addWidget(self.tabs)
-        self.hsplit.setStretchFactor(0, 4)
-        self.hsplit.setStretchFactor(1, 1)
-        self.hsplit.setCollapsible(0, False)
-        outer.addWidget(self.hsplit, 1)
+        tabs = {"tab-trace": self.trace_tab, "tab-marker": self.marker_tab, "tab-view": self.display_tab,
+                "tab-source": self.source_tab}
+        self.parts = Parts(self, self.plot, self.marker_panel, tabs, self.marker_tab.peak_group,
+                           self.marker_tab.body)
+        self.marker_tab.pk_detach.clicked.connect(lambda: self.parts.detach("peaks"))
+        outer.addWidget(self.parts.inner, 1)
         self.task_panel = TaskPanel(self)
         outer.addWidget(self.task_panel)
         self.setCentralWidget(central)
-        self._restore_splitters()
+        # ドロップダウンは全部、一番長い選択肢が切れない幅にする（J §4.3）
+        widget_sync.fit_all(self)
+        # 並び（切り離した部分・位置・大きさ）は次の起動で戻す（J §4.3.2。画面ごとの覚え書き: O §1.1）
+        self.parts.restore(self.prefs.get("layout"))
+        self._add_part_menu()
         self._update_y_axis()
 
-    def _restore_splitters(self) -> None:
-        # 分割比は次の起動で戻す（J §4.3.2。画面ごとの覚え書き: O §1.1）
-        self._split_user = False
-        for key, sp in (("vsplit", self.vsplit), ("hsplit", self.hsplit)):
-            sizes = self.prefs.get(key)
-            if sizes:
-                try:
-                    sp.setSizes([int(x) for x in sizes])
-                    self._split_user = self._split_user or key == "vsplit"
-                except (TypeError, ValueError):
-                    pass
-        # 利用者が境目を動かすまでは、窓の大きさが変わっても表の高さの割合を保つ
-        self.vsplit.splitterMoved.connect(lambda *_: setattr(self, "_split_user", True))
-        self.vsplit.installEventFilter(self)
+    def _add_part_menu(self) -> None:
+        """メニュー「表示」に部分ごとの「別ウィンドウで開く」（J §4.3.2。Web の「≡」と同じ語）。"""
+        view = next((a.menu() for a in self.menuBar().actions()
+                     if a.menu() is not None and a.text().startswith(texts.MENU_TITLES["view"])), None)
+        if view is None:
+            return
+        view.addSeparator()
+        for key in ("graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"):
+            act = view.addAction(texts.w("detach_item", part=texts.LABELS["part_" + key]))
+            act.setObjectName("detach_" + key)
+            act.triggered.connect(lambda _=False, k=key: self.parts.detach(k))
 
-    def eventFilter(self, obj, ev) -> bool:
-        if obj is self.vsplit and ev.type() == QEvent.Type.Resize and not self._split_user:
-            h = ev.size().height()
-            table = max(self.marker_panel.minimumHeight(), int(h * TABLE_RATIO))
-            self.vsplit.setSizes([max(1, h - table), table])
-        return super().eventFilter(obj, ev)
+    def window_actions(self) -> list[QAction]:
+        """窓のキーの項目（グラフだけで効くものを除く）。切り離した窓にも付けてキーを効かせる。"""
+        return [a for c, a in self.actions.items() if c not in menu_table.GRAPH_ONLY]
+
+    def show_part(self, key: str) -> None:
+        self.parts.show_part(key)
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        self.parts.first_show()
 
     def _build_status(self) -> None:
         self.status = StatusBar(self)
@@ -412,24 +423,33 @@ class MainWindow(QMainWindow):
         """RBW の選択肢は機器ごと（設計Q §6.4: FFT の機器は窓ごとにまとめる）。好みの RBW を選んで見せる。"""
         groups = screen_model.rbw_groups(st)
         key = tuple((g["window"], tuple(c["hz"] for c in g["choices"])) for g in groups)
-        if key != self._rbw_key:
-            self._rbw_key = key
-            self.rbw_combo.clear()
-            for g in groups:
-                if g["label"]:
-                    # 窓の名前の見出し（選べない行）。説明はツールチップ
-                    self.rbw_combo.addItem(g["label"], None)
-                    disable_item(self.rbw_combo, self.rbw_combo.count() - 1, g["note"])
-                for c in g["choices"]:
-                    self.rbw_combo.addItem(("  " if g["label"] else "") + c["text"], c["hz"])
-                    if g["note"]:
-                        self.rbw_combo.setItemData(self.rbw_combo.count() - 1, g["note"], Qt.ItemDataRole.ToolTipRole)
         pref = st["sweep"]["rbw_preference_hz"]
-        i = self.rbw_combo.findData(pref)
-        if i >= 0:
-            self.rbw_combo.setCurrentIndex(i)
+        combo = self.rbw_combo
+
+        def show() -> None:
+            # 一覧を開いている間は組み替えない・選び直さない（閉じたときに最新の状態で入れる）
+            if key != self._rbw_key:
+                self._rbw_key = key
+                was = combo.blockSignals(True)
+                combo.clear()
+                for g in groups:
+                    if g["label"]:
+                        # 窓の名前の見出し（選べない行）。説明はツールチップ
+                        combo.addItem(g["label"], None)
+                        disable_item(combo, combo.count() - 1, g["note"])
+                    for c in g["choices"]:
+                        combo.addItem(("  " if g["label"] else "") + c["text"], c["hz"])
+                        if g["note"]:
+                            combo.setItemData(combo.count() - 1, g["note"], Qt.ItemDataRole.ToolTipRole)
+                combo.blockSignals(was)
+                self.topbar.relayout()  # 選択肢の幅が変わると上段の幅が変わる（J §4.3.3）
+            i = combo.findData(pref)
+            if i >= 0 and i != combo.currentIndex():
+                widget_sync.set_index(combo, i)
+
+        widget_sync.when_idle(combo, "rbw", show)
         w = screen_model.rbw_window_of(st, pref)
-        self.rbw_combo.setToolTip(next((g["note"] for g in groups if g["window"] == w), ""))
+        combo.setToolTip(next((g["note"] for g in groups if g["window"] == w), ""))
 
     def _rbw_chosen(self, i: int) -> None:
         hz = self.rbw_combo.itemData(i)
@@ -447,7 +467,8 @@ class MainWindow(QMainWindow):
     def display_unit(self) -> str:
         """縦軸の単位。コアの amplitude.unit が決まっていればそれ、無ければ見えているトレースの単位。"""
         amp = self.state.get("amplitude") or {}
-        if amp.get("unit") in ("dBm", "dB"):
+        if amp.get("unit") == "dB" or (amp.get("unit") and amp.get("unit") == (self.state.get("view") or {}).get(
+                "level_unit_label")):
             return amp["unit"]
         p = self.traces.any_live()
         if p is not None and p.get("unit"):
@@ -534,20 +555,22 @@ class MainWindow(QMainWindow):
         # 端ちょうどの目盛は範囲の外と見なされて数字が消えるので、わずかに広げる
         eps = self._db_div * 1e-3
         pi.setYRange(bottom - eps, top + eps, padding=0)
-        ticks = [(top - i * self._db_div, f"{top - i * self._db_div:g}") for i in range(DIVISIONS + 1)]
+        # 目盛の数字は REF の欄と同じ形（0.1 dB まで・負号「−」）。単位を換えた REF の端数を出さない
+        ticks = [(top - i * self._db_div, level_text(top - i * self._db_div)) for i in range(DIVISIONS + 1)]
         pi.getAxis("left").setTicks([ticks, []])
         for line in self._hgrid:
             pi.removeItem(line)
-        pen = pg.mkPen(self.pal["grid"], width=1)
+        pen = pg.mkPen(self.pal["grid"], width=1)  # 配色を変えたら描き直す（look.apply_palette）
         self._hgrid = [pg.InfiniteLine(pos=v, angle=0, pen=pen, movable=False) for v, _ in ticks]
         for line in self._hgrid:
             line.setZValue(-10)
             pi.addItem(line, ignoreBounds=True)
         self.f_ref.set_value(self._ref_dbm)
         i = self.div_combo.findData(self._db_div)
-        if i >= 0 and i != self.div_combo.currentIndex():
-            self.div_combo.setCurrentIndex(i)
-        self.traces.set_fill(self.display_tab.fill_on() if hasattr(self, "display_tab") else False, bottom)
+        if i >= 0:
+            widget_sync.set_index(self.div_combo, i)
+        fill = (self.state.get("view") or {}).get("draw_style") == "fill"
+        self.traces.set_fill(fill, bottom)
 
     def _update_unit(self) -> None:
         unit = self.display_unit()
@@ -609,10 +632,11 @@ class MainWindow(QMainWindow):
         m.setToolTipsVisible(True)
         why = self._freq_ops_reason()
         hz = int(round(x))
-        act = m.addAction(texts.LABELS["ctx_center"] + ("" if why else texts.tpl("paren", text=format_freq(hz))))
+        shown = format_freq(hz + texts.freq_offset_of(self.state))  # 換算後の周波数（設計O）
+        act = m.addAction(texts.LABELS["ctx_center"] + ("" if why else texts.tpl("paren", text=shown)))
         act.setObjectName("ctx_center")
         act.triggered.connect(lambda: self._set_sweep(center_hz=hz, field=self.f_center))
-        act2 = m.addAction(texts.LABELS["ctx_marker"] + ("" if why else texts.tpl("paren", text=format_freq(hz))))
+        act2 = m.addAction(texts.LABELS["ctx_marker"] + ("" if why else texts.tpl("paren", text=shown)))
         act2.setObjectName("ctx_marker")
         act2.triggered.connect(lambda: self._marker_add_at(x, y))
         for a in (act, act2):
@@ -769,12 +793,30 @@ class MainWindow(QMainWindow):
     def _disconnect(self) -> None:
         device_menu.disconnect(self)
 
-    def _settings_dialog(self) -> None:
+    def _settings_dialog(self, page: Optional[str] = None) -> None:
         if self._settings is None:
             self._settings = SettingsDialog(self)
             self._settings.finished.connect(lambda _r: setattr(self, "_settings", None))
+        if page:
+            self._settings.open_page(page)
         self._settings.show()
         self._settings.raise_()
+
+    def open_presets(self) -> None:
+        if self._presets is None:
+            self._presets = PresetsDialog(self)
+            self._presets.finished.connect(lambda _r: setattr(self, "_presets", None))
+        self._presets.show()
+        self._presets.raise_()
+
+    def save_preset(self) -> None:
+        save_new(self, self._presets.reload if self._presets is not None else None)
+
+    def reset_palette(self, base: str) -> None:
+        look.reset_palette(self, base)
+
+    def apply_keymap(self) -> None:
+        look.apply_keymap(self)
 
     def _import_legacy(self) -> None:
         device_menu.import_legacy(self)
@@ -836,7 +878,7 @@ class MainWindow(QMainWindow):
                   "span_hz": self.f_span, "rbw_hz": self.rbw_field, "sg_hz": self.source_tab.f_sg}
         for adj in adjustments:
             w = fields.get(adj.get("field"))
-            text = texts.adjustment_text(adj)
+            text = texts.adjustment_text(adj, texts.freq_offset_of(self.state))
             action = None
             if alternative and adj.get("reason") in texts.RULE_REASONS and w is not None:
                 # 規則で動いた欄の知らせに、反対の規則の結果を「その1回だけ」のボタンで添える（C §5.11 の 3）
@@ -864,6 +906,7 @@ class MainWindow(QMainWindow):
         self.state = st
         device_menu.on_state(self, st, before)
         sw = st["sweep"]
+        look.apply_view(self, st)  # 配色・周波数オフセット・描き方（設計J §4.4・O）
         self.f_center.set_hz(sw["center_hz"])
         self.f_span.set_hz(sw["span_hz"])
         self.f_start.set_hz(sw["start_hz"])
@@ -950,7 +993,8 @@ class MainWindow(QMainWindow):
             self.plot.getPlotItem().setLabel("bottom", texts.LABELS["axis_zero_span"], units="")
             self.plot.setXRange(0, max(1, sw["points"] - 1), padding=0)
         else:
-            self.plot.getPlotItem().setLabel("bottom", texts.LABELS["freq"], units="Hz")
+            # 周波数オフセットで換算中なら、軸の名前で示す（設計O）
+            self.plot.getPlotItem().setLabel("bottom", look.freq_axis_label(self.state), units="Hz")
             self.plot.setXRange(sw["start_hz"], sw["stop_hz"], padding=0)
 
     # ------------------------------------------------------------------ 知らせ・ドラッグ＆ドロップ・閉じる
@@ -994,7 +1038,7 @@ class MainWindow(QMainWindow):
             return
         self.listen.close()
         self.web.shutdown()
-        self.prefs.set("vsplit", self.vsplit.sizes())
-        self.prefs.set("hsplit", self.hsplit.sizes())
+        self.prefs.set("layout", self.parts.save())
+        self.parts.close_windows()
         self._unsub()
         super().closeEvent(e)

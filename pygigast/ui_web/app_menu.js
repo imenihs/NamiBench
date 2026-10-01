@@ -1,37 +1,19 @@
 // Web のメニュー「≡」とキー操作（J §4.3.1・§4.6）。並びと語は texts の MENU_LAYOUT・MENU_ITEMS（Qt のメニューバーと同じ）。
-// ここに持つのは Web のキーと、項目を押したときに呼ぶ画面の処理だけ。app.js が読み込んで合わせる。
+// ここに持つのは、項目を押したときに呼ぶ画面の処理と、押したキーを項目へつなぐことだけ。キーの割り当て
+// （初期値・利用者が変えた分）は app_keys.js の keySeqs で、メニューの横の表示・ツールチップ・キーの処理が同じものを見る。
+// app.js が読み込んで合わせる。
 (function (root) {
   "use strict";
 
   const X = root.GSTexts;
   const W = (k, kw) => X.w(k, kw);
 
-  // キー操作の Web の初期値（J §4.6。ブラウザが先に取るキーは避けた: F5 の再読み込み・Ctrl+数字のタブ切り替え・
-  // Ctrl+Shift+C の開発者ツール）。グラフにいるときだけのキーは GRAPH_ONLY
-  const KEYS = {
-    open: ["Ctrl+O"], save: ["Ctrl+S"], export: ["Ctrl+E"], png_save: ["Ctrl+P"], png_copy: ["Ctrl+Alt+C"],
-    undo: ["Ctrl+Z"], redo: ["Ctrl+Y"],
-    run_cont: ["R"], run_single: ["S"], stop: ["X"], pause: ["Pause"],
-    mode_sa: ["Alt+1"], mode_tg: ["Alt+2"], mode_s11: ["Alt+3"], mode_sg: ["Alt+4"], mode_nf: ["Alt+5"],
-    marker_peak: ["P"], marker_peak_left: ["["], marker_peak_right: ["]"],
-    marker_left: ["ArrowLeft", "Shift+ArrowLeft"], marker_right: ["ArrowRight", "Shift+ArrowRight"], marker_here: ["M"],
-  };
-  const GRAPH_ONLY = new Set(["marker_peak", "marker_peak_left", "marker_peak_right", "marker_left", "marker_right", "marker_here"]);
-  const KEY_NAMES = { ArrowLeft: "←", ArrowRight: "→" };
-  const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source"];
+  const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"];
   // Web のメニューに無い項目（Qt だけのもの: 終了はブラウザの窓を閉じる）
   const WEB_SKIP = new Set(["quit"]);
 
-  function keyOf(e) {
-    let k = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-    if (e.code && /^Digit\d$/.test(e.code)) k = e.code.slice(5); // Alt+数字で文字が変わる配列でも数字で見る
-    const mods = [];
-    if (e.ctrlKey || e.metaKey) mods.push("Ctrl");
-    if (e.altKey) mods.push("Alt");
-    if (e.shiftKey && e.key.length !== 1) mods.push("Shift");
-    return [...mods, k].join("+");
-  }
-  function keyLabel(k) { return k.split("+").map((p) => KEY_NAMES[p] || p).join("+"); }
+  const keyLabel = (k) => root.GSKeys.keyLabel(k);
+  const graphOnly = (code) => X.list("GRAPH_ONLY_KEYS").includes(code);
 
   root.GSAppMenu = {
     computed: {
@@ -53,7 +35,6 @@
           undo: () => this.cmd("undo", {}, { quiet: ["nothing_to_undo"] }),
           redo: () => this.cmd("redo", {}, { quiet: ["nothing_to_redo"] }),
           connect: () => this.openDevices(),
-          connect_sim: () => this.cmd("connect", { backend: "simulator", serial: "SIM00001" }),
           disconnect: () => this.disconnectAndList(),
           run_cont: () => this.runCont(), run_single: () => this.runSingle(), stop: () => this.stop(),
           pause: () => this.toggleRun(),
@@ -71,8 +52,11 @@
           marker_clear: () => this.cmd("marker_clear"),
           marker_copy: () => this.copyMarkerTable(),
           cal_legacy: () => this.legacyDialog(),
-          settings: () => this.settingsDialog(),
+          settings: () => this.openSettings("connection"),
           web_connect: () => this.showConnect(),
+          presets: () => this.openPresets(), preset_save: () => this.presetSaveNew(),
+          layout_reset: () => this.layoutReset(),
+          view_colors: () => this.openSettings("display"), settings_keys: () => this.openSettings("keys"),
           help_keys: () => { this.modal = { title: X.get("MENU_ITEMS", "help_keys"), keys: true, fields: [] }; },
           help_about: () => { this.modal = { title: X.get("MENU_ITEMS", "help_about"), note: W("about", { version: this.info.version || "" }), fields: [] }; },
         };
@@ -85,8 +69,10 @@
         const noMarker = this.selectedMarker ? null : R("select_marker");
         const sel = this.selMarker;
         if (code.startsWith("mode_")) return this.readOnlyReason || this.modeReason(code.slice(5));
-        // 見るだけの接続で使えるのは、表示・PNG・キーの一覧・別ウィンドウだけ（A §4.3.2 の 4）
-        if (this.readOnly && !["png_save", "png_copy", "marker_copy", "help_keys", "help_about"].includes(code)) return this.readOnlyReason;
+        // 見るだけの接続で使えるのは、表示・PNG・キーの一覧・別ウィンドウだけ（A §4.3.2 の 4）。キーの割り当てと
+        // 並びはこのブラウザの覚え書きで、機器にもほかの画面にも効かないので使える
+        if (this.readOnly && !["png_save", "png_copy", "marker_copy", "help_keys", "help_about", "settings_keys",
+          "layout_reset"].includes(code)) return this.readOnlyReason;
         switch (code) {
           case "web_connect": return this.connectReason();
           case "png_save": return this.st ? null : R("no_state");
@@ -113,14 +99,14 @@
           if (code === null) return null;
           const notYet = X.get("MENU_NOT_YET", code, null);
           const why = notYet ? X.get("NOT_YET", notYet) : this.itemReason(code);
-          return { code, label: X.get("MENU_ITEMS", code), run: notYet ? null : h[code], why, keys: KEYS[code] || [], graphOnly: GRAPH_ONLY.has(code) };
+          return { code, label: X.get("MENU_ITEMS", code), run: notYet ? null : h[code], why, keys: this.keySeqs[code] || [], graphOnly: graphOnly(code) };
         });
         const out = [];
         for (const [sec, codes] of X.list("MENU_LAYOUT")) {
           let list = items(codes);
           if (sec === "mode") {
             list = X.list("MODES").map(([c, l, n]) => ({
-              code: "mode_" + c, label: l + X.fmt("paren", { text: n }), run: () => this.setMode(c), why: this.modeReason(c), keys: KEYS["mode_" + c] || [], graphOnly: false,
+              code: "mode_" + c, label: l + X.fmt("paren", { text: n }), run: () => this.setMode(c), why: this.modeReason(c), keys: this.keySeqs["mode_" + c] || [], graphOnly: false,
             }));
           }
           if (sec === "view") {
@@ -152,21 +138,33 @@
         if (it.why || !it.run) { if (it.why) this.note(null, it.why); return; }
         it.run();
       },
-      keyHint(code) { const k = KEYS[code]; return k ? X.fmt("paren", { text: k.map(keyLabel).join("・") }) : ""; },
+      keyHint(code) { const k = this.keySeqs[code]; return k && k.length ? X.fmt("paren", { text: k.map(keyLabel).join("・") }) : ""; },
       keysText(it) { return it.keys.map(keyLabel).join("・"); },
       onKey(e) {
-        const k = keyOf(e);
+        // キーの割り当ての画面で「キーを押して割り当てる」の後は、押したキーを操作に使わずに受ける（J §4.6）
+        if (this.keyCapture) { this.captureKey(e); return; }
+        const k = root.GSKeys.keyOf(e);
         const tag = (e.target && e.target.tagName) || "";
         const inField = ["INPUT", "SELECT", "TEXTAREA"].includes(tag);
         const inGraph = this.$graph && this.$graph.u.root.contains(e.target);
-        if (k === "Escape") { this.menuOpen = false; this.ctx = null; if (this.modal && !inField) this.modal = null; }
-        if (this.modal) return;
-        for (const [code, keys] of Object.entries(KEYS)) {
+        if (k === "Escape") {
+          this.menuOpen = false;
+          this.ctx = null;
+          // 上に重なっている窓から1つ閉じる
+          if (this.confirmBox) this.answerConfirm(false);
+          else if (this.modal) { if (!inField) this.modal = null; }
+          else if (this.settingsWin) this.closeSettings();
+          else if (this.presetsWin) this.closePresets();
+          return;
+        }
+        // 窓（入力・確かめる・設定・プリセット）を開いている間は、メイン画面の操作のキーを動かさない
+        if (this.modal || this.confirmBox || this.settingsWin || this.presetsWin) return;
+        for (const [code, keys] of Object.entries(this.keySeqs)) {
           if (!keys.includes(k)) continue;
           // 入力の欄にいる間は、Ctrl・Alt の付かないキーと Ctrl+Z/Y は欄に渡す（J §4.6）
           const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
           if (inField && (plain || code === "undo" || code === "redo")) return;
-          if (GRAPH_ONLY.has(code) && !inGraph) return;
+          if (graphOnly(code) && !inGraph) return;
           e.preventDefault();
           if (code === "marker_left" || code === "marker_right") { this.markerStep((code === "marker_left" ? -1 : 1) * (e.shiftKey ? 10 : 1)); return; }
           this.trigger(code);

@@ -152,7 +152,7 @@ class RenderTest(unittest.TestCase):
         self.assertIn("GigaSt v5 S/N TEST0001", flat)
         self.assertIn("RBW 180 kHz", flat)
         self.assertIn("Span 100 MHz", flat)
-        self.assertIn("REF 0 dBm", flat)
+        self.assertIn("REF 0.0 dBm", flat)
         self.assertFalse(any(s.startswith("メモ") for s in flat))  # 空のメモは出さない
         rows2 = pe.band_rows({"conditions": {}}, note="")
         flat2 = [it for _, items in rows2 for it in items]

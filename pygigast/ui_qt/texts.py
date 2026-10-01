@@ -22,6 +22,9 @@ from .texts_devices import device_name, port_shown
 from .texts_web import *  # noqa: F401,F403 — ブラウザから使うときの語（A §4.3.2）
 from .texts_web import WEB_ERRORS
 from .texts_screens import *  # noqa: F401,F403 — 右のタブ・マーカー表・ファイルの窓などの語（LABELS・REASON_TEXTS へ足す）
+from .texts_settings import *  # noqa: F401,F403 — 設定の画面・配色・キー・プリセット・表示の単位（設計O・J §4.4・§4.6）
+from .texts_settings import SETTINGS_ERRORS, VIEW_TEXTS
+from .texts_web_settings import *  # noqa: F401,F403 — ブラウザだけの設定の画面・キーの割り当ての語
 
 
 def tpl(key: str, **kw) -> str:
@@ -56,12 +59,16 @@ FIELD_NAMES = {
 FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz", "span_hz", "sg_hz", "step_hz", "rbw_hz"}
 
 
-def adjustment_text(adj: dict) -> str:
-    """調整1件を「◯◯ に合わせました（理由）」にする。"""
+# 周波数オフセット（設計O）で換算して出す欄（欄の表示と同じ: Span・SG・Step・RBW は換算しない）
+OFFSET_FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz"}
+
+
+def adjustment_text(adj: dict, freq_offset_hz: int = 0) -> str:
+    """調整1件を「◯◯ に合わせました（理由）」にする。周波数は欄と同じく換算後の周波数で出す。"""
     field = adj.get("field", "")
     v = adj.get("adopted")
     if field in FREQ_FIELDS and isinstance(v, int):
-        value = format_freq(v)
+        value = format_freq(v + (int(freq_offset_hz or 0) if field in OFFSET_FREQ_FIELDS else 0))
     elif field == "points" and v is None:
         value = TEMPLATES["points_auto"]
     elif field == "mode":
@@ -123,6 +130,17 @@ WARNINGS = {
 }
 
 
+def offset_text(off_hz) -> str:
+    """周波数オフセットの符号付きの文字（+10GHz・−1.2GHz）。負号は見間違えない字形（J §4.1）。"""
+    off = int(off_hz or 0)
+    return ("+" if off >= 0 else "−") + format_freq(abs(off))
+
+
+def freq_offset_of(st: Optional[dict]) -> int:
+    """表示の周波数オフセット（設計O）。表示する周波数 = 測った周波数 + これ。"""
+    return int(((st or {}).get("view") or {}).get("freq_offset_hz") or 0)
+
+
 def condition_lines(st: dict) -> list[str]:
     """上段の下に出し続ける条件の注意（U-02・U-08）。PNG の帯の注意と同じ文（I §3.2 の 6）。"""
     sw = st.get("sweep") or {}
@@ -130,6 +148,10 @@ def condition_lines(st: dict) -> list[str]:
         return []
     fft = (st.get("connection") or {}).get("sweep_kind") == "fft"
     out = []
+    off = freq_offset_of(st)
+    if off:
+        # 周波数オフセットで換算中であることを出し続ける（設計O: 換算中であることを示す）
+        out.append(VIEW_TEXTS["freq_offset_on"].replace("{off}", offset_text(off)))
     if sw.get("rbw_hz") != sw.get("rbw_preference_hz"):
         out.append(tpl("cond_rbw_widened" if fft else "cond_rbw_fixed", rbw=format_freq(sw["rbw_hz"]),
                        pref=format_freq(sw["rbw_preference_hz"])))
@@ -398,6 +420,8 @@ MARKER_NOTES = {
     "no_value": "値なし",
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
     "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
+    # イメージキャンセル ON の4回の合わせ方は雑音の床の近くを低く読む（設計F §6）
+    "ic_noise_floor": "雑音の床の近く（イメージキャンセル ON では約 2dB 低く読める）",
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
     **DISPLAY_MARKS,
 }
@@ -585,6 +609,7 @@ ERRORS.update({
     "rtlsdr_fit_needs_manual_gain": "AGC の間は利得を合わせられません（利得を手動の段にしてから押します）",
     "rtlsdr_fit_running": "いま利得を合わせています",
     **WEB_ERRORS,
+    **SETTINGS_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
 })
 
@@ -691,6 +716,8 @@ def status_items(st: dict) -> list[dict]:
     norm = st.get("normalization") or {}
     rt_text, rt_cls = rtltcp_status(st.get("rtltcp") or {})
     tasks = st.get("tasks") or []
+    ext = float((st.get("view") or {}).get("ext_db") or 0.0)
+    off = freq_offset_of(st)
     items = [
         {"key": "conn", "text": TEMPLATES["status_conn_none"] if conn.get("state") == "disconnected" else
          tpl("status_conn", state=CONN_STATES.get(conn.get("state"), conn.get("state")), who=who),
@@ -700,6 +727,10 @@ def status_items(st: dict) -> list[dict]:
          else TEMPLATES["status_sweep_time_none"], "cls": ""},
         {"key": "discard", "text": tpl("status_discard", n=run.get("discard_count", 0)), "cls": ""},
         {"key": "cal", "text": calibration_status(st), "cls": ""},
+        # 外部補正・周波数オフセット（設計O: 読み値がずれていることを常に見せる）
+        {"key": "ext", "text": VIEW_TEXTS["status_ext"].replace("{db}", f"{ext:+g}") if ext else "", "cls": "warn"},
+        {"key": "offset", "text": VIEW_TEXTS["status_offset"].replace("{off}", offset_text(off)) if off else "",
+         "cls": "warn"},
         {"key": "norm", "text": nt, "cls": "" if norm.get("applied") else "warn"},
         {"key": "src", "text": source_text(st), "cls": "warn"},
         {"key": "listen", "text": listen_status(st.get("listen") or {}), "cls": "warn"},

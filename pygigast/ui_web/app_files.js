@@ -105,18 +105,19 @@
           { key: "note", label: W("memo"), value: "" },
         ], (v) => this.makeFile("save", { name: v.name, note: v.note }), W("download_note"));
       },
+      // 範囲の欄は上段の Start・Stop と同じく換算後の周波数（周波数オフセット: 設計O）で出し、機器の周波数へ戻して送る
       exportDialog() {
         const U = root.GSUnits;
         const s = this.sw || {};
         this.openModal(W("export_title"), [
           { key: "name", label: W("file_name"), value: nowName() + ".csv" },
-          { key: "start", label: W("export_start"), value: s.start_hz != null ? U.freqFieldText(s.start_hz) : "" },
-          { key: "stop", label: W("export_stop"), value: s.stop_hz != null ? U.freqFieldText(s.stop_hz) : "" },
+          { key: "start", label: W("export_start"), value: s.start_hz != null ? U.freqFieldText(this.shownHz(s.start_hz)) : "" },
+          { key: "stop", label: W("export_stop"), value: s.stop_hz != null ? U.freqFieldText(this.shownHz(s.stop_hz)) : "" },
         ], (v) => {
           const args = { name: v.name };
           try {
-            if (v.start.trim()) args.start_hz = U.parseFreqHz(v.start);
-            if (v.stop.trim()) args.stop_hz = U.parseFreqHz(v.stop);
+            if (v.start.trim()) args.start_hz = this.deviceHz(U.parseFreqHz(v.start));
+            if (v.stop.trim()) args.stop_hz = this.deviceHz(U.parseFreqHz(v.stop));
           } catch (e) { this.note(null, W("bad_freq")); return; }
           this.makeFile("export_csv", args);
         }, W("export_note"));

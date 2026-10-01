@@ -79,6 +79,30 @@ class MarkerKeysTest(MarkerBase):
         QTest.keyClick(self.win.plot, Qt.Key.Key_BracketRight)
         self.wait(lambda: self.marker("M1")["freq_hz"] > f1, what="] で右の次のピーク")
 
+    def test_delete_key_removes_selected_marker(self):
+        self.win.marker_panel.btn_peak.click()
+        self.wait(lambda: self.win.selected_marker == "M1", what="M1 を選ぶ")
+        # 入力の欄にいる間の Delete は欄の文字を消すだけで、マーカーは消さない
+        edit = self.win.marker_tab.freq.edit
+        edit.setFocus()
+        self.pump(0.1)
+        QTest.keyClick(edit, Qt.Key.Key_Delete)
+        self.pump(0.2)
+        self.assertEqual(len(self.markers()), 1)
+        # マーカーの表で選んで Delete
+        tree = self.win.marker_panel.tree
+        tree.setFocus()
+        self.pump(0.1)
+        QTest.keyClick(tree, Qt.Key.Key_Delete)
+        self.wait(lambda: not self.markers() and self.win.selected_marker is None, what="表で Delete")
+        # グラフで選んで Delete
+        self.win.marker_panel.btn_peak.click()
+        self.wait(lambda: self.win.selected_marker is not None, what="もう一度ピーク")
+        self.win.plot.setFocus()
+        self.pump(0.1)
+        QTest.keyClick(self.win.plot, Qt.Key.Key_Delete)
+        self.wait(lambda: not self.markers(), what="グラフで Delete")
+
     def test_m_key_at_mouse(self):
         vb = self.win.plot.getPlotItem().getViewBox()
         pos = self.win.plot.mapFromScene(vb.mapViewToScene(QPointF(700e6, -75)))

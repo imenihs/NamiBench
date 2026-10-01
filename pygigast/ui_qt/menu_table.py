@@ -1,26 +1,19 @@
 """メニューバーの中身（設計J §4.3.1）。並びと語は texts の MENU_LAYOUT・MENU_ITEMS（Web の「≡」と同じ）。
 
-ここに持つのは Qt のキー（J §4.6）と、項目を押したときに呼ぶ画面の処理だけ。
+ここに持つのは項目を押したときに呼ぶ画面の処理だけ。キーは texts の QT_KEY_DEFAULTS（J §4.6 の初期値）に
+利用者が変えた分（画面の覚え書きの "keys"）を重ねたもの（keymap.py）。
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Optional
 
-from . import menus, texts
+from . import keymap, menus, texts
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-# Qt のキーの初期値（J §4.6）
-KEYS = {
-    "open": ("Ctrl+O",), "save": ("Ctrl+S",), "export": ("Ctrl+E",), "png_save": ("Ctrl+P",),
-    "png_copy": ("Ctrl+Shift+C",), "quit": ("Ctrl+Q",), "undo": ("Ctrl+Z",), "redo": ("Ctrl+Y",),
-    "run_cont": ("F5",), "run_single": ("F6",), "stop": ("F7",), "pause": ("Pause",),
-    "marker_peak": ("P",), "marker_peak_left": ("[",), "marker_peak_right": ("]",),
-    "marker_left": ("Left", "Shift+Left"), "marker_right": ("Right", "Shift+Right"), "marker_here": ("M",),
-}
 # グラフにいるときだけ効くキー
-GRAPH_ONLY = {"marker_peak", "marker_peak_left", "marker_peak_right", "marker_left", "marker_right", "marker_here"}
+GRAPH_ONLY = set(texts.GRAPH_ONLY_KEYS)
 
 
 def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
@@ -28,11 +21,11 @@ def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
     return {
         "open": lambda: f.open_files(), "save": f.save, "export": f.export,
         "png_save": f.png_save, "png_copy": f.png_copy,
+        "presets": win.open_presets, "preset_save": win.save_preset,
         "record_start": f.record_start, "record_stop": f.record_stop, "record_finish": f.record_finish,
         "quit": win.close,
         "undo": lambda: win._undo_redo("undo"), "redo": lambda: win._undo_redo("redo"),
         "connect": win._connect_dialog,
-        "connect_sim": lambda: win.call("connect", backend="simulator", serial="SIM00001"),
         "disconnect": win._disconnect,
         "run_cont": lambda: win.call("run", mode="continuous"),
         "run_single": lambda: win.call("run", mode="single"),
@@ -56,7 +49,10 @@ def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
         "marker_clear": win._marker_clear,
         "marker_copy": win._marker_copy,
         "cal_legacy": win._import_legacy,
+        "view_colors": lambda: win._settings_dialog("display"),
+        "layout_reset": lambda: win.parts.reset(),
         "settings": win._settings_dialog,
+        "settings_keys": lambda: win._settings_dialog("keys"),
         "web_connect": lambda: win.web.show_connect(),
         "help_keys": win._show_key_table,
         "help_about": win._show_about,
@@ -66,19 +62,21 @@ def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
 def table(win: "MainWindow") -> list[tuple[str, list[Optional[menus.Item]]]]:
     """menus.build へ渡す並び。まだ作っていない項目は理由付きで無効（U-08）。"""
     h = handlers(win)
+    km = keymap.effective(keymap.load_overrides(win.prefs.get("keys")))
     out = []
     for sec, codes in texts.MENU_LAYOUT:
         items: list[Optional[menus.Item]] = []
         if sec == "mode":
-            for i, (code, label, name, why) in enumerate(texts.MODES):
-                items.append(menus.Item(f"mode_{code}", f"{label}（{name}）", (f"Ctrl+{i + 1}",),
-                                        (lambda c=code: win.call("set_mode", mode=c)), why))
+            for code, label, name, why in texts.MODES:
+                c = f"mode_{code}"
+                items.append(menus.Item(c, f"{label}（{name}）", keymap.sequences(c, km.get(c, "")),
+                                        (lambda m=code: win.call("set_mode", mode=m)), why))
         for code in codes:
             if code is None:
                 items.append(None)
                 continue
             why = texts.NOT_YET.get(texts.MENU_NOT_YET[code]) if code in texts.MENU_NOT_YET else None
-            items.append(menus.Item(code, texts.MENU_ITEMS[code], KEYS.get(code, ()),
+            items.append(menus.Item(code, texts.MENU_ITEMS[code], keymap.sequences(code, km.get(code, "")),
                                     None if why else h.get(code), why, code in GRAPH_ONLY))
         out.append((f"{texts.MENU_TITLES[sec]}(&{texts.MENU_MNEMONICS[sec]})", items))
     return out

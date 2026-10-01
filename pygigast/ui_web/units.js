@@ -82,6 +82,13 @@
   // 表示の負号を見間違えない字形「−」（U+2212）にする（J §4.1。Python の units.minus_sign と同じ）
   function minusSign(text) { return String(text).replace(/-/g, "−"); }
 
+  // レベル（dB の値）の表示: 0.1 dB まで・負号は「−」。REF の欄と縦軸の目盛で同じ形にする
+  // （Python の units.level_text と同じ。単位を換えた REF の端数 116.99 などを欄の 117.0 とそろえる）
+  function levelText(v) {
+    const s = Number(v).toFixed(1);
+    return minusSign(s === "-0.0" ? "0.0" : s);
+  }
+
   // dB・dBm の欄。単位の文字は読み飛ばす。マイナスは「-」と「−」の両方を読む
   function parseDb(text) {
     let t = String(text).trim().replace(/−/g, "-");
@@ -112,7 +119,7 @@
     return idx < dot ? dot - idx - 1 : dot - idx;
   }
 
-  const api = { ParseError, parseFreqHz, formatFreq, freqFieldText, parseDb, digitExponent, minusSign };
+  const api = { ParseError, parseFreqHz, formatFreq, freqFieldText, parseDb, digitExponent, minusSign, levelText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GSUnits = api;
 })(typeof window !== "undefined" ? window : globalThis);

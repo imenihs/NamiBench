@@ -19,7 +19,9 @@ def default_unit(st: Optional[dict]) -> str:
     """マーカー表で単位を持たない行（Y カーソル）に使う単位。Qt の display_unit と同じ順で決める。"""
     st = st or {}
     amp = st.get("amplitude") or {}
-    if amp.get("unit") in ("dBm", "dB"):
+    # 電力の単位は表示の設定で dBm・dBμV・dBmV になる（設計O）。Qt の display_unit と同じく、いまの単位の名前だけ使う
+    if amp.get("unit") == "dB" or (amp.get("unit") and amp.get("unit") == (st.get("view") or {}).get("level_unit_label",
+                                                                                                    "dBm")):
         return amp["unit"]
     for t in st.get("traces") or []:
         if t.get("visible") and t.get("unit"):
@@ -34,14 +36,14 @@ def state_view(st: dict) -> dict:
     ui["unit"] = default_unit(st)
     out = {**st, "ui": ui}
     if isinstance(st.get("markers"), dict):
-        out["markers"] = markers_view(st["markers"], ui["unit"])
+        out["markers"] = markers_view(st["markers"], ui["unit"], texts.freq_offset_of(st))
     return out
 
 
-def markers_view(snap: dict, unit: str = "dBm") -> dict:
+def markers_view(snap: dict, unit: str = "dBm", freq_offset_hz: int = 0) -> dict:
     """マーカー表に `rows`（表の行。Qt の表・コピー・PNG と同じ行）と `cells`（表の文字）を足す。"""
     rows = marker_rows.rows_from_snapshot(snap)
-    cells = marker_rows.format_rows(rows, unit)
+    cells = marker_rows.format_rows(rows, unit, freq_offset_hz)
     out = []
     for r, c in zip(rows, cells):
         out.append({"id": r["id"], "parent": r.get("parent"), "kind": r.get("kind"), "child": bool(r.get("child")),
@@ -82,13 +84,19 @@ def error_view(err: dict) -> dict:
     return {**err, "error": out}
 
 
-def result_view(command: str, args: dict, result: Any) -> Any:
-    """命令の戻り値に、画面がそのまま出す文を `texts` として足す（調整の知らせ・反対の規則・校正の結果）。"""
+def result_view(command: str, args: dict, result: Any, freq_offset_hz: int = 0) -> Any:
+    """命令の戻り値に、画面がそのまま出す文を `texts` として足す（調整の知らせ・反対の規則・校正の結果）。
+
+    freq_offset_hz は表示の周波数オフセット（設計O）。調整の知らせの周波数を欄と同じ換算後の値で出す。
+    プリセットの一覧には行の文（名前と中身の要約。Qt の窓と同じ screen_model.preset_rows）を `rows` で足す。
+    """
     if not isinstance(result, dict):
         return result
+    if command == "preset_list" and "presets" in result:
+        return {**result, "rows": screen_model.preset_rows(result.get("presets") or [])}
     t: dict = {}
     if result.get("adjustments"):
-        t["adjustments"] = [{"field": a.get("field"), "text": texts.adjustment_text(a),
+        t["adjustments"] = [{"field": a.get("field"), "text": texts.adjustment_text(a, freq_offset_hz),
                              "field_name": texts.FIELD_NAMES.get(a.get("field"), a.get("field")),
                              "rule": a.get("reason") in texts.RULE_REASONS} for a in result["adjustments"]]
     if result.get("alternative"):

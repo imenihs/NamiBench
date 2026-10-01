@@ -68,7 +68,6 @@ MENU_ITEMS = {
     "undo": "条件の変更を戻す",
     "redo": "条件の変更をやり直す",
     "connect": "接続…",
-    "connect_sim": "シミュレータに接続",
     "disconnect": "切断",
     "self_test": "自己診断の結果",
     "run_cont": "連続",
@@ -108,10 +107,10 @@ MENU_ITEMS = {
 
 # メニューの並び（None は区切り線）。mode は MODES から作る
 MENU_LAYOUT = (
-    ("file", ("open", "save", "export", None, "png_save", "png_copy", None, "record_start", "record_stop",
-              "record_finish", None, "quit")),
+    ("file", ("open", "save", "export", None, "png_save", "png_copy", None, "presets", "preset_save", None,
+              "record_start", "record_stop", "record_finish", None, "quit")),
     ("edit", ("undo", "redo")),
-    ("device", ("connect", "connect_sim", "disconnect", None, "self_test")),
+    ("device", ("connect", "disconnect", None, "self_test")),
     ("sweep", ("run_cont", "run_single", "stop", "pause")),
     ("mode", ()),
     ("amplitude", ("ref_auto",)),
@@ -119,15 +118,15 @@ MENU_LAYOUT = (
                 "marker_right", "marker_here", "marker_add", None, "marker_center", "marker_ref", "marker_span",
                 None, "marker_listen", "listen_stop", None, "marker_remove", "marker_clear", "marker_copy")),
     ("calibration", ("cal_freq", "cal_rbw", "cal_nf", None, "cal_legacy")),
-    ("view", ("view_colors", "view_waterfall", "view_density")),
+    ("view", ("view_colors", "view_waterfall", "view_density", None, "layout_reset")),
     ("settings", ("settings", "settings_keys", None, "web_connect")),
     ("help", ("help_keys", "help_about")),
 )
 
 # まだ作っていない項目と、その理由（NOT_YET のキー）
 MENU_NOT_YET = {
-    "self_test": "diag", "cal_freq": "cal", "cal_rbw": "cal", "cal_nf": "cal", "view_colors": "colors",
-    "view_waterfall": "waterfall", "view_density": "density", "settings_keys": "settings_keys",
+    "self_test": "diag", "cal_freq": "cal", "cal_rbw": "cal", "cal_nf": "cal",
+    "view_waterfall": "waterfall", "view_density": "density",
 }
 
 # 操作が使えない理由（メニューとボタンで同じ文）

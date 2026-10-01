@@ -146,8 +146,14 @@ def xy_rows(xy: dict) -> list[dict]:
     return out
 
 
-def format_rows(rows: list[dict], default_unit: str = "dBm") -> list[list[str]]:
-    """表の文字（列は COLUMNS）。周波数の小数の桁は全部の行でそろえる（桁を縦にそろえる: U-17）。"""
+def format_rows(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int = 0) -> list[list[str]]:
+    """表の文字（列は COLUMNS）。周波数の小数の桁は全部の行でそろえる（桁を縦にそろえる: U-17）。
+
+    freq_offset_hz は表示の周波数オフセット（設計O）。周波数の列は測った周波数に足した値（Δ周波数は変わらない）。
+    """
+    off = int(freq_offset_hz or 0)
+    if off:
+        rows = [{**r, "freq_hz": r["freq_hz"] + off} if r.get("freq_hz") is not None else r for r in rows]
     freqs = [r.get("freq_hz") for r in rows] + [r.get("delta_freq_hz") for r in rows]
     d = _freq_decimals(f for f in freqs if f is not None)
     out = []
@@ -167,10 +173,10 @@ def format_rows(rows: list[dict], default_unit: str = "dBm") -> list[list[str]]:
     return out
 
 
-def to_tsv(rows: list[dict], default_unit: str = "dBm") -> str:
+def to_tsv(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int = 0) -> str:
     """タブ区切りの表（見出し付き。子の行と機能の結果も含める: G §3.3・§3.5）。"""
     lines = ["\t".join(COLUMNS)]
-    for cells in format_rows(rows, default_unit):
+    for cells in format_rows(rows, default_unit, freq_offset_hz):
         cells = [c.strip() for c in cells]
         lines.append("\t".join(cells))
     return "\n".join(lines) + "\n"

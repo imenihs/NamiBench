@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import marker_rows, menus, texts
+from . import marker_rows, menus, texts, widget_sync
 from .theme import number_font
 
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ class MarkerPanel(QWidget):
         if structure != self._structure:
             self._rebuild(rows)
             self._structure = structure
-        texts_ = marker_rows.format_rows(rows, self.win.display_unit())
+        texts_ = marker_rows.format_rows(rows, self.win.display_unit(), texts.freq_offset_of(self.win.state))
         for r, cells in zip(rows, texts_):
             it = self._items[r["id"]]
             for i, c in enumerate(cells):
@@ -122,14 +122,9 @@ class MarkerPanel(QWidget):
         for mid, cb in self._ref_combos.items():
             row = next(r for r in rows if r["id"] == mid)
             want = [None] + [i for i in ids if i != mid]
-            have = [cb.itemData(k) for k in range(cb.count())]
-            cb.blockSignals(True)
-            if want != have:
-                cb.clear()
-                for i in want:
-                    cb.addItem(texts.LABELS["none"] if i is None else i, i)
-            cb.setCurrentIndex(max(0, cb.findData(row.get("ref"))) if row.get("ref") else 0)
-            cb.blockSignals(False)
+            # 一覧を開いている間は組み替えない・選び直さない（閉じたときに最新の状態で入れる）
+            widget_sync.set_items(cb, [(texts.LABELS["none"] if i is None else i, i) for i in want])
+            widget_sync.set_data(cb, row.get("ref") if row.get("ref") else None)
         # 表の外に隠れた行も含めて、注意の列の幅を一番長い文字に合わせる（表は横にスクロールする）
         fm = self.tree.fontMetrics()
         widest = max([fm.horizontalAdvance(c[COL_NOTE]) for c in texts_] + [fm.horizontalAdvance(marker_rows.COLUMNS[COL_NOTE])])
@@ -156,7 +151,7 @@ class MarkerPanel(QWidget):
         for r in rows:
             it = self._items[r["id"]]
             if r.get("kind") == "marker":
-                cb = QComboBox()
+                cb = widget_sync.fit_combo(QComboBox())
                 cb.setToolTip(texts.LABELS["ref_combo_tip"])
                 cb.activated.connect(lambda _i, mid=r["id"], c=cb: self._set_ref(mid, c.currentData()))
                 self.tree.setItemWidget(it, COL_REF, cb)
@@ -238,6 +233,6 @@ class MarkerPanel(QWidget):
             self._row_menu(row).exec(self.tree.viewport().mapToGlobal(pos))
 
     def copy_tsv(self) -> str:
-        text = marker_rows.to_tsv(self.rows, self.win.display_unit())
+        text = marker_rows.to_tsv(self.rows, self.win.display_unit(), texts.freq_offset_of(self.win.state))
         QGuiApplication.clipboard().setText(text)
         return text

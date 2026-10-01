@@ -21,6 +21,16 @@ def minus_sign(text: str) -> str:
     return text.replace("-", MINUS)
 
 
+def level_text(v: float) -> str:
+    """レベル（dB の値）の表示: 0.1 dB まで・負号は「−」。REF レベルの欄と縦軸の目盛で同じ形にする。
+
+    単位を換えた REF（例 0 dBm → 106.99 dBμV）を足し引きした目盛の値は 116.99 や 106.98999… になるので、
+    欄と同じ桁に丸めて、欄（117.0）と目盛（116.99）の数字が食い違わないようにする。-0.0 は 0.0 と書く
+    """
+    s = f"{float(v):.1f}"
+    return minus_sign("0.0" if s == "-0.0" else s)
+
+
 class ParseError(ValueError):
     pass
 

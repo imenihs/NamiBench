@@ -1,20 +1,19 @@
-"""右のタブ「表示」（設計J §4.5・P §2・I §3）。
+"""右のタブ「表示」（設計J §4.5・P §2・O・I §3）。
 
-- 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（後の2つは次の回。消さずに無効にし理由: U-08）
-- 描き方: 線／塗りつぶし（旧 Line/Dot。画面だけの設定で、測定値は変わらない）
-- 振幅の詳細: 単位（いまは dBm・dB。dBμV・dBmV の換算と外部補正は次の回）
-- 画像（PNG）: 配色（既定はライトの初期値: J §4.4）・大きさ・メモ1行・保存先
-- 配色の編集（J §4.4）は次の回
+- 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（後の2つは設計P。消さずに無効にし理由: U-08）
+- 描き方: 線／塗りつぶし（旧 Line/Dot。測定値は変わらない）。コアの表示の設定（Qt と Web で同じ・プリセットに入る）
+- 振幅の詳細（設計O）: 単位 dBm／dBμV／dBmV と外部補正 dB。換算はコア（グラフ・マーカー・CSV・PNG・REF が
+  同じ単位になる）。「初期値に戻す」
+- 配色（J §4.4）: ライト・ダークの初期値にするボタン（変えた色の数を言ってから聞く）と、編集の画面への入口
+- 画像（PNG）のメモ1行（大きさ・配色・保存先は設定の画面の「保存」: 同じ値の入口を2つ作らない U-09）
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -26,22 +25,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import texts
-from .tab_traces import disable_item, scroll, set_enabled
+from . import texts, widget_sync
+from .fields import DbField
+from .tab_traces import scroll, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-# まだ作っていない欄の理由（設計P §3・§4・§6・設計O・J §4.4。dBμV・dBmV の換算はコアで行い、マーカー・書き出しとそろえる）
+# まだ作っていない欄の理由（設計P §3・§4・§6）
 REASON_WATERFALL = texts.NOT_YET["waterfall"]
 REASON_DENSITY = texts.NOT_YET["density"]
-REASON_UNIT = texts.NOT_YET["unit"]
-REASON_EXT = texts.NOT_YET["ext"]
-REASON_COLORS = texts.NOT_YET["colors"]
 REASON_BANDPLAN = texts.NOT_YET["bandplan"]
 
-PNG_PALETTES = tuple(texts.PNG_PALETTES.items())
-PNG_SIZES = ((1600, 1000), (1920, 1080), (1280, 800), (2560, 1600))
+V = texts.VIEW_TEXTS
+S = texts.SETTINGS_TEXTS
 
 
 class DisplayTab(QWidget):
@@ -72,8 +69,7 @@ class DisplayTab(QWidget):
         self.style_group = QButtonGroup(self)
         self.style_line = QRadioButton(L["draw_line"])
         self.style_fill = QRadioButton(L["draw_fill"])
-        fill = str(win.prefs.get("draw_style", "line")) == "fill"
-        (self.style_fill if fill else self.style_line).setChecked(True)
+        self.style_line.setChecked(True)
         for b in (self.style_line, self.style_fill):
             self.style_group.addButton(b)
             h.addWidget(b)
@@ -84,82 +80,86 @@ class DisplayTab(QWidget):
         g = QGroupBox(L["amplitude_detail"])
         form = QFormLayout(g)
         self.unit = QComboBox()
-        self.unit.addItem(L["unit_auto"], None)
-        self.unit.addItem("dBμV", "dBuV")
-        self.unit.addItem("dBmV", "dBmV")
-        disable_item(self.unit, 1, REASON_UNIT)
-        disable_item(self.unit, 2, REASON_UNIT)
-        self.unit.setToolTip(L["unit_tip"])
-        form.addRow(L["unit"], self.unit)
-        self.ext = QLineEdit("0 dB")
-        set_enabled(self.ext, REASON_EXT)
-        form.addRow(L["ext_corr"], self.ext)
+        for code, name in (("dBm", "dBm"), ("dBuV", "dBμV"), ("dBmV", "dBmV")):
+            self.unit.addItem(name, code)
+        self.unit.setToolTip(V["level_unit_tip"])
+        self.unit.activated.connect(lambda _i: win.call("set_view", level_unit=self.unit.currentData()))
+        form.addRow(V["level_unit"], self.unit)
+        self.ext = DbField(V["ext_db"], "dB", lambda v: win.call("set_view", field=self.ext, ext_db=float(v)),
+                           big=False)
+        self.ext.setToolTip(V["ext_db_tip"])
+        self.ext.edit.setPlaceholderText(V["ext_db_placeholder"])
+        form.addRow(self.ext)
+        self.amp_note = QLabel(V["level_unit_ratio"])
+        self.amp_note.setObjectName("dim")
+        self.amp_note.setWordWrap(True)
+        form.addRow(self.amp_note)
+        reset = QPushButton(V["reset_amp"])
+        reset.setObjectName("small")
+        reset.clicked.connect(lambda: win.call("set_view", level_unit=None, ext_db=None))
+        form.addRow(reset)
+        lay.addWidget(g)
+
+        g = QGroupBox(L["colors"])
+        v = QVBoxLayout(g)
+        row = QHBoxLayout()
+        self.reset_light = QPushButton(S["palette_reset_light"])
+        self.reset_light.clicked.connect(lambda: win.reset_palette("light"))
+        self.reset_dark = QPushButton(S["palette_reset_dark"])
+        self.reset_dark.clicked.connect(lambda: win.reset_palette("dark"))
+        row.addWidget(self.reset_light)
+        row.addWidget(self.reset_dark)
+        row.addStretch(1)
+        v.addLayout(row)
+        self.palette_state = QLabel("")
+        self.palette_state.setObjectName("dim")
+        self.palette_state.setWordWrap(True)
+        v.addWidget(self.palette_state)
+        self.colors = QPushButton(texts.MENU_ITEMS["view_colors"])
+        self.colors.clicked.connect(lambda: win.actions["view_colors"].trigger())
+        v.addWidget(self.colors)
+        self.bandplan = QPushButton(L["show_bandplan"])
+        set_enabled(self.bandplan, REASON_BANDPLAN)
+        v.addWidget(self.bandplan)
         lay.addWidget(g)
 
         g = QGroupBox(L["png_group"])
         form = QFormLayout(g)
-        self.png_palette = QComboBox()
-        for code, name in PNG_PALETTES:
-            self.png_palette.addItem(name, code)
-        cur = str(win.prefs.get("png_palette", "light"))
-        self.png_palette.setCurrentIndex(max(0, self.png_palette.findData(cur)))
-        self.png_palette.activated.connect(lambda _i: win.prefs.set("png_palette", self.png_palette.currentData()))
-        form.addRow(L["colors"], self.png_palette)
-        self.png_size = QComboBox()
-        for w, hh in PNG_SIZES:
-            self.png_size.addItem(f"{w}×{hh}", (w, hh))
-        self.png_size.setCurrentIndex(max(0, self.png_size.findText(str(win.prefs.get("png_size", "1600×1000")))))
-        self.png_size.activated.connect(lambda _i: win.prefs.set("png_size", self.png_size.currentText()))
-        form.addRow(L["png_size"], self.png_size)
         self.png_note = QLineEdit("")
         self.png_note.setPlaceholderText(L["png_memo_placeholder"])
         form.addRow(L["memo"], self.png_note)
-        row = QHBoxLayout()
-        self.png_dir = QLabel("")
-        self.png_dir.setObjectName("dim")
-        self.png_dir.setWordWrap(True)
-        row.addWidget(self.png_dir, 1)
-        b = QPushButton(L["change"])
-        b.setObjectName("small")
-        b.clicked.connect(self._choose_png_dir)
-        row.addWidget(b)
-        form.addRow(L["png_dir"], row)
-        lay.addWidget(g)
-
-        g = QGroupBox(L["colors_bandplan"])
-        v = QVBoxLayout(g)
-        self.colors = QPushButton(L["reset_colors"])
-        set_enabled(self.colors, REASON_COLORS)
-        self.bandplan = QPushButton(L["show_bandplan"])
-        set_enabled(self.bandplan, REASON_BANDPLAN)
-        v.addWidget(self.colors)
-        v.addWidget(self.bandplan)
         lay.addWidget(g)
         lay.addStretch(1)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll(inner))
-        self.show_png_dir()
+
+    def apply_state(self, st: dict) -> None:
+        """コアの表示の設定（単位・外部補正・描き方）と配色を映す。"""
+        v = st.get("view") or {}
+        widget_sync.set_data(self.unit, v.get("level_unit"))
+        widget_sync.set_checked(self.style_fill, v.get("draw_style") == "fill")
+        widget_sync.set_checked(self.style_line, v.get("draw_style") != "fill")
+        self.ext.set_value(float(v.get("ext_db") or 0.0))  # 打っている間は欄が書き直さない（fields._Edit）
+        from .screen_model import palette_view
+
+        self.palette_state.setText(palette_view(st)["base_text"])
 
     def fill_on(self) -> bool:
         return self.style_fill.isChecked()
 
     def _style_changed(self, fill: bool) -> None:
-        self.win.prefs.set("draw_style", "fill" if fill else "line")
-        self.win.redraw_style()
+        self.win.call("set_view", draw_style="fill" if fill else "line")
 
+    # PNG の配色・大きさは設定の画面の「保存」で選ぶ（画面ごとの覚え書き）
     def png_palette_choice(self) -> str:
-        return self.png_palette.currentData()
+        return str(self.win.prefs.get("png_palette", "light"))
 
     def png_size_choice(self) -> tuple[int, int]:
-        return tuple(self.png_size.currentData())
-
-    def show_png_dir(self) -> None:
-        self.png_dir.setText(str(self.win.files.png_dir()))
-
-    def _choose_png_dir(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, texts.LABELS["png_dir_title"], str(self.win.files.png_dir()))
-        if d:
-            self.win.prefs.set("png_dir", str(Path(d)))
-            self.show_png_dir()
+        text = str(self.win.prefs.get("png_size", "1600×1000"))
+        try:
+            w, h = text.split("×")
+            return int(w), int(h)
+        except ValueError:
+            return 1600, 1000

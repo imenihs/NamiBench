@@ -19,7 +19,7 @@ from tests.device_helpers import FakeGigaBackend
 from tests.instrument_helpers import InstrumentCase
 from tests.test_instrument_rtlsdr import FakeLib
 
-SERIAL = "A9016WJ9"
+SERIAL = "FT00AB12"
 
 
 class DevicesCase(unittest.TestCase):
@@ -74,22 +74,22 @@ class DevicesCase(unittest.TestCase):
 
 class TestList(DevicesCase):
     def test_all_kinds_in_one_list_with_states_and_names(self):
-        self.giga.plug("COM5", SERIAL)
+        self.giga.plug("COM7", SERIAL)
         rows = self.rows()
         self.assertEqual([d["kind"] for d in rows.values()], ["gigast", "rtlsdr", "simulator"])
-        g = rows["gigast:COM5"]
+        g = rows["gigast:COM7"]
         # 初めての機器は確認の掃引をしてから繋ぐ。既定の名前は機種名＋シリアル番号の末尾4桁
         self.assertEqual(g["state"], "first_time_needs_probe")
-        self.assertEqual(g["name"], "GigaSt v5 6WJ9")
+        self.assertEqual(g["name"], "GigaSt v5 AB12")
         self.assertEqual(g["usb_id"], "0403:6001")
         self.assertEqual(rows["rtlsdr:rtlsdr:0"]["state"], "available")
         self.assertEqual(rows["rtlsdr:rtlsdr:0"]["name"], "RTL-SDR (R820T) 0001")
-        self.call("connect", backend="gigast", port="COM5")
+        self.call("connect", backend="gigast", port="COM7")
         rows = self.rows()
-        self.assertEqual(rows["gigast:COM5"]["state"], "in_use_here")
-        self.assertEqual(self.call("get_state")["connection"]["name"], "GigaSt v5 6WJ9")
+        self.assertEqual(rows["gigast:COM7"]["state"], "in_use_here")
+        self.assertEqual(self.call("get_state")["connection"]["name"], "GigaSt v5 AB12")
         self.call("disconnect")
-        self.assertEqual(self.rows()["gigast:COM5"]["state"], "known")
+        self.assertEqual(self.rows()["gigast:COM7"]["state"], "known")
 
     def test_rtlsdr_open_elsewhere_and_dll_missing(self):
         self.lib.opened.add(0)  # ほかのアプリが開いている
@@ -108,15 +108,15 @@ class TestList(DevicesCase):
         self.assertIn("simulator:simulator", self.rows())
 
     def test_rename_persists_and_resets(self):
-        self.giga.plug("COM5", SERIAL)
+        self.giga.plug("COM7", SERIAL)
         r = self.call("rename_device", kind="gigast", serial=SERIAL, name="  机の GigaSt ")
         self.assertEqual(r["name"], "机の GigaSt")
         self.wait_devices(lambda ds: any(d["name"] == "机の GigaSt" for d in ds))
         self.inst.shutdown()
         self.inst = self.make_instrument()
-        self.assertEqual(self.rows()["gigast:COM5"]["name"], "机の GigaSt")
+        self.assertEqual(self.rows()["gigast:COM7"]["name"], "机の GigaSt")
         self.call("rename_device", kind="gigast", serial=SERIAL, name="")
-        self.assertEqual(self.rows()["gigast:COM5"]["name"], "GigaSt v5 6WJ9")
+        self.assertEqual(self.rows()["gigast:COM7"]["name"], "GigaSt v5 AB12")
         with self.assertRaises(CommandError):
             self.call("rename_device", kind="nope", serial=SERIAL, name="x")
 
@@ -130,8 +130,8 @@ class TestPolling(DevicesCase):
         self.wait_devices(lambda ds: not any(d["port"] == "COM7" for d in ds))
 
     def test_no_polling_while_connected_unless_watched(self):
-        self.giga.plug("COM5", SERIAL)
-        self.call("connect", backend="gigast", port="COM5")
+        self.giga.plug("COM7", SERIAL)
+        self.call("connect", backend="gigast", port="COM7")
         time.sleep(0.3)
         n = self.giga.discover_calls
         time.sleep(1.2)
@@ -147,16 +147,16 @@ class TestPolling(DevicesCase):
 
 class TestConnectErrors(DevicesCase):
     def test_port_in_use_is_not_probe_failed(self):
-        self.giga.plug("COM5", SERIAL)
-        self.giga.busy.add("COM5")
+        self.giga.plug("COM7", SERIAL)
+        self.giga.busy.add("COM7")
         with self.assertRaises(CommandError) as cm:
-            self.call("connect", backend="gigast", port="COM5")
+            self.call("connect", backend="gigast", port="COM7")
         self.assertEqual(cm.exception.code, "port_in_use")
-        self.assertEqual(self.rows()["gigast:COM5"]["state"], "busy_other_app")
+        self.assertEqual(self.rows()["gigast:COM7"]["state"], "busy_other_app")
         # 空いたら繋げる。繋げたら「使用中」の覚えは消える
         self.giga.busy.clear()
-        self.call("connect", backend="gigast", port="COM5")
-        self.assertEqual(self.rows()["gigast:COM5"]["state"], "in_use_here")
+        self.call("connect", backend="gigast", port="COM7")
+        self.assertEqual(self.rows()["gigast:COM7"]["state"], "in_use_here")
 
     def test_probe_failed(self):
         self.giga.plug("COM6", "FT111111")
@@ -168,7 +168,7 @@ class TestConnectErrors(DevicesCase):
                                                                "probe_failed"))
 
     def test_is_port_in_use(self):
-        busy = serial.SerialException("could not open port 'COM5': PermissionError(13, 'アクセスが拒否されました。', None, 5)")
+        busy = serial.SerialException("could not open port 'COM7': PermissionError(13, 'アクセスが拒否されました。', None, 5)")
         self.assertTrue(is_port_in_use(busy))
         gone = serial.SerialException("could not open port 'COM9': FileNotFoundError(2, '指定されたファイルが見つかりません。', None, 2)")
         self.assertFalse(is_port_in_use(gone))
@@ -193,8 +193,8 @@ class TestAutoConnect(DevicesCase):
         self.assertIsNone(self.call("connect_last")["identity"])
 
     def test_dll_missing_still_finds_gigast(self):
-        self.giga.plug("COM5", SERIAL)
-        self.call("connect", backend="gigast", port="COM5")
+        self.giga.plug("COM7", SERIAL)
+        self.call("connect", backend="gigast", port="COM7")
         self.call("disconnect")
 
         def missing():
@@ -214,13 +214,13 @@ class TestTexts(unittest.TestCase):
         self.assertTrue(v["empty"])
         self.assertEqual(v["rows"], [])
         self.assertEqual(texts.device_name(v["simulator"]), "シミュレータ")
-        row = {"id": "gigast:COM5", "kind": "gigast", "port": "COM5", "serial": SERIAL, "usb_id": "0403:6001",
-               "description": "USB Serial Port", "state": "busy_other_app", "name": "GigaSt v5 6WJ9"}
+        row = {"id": "gigast:COM7", "kind": "gigast", "port": "COM7", "serial": SERIAL, "usb_id": "0403:6001",
+               "description": "USB Serial Port", "state": "busy_other_app", "name": "GigaSt v5 AB12"}
         v = texts.devices_view([row])
         self.assertFalse(v["empty"])
         rv = v["rows"][0]["view"]
         self.assertEqual(rv["state_text"], "ほかのアプリが使っています")
-        self.assertIn("ポート COM5", rv["details"])
+        self.assertIn("ポート COM7", rv["details"])
         self.assertIn("USB ID 0403:6001", rv["details"])
 
     def test_minus_sign(self):

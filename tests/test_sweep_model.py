@@ -733,8 +733,12 @@ class TestEstimate(Base):
         one = first + (s.axis.points + s.preroll_points) * pp
         self.assertAlmostEqual(s.estimated_sweep_s, one)
         self.assertEqual(s.preroll_points, math.ceil(0.030 / pp))
-        self.assertAlmostEqual(self.req(s, image_cancel=True).estimated_sweep_s, 2 * one)
+        # イメージキャンセル ON は b3=0・1・0・1 の4回で1画面（設計F §6 の 4）
+        self.assertAlmostEqual(self.req(s, image_cancel=True).estimated_sweep_s, 4 * one)
         self.assertAlmostEqual(self.req(s, mode=Mode.NF).estimated_sweep_s, 2 * one)
+        # NF は HOT/COLD の2回だけ（イメージキャンセルの設定があっても機器の層は4回にしない）
+        nf_ic = self.req(s, mode=Mode.NF, image_cancel=True)
+        self.assertAlmostEqual(nf_ic.estimated_sweep_s, 2 * one)
 
     def test_image_cancel_default_on_for_gigast(self):
         # SA でのイメージキャンセルの初期値は ON（設計F §4。2026-10-01 ユーザー決定・T16）

@@ -15,6 +15,7 @@ from typing import Optional
 import numpy as np
 
 from . import display_marks as dm
+from .devices.gigast import image_cancel as gigast_ic
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
@@ -24,6 +25,7 @@ from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
 from .trace import ConditionChange, TraceAction, TraceSet, to_db
 from .types import AdoptedSweep, Frame, Mode, Quantity, RawSweep, ValueKind
+from .view_units import shift_values
 
 # 引数を渡さなかった（null で「消す」と区別する）
 _UNSET = object()
@@ -174,7 +176,7 @@ class DisplayMixin:
             # 決めるのに使う。まだ値が無いトレースは、つないでいる機器のプロファイルの値の種類
             "value_kind": (t.value_kind.value if t.value_kind is not None
                            else self._profile.get("value_kind", "real")),
-            "unit": unit_for(t.quantity, t.profile),
+            "unit": self._level_shift(t.quantity, t.profile)[1],
             "has_values": t.values is not None,
             "axis_differs": t.action == TraceAction.FIXED and t.axis_differs(self._adopted.axis),
             "last_update_time": t.last_update_time,
@@ -210,17 +212,23 @@ class DisplayMixin:
         def put(tid: str, values_db, freqs, flags, unit) -> None:
             peaks[tid] = {"unit": unit, "max": dm.usable_max(values_db, freqs, flags, lo, hi)}
 
+        def put_shifted(tid: str, values, quantity, freqs, flags, profile) -> None:
+            # 表示の単位・外部補正の分だけずらした最大（縦軸と同じ数: core/view_units.py）
+            shift, unit = self._level_shift(quantity, profile)
+            put(tid, db_values(values, quantity), freqs, flags, unit)
+            if shift and peaks[tid]["max"] is not None:
+                peaks[tid]["max"] = peaks[tid]["max"] + shift
+
         for t in self._traces:
             if t.visible and t.values is not None and t.axis is not None and t.quantity is not None:
-                put(str(t.number), db_values(t.values, t.quantity), t.axis.freqs(), t.flags,
-                    unit_for(t.quantity, t.profile))
+                put_shifted(str(t.number), t.values, t.quantity, t.axis.freqs(), t.flags, t.profile)
         cache = self._ref_auto_file_cache
         new_cache = {}
         for e in self._files.values():
             for tid, td in e["traces"].items():
-                key = (tid, id(td), lo, hi)
+                key = (tid, id(td), lo, hi, self._level_shift(td.quantity, td.profile))
                 if key not in cache:
-                    put(tid, db_values(td.values, td.quantity), td.freqs(), td.flags, unit_for(td.quantity, td.profile))
+                    put_shifted(tid, td.values, td.quantity, td.freqs(), td.flags, td.profile)
                     cache[key] = peaks[tid]
                 peaks[tid] = new_cache[key] = cache[key]
         self._ref_auto_file_cache = new_cache
@@ -261,7 +269,10 @@ class DisplayMixin:
             display_stop_hz=a.stop_hz,
             adopted=a,
             raw=raw,
-            flags={"transient": transient, "out_of_cal_range": np.asarray(levels.out_of_cal_range, dtype=bool)},
+            # ic_noise_floor: イメージキャンセル（4回）で採った値が雑音の床の近くの点。雑音の床は2回の min より
+            # 約 2dB 低く見えるので、マーカーの読み値に注意を添える（設計F §6 の 2・設計G §3.3）
+            flags={"transient": transient, "out_of_cal_range": np.asarray(levels.out_of_cal_range, dtype=bool),
+                   **gigast_ic.note_flags(raw, self._profile)},
             profile=copy.deepcopy(self._profile),
         )
 
@@ -333,9 +344,13 @@ class DisplayMixin:
                 t.number, t.axis, t.values, t.quantity, int(t.display_start_hz), int(t.display_stop_hz),
                 t.flags, notes + self._trace_own_notes(t.profile),
             )
-            unit = unit_for(t.quantity, t.profile)
+            shift, unit = self._level_shift(t.quantity, t.profile)
+            if shift:
+                # 表示の単位（dBμV など）・外部補正の分だけずらした値で読む（core/view_units.py）。
+                # 盛り上がり・帯域幅は差で決まるので、ずらしても同じ点になる
+                v = dataclasses.replace(v, level_db=v.level_db + shift)
             if unit != v.unit:
-                # 測った機器の単位（「dB（未校正）」など）でマーカーを読む。単位の違うトレース同士のデルタは作らない
+                # 測った機器の単位（「dB（未校正）」など）・表示の単位でマーカーを読む。単位の違うトレース同士のデルタは作らない
                 v = dataclasses.replace(v, unit=unit)
             views[t.number] = v
         self._views = views
@@ -381,6 +396,7 @@ class DisplayMixin:
         pts = {k: np.asarray(v, dtype=bool) for k, v in t.flags.items()}
         n = t.axis.points
         eff = t.effective_average_type()
+        shift, unit = self._level_shift(t.quantity, t.profile)
         return {
             "trace": t.number,
             "source": "live",
@@ -391,8 +407,8 @@ class DisplayMixin:
             "display": {"start_hz": t.display_start_hz, "stop_hz": t.display_stop_hz,
                         "tail_gap": self._adopted.tail_gap},
             "quantity": t.quantity.value,
-            "unit": unit_for(t.quantity, t.profile),
-            "values": db_values(t.values, t.quantity),
+            "unit": unit,
+            "values": shift_values(db_values(t.values, t.quantity), shift),
             "action": t.action.value,
             "visible": t.visible,
             "average_type": None if eff is None else eff.value,
@@ -428,49 +444,83 @@ class DisplayMixin:
 
     # ------------------------------------------------------------------ 元に戻す（設計J §3）
 
-    def _undo_snapshot(self) -> dict:
-        return {"adopted": self._adopted, "traces": [trace_settings(t) for t in self._traces]}
+    def _undo_snapshot(self, keys: tuple[str, ...] = ("sweep",)) -> dict:
+        """元に戻すために持つ、いまの状態のうち keys の部分（積むのは変えた部分だけ）。
+
+        sweep: 掃引条件とトレースの設定／view: 表示の設定（単位・外部補正・周波数オフセット・描き方: 設計O）／
+        amplitude: 縦軸（プリセットの呼び出しで置き換えたとき）／palette: 配色（設計J §4.4）
+        """
+        s: dict = {"keys": tuple(keys)}
+        if "sweep" in keys:
+            s["adopted"] = self._adopted
+            s["traces"] = [trace_settings(t) for t in self._traces]
+        if "view" in keys:
+            s["view"] = dict(self._view_opts)
+        if "amplitude" in keys:
+            s["amplitude"] = dict(self._amplitude)
+        if "palette" in keys:
+            s["palette"] = self._palette.to_saved()
+        return s
 
     @staticmethod
     def _undo_key(s: dict) -> tuple:
-        a = s["adopted"]
-        return (a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.rbw_preference_hz, a.mode, a.sg_hz, a.image_cancel,
-                a.points_setting, a.span_lock_hz, tuple(tuple(sorted(d.items())) for d in s["traces"]))
+        out: list = [s.get("keys", ("sweep",))]
+        if "adopted" in s:
+            a = s["adopted"]
+            out += [a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.rbw_preference_hz, a.mode, a.sg_hz, a.image_cancel,
+                    a.points_setting, a.span_lock_hz, tuple(tuple(sorted(d.items())) for d in s["traces"])]
+        for k in ("view", "amplitude"):
+            if k in s:
+                out.append(tuple(sorted(s[k].items())))
+        if "palette" in s:
+            out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items()))))
+        return tuple(out)
 
     def _record_undo(self, before: dict) -> None:
         """before から変わっていれば元に戻す列に積み、やり直す列を捨てる。"""
-        if self._undo_key(before) == self._undo_key(self._undo_snapshot()):
+        if self._undo_key(before) == self._undo_key(self._undo_snapshot(before.get("keys", ("sweep",)))):
             return
         self._undo.append(before)
         del self._undo[:-UNDO_LIMIT]
         self._redo.clear()
 
     def _restore_snapshot(self, s: dict) -> None:
-        self._check_not_taking_reference()
-        adopted = dataclasses.replace(s["adopted"], adjustments=(), alternative=None)
-        for d in s["traces"]:
-            apply_trace_settings(self._traces[int(d["number"])], d)
-        self._set_adopted(adopted)
+        if "view" in s:
+            # 縦軸も一緒に戻すときは、縦軸は持っている値にする（ずらさない）
+            self._set_view_opts(s["view"], shift_levels="amplitude" not in s)
+        if "amplitude" in s:
+            self._amplitude.update(s["amplitude"])
+        if "palette" in s:
+            from .palette import Palette
+
+            self._palette = Palette.from_saved(s["palette"])
+            self._save_palette_setting()
+        if "adopted" in s:
+            self._check_not_taking_reference()
+            adopted = dataclasses.replace(s["adopted"], adjustments=(), alternative=None)
+            for d in s["traces"]:
+                apply_trace_settings(self._traces[int(d["number"])], d)
+            self._set_adopted(adopted)
+
+    def _undo_redo(self, src: list, dst: list) -> dict:
+        top = src[-1]
+        if "adopted" in top:
+            self._check_not_taking_reference()
+            self._rtlsdr_check_condition(top["adopted"])  # 取り出す前に確かめる（失敗で履歴を失わない）
+        cur = self._undo_snapshot(top.get("keys", ("sweep",)))
+        self._restore_snapshot(src.pop())
+        dst.append(cur)
+        return self._undo_result()
 
     def _cmd_undo(self) -> dict:
         if not self._undo:
             raise self._error("nothing_to_undo")
-        self._check_not_taking_reference()
-        self._rtlsdr_check_condition(self._undo[-1]["adopted"])  # 取り出す前に確かめる（失敗で履歴を失わない）
-        cur = self._undo_snapshot()
-        self._restore_snapshot(self._undo.pop())
-        self._redo.append(cur)
-        return self._undo_result()
+        return self._undo_redo(self._undo, self._redo)
 
     def _cmd_redo(self) -> dict:
         if not self._redo:
             raise self._error("nothing_to_redo")
-        self._check_not_taking_reference()
-        self._rtlsdr_check_condition(self._redo[-1]["adopted"])
-        cur = self._undo_snapshot()
-        self._restore_snapshot(self._redo.pop())
-        self._undo.append(cur)
-        return self._undo_result()
+        return self._undo_redo(self._redo, self._undo)
 
     def _undo_result(self) -> dict:
         self._emit_visible_traces()

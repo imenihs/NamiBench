@@ -15,7 +15,7 @@ from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
 from tests.device_helpers import FakeGigaBackend
 from tests.test_ui_qt_support import UiBase, app
 
-SERIAL = "A9016WJ9"
+SERIAL = "FT00AB12"
 
 
 class DevUiBase(UiBase):
@@ -63,37 +63,37 @@ class TestEmptyAndSimulator(DevUiBase):
 
     def test_plug_updates_list_automatically(self):
         self.wait(lambda: self.dw.empty.isVisible(), what="空")
-        self.giga.plug("COM5", SERIAL)
+        self.giga.plug("COM7", SERIAL)
         self.wait(lambda: len(self.dw.row_widgets()) == 2, what="挿した機器が出る")
         self.pump(0.1)
         self.assertFalse(self.dw.empty.isVisible())
         name, state = self.row_texts()[0]
-        self.assertEqual(name, "GigaSt v5 6WJ9")
+        self.assertEqual(name, "GigaSt v5 AB12")
         self.assertEqual(state, "初めての機器（GigaSt かどうか確かめてから繋ぎます）")
         # 詳細（COM 番号・USB ID）はたたんである
         row = self.dw.row_widgets()[0]
         self.assertFalse(row.details.isVisible())
         row.more.click()
         self.assertTrue(row.details.isVisible())
-        self.assertIn("ポート COM5", row.details.text())
+        self.assertIn("ポート COM7", row.details.text())
         self.assertIn("USB ID 0403:6001", row.details.text())
-        self.giga.unplug("COM5")
+        self.giga.unplug("COM7")
         self.wait(lambda: self.dw.empty.isVisible(), what="抜いたら消える")
 
 
 class TestConnectFromList(DevUiBase):
-    plugged = (("COM5", SERIAL),)
+    plugged = (("COM7", SERIAL),)
 
     def test_connecting_then_success_closes(self):
         self.wait(lambda: len(self.dw.row_widgets()) == 2, what="行")
         self.giga.gate = threading.Event()
         self.dw.row_widgets()[0].action.click()
         self.wait(lambda: self.dw.status.isVisible(), what="繋いでいます")
-        self.assertEqual(self.dw.status.text(), "繋いでいます…（GigaSt v5 6WJ9）")
+        self.assertEqual(self.dw.status.text(), "繋いでいます…（GigaSt v5 AB12）")
         self.assertFalse(self.dw.row_widgets()[0].action.isEnabled())
         self.giga.gate.set()
         self.wait(lambda: not self.dw.isVisible(), what="繋いだら閉じる")
-        self.assertEqual(self.state()["connection"]["identity"]["port"], "COM5")
+        self.assertEqual(self.state()["connection"]["identity"]["port"], "COM7")
         # メニューの「接続…」でいつでも開ける。いま使っている機器は「使用中」で押せない
         self.menu_action("connect").trigger()
         self.wait(lambda: self.dw.isVisible() and self.row_texts() and self.row_texts()[0][1] == "使用中",
@@ -102,10 +102,10 @@ class TestConnectFromList(DevUiBase):
 
     def test_port_in_use_shows_reason_and_next_step(self):
         self.wait(lambda: len(self.dw.row_widgets()) == 2, what="行")
-        self.giga.busy.add("COM5")
+        self.giga.busy.add("COM7")
         self.dw.row_widgets()[0].action.click()
         self.wait(lambda: self.dw.status.objectName() == "warn", what="失敗の理由")
-        self.assertIn("GigaSt v5 6WJ9 に繋げませんでした", self.dw.status.text())
+        self.assertIn("GigaSt v5 AB12 に繋げませんでした", self.dw.status.text())
         self.assertIn("GS5.exe など別のアプリが使っていないか", self.dw.status.text())
         self.wait(lambda: self.row_texts()[0][1] == "ほかのアプリが使っています", what="行の状態")
         self.assertTrue(self.dw.isVisible())
@@ -126,20 +126,20 @@ class TestConnectFromList(DevUiBase):
 
 
 class TestWhenListOpens(DevUiBase):
-    plugged = (("COM5", SERIAL),)
+    plugged = (("COM7", SERIAL),)
 
     def test_user_disconnect_opens_unplug_does_not(self):
         self.wait(lambda: len(self.dw.row_widgets()) == 2, what="行")
         self.dw.row_widgets()[0].action.click()
         self.wait(lambda: not self.dw.isVisible(), what="繋いで閉じる")
         # 抜けた（切断・再接続待ち）ときは開かない: 同じ機器が戻るのを待つ（B §7.3）
-        self.giga.unplug("COM5")
+        self.giga.unplug("COM7")
         self.cmd("run", mode="continuous")
         self.api._inst._device.unplug()
         self.wait(lambda: self.state()["connection"]["state"] == "reconnecting", what="再接続待ち")
         self.pump(0.8)
         self.assertFalse(self.dw.isVisible())
-        self.giga.plug("COM5", SERIAL)
+        self.giga.plug("COM7", SERIAL)
         self.wait(lambda: self.state()["connection"]["state"] == "connected", what="戻る")
         # 利用者が切断したら開く
         self.menu_action("disconnect").trigger()
@@ -147,7 +147,7 @@ class TestWhenListOpens(DevUiBase):
 
 
 class TestAutoConnectNotice(DevUiBase):
-    plugged = (("COM5", SERIAL),)
+    plugged = (("COM7", SERIAL),)
 
     def make_window(self):
         # 前回この機器に繋いでいた設定を作ってから画面を開く。先に作られた本体は閉じておく（閉じるときに
@@ -156,10 +156,10 @@ class TestAutoConnectNotice(DevUiBase):
         self.api = type("Closed", (), {"close": lambda self: None})()
         profile = load_profile(GIGAST_PROFILE_PATH)
         giga = FakeGigaBackend(profile)
-        giga.plug("COM5", SERIAL)
+        giga.plug("COM7", SERIAL)
         api = LocalApi(Instrument({"gigast": giga}, profile=profile, data_root=self.root / "d",
                                   cal_root=self.root / "c"))
-        api.call("connect", backend="gigast", port="COM5").result(10)
+        api.call("connect", backend="gigast", port="COM7").result(10)
         api.close()
         return super().make_window()
 
@@ -167,7 +167,7 @@ class TestAutoConnectNotice(DevUiBase):
         pass
 
     def test_notice_and_no_list(self):
-        self.wait(lambda: "前回の GigaSt v5 6WJ9 に繋ぎました" in self.win.st_note.text(), what="自動接続の知らせ")
+        self.wait(lambda: "前回の GigaSt v5 AB12 に繋ぎました" in self.win.st_note.text(), what="自動接続の知らせ")
         self.assertIsNone(self.win.device_window)
 
 

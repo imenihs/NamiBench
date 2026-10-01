@@ -26,6 +26,9 @@ FftTimingFn = Callable[[FreqAxis, int], float]
 SWEEP_STEPPED = "stepped"
 SWEEP_FFT = "fft"
 
+# イメージキャンセル ON の1画面の掃引の回数（b3=0・1・0・1: 設計F §6 の 1。機器の層の measure と同じ）
+IMAGE_CANCEL_PASSES = 4
+
 # 周波数の欄の名前（SweepRequest.edited に入れる名前。Adjustment.field と同じ）
 START = "start_hz"
 STOP = "stop_hz"
@@ -659,10 +662,12 @@ class SweepModel:
         first_s, per_point_s = self._timing(step, rbw, mode)
         preroll, head = self._preroll(start, step, points, per_point_s)
         est = first_s + (points + preroll) * per_point_s
-        if image_cancel:
-            est *= 2
+        # 1画面の掃引の回数（機器の層の measure と同じ並び）: NF は HOT/COLD の2回（b3 は 1 に固定し、
+        # イメージキャンセルは使わない）、イメージキャンセル ON は b3=0・1・0・1 の4回（設計F §6 の 4）
         if mode == Mode.NF:
             est *= 2
+        elif image_cancel:
+            est *= IMAGE_CANCEL_PASSES
 
         axis = FreqAxis(start_hz=start, step_hz=step, points=points)
         self._check_device(axis, preroll)

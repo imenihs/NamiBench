@@ -4,20 +4,21 @@
 // - 周波数軸（グラフの中）でホイール → カーソルの位置を中心に拡大・縮小
 // - レベル軸の上でホイール → REF を1目盛（Ctrl で dB/div を1段）、ドラッグ → REF を連続で
 // - クリック → マーカーを置く、右クリック → 名前の付いた操作のメニュー
+// 横軸の位置は機器の周波数のまま。周波数オフセット（設計O）は目盛の数字と軸の名前だけに足す
 (function (root) {
   "use strict";
 
   const DIVISIONS = 10;
+  // 塗りつぶしの濃さ（Qt の plot_layers._apply_fill のアルファ 70/255 と同じ）
+  const FILL_ALPHA = 70 / 255;
 
   function xUnit(span) {
     const a = Math.abs(span);
     return a >= 1e9 ? [1e9, "GHz"] : a >= 1e6 ? [1e6, "MHz"] : a >= 1e3 ? [1e3, "kHz"] : [1, "Hz"];
   }
 
-  function fmtLevel(v) {
-    const r = Math.round(v * 100) / 100;
-    return String(Object.is(r, -0) ? 0 : r);
-  }
+  // 目盛の数字は REF の欄と同じ形（units.js の levelText）
+  function fmtLevel(v) { return root.GSUnits.levelText(v); }
 
   class Graph {
     constructor(el, opts) {
@@ -27,6 +28,8 @@
       this.x0 = 0;
       this.x1 = 1;
       this.zeroSpan = false;
+      this.xOffset = 0; // 周波数オフセット（Hz）と、その文字（+10 GHz）。目盛と軸の名前に使う
+      this.xOffsetText = "";
       this.ref = 0;
       this.div = 10;
       this.unit = "dBm";
@@ -67,7 +70,7 @@
             values: (u, splits) => {
               if (self.zeroSpan) return splits.map((v) => String(Math.round(v)));
               const [k] = xUnit(self.x1 - self.x0);
-              return splits.map((v) => String(+(v / k).toPrecision(10)));
+              return splits.map((v) => String(+((v + self.xOffset) / k).toPrecision(10)));
             },
           },
           {
@@ -109,7 +112,10 @@
       const [, unit] = xUnit(this.x1 - this.x0);
       // 軸の名前は texts の表（Qt と同じ語）
       const X = root.GSTexts;
-      this.u.axes[0].label = this.zeroSpan ? X.w("axis_zero_span") : X.w("axis_freq", { unit });
+      // 換算中は軸の名前で示す（設計O）。単位の付け方は換算しない軸の名前（axis_freq）と同じ形
+      if (this.zeroSpan) this.u.axes[0].label = X.w("axis_zero_span");
+      else if (this.xOffset) this.u.axes[0].label = X.fmtText(X.get("VIEW_TEXTS", "axis_freq_offset"), { off: this.xOffsetText }) + ` (${unit})`;
+      else this.u.axes[0].label = X.w("axis_freq", { unit });
       this.u.axes[1].label = X.w("axis_level", { unit: this.unit });
     }
 
@@ -123,6 +129,26 @@
       this.zeroSpan = !!zeroSpan;
       this._applyLabels();
       this.u.setScale("x", { min: this.x0, max: this.x1 });
+    }
+
+    // 周波数オフセット（設計O）。off は Hz、text は軸の名前に入れる符号付きの文字
+    setXOffset(off, text) {
+      if (off === this.xOffset && text === this.xOffsetText) return;
+      this.xOffset = off || 0;
+      this.xOffsetText = text || "";
+      this._applyLabels();
+      this.u.redraw(false, true);
+    }
+
+    // 配色を入れ替える（J §4.4: 変えた色はその場で画面に出る）。uPlot の軸の色は関数で持たせ、描き直す
+    setColors(c) {
+      this.colors = c;
+      for (const a of this.u.axes) {
+        a.stroke = () => c.text;
+        if (a.grid) a.grid.stroke = () => c.grid;
+        if (a.ticks) a.ticks.stroke = () => c.axis;
+      }
+      this.u.redraw(false, true);
     }
 
     setY(ref, div, unit) {
@@ -227,48 +253,69 @@
       ctx.setLineDash([]);
     }
 
-    // 画素より点が多いときは、画素の列ごとに最大値（最小保持のトレースは最小値）で間引く（設計F §5.5）
+    // 画素より点が多いときは、画素の列ごとに最大値（最小保持のトレースは最小値）で間引く（設計F §5.5）。
+    // 描き方が塗りつぶし（旧 Line/Dot・設計O）のときは、線の下からグラフの下端までをトレースの色で薄く塗る（Qt と同じ）
     _drawTrace(u, t) {
       const ctx = u.ctx;
+      const b = u.bbox;
       const n = t.y.length;
       if (!n) return;
       const useMin = !!t.minHold;
       const segments = [[0, n, t.color]];
       if (t.head > 0 && t.dimColor) segments.splice(0, 1, [0, Math.min(n, t.head + 1), t.dimColor], [t.head, n, t.color]);
       for (const [i0, i1, color] of segments) {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = t.width || 1.25;
-        ctx.setLineDash(t.dash || []);
-        ctx.beginPath();
-        let pen = false;
+        // 値の無い点で途切れる、つながった線の並び（[x0, y0, x1, y1, ...]）
+        const runs = [];
+        let run = null;
         let col = null;
         let agg = null;
         const flush = () => {
           if (col === null) return;
-          if (agg === null) { pen = false; return; }
-          const py = u.valToPos(agg, "y", true);
-          if (pen) ctx.lineTo(col, py); else { ctx.moveTo(col, py); pen = true; }
+          if (agg === null) { run = null; return; }
+          if (!run) { run = []; runs.push(run); }
+          run.push(col, u.valToPos(agg, "y", true));
         };
         for (let i = i0; i < i1; i++) {
-          const xv = t.x(i);
-          const px = Math.round(u.valToPos(xv, "x", true));
+          const px = Math.round(u.valToPos(t.x(i), "x", true));
           const yv = t.y[i];
           const v = Number.isFinite(yv) ? yv : null;
           if (px !== col) {
             flush();
             col = px;
             agg = v;
-            if (v === null) pen = false;
+            if (v === null) run = null;
           } else if (v !== null && agg !== null) {
             agg = useMin ? Math.min(agg, v) : Math.max(agg, v);
           } else if (v === null) {
             // 値の無い点は途切れにする（数値を作らない: 設計E §6.4）
             flush();
             agg = null;
-            pen = false;
+            run = null;
           }
         }
         flush();
+        if (t.fill) {
+          const bottom = b.top + b.height;
+          ctx.globalAlpha = FILL_ALPHA;
+          ctx.fillStyle = color;
+          for (const r of runs) {
+            ctx.beginPath();
+            ctx.moveTo(r[0], bottom);
+            for (let k = 0; k < r.length; k += 2) ctx.lineTo(r[k], r[k + 1]);
+            ctx.lineTo(r[r.length - 2], bottom);
+            ctx.closePath();
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = t.width || 1.25;
+        ctx.setLineDash(t.dash || []);
+        ctx.beginPath();
+        for (const r of runs) {
+          ctx.moveTo(r[0], r[1]);
+          for (let k = 2; k < r.length; k += 2) ctx.lineTo(r[k], r[k + 1]);
+        }
         ctx.stroke();
         ctx.setLineDash([]);
       }

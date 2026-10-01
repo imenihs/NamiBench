@@ -1,6 +1,6 @@
 """GigaSt v5 の機器の口（設計B §7.1〜§7.3）。
 
-measure() の中で、前置きの切り落とし・イメージキャンセルの2回掃引と min・NF の HOT/COLD の組を行う。
+measure() の中で、前置きの切り落とし・イメージキャンセルの4回の掃引と合わせ方（設計F §6）・NF の HOT/COLD の組を行う。
 機器ごとの癖はここに閉じ、外へは生の AD 値（uint16）と、それをどう読むかの encoding だけを返す。
 
 制御のスレッドへの組み込み（切れたら状態を出して再接続を待つ）は呼ぶ側が行う。そのための部品として
@@ -26,7 +26,7 @@ from ...types import (
     SweepDiscarded,
 )
 from ..base import Device
-from . import protocol
+from . import image_cancel, protocol
 from .protocol import DeviceSweep, Limits
 from .traffic_log import TrafficLog
 from .transport import Exchange, PortInfo, Transport, discover, find_by_serial, open_serial
@@ -51,13 +51,13 @@ def _passes(sweep: AdoptedSweep) -> list[tuple[str, int, int]]:
     """1回の measure で送る要求の並び (名前, b3, b2)。
 
     - NF: b2 を 1/0（HOT/COLD）。b3 は 1（イメージキャンセルは使わない）
-    - イメージキャンセル ON: b3=0 と b3=1 を続けて測る
+    - イメージキャンセル ON: b3=0 → b3=1 → b3=0 → b3=1 の4回（設計F §6 の 1）
     - OFF: 常に b3=1（旧アプリの校正ファイルのレベルに合う: 設計B §7.2）
     """
     if sweep.mode == Mode.NF:
         return [("hot", 1, 1), ("cold", 1, 0)]
     if sweep.image_cancel:
-        return [("b3_0", 0, 0), ("b3_1", 1, 0)]
+        return [(name, b3, 0) for name, b3 in zip(image_cancel.PASS_NAMES, image_cancel.PASS_B3)]
     return [("b3_1", 1, 0)]
 
 
@@ -84,7 +84,7 @@ class SweepRunner:
 
         - 送る前に全部の要求を検証する（範囲外は1つも送らずに InvalidSweep）
         - cancel が立っていたら次の要求を送らない。送った要求は終わりまで受けてから cancelled で捨てる
-        - 組のどちらかが捨てられたら組ごと捨てる
+        - 組（イメージキャンセルの4回・NF の2回）のどれかが捨てられたら組ごと捨てる（設計F §6 の 5）
         """
         plan = [(name, protocol.device_sweep(sweep, self._profile, b3, b2)) for name, b3, b2 in _passes(sweep)]
         if _cancelled(cancel):
@@ -101,6 +101,7 @@ class SweepRunner:
                 if len(plan) > 1:
                     e.detail.setdefault("pass", name)
                     e.detail.setdefault("pair_discarded", True)
+                    e.detail.setdefault("passes", len(plan))
                 raise
             data = np.frombuffer(ex.response, dtype="<u2", count=ds.points)
             # 前置きの点を切り落とす（設計C §5.6）。uint16 のまま持つ（換算は機器の口の外: 設計D）
@@ -127,11 +128,17 @@ class SweepRunner:
         if sweep.mode == Mode.NF:
             return RawSweep(raw=got["hot"], raw_hot=got["hot"], raw_cold=got["cold"], **common)
         if sweep.image_cancel:
-            # 点ごとに小さい方を採る。2回の生の値はどちらも返す（設計B §7.2・設計H §3）
+            # 4回を合わせた値を採る（同じ b3 の2回 → b3 の両側の min: 設計F §6 の 2）。
+            # 4回の生の値はどれも返す（保存する: 設計F §6 の 3）
+            passes = np.stack([got[n] for n in image_cancel.PASS_NAMES])
+            extra["pass_b3"] = list(image_cancel.PASS_B3)
             return RawSweep(
-                raw=np.minimum(got["b3_0"], got["b3_1"]),
-                raw_b3_0=got["b3_0"],
-                raw_b3_1=got["b3_1"],
+                raw=image_cancel.combine(
+                    passes,
+                    image_cancel.noise_floor_ad(self._profile, sweep.rbw_hz),
+                    image_cancel.counts_per_db(self._profile),
+                ),
+                raw_passes=passes,
                 **common,
             )
         return RawSweep(raw=got["b3_1"], **common)

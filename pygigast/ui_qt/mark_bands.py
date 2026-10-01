@@ -63,6 +63,12 @@ class MarkBands:
             self.items.append((region, label, m))
         self._place_labels()
 
+    def restyle(self) -> None:
+        """配色を変えたとき（帯の色は配色の「注意」「控えめな文字」: J §4.8）。"""
+        marks = [m for _r, _l, m in self.items]
+        self._key = ()
+        self.set_marks(marks)
+
     def labels(self) -> list[pg.TextItem]:
         return [lb for _r, lb, _m in self.items]
 
