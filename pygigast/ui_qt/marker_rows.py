@@ -10,7 +10,7 @@ from typing import Optional
 
 from ..core.units import format_freq
 from . import texts
-from .png_export import _freq_decimals
+from ..core.report_layout import freq_decimals as _freq_decimals
 
 COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", "Δ周波数 (MHz)", "Δ値 (dB)", "注意")
 # 数える列は右寄せ（U-17）
@@ -176,5 +176,5 @@ def to_tsv(rows: list[dict], default_unit: str = "dBm") -> str:
 
 
 def png_rows(rows: list[dict]) -> list[dict]:
-    keys = ("name", "kind", "trace", "freq_hz", "value", "ref", "delta_freq_hz", "delta_value", "child", "note")
+    keys = ("name", "kind", "trace", "freq_hz", "value", "unit", "ref", "delta_freq_hz", "delta_value", "child", "note")
     return [{k: r.get(k) for k in keys} for r in rows]

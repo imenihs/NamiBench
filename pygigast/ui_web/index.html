@@ -18,19 +18,23 @@
 <script src="fields.js"></script>
 <script src="graph.js"></script>
 <script src="png.js"></script>
+<script src="audio.js"></script>
+<script src="app_menu.js"></script>
+<script src="app_rtl.js"></script>
 <script src="app.js"></script>
 </head>
 <body>
 <noscript>この画面は JavaScript を使います。</noscript>
+<!-- 文言はここに書かない。W(...) は texts_labels.py の LABELS、T(表, コード) は texts の表、F(型, 値) は TEMPLATES（Qt と同じ語: J §5） -->
 <div id="app" v-cloak>
 <!-- マウントする要素そのものの属性はテンプレートにならないので、内側の要素に付ける -->
-<div :style="layoutStyle" :class="['app', part ? 'partmode' : '']">
+<div :style="layoutStyle" :class="['app', part ? 'partmode' : '']" v-if="textsReady">
 
   <!-- ================= 上段（J §4.3 の案B: 主な値を大きく並べてその場で直接入力） ================= -->
   <header class="topbar" v-if="!part">
     <div class="topgroup">
       <div class="menu-wrap">
-        <button class="menu-btn" title="メニュー（ファイル・機器・校正・表示・設定・ヘルプ）" @click.stop="menuOpen = !menuOpen">≡</button>
+        <button class="menu-btn" :title="W('menu_button')" @click.stop="menuOpen = !menuOpen">≡</button>
         <div class="menu" v-if="menuOpen" @click.stop>
           <div class="menu-sec" v-for="sec in menu" :key="sec.title">
             <div class="menu-title">{{ sec.title }}</div>
@@ -46,7 +50,7 @@
       </div>
       <div class="modes">
         <button v-for="m in modes" :key="m[0]" class="mode-btn" :class="{on: sw && sw.mode === m[0]}"
-                :disabled="!!m[3]" :title="m[2] + keyHint('mode_' + m[0]) + (m[3] ? ' — ' + m[3] : '')"
+                :disabled="!!modeReason(m[0])" :title="m[2] + keyHint('mode_' + m[0]) + (modeReason(m[0]) ? ' — ' + modeReason(m[0]) : '')"
                 @click="trigger('mode_' + m[0])">{{ m[1] }}</button>
       </div>
       <num-field label="Center" big :text="freqText.center" :note="notes.center" @clear-note="clearNote('center')"
@@ -55,8 +59,7 @@
                  @commit="commitFreq('span', 'span_hz', $event)" @step="(e, d) => stepFreq('span', 'span_hz', e, d)">
         <template #head>
           <!-- Span 固定（設計C §5.11 の 2）。状態を欄の上で文字と鍵の印で見せる -->
-          <button class="lock" :class="{on: sw && sw.span_lock_hz != null}" @click="toggleSpanLock" :disabled="!sw"
-                  title="ON: Center を変えても Span を保つ（範囲を超える分は Center が動く）&#10;OFF: Center を保ち、範囲を超える分だけ Span を縮める">
+          <button class="lock" :class="{on: sw && sw.span_lock_hz != null}" @click="toggleSpanLock" :disabled="!sw" :title="W('span_lock_tip')">
             <svg class="lock-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path v-if="sw && sw.span_lock_hz != null" d="M4.5 7.5V5a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
               <path v-else d="M7.5 7.5V4a3.5 3.5 0 0 1 7 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/>
@@ -72,16 +75,22 @@
     <div class="topgroup">
       <div class="field">
         <div class="field-head"><span class="field-name">RBW</span></div>
-        <select class="field-select" :value="sw ? sw.rbw_preference_hz : ''" @change="setRbw($event.target.value)">
-          <option v-for="hz in rbwChoices" :key="hz" :value="hz">{{ fmtFreq(hz) }}</option>
+        <!-- 選択肢は機器ごと。FFT の機器は窓ごとにまとめる（設計Q §6.4） -->
+        <select class="field-select" :value="sw ? sw.rbw_preference_hz : ''" :title="rbwNote" @change="setRbw($event.target.value)">
+          <template v-for="g in rbwGroups" :key="g.window || 'rbw'">
+            <optgroup v-if="g.label" :label="g.label" :title="g.note">
+              <option v-for="c in g.choices" :key="c.hz" :value="c.hz">{{ c.text }}</option>
+            </optgroup>
+            <template v-else><option v-for="c in g.choices" :key="c.hz" :value="c.hz">{{ c.text }}</option></template>
+          </template>
         </select>
         <div v-if="notes.rbw" class="note-pop"><span>{{ notes.rbw.text }}</span></div>
       </div>
-      <num-field label="REF レベル" :text="refText" :note="notes.ref" @clear-note="clearNote('ref')"
+      <num-field :label="W('ref_level')" :text="refText" :note="notes.ref" @clear-note="clearNote('ref')"
                  @commit="commitRef" @step="stepRef">
         <template #head>
           <button class="small" :disabled="!!refAutoReason()" @click="trigger('ref_auto')"
-                  :title="'いまの波形の最大値が上から1目盛下に来るよう REF レベルを合わせる' + (refAutoReason() ? ' — ' + refAutoReason() : '')">自動</button>
+                  :title="W('ref_auto_tip') + (refAutoReason() ? ' — ' + refAutoReason() : '')">{{ W('ref_auto') }}</button>
         </template>
       </num-field>
       <div class="field">
@@ -92,15 +101,15 @@
       </div>
       <div class="runbtns">
         <button class="run-btn" :class="{running: run.state === 'continuous'}" :disabled="!connected"
-                :title="'連続で掃引する' + keyHint('run_cont')" @click="trigger('run_cont')">▶ <span class="lbl">連続</span></button>
+                :title="W('run_cont_tip') + keyHint('run_cont')" @click="trigger('run_cont')">▶ <span class="lbl">{{ T('MENU_ITEMS', 'run_cont') }}</span></button>
         <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!connected"
-                :title="'単発で掃引する' + keyHint('run_single')" @click="trigger('run_single')">⏵| <span class="lbl">単発</span></button>
+                :title="W('run_single_tip') + keyHint('run_single')" @click="trigger('run_single')">⏵| <span class="lbl">{{ T('MENU_ITEMS', 'run_single') }}</span></button>
         <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
-                :title="'いまの掃引の終わりで止める' + keyHint('stop')" @click="trigger('stop')">■ <span class="lbl">停止</span></button>
+                :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">■ <span class="lbl">{{ T('MENU_ITEMS', 'stop') }}</span></button>
       </div>
       <div class="filebtns">
-        <button class="top-btn" :title="'保存' + keyHint('save')" @click="trigger('save')">保存</button>
-        <button class="top-btn" :title="'PNG を保存' + keyHint('png_save')" @click="trigger('png_save')">PNG</button>
+        <button class="top-btn" :title="W('save') + keyHint('save')" @click="trigger('save')">{{ W('save') }}</button>
+        <button class="top-btn" :title="T('MENU_ITEMS', 'png_save') + keyHint('png_save')" @click="trigger('png_save')">PNG</button>
       </div>
     </div>
   </header>
@@ -115,48 +124,49 @@
         <div class="part-bar">
           <span class="hover" v-if="hover && sw && sw.step_hz">{{ fmtFreq(Math.round(hover.x)) }}・{{ hover.y.toFixed(1) }} {{ axisUnit }}</span>
           <span class="legend">
-            <span v-for="t in traceRows" :key="t.number" v-show="t.visible && t.has_values" :style="{color: t.color}">{{ legend({...t, count: t.current_count}) }}</span>
+            <span v-for="t in traceRows" :key="t.number" v-show="t.visible && t.has_values" :style="{color: t.color}">{{ t.legend }}</span>
           </span>
-          <button class="small" v-if="!part" @click="detach('graph')" title="グラフを別ウィンドウで開く（J §4.3.2）">別ウィンドウ</button>
+          <button class="small" v-if="!part" @click="detach('graph')" :title="W('detach_item', {part: W('part_graph')})">{{ W('detach') }}</button>
         </div>
-        <div class="graph" ref="graph"
-             title="グラフの中を横にドラッグ: その範囲を Start/Stop に&#10;ホイール: カーソルの位置を中心に拡大・縮小&#10;クリック: マーカーを置く&#10;右クリック: この位置への操作&#10;左の目盛の上でホイール: REF を1目盛（Ctrl で dB/div）・ドラッグ: REF を連続で"></div>
+        <div class="graph" ref="graph" :title="W('graph_tip')"></div>
       </div>
-      <div class="detached-bar" v-if="!part && detached.graph">グラフは別ウィンドウで表示中 <button class="small" @click="reattach('graph')">ここに戻す</button></div>
-      <div class="hsplit" v-if="!part && show('graph') && show('markers')" @mousedown="startSplit($event, 'v')" title="ドラッグで分割比を変える"></div>
+      <div class="detached-bar" v-if="!part && detached.graph">{{ W('detached_now', {part: W('part_graph')}) }} <button class="small" @click="reattach('graph')">{{ W('reattach') }}</button></div>
+      <div class="hsplit" v-if="!part && show('graph') && show('markers')" @mousedown="startSplit($event, 'v')" :title="W('split_tip')"></div>
 
       <div class="marker-box" v-show="show('markers')">
         <div class="marker-tools">
-          <button @click="trigger('marker_peak')" :title="'ピーク' + keyHint('marker_peak')">ピーク</button>
-          <button @click="trigger('marker_peak_left')" :disabled="!selectedMarker" :title="'次のピーク（左）' + keyHint('marker_peak_left')">◀ 次のピーク</button>
-          <button @click="trigger('marker_peak_right')" :disabled="!selectedMarker" :title="'次のピーク（右）' + keyHint('marker_peak_right')">次のピーク ▶</button>
+          <button @click="trigger('marker_peak')" :title="T('DIRECTIONS', 'highest') + keyHint('marker_peak')">{{ T('DIRECTIONS', 'highest') }}</button>
+          <button @click="trigger('marker_peak_left')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'left') + keyHint('marker_peak_left')">◀ {{ W('next_peak') }}</button>
+          <button @click="trigger('marker_peak_right')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'right') + keyHint('marker_peak_right')">{{ W('next_peak') }} ▶</button>
           <button @click="markerPeak('lower')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'lower')">{{ T('DIRECTIONS', 'lower') }}</button>
-          <button @click="cmd('marker_clear')" :disabled="!markers.markers.length">全部消す</button>
-          <button @click="copyMarkerTable" :disabled="!markers.markers.length" title="タブ区切りで表計算へ貼れる形にコピー（G §3.3）">表をコピー</button>
+          <button @click="trigger('marker_clear')" :disabled="!markers.markers.length">{{ W('clear_all') }}</button>
+          <button @click="copyMarkerTable" :disabled="!markerRows.length" :title="T('MENU_ITEMS', 'marker_copy')">{{ W('copy_table') }}</button>
           <span class="grow"></span>
-          <button class="small" v-if="!part" @click="detach('markers')" title="マーカー表を別ウィンドウで開く">別ウィンドウ</button>
+          <button class="small" v-if="!part" @click="detach('markers')" :title="W('detach_item', {part: W('part_markers')})">{{ W('detach') }}</button>
         </div>
         <div class="table-scroll">
+          <!-- 列・行・文字は Qt のマーカー表と同じ（サーバーが marker_rows で作る） -->
           <table class="mtable">
-            <thead><tr><th>番号</th><th class="r">トレース</th><th class="r">周波数 (MHz)</th><th class="r">値</th><th>基準</th><th class="r">Δ周波数 (MHz)</th><th class="r">Δ値 (dB)</th><th>注意</th><th></th></tr></thead>
+            <thead><tr><th v-for="(c, i) in markerColumns" :key="i" :class="{r: (markers.right || [])[i]}">{{ c }}</th><th></th></tr></thead>
             <tbody>
-              <tr v-if="!markerRowsView.length"><td colspan="9" class="dim">マーカーはまだありません（グラフをクリック・「ピーク」で置けます）</td></tr>
-              <tr v-for="r in markerRowsView" :key="r.id" :class="{child: r.parent, sel: r.id === selectedMarker}"
-                  @click="!r.parent && (selectedMarker = r.id)">
-                <td>{{ r.name }}</td><td class="r">{{ r.trace }}</td><td class="r">{{ r.freq }}</td><td class="r">{{ r.value }}</td>
-                <td>
-                  <select v-if="!r.parent" :value="r.ref || ''" @click.stop @change="cmd('marker_set', {id: r.id, ref: $event.target.value || null})">
-                    <option value="">なし</option>
-                    <option v-for="o in markers.markers" :key="o.id" v-show="o.id !== r.id" :value="o.id">{{ o.kind + o.number }}</option>
-                  </select>
-                </td>
-                <td class="r">{{ r.dfreq }}</td><td class="r">{{ r.dval }}</td><td class="note-cell">{{ r.note }}</td>
+              <tr v-if="!markerRows.length"><td :colspan="markerColumns.length + 1" class="dim">{{ W('no_markers') }}</td></tr>
+              <tr v-for="r in markerRows" :key="r.id" :class="{child: r.child, sel: r.id === selectedMarker}"
+                  @click="!r.child && r.kind === 'marker' && (selectedMarker = r.id)">
+                <template v-for="(cell, i) in r.cells" :key="i">
+                  <td v-if="i === 4 && !r.child && r.kind === 'marker'">
+                    <select :value="r.ref || ''" @click.stop @change="cmd('marker_set', {id: r.id, ref: $event.target.value || null})">
+                      <option value="">{{ W('none') }}</option>
+                      <option v-for="o in markers.markers" :key="o.id" v-show="o.id !== r.id" :value="o.id">{{ o.id }}</option>
+                    </select>
+                  </td>
+                  <td v-else :class="{r: (markers.right || [])[i], 'note-cell': i === r.cells.length - 1}">{{ cell }}</td>
+                </template>
                 <td class="ops">
-                  <template v-if="!r.parent">
-                    <button class="small" @click.stop="cmd('marker_to', {id: r.id, target: 'center'})" title="この周波数を Center に（G §3.4）">Center に</button>
-                    <button class="small" @click.stop="cmd('marker_to', {id: r.id, target: 'ref'})" title="この値を REF レベルに">REF に</button>
-                    <button class="small" v-if="r.ref" @click.stop="cmd('marker_to', {id: r.id, target: 'span'})" title="デルタの2点を Start・Stop に">2点を範囲に</button>
-                    <button class="small" @click.stop="cmd('marker_remove', {id: r.id})">削除</button>
+                  <template v-if="!r.child && r.kind === 'marker'">
+                    <button class="small" @click.stop="cmd('marker_to', {id: r.id, target: 'center'})" :title="T('MENU_ITEMS', 'marker_center')">{{ W('to_center') }}</button>
+                    <button class="small" @click.stop="cmd('marker_to', {id: r.id, target: 'ref'})" :title="T('MENU_ITEMS', 'marker_ref')">{{ W('to_ref') }}</button>
+                    <button class="small" v-if="r.ref" @click.stop="cmd('marker_to', {id: r.id, target: 'span'})" :title="T('MENU_ITEMS', 'marker_span')">{{ W('to_span') }}</button>
+                    <button class="small" @click.stop="cmd('marker_remove', {id: r.id})">{{ W('remove') }}</button>
                   </template>
                 </td>
               </tr>
@@ -164,24 +174,23 @@
           </table>
         </div>
       </div>
-      <div class="detached-bar" v-if="!part && detached.markers">マーカー表は別ウィンドウで表示中 <button class="small" @click="reattach('markers')">ここに戻す</button></div>
+      <div class="detached-bar" v-if="!part && detached.markers">{{ W('detached_now', {part: W('part_markers')}) }} <button class="small" @click="reattach('markers')">{{ W('reattach') }}</button></div>
     </section>
 
-    <div class="vsplit" v-if="!part" @mousedown="startSplit($event, 'h')" title="ドラッグで右のパネルの幅を変える"></div>
+    <div class="vsplit" v-if="!part" @mousedown="startSplit($event, 'h')" :title="W('side_split_tip')"></div>
 
     <aside class="side" v-if="!part || part.startsWith('tab-')">
       <nav class="tabs" v-if="!part">
-        <button v-for="t in [['trace', 'トレース・掃引'], ['marker', 'マーカー'], ['view', '表示'], ['source', '信号源']]" :key="t[0]"
-                :class="{on: tab === t[0]}" @click="tab = t[0]; t[0] === 'source' && loadRefs()">{{ t[1] }}</button>
-        <button class="small" @click="detach('tab-' + tab)" title="このタブを別ウィンドウで開く（複数同時に開けます）">別ウィンドウ</button>
+        <button v-for="t in tabList" :key="t[0]" :class="{on: tab === t[0]}" @click="tab = t[0]; t[0] === 'source' && loadRefs()">{{ t[1] }}</button>
+        <button class="small" @click="detach('tab-' + tab)" :title="W('detach_tab_tip')">{{ W('detach') }}</button>
       </nav>
-      <div class="detached-bar" v-if="!part && detached['tab-' + tab]">このタブは別ウィンドウで表示中 <button class="small" @click="reattach('tab-' + tab)">ここに戻す</button></div>
+      <div class="detached-bar" v-if="!part && detached['tab-' + tab]">{{ W('detached_tab') }} <button class="small" @click="reattach('tab-' + tab)">{{ W('reattach') }}</button></div>
 
       <!-- ---- トレース・掃引（J §4.5） ---- -->
       <div class="tab-body" v-show="showTab('trace')">
-        <h3>トレース</h3>
+        <h3>{{ W('traces') }}</h3>
         <table class="ttable">
-          <thead><tr><th></th><th>表示</th><th>動作</th><th>回数</th><th></th></tr></thead>
+          <thead><tr><th></th><th>{{ W('visible') }}</th><th>{{ W('action') }}</th><th>{{ W('count') }}</th><th></th></tr></thead>
           <tbody>
             <template v-for="t in traceRows" :key="t.number">
               <tr>
@@ -192,127 +201,173 @@
                 <td class="nowrap"><input class="num" :value="t.count == null ? '' : t.count" placeholder="—"
                     :disabled="!['average', 'max_hold', 'min_hold'].includes(t.action)" @change="setTraceCount(t.number, $event.target.value)">
                   <span class="dim" v-if="['average', 'max_hold', 'min_hold'].includes(t.action)"> {{ t.current_count }}{{ t.count_target ? '/' + t.count_target : '' }}</span></td>
-                <td><button class="small" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">クリア</button></td>
+                <td><button class="small" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">{{ W('clear') }}</button></td>
               </tr>
               <!-- 平均の種類と N 回の後（設計F §5.2.1）。平均・保持のときだけ出す -->
               <tr v-if="t.action === 'average'" class="sub">
                 <td></td><td colspan="4">
-                  <select :value="t.average_type_effective || t.average_type" title="平均の種類" @change="setTrace(t.number, 'average_type', $event.target.value)">
+                  <select :value="t.average_type_effective || t.average_type" :title="W('average_type')" @change="setTrace(t.number, 'average_type', $event.target.value)">
                     <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c">{{ l }}</option></select>
-                  <select :value="t.average_after" title="N 回に達した後" @change="setTrace(t.number, 'average_after', $event.target.value)">
+                  <select :value="t.average_after" :title="W('after_n')" @change="setTrace(t.number, 'average_after', $event.target.value)">
                     <option v-for="(l, c) in Td('AVERAGE_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
               </tr>
               <tr v-else-if="t.action === 'max_hold' || t.action === 'min_hold'" class="sub">
                 <td></td><td colspan="4">
-                  <select :value="t.hold_after" title="N 回に達した後" @change="setTrace(t.number, 'hold_after', $event.target.value)">
+                  <select :value="t.hold_after" :title="W('after_n')" @change="setTrace(t.number, 'hold_after', $event.target.value)">
                     <option v-for="(l, c) in Td('HOLD_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
               </tr>
               <tr v-if="traceNotes[t.number] || notes['trace' + t.number] || t.axis_differs" class="tnote">
-                <td></td><td colspan="4">{{ traceNotes[t.number] || (notes['trace' + t.number] || {}).text || '' }}{{ t.axis_differs ? ' いまの軸と違う（固定）' : '' }}</td>
+                <td></td><td colspan="4">{{ traceNotes[t.number] || (notes['trace' + t.number] || {}).text || '' }}{{ t.axis_differs ? ' ' + F('axis_differs') : '' }}</td>
               </tr>
             </template>
           </tbody>
         </table>
 
-        <h3>掃引</h3>
-        <div class="form" v-if="sw">
-          <label>点数</label>
-          <div><label class="inline"><input type="checkbox" :checked="!sw.points_setting" @change="setPointsAuto($event.target.checked)"> 自動</label>
-            <input class="num" type="number" min="2" max="12000" :value="sw.points" :disabled="!sw.points_setting" @change="setPoints($event.target.value)">
-            <div class="fnote" v-if="notes.points">{{ notes.points.text }}</div></div>
-          <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? '（ゼロスパン）' : '' }}</div>
-          <label>掃引時間の見積もり</label><div>{{ sw.estimated_sweep_s.toFixed(2) }} 秒（前置き {{ sw.preroll_points }} 点を含む）</div>
-          <label></label><div><label class="inline"><input type="checkbox" :checked="sw.image_cancel" @change="sweep({image_cancel: $event.target.checked})"> イメージキャンセル（2回で1画面）</label></div>
+        <!-- 受信（RTL-SDR: 設計Q §6.5・§6.6）。繋いでいないときは消さずに無効にして理由を出す（U-08） -->
+        <h3>{{ T('RTL_LABELS', 'group') }}</h3>
+        <div class="form" :class="{disabled: !!rtlView.reason}">
+          <label>{{ T('RTL_LABELS', 'gain') }}</label>
+          <select :value="rtlGainValue" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'gain_tip')" @change="setGain($event.target.value)">
+            <option v-for="g in rtlView.gains" :key="String(g.value)" :value="g.value == null ? 'agc' : String(g.value)">{{ g.text }}</option>
+          </select>
+          <label>{{ T('RTL_LABELS', 'ppm') }}</label>
+          <input class="num" :value="rtlView.ppm" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'ppm_tip')" @change="setPpm($event.target.value)">
         </div>
+        <div class="fnote" v-if="notes.rtl">{{ notes.rtl.text }}</div>
+        <div class="dim">{{ rtlView.reason || rtlView.cal_text }}</div>
+        <div v-if="rtlView.unit_text">{{ rtlView.unit_text }}</div>
+        <div class="warn" v-if="rtlView.shared_text">{{ rtlView.shared_text }}</div>
+        <div class="form">
+          <label>{{ T('RTL_LABELS', 'cal_marker') }}</label>
+          <select v-model="rtlMarker" :disabled="!!(rtlView.reason || rtlNoMarker)" :title="rtlView.reason || rtlNoMarker || ''">
+            <option v-for="m in markers.markers" :key="m.id" :value="m.id">{{ m.id }}</option>
+          </select>
+          <label>{{ T('RTL_LABELS', 'cal_true_freq') }}</label>
+          <input class="mid" v-model="rtlTrueFreq" :disabled="!!(rtlView.ppm_reason || rtlNoMarker)">
+          <label></label>
+          <button :disabled="!!(rtlView.ppm_reason || rtlNoMarker)" :title="T('RTL_LABELS', 'cal_ppm_tip') + ((rtlView.ppm_reason || rtlNoMarker) ? ' — ' + (rtlView.ppm_reason || rtlNoMarker) : '')" @click="calPpm">{{ T('RTL_LABELS', 'cal_ppm_button') }}</button>
+          <label>{{ T('RTL_LABELS', 'cal_true_dbm') }}</label>
+          <input class="mid" v-model="rtlTrueDbm" :disabled="!!(rtlView.level_reason || rtlNoMarker)">
+          <label></label>
+          <button :disabled="!!(rtlView.level_reason || rtlNoMarker)" :title="T('RTL_LABELS', 'cal_level_tip') + ((rtlView.level_reason || rtlNoMarker) ? ' — ' + (rtlView.level_reason || rtlNoMarker) : '')" @click="calLevel">{{ T('RTL_LABELS', 'cal_level_button') }}</button>
+        </div>
+        <div class="fnote" v-if="notes.rtlcal">{{ notes.rtlcal.text }}</div>
+        <div class="warn" v-if="rtlResult">{{ rtlResult }}</div>
 
-        <h3>参照トレース（開いたファイル）</h3>
-        <div class="dim" v-if="!files.length">ありません（メニュー ≡ →「開く…」で重ねられます）</div>
+        <h3>{{ W('sweep') }}</h3>
+        <div class="form" v-if="sw">
+          <label>{{ W('points') }}</label>
+          <div><label class="inline" :class="{disabled: !!sweepReasons.points}" :title="sweepReasons.points || ''"><input type="checkbox" :checked="!sw.points_setting" :disabled="!!sweepReasons.points" @change="setPointsAuto($event.target.checked)"> {{ F('points_auto') }}</label>
+            <input class="num" type="number" min="2" max="12000" :value="sw.points" :disabled="!sw.points_setting || !!sweepReasons.points" :title="sweepReasons.points || ''" @change="setPoints($event.target.value)">
+            <div class="fnote" v-if="notes.points">{{ notes.points.text }}</div></div>
+          <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? W('zero_span_mark') : '' }}</div>
+          <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(2), n: sw.preroll_points}) }}</div>
+          <label></label><div><label class="inline" :class="{disabled: !!sweepReasons.image_cancel}" :title="sweepReasons.image_cancel || ''"><input type="checkbox" :checked="sw.image_cancel" :disabled="!!sweepReasons.image_cancel" @change="sweep({image_cancel: $event.target.checked})"> {{ W('image_cancel') }}</label></div>
+        </div>
+        <div class="dim" v-for="r in [sweepReasons.points, sweepReasons.zero_span].filter((x) => x)" :key="r">{{ r }}</div>
+
+        <h3>{{ W('files') }}</h3>
+        <div class="dim" v-if="!files.length">{{ W('no_files') }}</div>
         <div class="file" v-for="f in files" :key="f.file_id">
           <div class="file-head"><b>{{ f.name }}</b> <span class="dim">{{ f.created_at }} {{ f.device_model }} {{ f.device_serial }}</span>
-            <button class="small" @click="cmd('close_file', {file_id: f.file_id})">外す</button></div>
+            <button class="small" @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
           <div v-for="tr in f.traces" :key="tr.id" class="file-trace">
-            <label class="inline"><input type="checkbox" :checked="!fileHidden[tr.id]" @change="toggleFileTrace(tr.id)"> {{ tr.id }}（トレース {{ tr.number }}・{{ tr.points }} 点・{{ tr.unit }}）</label>
+            <label class="inline"><input type="checkbox" :checked="!fileHidden[tr.id]" @change="toggleFileTrace(tr.id)"> {{ W('file_trace_row', {id: tr.id, number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
           </div>
         </div>
       </div>
 
       <!-- ---- マーカー（J §4.5・設計G §3.5） ---- -->
       <div class="tab-body" v-show="showTab('marker')">
-        <h3>選んでいるマーカー</h3>
+        <h3>{{ W('selected_marker') }}</h3>
         <div class="form">
-          <label>マーカー</label>
+          <label>{{ W('marker') }}</label>
           <select :value="selectedMarker || ''" @change="selectedMarker = $event.target.value || null">
-            <option value="">（選んでいない）</option>
-            <option v-for="m in markers.markers" :key="m.id" :value="m.id">{{ m.kind + m.number }}</option>
+            <option value="">{{ W('not_selected') }}</option>
+            <option v-for="m in markers.markers" :key="m.id" :value="m.id">{{ m.id }}</option>
           </select>
           <template v-if="selMarker">
-            <label>ピーク追従</label>
+            <label>{{ W('peak_track') }}</label>
             <div><input type="checkbox" :checked="selMarker.peak_track" @change="cmd('marker_set', {id: selMarker.id, peak_track: $event.target.checked})"></div>
-            <label>トレース</label>
+            <label>{{ W('trace') }}</label>
             <select :value="selMarker.trace" @change="cmd('marker_set', {id: selMarker.id, trace: Number($event.target.value)})">
               <option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">{{ n }}</option></select>
           </template>
         </div>
-        <div class="dim" v-if="!selMarker">表の行を選ぶか、グラフをクリックして置いてください</div>
+        <div class="dim" v-if="!selMarker">{{ T('REASON_TEXTS', 'select_marker') }}</div>
 
-        <h3>オフセット</h3>
+        <!-- 聞く（設計Q §6.8）。選んでいるマーカーの位置を、方式を選んで聞く -->
+        <h3>{{ T('LISTEN_LABELS', 'group') }}</h3>
+        <div class="row">
+          <span>{{ T('LISTEN_LABELS', 'mode') }}</span>
+          <select v-model="listenMode" :disabled="!!listenView.reason" @change="listenModeChanged">
+            <option v-for="(l, c) in Td('LISTEN_MODES')" :key="c" :value="c">{{ l }}</option></select>
+          <button :disabled="!!listenStartReason" :title="listenStartReason || ''" @click="trigger('marker_listen')">{{ T('LISTEN_LABELS', 'start') }}</button>
+          <button :disabled="!listenView.active" :title="listenView.stop_reason || ''" @click="listenStop">{{ T('LISTEN_LABELS', 'stop') }}</button>
+        </div>
+        <div class="row"><span>{{ T('LISTEN_LABELS', 'volume') }}</span><input type="range" min="0" max="100" :value="volume" @input="setVolume($event.target.value)"></div>
+        <div class="warn pre" v-if="listenText">{{ listenText }}</div>
+        <div class="fnote" v-if="notes.listen">{{ notes.listen.text }}</div>
+        <div class="dim">{{ F('listen_note') }}</div>
+
+        <h3>{{ W('offsets') }}</h3>
         <div class="row" :class="{disabled: !selMarker}">
-          <select v-model="off.type" :disabled="!selMarker"><option value="freq">周波数</option><option value="level">レベル</option></select>
+          <select v-model="off.type" :disabled="!selMarker"><option value="freq">{{ W('freq') }}</option><option value="level">{{ W('level') }}</option></select>
           <select v-model="off.sign" :disabled="!selMarker"><option value="+">+</option><option value="-">−</option><option value="±">±</option></select>
-          <input class="mid" v-model="off.delta" :disabled="!selMarker" :placeholder="off.type === 'freq' ? '例 10M' : '例 3'" @keydown.enter="addOffset">
-          <button :disabled="!selMarker" @click="addOffset">追加</button>
+          <input class="mid" v-model="off.delta" :disabled="!selMarker" :placeholder="off.type === 'freq' ? W('eg_freq') : W('eg_db')" @keydown.enter="addOffset">
+          <button :disabled="!selMarker" @click="addOffset">{{ W('add') }}</button>
         </div>
         <div class="fnote" v-if="notes.offset">{{ notes.offset.text }}</div>
         <div v-if="selMarker">
           <div v-for="o in offsetDefs(selMarker)" :key="o.key" class="row">
-            <span>{{ o.label }}</span><button class="small" @click="cmd('marker_offset_remove', {id: selMarker.id, type: o.type, index: o.index})">削除</button>
+            <span>{{ o.label }}</span><button class="small" @click="cmd('marker_offset_remove', {id: selMarker.id, type: o.type, index: o.index})">{{ W('remove') }}</button>
           </div>
         </div>
 
-        <h3>マーカーの機能</h3>
+        <h3>{{ W('functions') }}</h3>
         <div class="row">
-          <span>N dB 帯域幅</span>
-          <input class="num" v-model="fn.bw1" :disabled="!selMarker"> <input class="num" v-model="fn.bw2" :disabled="!selMarker" placeholder="2つ目">
-          <button :disabled="!selMarker" @click="setFunction">設定</button>
+          <span>{{ W('n_db_bw') }}</span>
+          <input class="num" v-model="fn.bw1" :disabled="!selMarker"> <input class="num" v-model="fn.bw2" :disabled="!selMarker" :placeholder="W('second')">
+          <button :disabled="!selMarker" @click="setFunction">{{ W('set') }}</button>
         </div>
         <div class="row">
-          <span>しきい値</span>
+          <span>{{ W('threshold') }}</span>
           <input class="num" v-model="fn.thr" :disabled="!selMarker" :placeholder="axisUnit">
           <select v-model="fn.side" :disabled="!selMarker"><option v-for="(l, c) in Td('THRESHOLD_SIDES')" :key="c" :value="c">{{ l }}</option></select>
-          <button :disabled="!selMarker" @click="setThreshold(true)">設定</button>
-          <button :disabled="!selMarker || !selMarker.threshold" @click="setThreshold(false)">外す</button>
+          <button :disabled="!selMarker" @click="setThreshold(true)">{{ W('set') }}</button>
+          <button :disabled="!selMarker || !selMarker.threshold" @click="setThreshold(false)">{{ W('unset') }}</button>
         </div>
         <div class="fnote" v-if="notes.function">{{ notes.function.text }}</div>
 
-        <h3>XY カーソル</h3>
+        <h3>{{ W('xy_cursor') }}</h3>
         <div class="form">
           <template v-for="k in ['x1_hz', 'x2_hz', 'y1', 'y2']" :key="k">
             <label>{{ k.replace('_hz', '').toUpperCase() }}</label>
-            <input :value="xyText(k)" placeholder="空で外す" @change="commitXY(k, $event.target.value)">
+            <input :value="xyText(k)" :placeholder="W('empty_to_remove')" @change="commitXY(k, $event.target.value)">
           </template>
           <label>ΔX</label><div>{{ markers.xy && markers.xy.dx_hz != null ? fmtFreq(markers.xy.dx_hz) : '—' }}</div>
           <label>ΔY</label><div>{{ markers.xy && markers.xy.dy != null ? markers.xy.dy.toFixed(2) + ' dB' : '—' }}</div>
         </div>
         <div class="fnote" v-if="notes.xy">{{ notes.xy.text }}</div>
 
-        <h3>ピークの一覧</h3>
+        <h3>{{ W('peak_list') }}</h3>
         <div class="row">
-          <span>トレース</span><select v-model="peakTrace"><option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">{{ n }}</option></select>
-          <span>床から</span><input class="num" v-model="peakMargin"><span>dB</span>
-          <button @click="getPeakList">一覧を出す</button>
+          <span>{{ W('trace') }}</span><select v-model="peakTrace"><option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">{{ n }}</option></select>
+          <span>{{ W('from_floor') }}</span><input class="num" v-model="peakMargin"><span>dB</span>
+          <button @click="getPeakList">{{ W('list_peaks') }}</button>
         </div>
         <div class="row">
-          <span>上位</span><input class="num" v-model="topN"><span>個に P を置く</span><button @click="topPeaks">置く</button>
+          <span>{{ W('top') }}</span><input class="num" v-model="topN"><span>{{ W('place_p') }}</span><button @click="topPeaks">{{ W('place') }}</button>
         </div>
         <div class="fnote" v-if="notes.peaks">{{ notes.peaks.text }}</div>
         <table class="mtable" v-if="peakList">
-          <thead><tr><th class="r">周波数</th><th class="r">値</th><th class="r">高さ</th><th></th></tr></thead>
+          <thead><tr><th class="r">{{ W('freq') }}</th><th class="r">{{ W('value') }}</th><th class="r">{{ W('height') }}</th><th></th></tr></thead>
           <tbody>
             <tr v-if="!peakList.peaks.length"><td colspan="4" class="dim">{{ T('ERRORS', 'no_peak') }}</td></tr>
             <tr v-for="p in peakList.peaks" :key="p.freq_hz">
               <td class="r">{{ fmtFreq(p.freq_hz) }}</td><td class="r">{{ fmtLevel(p.level, peakList.unit) }}</td>
               <td class="r">{{ p.height_db != null ? p.height_db.toFixed(1) + ' dB' : '' }}</td>
-              <td><button class="small" @click="cmd('marker_register_peak', {trace: peakList.trace, freq_hz: p.freq_hz})">P に登録</button></td>
+              <td><button class="small" @click="cmd('marker_register_peak', {trace: peakList.trace, freq_hz: p.freq_hz})">{{ W('register_p') }}</button></td>
             </tr>
           </tbody>
         </table>
@@ -320,48 +375,48 @@
 
       <!-- ---- 表示（J §4.5） ---- -->
       <div class="tab-body" v-show="showTab('view')">
-        <h3>表示の組み合わせ</h3>
-        <div class="row"><label class="inline"><input type="radio" checked> スペクトルのみ</label>
-          <label class="inline disabled" title="表示の切り替えは次の回で実装します"><input type="radio" disabled> ＋ウォーターフォール</label>
-          <label class="inline disabled" title="表示の切り替えは次の回で実装します"><input type="radio" disabled> ＋密度</label></div>
-        <div class="dim">表示の切り替えは次の回で実装します</div>
-        <h3>振幅の詳細</h3>
-        <div class="row"><span>単位</span><select disabled title="dBμV・dBmV への切り替えは次の回で実装します"><option>{{ axisUnit }}</option></select></div>
-        <div class="dim">dBμV・dBmV・外部補正は次の回で実装します。REF レベルと dB/div は上段で変えます</div>
-        <h3>配色</h3>
-        <div class="row"><button disabled title="配色の編集は次の回で実装します">ライトの初期値に戻す</button><button disabled title="配色の編集は次の回で実装します">ダークの初期値に戻す</button></div>
+        <h3>{{ W('view_combo') }}</h3>
+        <div class="row"><label class="inline"><input type="radio" checked> {{ W('spectrum_only') }}</label>
+          <label class="inline disabled" :title="T('NOT_YET', 'waterfall')"><input type="radio" disabled> {{ W('plus_waterfall') }}</label>
+          <label class="inline disabled" :title="T('NOT_YET', 'density')"><input type="radio" disabled> {{ W('plus_density') }}</label></div>
+        <div class="dim">{{ T('NOT_YET', 'view') }}</div>
+        <h3>{{ W('amplitude_detail') }}</h3>
+        <div class="row"><span>{{ W('unit') }}</span><select disabled :title="W('unit_not_yet')"><option>{{ axisUnit }}</option></select></div>
+        <div class="dim">{{ W('amplitude_not_yet') }}</div>
+        <h3>{{ W('colors') }}</h3>
+        <div class="row"><button disabled :title="T('NOT_YET', 'colors')">{{ W('reset_light') }}</button><button disabled :title="T('NOT_YET', 'colors')">{{ W('reset_dark') }}</button></div>
       </div>
 
       <!-- ---- 信号源（J §4.5） ---- -->
       <div class="tab-body" v-show="showTab('source')">
         <h3>SG</h3>
-        <num-field label="SG 周波数" :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')"
+        <num-field :label="W('sg_freq')" :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')"
                    @commit="commitFreq('sg', 'sg_hz', $event)" @step="(e, d) => stepFreq('sg', 'sg_hz', e, d)"></num-field>
-        <div class="dim">{{ sw && sw.mode === 'sg' ? 'SG モードで出力しています。' : 'SG 周波数は SG モードのときに使います。' }}</div>
+        <div class="dim">{{ sw && sw.mode === 'sg' ? W('sg_on') : W('sg_off') }}</div>
 
-        <h3>TG・S11 の基準</h3>
-        <div class="dim" v-if="!sw || !['tg', 's11'].includes(sw.mode)">基準は TG・S11 モードで取ります</div>
+        <h3>{{ W('references') }}</h3>
+        <div class="dim" v-if="!sw || !['tg', 's11'].includes(sw.mode)">{{ T('ERRORS', 'mode_not_normalizable') }}</div>
         <div class="row">
-          <input class="mid" v-model="refName" placeholder="名前（空ならアプリが付ける）">
-          <button :disabled="!connected || !sw || !['tg', 's11'].includes(sw.mode)" @click="takeRef('wide')" title="機器の全範囲を粗く取る">広く取る</button>
-          <button :disabled="!connected || !sw || !['tg', 's11'].includes(sw.mode)" @click="takeRef('fine')" title="いまの掃引条件で細かく取る">いまの条件で細かく取る</button>
+          <input class="mid" v-model="refName" :placeholder="W('ref_name_placeholder')">
+          <button :disabled="!connected || !sw || !['tg', 's11'].includes(sw.mode)" @click="takeRef('wide')" :title="W('take_wide_tip')">{{ W('take_wide') }}</button>
+          <button :disabled="!connected || !sw || !['tg', 's11'].includes(sw.mode)" @click="takeRef('fine')" :title="W('take_fine_tip')">{{ W('take_fine') }}</button>
         </div>
         <div class="fnote" v-if="notes.refs">{{ notes.refs.text }}</div>
-        <div class="row"><button class="small" @click="loadRefs">一覧を読み直す</button>
-          <button class="small" @click="refAction('reference_select', {id: null})">選ばない</button></div>
+        <div class="row"><button class="small" @click="loadRefs">{{ W('reload') }}</button>
+          <button class="small" @click="refAction('reference_select', {id: null})">{{ W('select_none') }}</button></div>
         <table class="mtable">
           <tbody>
-            <tr v-if="!refs.length"><td class="dim">基準はありません</td></tr>
+            <tr v-if="!refs.length"><td class="dim">{{ W('no_refs') }}</td></tr>
             <tr v-for="r in refs" :key="r.id" :class="{sel: r.selected}">
               <td>{{ r.selected ? '● ' : '' }}{{ r.name }}</td><td class="dim">{{ r.mode }}・{{ r.taken_at }}</td>
-              <td class="ops"><button class="small" @click="refAction('reference_select', {id: r.id})">選ぶ</button>
-                <button class="small" @click="renameRef(r)">名前</button>
-                <button class="small" @click="refAction('reference_delete', {id: r.id})">削除</button></td>
+              <td class="ops"><button class="small" @click="refAction('reference_select', {id: r.id})">{{ W('select') }}</button>
+                <button class="small" @click="renameRef(r)">{{ W('name') }}</button>
+                <button class="small" @click="refAction('reference_delete', {id: r.id})">{{ W('remove') }}</button></td>
             </tr>
           </tbody>
         </table>
         <h3>NF</h3>
-        <div class="dim">NF 測定は次の回で実装します</div>
+        <div class="dim">{{ modeReason('nf') }}</div>
       </div>
     </aside>
   </main>
@@ -369,15 +424,20 @@
   <!-- 長い処理の進み具合とやめるボタン（H §4.1: サイレントウェイトをしない。U-19） -->
   <div class="tasks" v-if="tasks.length">
     <div class="task" v-for="t in tasks" :key="t.task_id">
-      <span>{{ taskLabel(t) }}</span>
+      <span>{{ t.label }}</span>
       <progress v-if="t.total" :max="t.total" :value="t.done"></progress><progress v-else></progress>
-      <button class="small" :disabled="t.cancelling" @click="cmd('cancel_task', {task_id: t.task_id})">やめる</button>
+      <button class="small" :disabled="t.cancelling" @click="cmd('cancel_task', {task_id: t.task_id})">{{ W('cancel') }}</button>
     </div>
   </div>
 
-  <!-- 状態バー（接続・掃引・掃引時間・捨てた回数・補正。常に出す: J §2・M-04） -->
+  <!-- 状態バー（項目と文は Qt と同じ texts.status_items。常に出す: J §2・M-04） -->
   <footer class="statusbar">
-    <span v-for="s in statusItems" :key="s.key" :class="s.cls">{{ s.text }}</span>
+    <template v-for="s in statusItems" :key="s.key">
+      <span :class="s.cls" :title="s.text">{{ s.text }}</span>
+      <!-- 聞いている・rtl_tcp を出しているときは、状態バーからすぐ止められる（設計Q §4.3・§6.8） -->
+      <button v-if="s.key === 'listen'" class="small" @click="listenStop">{{ T('LISTEN_LABELS', 'stop') }}</button>
+      <button v-if="s.key === 'rtltcp'" class="small" @click="setRtltcp({enabled: false})">{{ T('SETTINGS_LABELS', 'rtltcp_stop') }}</button>
+    </template>
     <span class="status-note" :title="status">{{ status }}</span>
   </footer>
 
@@ -386,26 +446,51 @@
     <button v-for="(it, i) in ctx.items" :key="i" :disabled="!!it.why" :title="it.why || ''" @click="ctx = null; it.run()">{{ it.label }}</button>
   </div>
 
-  <!-- 入力の窓（保存先・開くファイル・接続する機器など） -->
+  <!-- 入力の窓（保存先・開くファイル・接続する機器・アプリ設定など） -->
   <div class="modal-back" v-if="modal" @click="modal = null">
     <div class="modal" @click.stop>
       <h3>{{ modal.title }}</h3>
       <p v-if="modal.note" class="modal-note">{{ modal.note }}</p>
       <div v-if="modal.devices" class="devlist">
         <label v-for="(d, i) in modal.devices" :key="i" class="inline dev">
-          <input type="radio" :value="i" v-model="modal.pick"> {{ d.serial || '（シリアル番号なし）' }} {{ d.port }} {{ d.description }}{{ d.known ? '（前に使った機器）' : '' }}
+          <input type="radio" :value="i" v-model="modal.pick"> {{ deviceLabel(d) }}
         </label>
       </div>
       <table v-if="modal.keys" class="mtable"><tbody><tr v-for="(r, i) in keyRows" :key="i"><td>{{ r[0] }}</td><td>{{ r[1] }}</td></tr></tbody></table>
-      <p v-if="modal.keys" class="modal-note">入力の欄にいる間は、文字・数字・矢印などのキーは欄に渡します。ブラウザが先に取るキー（F5・Ctrl+数字・Ctrl+Shift+C など）は使わない割り当てにしています。</p>
+      <p v-if="modal.keys" class="modal-note">{{ W('keys_note') }}</p>
+      <!-- アプリ設定（O §1.3。Qt の settings_dialog.py と同じ欄。変えたらすぐ効く） -->
+      <template v-if="modal.settings">
+        <p class="modal-note">{{ T('SETTINGS_LABELS', 'note') }}</p>
+        <h3>{{ T('SETTINGS_LABELS', 'rtltcp_group') }}</h3>
+        <div class="form">
+          <label></label><label class="inline"><input type="checkbox" :checked="rtltcpView.enabled" @change="setRtltcp({enabled: $event.target.checked})"> {{ T('SETTINGS_LABELS', 'rtltcp_enable') }}</label>
+          <label>{{ T('SETTINGS_LABELS', 'rtltcp_port') }}</label><input class="num" :value="rtltcpView.port" @change="setRtltcpPort($event.target.value)">
+          <label>{{ T('SETTINGS_LABELS', 'rtltcp_bind') }}</label>
+          <select :value="rtltcpView.bind" @change="setRtltcp({bind: $event.target.value})"><option v-for="(l, c) in Td('RTLTCP_BINDS')" :key="c" :value="c">{{ l }}</option></select>
+        </div>
+        <div>{{ rtltcpView.text }}</div>
+        <div class="dim" v-if="rtltcpView.dropped_text">{{ rtltcpView.dropped_text }}</div>
+        <div class="warn" v-if="rtltcpView.error_text">{{ rtltcpView.error_text }}</div>
+        <div class="fnote" v-if="notes.rtltcp">{{ notes.rtltcp.text }}</div>
+        <div class="row"><button class="small" @click="setRtltcp({enabled: false, port: 1234, bind: 'local'})">{{ T('SETTINGS_LABELS', 'rtltcp_default') }}</button></div>
+        <p class="dim">{{ T('SETTINGS_LABELS', 'rtltcp_note') }}</p>
+        <h3>{{ T('SETTINGS_LABELS', 'rtlsdr_group') }}</h3>
+        <div :class="rtlView.dll_found ? '' : 'warn'">{{ rtlView.dll_found ? T('SETTINGS_LABELS', 'rtlsdr_found') : T('SETTINGS_LABELS', 'rtlsdr_missing') }}</div>
+        <div class="dim">{{ rtlView.dll_text }}</div>
+        <div class="row"><input class="mid" :placeholder="W('dll_folder_placeholder')" @change="setDllFolder($event.target.value)">
+          <button class="small" @click="setDllFolder('')">{{ T('SETTINGS_LABELS', 'rtlsdr_default') }}</button></div>
+        <div class="fnote" v-if="notes.dll">{{ notes.dll.text }}</div>
+        <h3>{{ T('SETTINGS_LABELS', 'other_group') }}</h3>
+        <p class="dim">{{ T('SETTINGS_LABELS', 'other_note') }}</p>
+      </template>
       <div v-for="f in modal.fields" :key="f.key" class="modal-field">
         <label>{{ f.label }}</label>
         <textarea v-if="f.multiline" v-model="f.value" rows="4"></textarea>
         <input v-else v-model="f.value" @keydown.enter="modalOk">
       </div>
       <div class="modal-btns">
-        <button v-if="modal.ok" class="primary" :disabled="modal.devices && modal.pick < 0" @click="modalOk">{{ modal.devices ? '接続' : 'OK' }}</button>
-        <button @click="modal = null">{{ modal.ok ? 'やめる' : '閉じる' }}</button>
+        <button v-if="modal.ok" class="primary" :disabled="modal.devices && modal.pick < 0" @click="modalOk">{{ modal.devices ? T('CONNECT_TEXTS', 'button') : 'OK' }}</button>
+        <button @click="modal = null">{{ modal.ok ? W('cancel') : T('SETTINGS_LABELS', 'close') }}</button>
       </div>
     </div>
   </div>

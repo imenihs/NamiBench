@@ -106,8 +106,10 @@
 
     _applyLabels() {
       const [, unit] = xUnit(this.x1 - this.x0);
-      this.u.axes[0].label = this.zeroSpan ? "点（ゼロスパン）" : `周波数 (${unit})`;
-      this.u.axes[1].label = `レベル (${this.unit})`;
+      // 軸の名前は texts の表（Qt と同じ語）
+      const X = root.GSTexts;
+      this.u.axes[0].label = this.zeroSpan ? X.w("axis_zero_span") : X.w("axis_freq", { unit });
+      this.u.axes[1].label = X.w("axis_level", { unit: this.unit });
     }
 
     setSize(w, h) {

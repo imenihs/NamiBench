@@ -319,6 +319,7 @@ class DbField(ValueField):
         self._value = 0.0
         self._unit = unit
         self._on_commit = on_commit
+        self._base_width = self.edit.minimumWidth()
         self.edit.committed.connect(self._commit_text)
         self.edit.stepped.connect(self._stepped)
 
@@ -329,6 +330,9 @@ class DbField(ValueField):
     def set_unit(self, unit: str) -> None:
         if unit != self._unit:
             self._unit = unit
+            # 値と単位が全部見える幅を取る（「dB（未校正）」のような長い単位でも切らない: J §4.3）
+            widest = self.edit.fontMetrics().horizontalAdvance(f"-000.0 {unit}")
+            self.edit.setMinimumWidth(max(self._base_width, widest + 16))
             self.set_value(self._value)
 
     def value(self) -> float:

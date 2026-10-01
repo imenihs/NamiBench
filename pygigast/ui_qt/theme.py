@@ -1,13 +1,13 @@
 """画面の配色と部品の見た目（設計J §4.4）。
 
-色の値は png_export の初期値の組を使う（同じ名前の色を2か所に書かない: U-09）。
+色の値は core/report_layout の初期値の組を使う（同じ名前の色を2か所に書かない: U-09）。
 配色の編集（ユーザー設定の1つの組）は 6-6。いまはダークの初期値で描く。
 """
 from __future__ import annotations
 
 from PySide6.QtGui import QFont, QFontDatabase
 
-from .png_export import DARK_DEFAULT
+from ..core.report_layout import DARK_DEFAULT
 
 DARK: dict[str, str] = dict(DARK_DEFAULT)
 

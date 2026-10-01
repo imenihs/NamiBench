@@ -131,7 +131,9 @@ class WebServerTest(unittest.TestCase):
     def test_error_shape(self):
         st, body = self.post("run", {"mode": "continuous"})
         self.assertEqual(st, 400)
-        self.assertEqual(body, {"error": {"code": "not_connected", "field": None, "detail": {}}})
+        # A §4.3 の失敗の形に、画面の文（Qt と同じ texts.error_text）を text として足して返す
+        self.assertEqual(body, {"error": {"code": "not_connected", "field": None, "detail": {},
+                                          "text": "機器に繋がっていません"}})
         st, body = self.post("no_such_command")
         self.assertEqual((st, body["error"]["code"]), (404, "unknown_command"))
         # 内部の命令（先頭が _）は Web から呼べない

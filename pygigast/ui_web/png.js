@@ -1,98 +1,12 @@
 // PNG の画像出力（設計I §3。Web はブラウザの canvas で、画面の外に描き直す）。
-// 配置（帯の段・文字の大きさの比・マーカー表の上限）は Qt の ui_qt/png_export.py の LAYOUT と同じ値。
-// I §3.1 は「配置はコアに1つ」だが、いまは Qt 側にあるので同じ値をここに写している（コアへ移したら読み替える）。
+// 配置（文字の大きさ・行の高さ・余白・帯の段と項目・マーカー表・凡例・tEXt の中身）はサーバーが
+// core/report_layout.py で作って返す（POST /api/v1/png_layout。Qt の png_export も同じ関数で描く: I §3.1）。
+// ここで行うのは、文字の幅を測って帯を折り返すことと、線や文字を描くことだけ（書体の幅は描く側でしか測れない）。
 (function (root) {
   "use strict";
 
-  const LAYOUT = {
-    base_px_at_1600x1000: 16.0,
-    min_px: 11.0,
-    margin: 1.0,
-    gap: 0.6,
-    item_gap: 1.6,
-    table_max_ratio: 0.30,
-    table_two_columns_from: 7,
-    band_rows: ["when", "conditions", "correction", "warnings", "note"],
-  };
-  const META_KEY = "pygigast";
-  const META_FORMAT = 1;
-  const MODE_LABELS = { sa: "SA", tg: "TG", s11: "S11", sg: "SG", nf: "NF" };
-  const FONT = '"Yu Gothic UI","Meiryo UI","Meiryo","Noto Sans CJK JP","Noto Sans JP","Hiragino Sans",sans-serif';
-
-  function measuredAt(d) {
-    const p = (n) => String(n).padStart(2, "0");
-    const off = -d.getTimezoneOffset();
-    const sign = off >= 0 ? "+" : "-";
-    const a = Math.abs(off);
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${sign}${p(Math.floor(a / 60))}:${p(a % 60)}`;
-  }
-
-  // 帯の段ごとの項目（png_export.band_rows と同じ段・同じ語）
-  function bandRows(data) {
-    const F = GSUnits.formatFreq;
-    const rows = {};
-    const dev = data.device || {};
-    const devText = [dev.model, dev.serial ? `S/N ${dev.serial}` : null].filter((x) => x).join(" ");
-    rows.when = ["text", [data.measured_at, ...(devText ? [devText] : []), `pyGigaSt ${data.app_version || ""}`.trim()]];
-    const c = data.conditions || {};
-    const cond = [];
-    if (data.mode) cond.push(data.mode);
-    if (c.start_hz != null && c.stop_hz != null) {
-      cond.push(`Start ${F(c.start_hz)}`, `Stop ${F(c.stop_hz)}`, `Center ${F(c.start_hz + Math.floor((c.stop_hz - c.start_hz) / 2))}`, `Span ${F(c.stop_hz - c.start_hz)}`);
-    }
-    if (c.rbw_hz != null) cond.push(`RBW ${F(c.rbw_hz)}`);
-    if (c.points != null) cond.push(`${c.points} 点` + (c.step_hz != null ? `（Step ${F(c.step_hz)}）` : ""));
-    if (c.image_cancel != null) cond.push("イメージキャンセル " + (c.image_cancel ? "ON" : "OFF"));
-    if (c.ref_level != null) cond.push(`REF ${c.ref_level} ${c.unit || "dBm"}`);
-    if (c.db_per_div != null) cond.push(`${c.db_per_div} dB/div`);
-    rows.conditions = ["text", cond];
-    const corr = [];
-    const cal = data.calibration;
-    corr.push(cal ? `校正データ: ${cal.source || ""}` + (cal.at ? `（${cal.at}）` : "") : "校正データ: なし");
-    const nz = data.normalization;
-    if (nz) {
-      let s = `ノーマライズ: ${nz.name || ""}` + (nz.at ? `（${nz.at}）` : "");
-      if (nz.before_power_cycle) s += " 電源の入れ直し前の基準";
-      if (nz.applied === false) s += " 当てていない" + (nz.reason ? `: ${nz.reason}` : "");
-      corr.push(s);
-    }
-    rows.correction = ["text", corr];
-    rows.warnings = ["warn", (data.warnings || []).filter((w) => w).map((w) => `注意: ${w}`)];
-    const memo = (data.note || "").trim();
-    rows.note = ["text", memo ? [`メモ: ${memo}`] : []];
-    // 空の段は出さない（U-15）
-    return LAYOUT.band_rows.map((k) => rows[k]).filter((r) => r[1].length);
-  }
-
-  // 画面の状態から、帯とメタデータの中身を作る
-  function collect(ctx) {
-    const st = ctx.st || {};
-    const s = st.sweep || {};
-    const conn = st.connection || {};
-    const ident = conn.identity || {};
-    const cal = st.calibration;
-    const n = st.normalization || {};
-    const data = {
-      measured_at: measuredAt(new Date()),
-      app_version: ctx.appVersion,
-      device: { model: ident.model || conn.profile_model, serial: ident.serial },
-      mode: MODE_LABELS[s.mode] || s.mode,
-      conditions: {
-        start_hz: s.start_hz, stop_hz: s.stop_hz, rbw_hz: s.rbw_hz, points: s.points, step_hz: s.step_hz,
-        image_cancel: s.image_cancel, ref_level: ctx.amp.ref, db_per_div: ctx.amp.div, unit: ctx.amp.unit,
-      },
-      calibration: cal ? { source: (cal.source && (cal.source.file_name || cal.source.kind)) || "", at: cal.created_at } : null,
-      normalization: n.used && n.selected ? {
-        name: n.selected.name, at: n.selected.taken_at, before_power_cycle: !!n.power_cycled, applied: !!n.applied,
-        reason: n.applied ? null : GSTexts.get("NORM_REASONS", n.reason || "", n.reason),
-      } : null,
-      warnings: (s.warnings || []).map((w) => GSTexts.get("WARNINGS", w)),
-      markers: (ctx.rows || []).map((r) => ({ name: r.name, trace: r.trace, freq_mhz: r.freq, value: r.value, ref: r.refName, delta_freq_mhz: r.dfreq, delta_value: r.dval, note: r.note, child: !!r.parent })),
-      traces: (ctx.traceStates || []).filter((t) => t.visible && t.has_values).map((t) => ({ number: t.number, legend: GSTexts.legendText({ ...t, count: t.current_count }) })),
-      note: ctx.note || "",
-    };
-    return data;
-  }
+  // 全角1字の幅を測る字（Qt の png_export と同じく「あ」）
+  const WIDE = String.fromCharCode(0x3042);
 
   // ---- PNG の塊（tEXt は Latin-1 なので、JSON は ASCII にしてから入れる）
   const CRC_TABLE = (() => {
@@ -133,24 +47,47 @@
     return out;
   }
 
+  // 帯の段ごとに、項目の切れ目で折り返した行の並び（Qt の png_export._flow_band と同じ規則）
+  function flowBand(g, band, width, sep) {
+    const lines = [];
+    const split = (text) => {
+      const out = [];
+      let cur = "";
+      for (const ch of text) {
+        if (cur && g.measureText(cur + ch).width > width) { out.push(cur); cur = ""; }
+        cur += ch;
+      }
+      if (cur) out.push(cur);
+      return out;
+    };
+    for (const [color, items] of band) {
+      let cur = [];
+      let curW = 0;
+      for (const it of items) {
+        for (const piece of split(it)) {
+          const iw = g.measureText(piece).width;
+          if (cur.length && curW + sep + iw > width) { lines.push([color, cur]); cur = []; curW = 0; }
+          curW = cur.length ? curW + sep + iw : iw;
+          cur.push(piece);
+        }
+      }
+      if (cur.length) lines.push([color, cur]);
+    }
+    return lines;
+  }
+
   async function render(ctx, size = [1600, 1000]) {
     const [W, H] = size;
     const c = ctx.colors;
-    const data = collect(ctx);
-    const fontPx = Math.max(LAYOUT.min_px, LAYOUT.base_px_at_1600x1000 * Math.min(W / 1600, H / 1000));
-    const lineH = fontPx * 1.45;
-    const margin = fontPx * LAYOUT.margin;
-    const gap = fontPx * LAYOUT.gap;
-    const band = bandRows(data);
-    const tableRows = data.markers;
-    const maxTableH = H * LAYOUT.table_max_ratio;
-    const twoCols = tableRows.length > LAYOUT.table_two_columns_from;
-    const perCol = twoCols ? Math.ceil(tableRows.length / 2) : tableRows.length;
-    let shownPerCol = Math.max(0, Math.min(perCol, Math.floor(maxTableH / lineH) - 1));
-    const tableH = tableRows.length ? (shownPerCol + 1) * lineH + (shownPerCol < perCol ? lineH : 0) : 0;
-    const bandH = band.length * lineH;
-    const graphH = Math.max(120, H - 2 * margin - bandH - tableH - 2 * gap);
-    const graphW = W - 2 * margin;
+    const lay = await GSApi.call("png_layout", {
+      width: W, height: H, note: ctx.note || "", ref_level: ctx.amp.ref, db_per_div: ctx.amp.div, unit: ctx.amp.unit,
+      files: ctx.files || [],
+    });
+    const px = lay.font_px;
+    const lh = lay.line_px;
+    const margin = lay.margin_px;
+    const gap = lay.gap_px;
+    const font = `${Math.round(px)}px ${lay.fonts.map((f) => `"${f}"`).join(",")},sans-serif`;
 
     const canvas = document.createElement("canvas");
     canvas.width = W;
@@ -158,8 +95,96 @@
     const g2 = canvas.getContext("2d");
     g2.fillStyle = c.graph_bg;
     g2.fillRect(0, 0, W, H);
+    g2.font = font;
+    g2.textBaseline = "middle";
+    const innerW = W - 2 * margin;
+    const sep = g2.measureText(WIDE).width * lay.item_gap;
+
+    // 区画の配分（Qt と同じ: 帯は下端、表はその上、残りがグラフ）
+    const band = flowBand(g2, lay.band, innerW, sep);
+    const bandH = band.length * lh + (band.length ? 2 * gap : 0);
+    const t = lay.table;
+    const tableH = t.rows.length ? (t.rows_per_col + 1) * lh : 0;
+    const bandTop = H - bandH;
+    const tableTop = bandTop - gap - tableH;
+    const graphBottom = t.rows.length ? tableTop - gap : bandTop - gap;
+
+    // 下端の帯（I §3.2）
+    g2.fillStyle = c.panel_bg;
+    g2.fillRect(0, bandTop, W, bandH);
+    g2.strokeStyle = c.axis;
+    g2.beginPath(); g2.moveTo(0, bandTop + 0.5); g2.lineTo(W, bandTop + 0.5); g2.stroke();
+    let y = bandTop + gap;
+    for (const [color, items] of band) {
+      g2.fillStyle = c[color] || c.text;
+      let x = margin;
+      for (const it of items) {
+        g2.fillText(it, x, y + lh / 2);
+        x += g2.measureText(it).width + sep;
+      }
+      y += lh;
+    }
+
+    // マーカー表（グラフのすぐ下。多いときは2列、収まらない分は「ほか N 行」はサーバーが入れる: I §3.5）
+    if (t.rows.length) {
+      const pad = g2.measureText(WIDE).width;
+      const colGap = pad * 2;
+      const blockW = (innerW - colGap * (t.cols - 1)) / t.cols;
+      const all = [t.header, ...t.rows];
+      let widths = t.header.map((_, i) => Math.max(...all.map((r) => g2.measureText(String(r[i] || "")).width)));
+      const need = widths.reduce((a, b) => a + b, 0) + pad * (widths.length - 1);
+      let tfont = font;
+      if (need > blockW) {
+        // 幅が足りないときは表の文字だけ縮める（切らない）
+        tfont = `${Math.max(8, Math.floor(px * blockW / need))}px ${lay.fonts.map((f) => `"${f}"`).join(",")},sans-serif`;
+        g2.font = tfont;
+        widths = t.header.map((_, i) => Math.max(...all.map((r) => g2.measureText(String(r[i] || "")).width)));
+      }
+      const pad2 = g2.measureText(WIDE).width;
+      for (let b = 0; b < t.cols; b++) {
+        const chunk = t.rows.slice(b * t.rows_per_col, (b + 1) * t.rows_per_col);
+        if (!chunk.length) continue;
+        const x0 = margin + b * (blockW + colGap);
+        let yy = tableTop;
+        [t.header, ...chunk].forEach((row, ri) => {
+          let x = x0;
+          row.forEach((cell, i) => {
+            const s = String(cell || "");
+            const tw = g2.measureText(s).width;
+            g2.fillStyle = ri === 0 ? c.text_dim : (i === row.length - 1 && s ? c.warn : c.text);
+            g2.fillText(s, t.right[i] ? x + widths[i] - tw : x, yy + lh / 2);
+            x += widths[i] + pad2;
+          });
+          if (ri === 0) {
+            g2.strokeStyle = c.grid;
+            g2.beginPath(); g2.moveTo(x0, yy + lh - 0.5); g2.lineTo(x - pad2, yy + lh - 0.5); g2.stroke();
+          }
+          yy += lh;
+        });
+      }
+      g2.font = font;
+    }
+
+    // 凡例（グラフの上の1段: U-14）
+    let lx = margin;
+    const sw = g2.measureText(WIDE).width * 1.4;
+    for (const it of lay.legend) {
+      const col = String(it.color || "").startsWith("#") ? it.color : (c[it.color] || c.trace1);
+      const tw = g2.measureText(it.text).width;
+      if (lx + sw + tw > W - margin) break;
+      g2.strokeStyle = col;
+      g2.lineWidth = Math.max(2, px / 6);
+      g2.beginPath(); g2.moveTo(lx, margin + lh / 2); g2.lineTo(lx + sw * 0.8, margin + lh / 2); g2.stroke();
+      g2.lineWidth = 1;
+      g2.fillStyle = c.text;
+      g2.fillText(it.text, lx + sw, margin + lh / 2);
+      lx += sw + tw + g2.measureText(WIDE).width * 2;
+    }
 
     // グラフ: 画面と同じ描画の部品（GSGraph）を、画面の外の要素に決めた大きさで描く
+    const gTop = margin + lh;
+    const graphW = innerW;
+    const graphH = Math.max(lh * 3, graphBottom - gTop);
     const host = document.createElement("div");
     host.style.cssText = `position:fixed;left:-20000px;top:0;width:${graphW}px;height:${graphH}px;background:${c.graph_bg}`;
     document.body.appendChild(host);
@@ -175,69 +200,16 @@
       // uPlot は描き直しをまとめて microtask で行うので、描き終わるのを待ってから写す
       // （requestAnimationFrame は裏のタブで止まるので使わない）
       await new Promise((r) => setTimeout(r, 0));
-      g2.drawImage(g.u.ctx.canvas, margin, margin, graphW, graphH);
+      g2.drawImage(g.u.ctx.canvas, margin, gTop, graphW, graphH);
       g.destroy();
     } finally {
       host.remove();
     }
 
-    g2.textBaseline = "top";
-    g2.font = `${fontPx}px ${FONT}`;
-    // 凡例（トレースの番号・動作・回数: U-14）。グラフの右上に重ねる
-    let ly = margin + fontPx * 0.8;
-    g2.textAlign = "right";
-    for (const t of data.traces) {
-      g2.fillStyle = c["trace" + t.number] || c.text;
-      g2.fillText(t.legend, margin + graphW - fontPx * 1.5, ly);
-      ly += lineH;
-    }
-    g2.textAlign = "left";
-
-    // マーカー表（グラフのすぐ下。多いときは2列、収まらない分は「ほか N 行」: I §3.5）
-    let y = margin + graphH + gap;
-    if (tableRows.length) {
-      const colW = twoCols ? (W - 2 * margin) / 2 : W - 2 * margin;
-      const cols = ["番号", "トレース", "周波数 (MHz)", "値", "基準", "Δ周波数 (MHz)", "Δ値 (dB)", ""];
-      const widths = [0.13, 0.08, 0.17, 0.17, 0.08, 0.17, 0.1, 0.1];
-      for (let k = 0; k < (twoCols ? 2 : 1); k++) {
-        const x0 = margin + k * colW;
-        const part = tableRows.slice(k * perCol, (k + 1) * perCol);
-        let x = x0;
-        g2.fillStyle = c.text_dim;
-        cols.forEach((h, i) => { g2.fillText(h, x, y); x += widths[i] * colW; });
-        part.slice(0, shownPerCol).forEach((r, j) => {
-          const vals = [(r.child ? "  " : "") + r.name, r.trace, r.freq_mhz, r.value, r.ref, r.delta_freq_mhz, r.delta_value, r.note];
-          let xx = x0;
-          g2.fillStyle = r.child ? c.text_dim : c.marker;
-          vals.forEach((v, i) => { g2.fillText(String(v == null ? "" : v), xx, y + (j + 1) * lineH, widths[i] * colW - 4); xx += widths[i] * colW; });
-        });
-        if (part.length > shownPerCol) {
-          g2.fillStyle = c.text_dim;
-          g2.fillText(`ほか ${part.length - shownPerCol} 行`, x0, y + (shownPerCol + 1) * lineH);
-        }
-      }
-      y += tableH + gap;
-    }
-
-    // 下端の帯（I §3.2）
-    y = H - margin - bandH;
-    for (const [color, items] of band) {
-      g2.fillStyle = color === "warn" ? c.warn : c.text;
-      let x = margin;
-      for (const it of items) {
-        g2.fillText(it, x, y, W - margin - x);
-        x += g2.measureText(it).width + fontPx * LAYOUT.item_gap;
-      }
-      y += lineH;
-    }
-
     const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
     const png = new Uint8Array(await blob.arrayBuffer());
-    const meta = { format: META_FORMAT, ...data };
-    delete meta.note;
-    if (data.note) meta.note = data.note;
-    return new Blob([addTextChunk(png, META_KEY, asciiJson(meta))], { type: "image/png" });
+    return new Blob([addTextChunk(png, lay.meta_key || "pygigast", asciiJson(lay.meta))], { type: "image/png" });
   }
 
-  root.GSPng = { render, bandRows, addTextChunk, crc32 };
+  root.GSPng = { render, addTextChunk, crc32, flowBand };
 })(window);

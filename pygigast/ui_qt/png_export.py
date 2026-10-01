@@ -1,48 +1,12 @@
-"""画像出力（設計I）。グラフを画面の外に描き直して PNG にする。
+"""画像出力（設計I）。グラフを画面の外に描き直して PNG にする（Qt の描画）。
 
 画面を撮らない（I §3.1）。他のウィンドウもマウスのカーソルも写らず、大きさを画面と独立に決められる。
 描くもの: グラフ（見えているトレース・マーカー・目盛・凡例）、グラフの下のマーカー表、下端の帯（I §3.2）。
 PNG の tEXt に、帯と同じ内容の JSON を `pygigast` のキーで入れる（I §3.3）。
 保存は上書きしない名前で（I §3.4・M-08）、クリップボードへもコピーできる。
 
-render_png に渡す data の形（JSON にできる素の値だけ。numpy の配列は values_db にだけ使ってよい）::
-
-    {
-      "measured_at": "2026-10-01T09:15:30+09:00",   # ISO 8601。時差なしならこの PC の時差とみなす
-      "device": {"model": "GigaSt v5", "serial": "..."},   # 呼ぶ側が渡したものをそのまま出す
-      "app_version": "0.1.0",                        # 省略時は pygigast.__version__
-      "mode": "スペアナ",                             # 画面に出しているモードの名前
-      "conditions": {
-        "start_hz": 100_000_000, "stop_hz": 200_000_000,   # 表示の Start–Stop（横軸はこの範囲で切る）
-        "rbw_hz": 180_000,
-        "points": 1001, "step_hz": 100_000,
-        "image_cancel": True,                        # None なら出さない
-        "ref_level": 0.0, "db_per_div": 10.0,
-        "unit": "dBm",                               # 縦軸の単位（比のトレースなら "dB"）
-      },
-      "calibration": {"source": "...", "at": "2026-09-30 14:00"} | None,   # None は「校正データ: なし」
-      "normalization": {"name": "...", "at": "...", "applied": True,
-                        "before_power_cycle": False, "reason": ""} | None,   # None は出さない
-      "traces": [
-        {"number": 1, "start_hz": ..., "step_hz": ..., "points": 1001,    # points 省略時は len(values_db)
-         "values_db": [...],                         # list か numpy 配列。NaN は描かない
-         "color": "trace1",                          # 配色トークンの名前か "#rrggbb"
-         "action": "Clear/Write", "average": "電力平均" | None,
-         "count": 12, "count_target": 30 | None,     # count が None なら回数を出さない
-         "label": "..." | None,                      # 凡例の後ろに足す文字（任意）
-         "flags": [bool, ...] | None,                # 印の付いた点（前置き不足・範囲外）。控えめな色で描く
-         "visible": True},
-      ],
-      "markers": [                                    # マーカー表の行（G §3.3・§3.5）。表の並びもこの順
-        {"name": "M1", "kind": "marker",             # marker / freq_cursor / level_cursor
-         "trace": 1, "freq_hz": ..., "value": -12.3,
-         "ref": "P1" | None, "delta_freq_hz": ... | None, "delta_value": ... | None,
-         "child": False,                             # 親の下に出す子の行（オフセットのカーソル）
-         "note": "範囲外" | ""},
-      ],
-      "warnings": ["RBW 15kHz の1回の掃引（約2dB 高く出うる）", ...],   # 画面に出ている注意と同じ文
-      "note": "",                                    # 利用者のメモ（1行）。render_png の note が優先
-    }
+配置・帯・マーカー表の規則は core/report_layout.py にあり、Web の canvas も同じものを使う（I §3.1・§3.5）。
+ここは QPainter で描くことと、PNG の塊・保存・コピーだけ。data の形は report_layout の冒頭の説明のとおり。
 """
 from __future__ import annotations
 
@@ -52,7 +16,7 @@ import struct
 import zlib
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Optional, Union
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMimeData, QPointF, QRectF, Qt
 from PySide6.QtGui import (
@@ -69,254 +33,37 @@ from PySide6.QtGui import (
 )
 
 from .. import __version__ as APP_VERSION
-from ..core.units import format_freq
+from ..core import report_layout as rl
 
-META_KEY = "pygigast"
-META_FORMAT = 1
-DIVISIONS = 10
-
-# 配色の初期値（設計J §4.4 の表）。名前は main_window.DARK と同じ。
-# J §4.4 は「マーカー」の色を名前だけ挙げて値を決めていないので、文字の色と同じにしている。
-DARK_DEFAULT: dict[str, str] = {
-    "graph_bg": "#15181d",
-    "panel_bg": "#1e232b",
-    "text": "#e6e9ee",
-    "text_dim": "#aab3c0",
-    "accent": "#4fa3ff",
-    "warn": "#ffcc66",
-    "grid": "#2a313c",
-    "axis": "#3a4452",
-    "trace1": "#ffd24a",
-    "trace2": "#4fd1c5",
-    "trace3": "#ff7aa8",
-    "trace4": "#9fe870",
-    "zero_db": "#7fb3ff",
-    "running": "#1f6f3a",
-    "marker": "#e6e9ee",
-}
-LIGHT_DEFAULT: dict[str, str] = {
-    "graph_bg": "#ffffff",
-    "panel_bg": "#f4f6f9",
-    "text": "#1b1f24",
-    "text_dim": "#4a5562",
-    "accent": "#1f5fae",
-    "warn": "#6f4600",
-    "grid": "#d5dbe3",
-    "axis": "#5a6573",
-    "trace1": "#d18a00",
-    "trace2": "#00897b",
-    "trace3": "#c2185b",
-    "trace4": "#2e7d32",
-    "zero_db": "#1f5fae",
-    "running": "#2e7d32",
-    "marker": "#1b1f24",
-}
-
-# 配置（I §3.1: 帯の項目・順・文字の大きさ）。文字の大きさは画像の大きさに比例させる。
-# 基準は 1600×1000 で 16 画素。Web の canvas も同じ値を使う前提（いまは Qt だけ）。
-LAYOUT = {
-    "base_px_at_1600x1000": 16.0,
-    "min_px": 11.0,
-    "margin": 1.0,            # 画像の外周の余白（文字の高さに対する倍率。以下同じ）
-    "gap": 0.6,               # 区画どうしの間
-    "item_gap": 1.6,          # 帯の項目どうしの間（字幅の倍率）
-    "table_max_ratio": 0.30,  # マーカー表に使ってよい高さ（画像の高さに対する割合）
-    "table_two_columns_from": 7,  # この行数を超えたら2列に（I §3.2）
-    # 帯の段（I §3.2 の 1〜3・6・5 の順）。マーカー表（4）はグラフのすぐ下に置く
-    "band_rows": ("when", "conditions", "correction", "warnings", "note"),
-}
-
-JP_FONT_FALLBACKS = ("Yu Gothic UI", "Meiryo UI", "Meiryo", "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans")
-
-MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", "Δ周波数 (MHz)", "Δ値 (dB)", "")
-# 数える列は右寄せ（U-17）
-MARKER_RIGHT = (False, True, True, True, False, True, True, False)
+# 規則は report_layout にある。前からこの名前で使っている呼び出し元（画面・試験）のために同じ名前で見せる
+META_KEY = rl.META_KEY
+META_FORMAT = rl.META_FORMAT
+DIVISIONS = rl.DIVISIONS
+DARK_DEFAULT = rl.DARK_DEFAULT
+LIGHT_DEFAULT = rl.LIGHT_DEFAULT
+LAYOUT = rl.LAYOUT
+JP_FONT_FALLBACKS = rl.JP_FONT_FALLBACKS
+MARKER_COLUMNS = rl.MARKER_COLUMNS
+MARKER_RIGHT = rl.MARKER_RIGHT
+resolve_palette = rl.resolve_palette
+format_measured_at = rl.format_measured_at
+legend_text = rl.legend_text
+marker_table_rows = rl.marker_table_rows
+_freq_decimals = rl.freq_decimals
 
 
-# ---------------------------------------------------------------- 配色
+def band_rows(data: dict, note: str = "") -> list[tuple[str, list[str]]]:
+    return rl.band_rows(data, note, APP_VERSION)
 
-def resolve_palette(palette: Union[str, dict, None]) -> dict[str, str]:
-    """"light" / "dark" / 色の組（ユーザー設定）から、全部の名前が揃った配色を返す。
 
-    ユーザー設定に欠けた名前があれば、ライトの初期値で埋める（画像が描けなくなるのを避ける）。
-    """
-    if palette is None or palette == "light":
-        return dict(LIGHT_DEFAULT)
-    if palette == "dark":
-        return dict(DARK_DEFAULT)
-    if isinstance(palette, dict):
-        out = dict(LIGHT_DEFAULT)
-        out.update({k: v for k, v in palette.items() if isinstance(v, str)})
-        return out
-    raise ValueError(f"palette は 'light'・'dark'・dict のどれか: {palette!r}")
+def png_metadata(data: dict, note: str = "") -> dict:
+    return rl.png_metadata(data, note, APP_VERSION)
 
 
 def _color(pal: dict[str, str], key_or_hex: Optional[str], fallback: str = "trace1") -> QColor:
     if key_or_hex and key_or_hex.startswith("#"):
         return QColor(key_or_hex)
     return QColor(pal.get(key_or_hex or fallback, pal[fallback]))
-
-
-# ---------------------------------------------------------------- 帯の文字
-
-def format_measured_at(value: Union[str, datetime, None]) -> str:
-    """`2026-10-01 09:15:30 +09:00` の形（I §3.2）。時差の無い値はこの PC の時差とみなす。"""
-    if value is None:
-        dt = datetime.now().astimezone()
-    elif isinstance(value, datetime):
-        dt = value
-    else:
-        dt = datetime.fromisoformat(str(value))
-    if dt.tzinfo is None:
-        dt = dt.astimezone()
-    off = dt.strftime("%z")  # +0900
-    return dt.strftime("%Y-%m-%d %H:%M:%S ") + f"{off[:3]}:{off[3:]}"
-
-
-def _hz(v: Any) -> str:
-    return format_freq(int(round(float(v))))
-
-
-def _num(v: float) -> str:
-    return f"{float(v):g}"
-
-
-def band_rows(data: dict, note: str = "") -> list[tuple[str, list[str]]]:
-    """帯の段ごとの項目（(色の名前, 項目の並び)）。Qt と Web で同じものを出すため、描画と分けて持つ。"""
-    c = data.get("conditions") or {}
-    unit = c.get("unit", "dBm")
-    rows: dict[str, tuple[str, list[str]]] = {}
-
-    dev = data.get("device") or {}
-    dev_text = " ".join(str(x) for x in (dev.get("model"), f"S/N {dev['serial']}" if dev.get("serial") else None) if x)
-    when = [format_measured_at(data.get("measured_at"))]
-    if dev_text:
-        when.append(dev_text)
-    when.append(f"pyGigaSt {data.get('app_version') or APP_VERSION}")
-    rows["when"] = ("text", when)
-
-    cond: list[str] = []
-    if data.get("mode"):
-        cond.append(str(data["mode"]))
-    if "start_hz" in c and "stop_hz" in c:
-        start, stop = float(c["start_hz"]), float(c["stop_hz"])
-        cond += [f"Start {_hz(start)}", f"Stop {_hz(stop)}",
-                 f"Center {_hz((start + stop) / 2)}", f"Span {_hz(stop - start)}"]
-    if c.get("rbw_hz") is not None:
-        cond.append(f"RBW {_hz(c['rbw_hz'])}")
-    if c.get("points") is not None:
-        s = f"{int(c['points'])} 点"
-        if c.get("step_hz") is not None:
-            s += f"（Step {_hz(c['step_hz'])}）"
-        cond.append(s)
-    if c.get("image_cancel") is not None:
-        cond.append("イメージキャンセル " + ("ON" if c["image_cancel"] else "OFF"))
-    if c.get("ref_level") is not None:
-        cond.append(f"REF {_num(c['ref_level'])} {unit}")
-    if c.get("db_per_div") is not None:
-        cond.append(f"{_num(c['db_per_div'])} dB/div")
-    rows["conditions"] = ("text", cond)
-
-    corr: list[str] = []
-    cal = data.get("calibration")
-    if cal:
-        s = f"校正データ: {cal.get('source', '')}"
-        if cal.get("at"):
-            s += f"（{cal['at']}）"
-        corr.append(s)
-    else:
-        # 無いこと自体が情報（U-15）
-        corr.append("校正データ: なし")
-    nz = data.get("normalization")
-    if nz:
-        s = f"ノーマライズ: {nz.get('name', '')}"
-        if nz.get("at"):
-            s += f"（{nz['at']}）"
-        if nz.get("before_power_cycle"):
-            s += " 電源の入れ直し前の基準"
-        if nz.get("applied") is False:
-            s += " 当てていない"
-            if nz.get("reason"):
-                s += f": {nz['reason']}"
-        corr.append(s)
-    rows["correction"] = ("text", corr)
-
-    warns = [f"注意: {w}" for w in (data.get("warnings") or []) if w]
-    rows["warnings"] = ("warn", warns)
-    memo = (note or data.get("note") or "").strip()
-    rows["note"] = ("text", [f"メモ: {memo}"] if memo else [])
-
-    # 空の段は出さない（U-15）
-    return [rows[k] for k in LAYOUT["band_rows"] if rows[k][1]]
-
-
-def legend_text(tr: dict) -> str:
-    """凡例の1項目: トレースの番号・動作・平均の種類・回数（U-14: 動作は凡例の隣）。"""
-    parts = [str(tr.get("number", "")), str(tr.get("action") or "")]
-    if tr.get("average"):
-        parts.append(str(tr["average"]))
-    if tr.get("count") is not None:
-        cnt = str(tr["count"])
-        if tr.get("count_target"):
-            cnt += f"/{tr['count_target']}"
-        parts.append(cnt)
-    if tr.get("label"):
-        parts.append(str(tr["label"]))
-    return " ".join(p for p in parts if p)
-
-
-def _freq_decimals(values_hz: Iterable[float]) -> int:
-    """MHz で出すときの小数の桁。全部の値が桁を落とさずに出る最小の桁数（最大 6 = 1Hz）。"""
-    vals = [float(v) for v in values_hz if v is not None]
-    for d in range(7):
-        if all(abs(round(v / 1e6, d) - v / 1e6) < 1e-9 for v in vals):
-            return d
-    return 6
-
-
-def marker_table_rows(data: dict) -> list[list[str]]:
-    """マーカー表の行（G §3.3・§3.5 の列）。コピー用の表と同じ中身。"""
-    ms = data.get("markers") or []
-    freqs = [m.get("freq_hz") for m in ms] + [m.get("delta_freq_hz") for m in ms]
-    d = _freq_decimals(f for f in freqs if f is not None)
-    unit = (data.get("conditions") or {}).get("unit", "dBm")
-    out = []
-    for m in ms:
-        name = str(m.get("name", ""))
-        if m.get("child"):
-            name = "  " + name
-        f = m.get("freq_hz")
-        v = m.get("value")
-        df = m.get("delta_freq_hz")
-        dv = m.get("delta_value")
-        out.append([
-            name,
-            str(m["trace"]) if m.get("trace") is not None else "",
-            f"{f / 1e6:.{d}f}" if f is not None else "",
-            f"{v:.2f} {unit}" if v is not None else "",
-            str(m.get("ref") or ""),
-            f"{df / 1e6:+.{d}f}" if df is not None else "",
-            f"{dv:+.2f}" if dv is not None else "",
-            str(m.get("note") or ""),
-        ])
-    return out
-
-
-def png_metadata(data: dict, note: str = "") -> dict:
-    """tEXt に入れる JSON（I §3.3: 帯と同じ内容。トレースの値は入れない——データは保存で残す: I §2）。"""
-    keys = ("device", "mode", "conditions", "calibration", "normalization", "markers", "warnings")
-    meta: dict[str, Any] = {"format": META_FORMAT,
-                            "measured_at": format_measured_at(data.get("measured_at")),
-                            "app_version": data.get("app_version") or APP_VERSION}
-    for k in keys:
-        if data.get(k) is not None:
-            meta[k] = data[k]
-    meta["traces"] = [{k: t.get(k) for k in ("number", "action", "average", "count", "count_target", "label")}
-                      for t in data.get("traces") or [] if t.get("visible", True)]
-    memo = (note or data.get("note") or "").strip()
-    if memo:
-        meta["note"] = memo
-    return meta
 
 
 # ---------------------------------------------------------------- PNG の塊
@@ -379,8 +126,9 @@ class _Painter:
         self.pal = pal
         self.note = note
         self.w, self.h = img.width(), img.height()
-        px = LAYOUT["base_px_at_1600x1000"] * min(self.w / 1600.0, self.h / 1000.0)
-        self.px = max(LAYOUT["min_px"], px)
+        # 配置の数（文字の大きさ・行の高さ・余白・帯・表）は Web と同じ規則から（I §3.1）
+        self.lay = rl.layout(data, (self.w, self.h), note, APP_VERSION)
+        self.px = self.lay["font_px"]
         # 画面と同じ書体を先に。日本語の書体が無い環境でも豆腐にならないよう、候補を並べる
         self.font = QFont(QGuiApplication.font())
         self.font.setFamilies([QGuiApplication.font().family(), *JP_FONT_FALLBACKS])
@@ -389,9 +137,11 @@ class _Painter:
         self.small.setPixelSize(round(self.px * 0.9))
         self.fm = QFontMetricsF(self.font)
         self.fms = QFontMetricsF(self.small)
-        self.lh = self.fm.height()
-        self.margin = self.lh * LAYOUT["margin"]
-        self.gap = self.lh * LAYOUT["gap"]
+        self.lh = self.lay["line_px"]
+        # 行の中の文字の位置（行の高さと書体の高さの差を上下に分ける）
+        self.base = (self.lh - self.fm.height()) / 2 + self.fm.ascent()
+        self.margin = self.lay["margin_px"]
+        self.gap = self.lay["gap_px"]
         self.p = QPainter(img)
         self.p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self.p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -424,7 +174,7 @@ class _Painter:
         """段ごとに、項目の切れ目で折り返した行の並び。1項目が幅を超えるときは文字で切って折り返す。"""
         lines: list[tuple[str, list[str]]] = []
         sep = self.fm.horizontalAdvance("あ") * LAYOUT["item_gap"]
-        for color, items in band_rows(self.data, self.note):
+        for color, items in self.lay["band"]:
             cur: list[str] = []
             cur_w = 0.0
             for it in items:
@@ -456,25 +206,16 @@ class _Painter:
             self.p.setPen(self.c(color))
             x = self.margin
             for it in items:
-                self.p.drawText(QPointF(x, y + self.fm.ascent()), it)
+                self.p.drawText(QPointF(x, y + self.base), it)
                 x += self.fm.horizontalAdvance(it) + sep
             y += self.lh
 
     # ---- マーカー表
     def _fit_table(self, width: float):
-        rows = marker_table_rows(self.data)
-        if not rows:
+        t = self.lay["table"]
+        if not t["rows"]:
             return [], 1, 0, 0.0
-        cols = 2 if len(rows) > LAYOUT["table_two_columns_from"] else 1
-        rows_per_col = math.ceil(len(rows) / cols)
-        max_rows = max(1, int((self.h * LAYOUT["table_max_ratio"]) / self.lh) - 1)  # 見出しの1行を除く
-        if rows_per_col > max_rows:
-            # 収まらない分は数を書いて知らせる（黙って切らない）。全行はデータの保存と tEXt に残る
-            keep = max_rows * cols - 1
-            rest = len(rows) - keep
-            rows = rows[:keep] + [[f"ほか {rest} 行", "", "", "", "", "", "", ""]]
-            rows_per_col = max_rows
-        return rows, cols, rows_per_col, (rows_per_col + 1) * self.lh
+        return t["rows"], t["cols"], t["rows_per_col"], (t["rows_per_col"] + 1) * self.lh
 
     def _draw_table(self, rows: list[list[str]], cols: int, rows_per_col: int, rect: QRectF) -> None:
         self.p.setFont(self.font)
@@ -531,7 +272,7 @@ class _Painter:
         if stop <= start:
             stop = start + 1.0
 
-        y_labels = [_num(ref - i * div) for i in range(DIVISIONS + 1)]
+        y_labels = self.lay["y_labels"]
         axis_w = max(self.fm.horizontalAdvance(s) for s in y_labels + [unit]) + self.fm.horizontalAdvance("あ") * 0.6
         legend_h = self.lh
         # 一番上の目盛（REF）の数字が切れないよう、上に文字の半分の高さを空ける（J §4.3）
@@ -588,12 +329,10 @@ class _Painter:
         self._draw_markers(plot, fx, fy, start, stop, ref, bottom)
 
     def _draw_x_axis(self, plot: QRectF, start: float, stop: float) -> None:
-        ticks = [start + (stop - start) * i / DIVISIONS for i in range(DIVISIONS + 1)]
-        d = _freq_decimals(ticks)
-        labels = [f"{t / 1e6:.{d}f}" for t in ticks]
+        labels = self.lay["x_labels"]
         step_px = plot.width() / DIVISIONS
         widest = max(self.fm.horizontalAdvance(s) for s in labels) + self.fm.horizontalAdvance("0") * 1.5
-        every = next((n for n in (1, 2, 5, 10) if step_px * n >= widest), 10)
+        every = rl.x_label_every(step_px, widest)
         self.p.setFont(self.font)
         self.p.setPen(self.c("text"))
         y = plot.bottom() + self.fm.ascent() + self.lh * 0.15
@@ -604,7 +343,7 @@ class _Painter:
             # 両端の数字は画像の外に出さない
             x = min(max(x, 0.0), self.w - self.margin * 0.3 - tw)
             self.p.drawText(QPointF(x, y), s)
-        title = "周波数 (MHz)"
+        title = self.lay["x_title"]
         tw = self.fm.horizontalAdvance(title)
         self.p.setPen(self.c("text_dim"))
         self.p.drawText(QPointF(plot.center().x() - tw / 2, y + self.lh), title)
@@ -613,11 +352,9 @@ class _Painter:
         self.p.setFont(self.font)
         x = rect.left()
         sw = self.fm.horizontalAdvance("あ") * 1.4
-        for tr in self.data.get("traces") or []:
-            if not tr.get("visible", True):
-                continue
-            s = legend_text(tr)
-            col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")
+        for item in self.lay["legend"]:
+            s = item["text"]
+            col = _color(self.pal, item["color"])
             yc = rect.top() + self.lh / 2
             if x + sw + self.fm.horizontalAdvance(s) > rect.right() + 1:
                 break  # 凡例は1段。あふれる分は描かない（トレースは最大4本なので実際には起きない想定）

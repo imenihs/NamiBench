@@ -12,14 +12,13 @@
 from __future__ import annotations
 
 import math
-import time
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QUrl, Signal
-from PySide6.QtGui import QCursor, QDesktopServices, QFont, QGuiApplication
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
+from PySide6.QtGui import QCursor, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -38,17 +37,21 @@ from PySide6.QtWidgets import (
 
 from ..api.local import LocalApi
 from ..core.units import format_freq
-from . import device_menu, marker_rows, menus, png_data, texts
+from . import device_menu, marker_rows, menu_table, menus, png_data, screen_model, texts
 from .fields import DbField, FreqField, SpanLockButton, ValueField
 from .files import FileActions
 from .graph import make_plot
+from .listen import ListenControl
 from .marker_table import MarkerPanel
 from .plot_layers import MarkerLayer, TraceLayer
 from .prefs import UiPrefs
+from .rtl_panel import RtlPanel
+from .settings_dialog import SettingsDialog
+from .statusbar import StatusBar
 from .tab_display import DisplayTab
 from .tab_markers import MarkerTab
 from .tab_source import SourceTab
-from .tab_traces import TraceTab
+from .tab_traces import TraceTab, disable_item
 from .tasks import TaskPanel
 from .theme import DARK, stylesheet
 from .topbar import ConnectDialog, TopBar
@@ -62,15 +65,9 @@ ZOOM_STEP = 0.8
 # マーカー表に使う高さの既定（グラフとの分割。境目を動かすまではこの割合を保つ）
 TABLE_RATIO = 0.24
 
-# モード（コード・ボタンの文字・名前・使えない理由）。並びが Ctrl+1〜5 の順（J §4.6）
-MODES = (
-    ("sa", "SA", "スペクトラムアナライザ", None),
-    ("tg", "TG", "伝送特性（TG 出力を被測定物へ）", None),
-    ("s11", "S11", "反射", "反射（方向性結合器）は次の回で実装します"),
-    ("sg", "SG", "信号源", None),
-    ("nf", "NF", "NF 測定", "NF 測定は次の回で実装します"),
-)
-MODE_NAMES = {code: name for code, _l, name, _w in MODES}
+# モード（コード・ボタンの文字・名前・使えない理由）は texts.MODES（Web と同じ）
+MODES = texts.MODES
+MODE_NAMES = texts.MODE_NAMES
 
 __all__ = ["MainWindow", "ConnectDialog", "DARK"]
 
@@ -101,7 +98,6 @@ class MainWindow(QMainWindow):
         self.marker_row_list: list[dict] = []
         self._requested: set = set()
         self._had_trace = False
-        self._note_folder: Optional[Path] = None
         self._bridge = _Bridge()
         self._bridge.event.connect(self._on_event, Qt.ConnectionType.QueuedConnection)
         self._bridge.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
@@ -212,93 +208,8 @@ class MainWindow(QMainWindow):
         self.marker_layer = MarkerLayer(self.plot, self.pal, self._on_xy_moved)
 
     def _build_menu(self) -> None:
-        """メニューバー（J §4.3.1）とキー（J §4.6）。上段・タブ・表のボタンも同じ項目を呼ぶ。"""
-        I = menus.Item
-        mode_items = [
-            I(f"mode_{code}", f"{label}（{name}）", (f"Ctrl+{i + 1}",),
-              (lambda c=code: self.call("set_mode", mode=c)) if why is None else None, why)
-            for i, (code, label, name, why) in enumerate(MODES)
-        ]
-        f = self.files
-        table = [
-            ("ファイル(&F)", [
-                I("open", "開く…", ("Ctrl+O",), lambda: f.open_files()),
-                I("save", "保存…", ("Ctrl+S",), f.save),
-                I("export", "書き出し（CSV）…", ("Ctrl+E",), f.export),
-                None,
-                I("png_save", "PNG を保存", ("Ctrl+P",), f.png_save),
-                I("png_copy", "PNG をクリップボードへ", ("Ctrl+Shift+C",), f.png_copy),
-                None,
-                I("record_start", "記録を開始", (), f.record_start),
-                I("record_stop", "記録を止める", (), f.record_stop),
-                I("record_finish", "記録をまとめる…", (), f.record_finish),
-                None,
-                I("quit", "終了", ("Ctrl+Q",), self.close),
-            ]),
-            ("編集(&E)", [
-                I("undo", "条件の変更を戻す", ("Ctrl+Z",), lambda: self._undo_redo("undo")),
-                I("redo", "条件の変更をやり直す", ("Ctrl+Y",), lambda: self._undo_redo("redo")),
-            ]),
-            ("機器(&D)", [
-                I("connect", "接続…", (), self._connect_dialog),
-                I("connect_sim", "シミュレータに接続", (),
-                  lambda: self.call("connect", backend="simulator", serial="SIM00001")),
-                I("disconnect", "切断", (), lambda: self.call("disconnect")),
-                None,
-                I("self_test", "自己診断の結果", (), None, menus.NOT_YET_DIAG),
-            ]),
-            ("掃引(&S)", [
-                I("run_cont", "連続", ("F5",), lambda: self.call("run", mode="continuous")),
-                I("run_single", "単発", ("F6",), lambda: self.call("run", mode="single")),
-                I("stop", "停止", ("F7",), lambda: self.call("stop")),
-                I("pause", "連続 ⇔ 停止", ("Pause",), self._toggle_run),
-            ]),
-            ("モード(&M)", mode_items),
-            ("振幅(&A)", [
-                I("ref_auto", "REF レベルを波形に合わせる（自動）", (), self._ref_auto),
-            ]),
-            ("マーカー(&K)", [
-                I("marker_peak", "選んでいるマーカーをピークへ", ("P",), lambda: self._peak("highest"), None, True),
-                I("marker_peak_left", "次のピーク（左）", ("[",), lambda: self._peak("left"), None, True),
-                I("marker_peak_right", "次のピーク（右）", ("]",), lambda: self._peak("right"), None, True),
-                I("marker_peak_lower", "次に高いピーク", (), lambda: self._peak("lower")),
-                I("marker_left", "マーカーを左へ1点（Shift で10点）", ("Left", "Shift+Left"),
-                  lambda: self._marker_step(-1), None, True),
-                I("marker_right", "マーカーを右へ1点（Shift で10点）", ("Right", "Shift+Right"),
-                  lambda: self._marker_step(+1), None, True),
-                I("marker_here", "マウスの位置に M を置く", ("M",), self._marker_at_mouse, None, True),
-                I("marker_add", "マーカーを追加（ピークに M）", (), self._marker_add_peak),
-                None,
-                I("marker_center", "マーカーの周波数を Center に", (), lambda: self._selected_to("center")),
-                I("marker_ref", "マーカーの値を REF レベルに", (), lambda: self._selected_to("ref")),
-                I("marker_span", "デルタの2点を Start・Stop に", (), lambda: self._selected_to("span")),
-                None,
-                I("marker_remove", "選んでいるマーカーを消す", (), self._marker_remove),
-                I("marker_clear", "マーカーを全部消す", (), self._marker_clear),
-                I("marker_copy", "マーカー表をコピー（タブ区切り）", (), self._marker_copy),
-            ]),
-            ("校正(&C)", [
-                I("cal_freq", "周波数特性…", (), None, menus.NOT_YET_CAL),
-                I("cal_rbw", "RBW…", (), None, menus.NOT_YET_CAL),
-                I("cal_nf", "NF の増幅度…", (), None, menus.NOT_YET_CAL),
-                None,
-                I("cal_legacy", "旧校正ファイルを読み込む…", (), self._import_legacy),
-            ]),
-            ("表示(&V)", [
-                I("view_colors", "配色…", (), None, "配色の編集は次の回で実装します（設計J §4.4）"),
-                I("view_waterfall", "ウォーターフォール", (), None, "ウォーターフォールは次の回で実装します（設計P §3）"),
-                I("view_density", "密度表示", (), None, "密度表示は次の回で実装します（設計P §4）"),
-            ]),
-            ("設定(&O)", [
-                I("settings", "アプリ設定…", (), None, menus.NOT_YET_SETTINGS),
-                I("settings_keys", "キー操作…", (), None, menus.NOT_YET_SETTINGS),
-            ]),
-            ("ヘルプ(&H)", [
-                I("help_keys", "キー操作の一覧", (), self._show_key_table),
-                I("help_about", "pyGigaSt について", (), self._show_about),
-            ]),
-        ]
-        self.actions = menus.build(self, self.plot, table)
+        """メニューバー（J §4.3.1）とキー（J §4.6）。並びと語は texts（Web と同じ）。上段・タブ・表のボタンも同じ項目を呼ぶ。"""
+        self.actions = menus.build(self, self.plot, menu_table.table(self))
 
     def _build_body(self) -> None:
         central = QWidget()
@@ -340,10 +251,8 @@ class MainWindow(QMainWindow):
         top = self.topbar.right
         rbw_box = ValueField("RBW", big=False)
         self.rbw_combo = QComboBox()
-        for hz in (180000, 30000, 15000):
-            self.rbw_combo.addItem(format_freq(hz), hz)
-        self.rbw_combo.activated.connect(
-            lambda i: self._set_sweep(rbw_hz=self.rbw_combo.itemData(i), field=self.rbw_field))
+        self._rbw_key: tuple = ()
+        self.rbw_combo.activated.connect(self._rbw_chosen)
         rbw_box.layout().replaceWidget(rbw_box.edit, self.rbw_combo)
         rbw_box.edit.hide()
         self.rbw_field = rbw_box
@@ -398,7 +307,12 @@ class MainWindow(QMainWindow):
         self.marker_panel.setMinimumHeight(90)
 
         self.trace_tab = TraceTab(self)
+        self.rtl_panel = RtlPanel(self)
+        self.trace_tab.body.insertWidget(1, self.rtl_panel)
         self.marker_tab = MarkerTab(self)
+        self.listen = ListenControl(self)
+        self.marker_tab.body.insertWidget(1, self.listen.panel)
+        self._settings: Optional[SettingsDialog] = None
         self.display_tab = DisplayTab(self)
         self.source_tab = SourceTab(self)
         self.tabs = QTabWidget()
@@ -444,28 +358,14 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, ev)
 
     def _build_status(self) -> None:
-        sb = self.statusBar()
-        self.st_conn = QLabel()
-        self.st_run = QLabel()
-        self.st_time = QLabel()
-        self.st_discard = QLabel()
-        self.st_cal = QLabel()
-        self.st_norm = QLabel()
-        self.st_src = QLabel()
-        self.st_src.setObjectName("warn")
-        self.st_rec = QLabel()
-        self.st_rec.setObjectName("warn")
-        self.st_tasks = QLabel()
-        self.st_note = QLabel()
-        self.note_button = QPushButton("フォルダを開く")
-        self.note_button.setObjectName("small")
-        self.note_button.hide()
-        self.note_button.clicked.connect(self._open_note_folder)
-        for lab in (self.st_conn, self.st_run, self.st_time, self.st_discard, self.st_cal, self.st_norm,
-                    self.st_src, self.st_rec, self.st_tasks):
-            sb.addWidget(lab)
-        sb.addWidget(self.st_note, 1)
-        sb.addWidget(self.note_button)
+        self.status = StatusBar(self)
+        # 試験と他の部品が使う名前（項目は texts.status_items の key）
+        lab = self.status.labels
+        self.st_conn, self.st_run, self.st_time, self.st_discard = lab["conn"], lab["run"], lab["time"], lab["discard"]
+        self.st_cal, self.st_norm, self.st_src, self.st_rec = lab["cal"], lab["norm"], lab["src"], lab["rec"]
+        self.st_tasks, self.st_listen, self.st_rtltcp = lab["tasks"], lab["listen"], lab["rtltcp"]
+        self.st_note = self.status.note
+        self.note_button = self.status.note_button
 
     def _style_axes(self) -> None:
         for ax in ("left", "bottom"):
@@ -499,6 +399,34 @@ class MainWindow(QMainWindow):
             self.actions["stop"].trigger()
         elif state == "stopped":
             self.actions["run_cont"].trigger()
+
+    def _apply_rbw(self, st: dict) -> None:
+        """RBW の選択肢は機器ごと（設計Q §6.4: FFT の機器は窓ごとにまとめる）。好みの RBW を選んで見せる。"""
+        groups = screen_model.rbw_groups(st)
+        key = tuple((g["window"], tuple(c["hz"] for c in g["choices"])) for g in groups)
+        if key != self._rbw_key:
+            self._rbw_key = key
+            self.rbw_combo.clear()
+            for g in groups:
+                if g["label"]:
+                    # 窓の名前の見出し（選べない行）。説明はツールチップ
+                    self.rbw_combo.addItem(g["label"], None)
+                    disable_item(self.rbw_combo, self.rbw_combo.count() - 1, g["note"])
+                for c in g["choices"]:
+                    self.rbw_combo.addItem(("  " if g["label"] else "") + c["text"], c["hz"])
+                    if g["note"]:
+                        self.rbw_combo.setItemData(self.rbw_combo.count() - 1, g["note"], Qt.ItemDataRole.ToolTipRole)
+        pref = st["sweep"]["rbw_preference_hz"]
+        i = self.rbw_combo.findData(pref)
+        if i >= 0:
+            self.rbw_combo.setCurrentIndex(i)
+        w = screen_model.rbw_window_of(st, pref)
+        self.rbw_combo.setToolTip(next((g["note"] for g in groups if g["window"] == w), ""))
+
+    def _rbw_chosen(self, i: int) -> None:
+        hz = self.rbw_combo.itemData(i)
+        if hz is not None:
+            self._set_sweep(rbw_hz=hz, field=self.rbw_field)
 
     # ------------------------------------------------------------------ 縦軸（J §4.1。正本はコアの amplitude）
 
@@ -682,10 +610,10 @@ class MainWindow(QMainWindow):
         m.setToolTipsVisible(True)
         why = self._freq_ops_reason()
         hz = int(round(x))
-        act = m.addAction("ここを Center に" + ("" if why else f"（{format_freq(hz)}）"))
+        act = m.addAction(texts.LABELS["ctx_center"] + ("" if why else texts.tpl("paren", text=format_freq(hz))))
         act.setObjectName("ctx_center")
         act.triggered.connect(lambda: self._set_sweep(center_hz=hz, field=self.f_center))
-        act2 = m.addAction("ここにマーカー" + ("" if why else f"（{format_freq(hz)}）"))
+        act2 = m.addAction(texts.LABELS["ctx_marker"] + ("" if why else texts.tpl("paren", text=format_freq(hz))))
         act2.setObjectName("ctx_marker")
         act2.triggered.connect(lambda: self._marker_add_at(x, y))
         for a in (act, act2):
@@ -693,18 +621,23 @@ class MainWindow(QMainWindow):
                 a.setEnabled(False)
                 a.setToolTip(why)
         level = round(y, 1)
-        act = m.addAction(f"REF をここに（{level:.1f} {self.display_unit()}）")
+        act = m.addAction(texts.LABELS["ctx_ref"].replace("{level}", f"{level:.1f}").replace("{unit}", self.display_unit()))
         act.setObjectName("ctx_ref")
         act.triggered.connect(lambda: self._set_ref(level))
         sel = self.selected_marker
         if sel:
             m.addSeparator()
-            for text, target, name in ((f"{sel} の周波数を Center に", "center", "ctx_m_center"),
-                                       (f"{sel} の値を REF レベルに", "ref", "ctx_m_ref"),
-                                       (f"{sel} とデルタの基準を Start・Stop に", "span", "ctx_m_span")):
-                a = m.addAction(text)
+            for target, name in (("center", "ctx_m_center"), ("ref", "ctx_m_ref"), ("span", "ctx_m_span")):
+                a = m.addAction(texts.LABELS[name].replace("{m}", sel))
                 a.setObjectName(name)
                 a.triggered.connect(lambda _=False, t=target: self.marker_to(sel, t))
+            # マーカーの位置を聞く（設計Q §6.8）。使えないときは理由を出す（U-08）
+            a = m.addAction(texts.LABELS["ctx_m_listen"].replace("{m}", sel).replace("{start}", texts.LISTEN_LABELS["start"]))
+            a.setObjectName("ctx_m_listen")
+            why = self.listen.start_reason()
+            a.setEnabled(why is None)
+            a.setToolTip(why or "")
+            a.triggered.connect(self.listen.start_selected)
         return m
 
     # ------------------------------------------------------------------ マーカー（設計G。命令は A §4.3.1）
@@ -809,24 +742,16 @@ class MainWindow(QMainWindow):
             menus.set_reason(self.actions[code], why)
         sel = self._selected_row()
         menus.set_reason(self.actions["marker_span"],
-                         why or (None if sel and sel.get("ref") else "デルタの基準を選ぶと使えます"))
+                         why or (None if sel and sel.get("ref") else texts.REASON_TEXTS["delta_ref"]))
+        if hasattr(self, "listen"):
+            self.listen.refresh()
+            self.rtl_panel.refresh_markers()
 
     # ------------------------------------------------------------------ 画像のための中身（設計I §3.2）
 
     def source_text(self) -> str:
         """信号源が出ていることの表示（U-05: 状態は画面が示す）。掃引している間だけ出す。"""
-        st = self.state
-        if not st:
-            return ""
-        running = st["run"]["state"] in ("continuous", "single", "stopping", "reference")
-        if st["connection"]["state"] != "connected" or not running:
-            return ""
-        mode = st["sweep"]["mode"]
-        if mode == "sg" and st["sweep"].get("sg_hz") is not None:
-            return f"SG 出力中 {format_freq(st['sweep']['sg_hz'])}"
-        if mode in ("tg", "s11"):
-            return "TG 出力中"
-        return ""
+        return texts.source_text(self.state)
 
     def png_data(self) -> dict:
         return png_data.build(self)
@@ -841,6 +766,13 @@ class MainWindow(QMainWindow):
 
     def _connect_dialog(self) -> None:
         device_menu.connect_dialog(self)
+
+    def _settings_dialog(self) -> None:
+        if self._settings is None:
+            self._settings = SettingsDialog(self)
+            self._settings.finished.connect(lambda _r: setattr(self, "_settings", None))
+        self._settings.show()
+        self._settings.raise_()
 
     def _import_legacy(self) -> None:
         device_menu.import_legacy(self)
@@ -860,7 +792,9 @@ class MainWindow(QMainWindow):
             if payload.get("kind") == "task":
                 self.task_panel.on_progress(payload)
             elif payload.get("kind") == "waiting_sweep_end":
-                self.status_note(f"いまの掃引の終わりを待っています（残り約 {payload['remaining_s']:.1f} 秒）")
+                self.status_note(texts.waiting_text(payload["remaining_s"]))
+        elif kind == "audio":
+            self.listen.on_audio(payload)
 
     def _on_trace(self, payload: dict) -> None:
         t = {"trace": 1, "source": "live", **payload}
@@ -875,23 +809,17 @@ class MainWindow(QMainWindow):
                 self._update_unit()
 
     def _on_notice(self, n: dict) -> None:
+        """知らせの出し方は texts.notice_view（Web と同じ文）。トレースの知らせはその行にも出す。"""
         code = n.get("code", "")
-        d = n.get("detail") or {}
         if code in ("task_done", "task_failed", "task_cancelled"):
-            self.files.on_task_end(code, d)
-        elif code == "trace":
-            for c in d.get("codes") or []:
-                self._trace_note(d.get("trace"), texts.TRACE_NOTICES.get(c, c))
-        elif code == "trace_reset":
-            for num in d.get("traces") or []:
-                self._trace_note(num, texts.trace_reset_text(d))
-        elif code in texts.TRACE_NOTICES:
-            self._trace_note(d.get("trace"), texts.TRACE_NOTICES[code])
-        elif code == "normalization":
-            text = texts.normalization_text({**(self.state.get("normalization") or {}), **d, "used": True})
-            self.status_note(text or "ノーマライズの状態が変わりました")
-        else:
-            self.status_note(texts.notice_text(n))
+            self.files.on_task_end(code, n.get("detail") or {})
+            return
+        v = texts.notice_view(n, self.state)
+        for num, text in v["traces"].items():
+            row = self.trace_tab.rows.get(int(num)) if str(num).isdigit() else None
+            if row is not None:
+                row.flash(text)
+        self.status_note(v["text"])
 
     def _trace_note(self, number, text: str) -> None:
         row = self.trace_tab.rows.get(number) if isinstance(number, int) else None
@@ -934,25 +862,28 @@ class MainWindow(QMainWindow):
         self.f_span.set_hz(sw["span_hz"])
         self.f_start.set_hz(sw["start_hz"])
         self.f_stop.set_hz(sw["stop_hz"])
-        i = self.rbw_combo.findData(sw["rbw_preference_hz"])
-        if i >= 0:
-            self.rbw_combo.setCurrentIndex(i)
-        cond = []
-        if sw["rbw_hz"] != sw["rbw_preference_hz"]:
-            cond.append(f"RBW は {format_freq(sw['rbw_hz'])} で測っています（TG・NF・S11、または Span 50MHz 超では 180kHz 固定。条件から出ると {format_freq(sw['rbw_preference_hz'])} に戻ります）")
-        cond += [texts.WARNINGS.get(w, w) for w in sw.get("warnings", [])]
-        if sw.get("tail_gap"):
-            cond.append("Stop の手前 1 Step 未満はデータがありません（機器の上限）")
+        self._apply_rbw(st)
+        cond = texts.condition_lines(st)
         self.cond_label.setText("\n".join(cond))
         self.cond_label.setVisible(bool(cond))
+        reasons = screen_model.mode_reasons(st)
         for code, b in self.mode_buttons.items():
             b.setChecked(code == sw["mode"])
+            why = reasons.get(code)
+            b.setEnabled(why is None)
+            b.setToolTip(menus.tooltip_for(self.actions[f"mode_{code}"], texts.MODE_NAMES[code])
+                         + (f" — {why}" if why else ""))
+            menus.set_reason(self.actions[f"mode_{code}"], why)
         self.span_lock.show_lock(sw.get("span_lock_hz"), sw["span_hz"], format_freq)
         self.plot.getPlotItem().getViewBox().freq_ops_enabled = self._freq_ops_reason() is None
         if self._amp_pending == 0:
             self._take_amplitude(st.get("amplitude") or {})
         self._update_x_axis()
         self.trace_tab.apply_state(st)
+        self.rtl_panel.apply(st)
+        self.listen.apply(st)
+        if self._settings is not None:
+            self._settings.apply(st)
         self.source_tab.apply_state(st)
         for n in self.traces.apply_trace_states(st.get("traces") or []):
             self._request_trace(n)
@@ -988,26 +919,9 @@ class MainWindow(QMainWindow):
         menus.set_reason(a["save"], None if has_data else "保存する値がありません（掃引してください）")
 
     def _apply_status(self, st: dict) -> None:
-        conn = st["connection"]
-        ident = conn.get("identity") or {}
-        cs = texts.CONN_STATES.get(conn["state"], conn["state"])
-        who = f" {ident.get('serial', '')} {ident.get('port', '')}" if ident else ""
-        self.st_conn.setText(f"● {cs}{who}")
+        self.status.apply(st)
         run = st["run"]
-        rs = texts.RUN_STATES.get(run["state"], run["state"])
-        if run["state"] == "single" or (run["state"] == "stopped" and run.get("last_stop_reason") == "single_done"):
-            rs += f" {run['single_done']}/{run['single_target']} 回"
-        self.st_run.setText(f"掃引: {rs}")
-        self.st_time.setText(f"掃引時間 {run['last_sweep_s']:.2f} 秒" if run.get("last_sweep_s") else "掃引時間 —")
-        self.st_discard.setText(f"捨てた掃引 {run['discard_count']} 回")
-        cal = st.get("calibration")
-        self.st_cal.setText("補正: " + (f"校正データ {cal['created_at']}" if cal else "校正データなし（補正なしの値）"))
-        for lab, text in ((self.st_norm, texts.normalization_text(st.get("normalization") or {})),
-                          (self.st_src, self.source_text()),
-                          (self.st_rec, self._recording_text(st.get("recording") or {})),
-                          (self.st_tasks, f"処理中 {len(st.get('tasks') or [])} 件" if st.get("tasks") else "")):
-            lab.setText(text)
-            lab.setVisible(bool(text))
+        conn = st["connection"]
         running = run["state"] in ("continuous", "single")
         self.btn_cont.setProperty("running", run["state"] == "continuous")
         self.btn_single.setProperty("running", run["state"] == "single")
@@ -1018,15 +932,6 @@ class MainWindow(QMainWindow):
         self.btn_cont.setEnabled(connected)
         self.btn_single.setEnabled(connected)
         self.btn_stop.setEnabled(running or run["state"] == "stopping")
-
-    @staticmethod
-    def _recording_text(rec: dict) -> str:
-        if rec.get("active"):
-            s = int(rec.get("elapsed_s") or 0)
-            return f"● 記録中 {s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}・{rec.get('sweeps', 0)} 回"
-        if rec.get("stopped"):
-            return "記録を止めました（まとめていません）"
-        return ""
 
     def _update_x_axis(self) -> None:
         sw = self.state.get("sweep")
@@ -1044,16 +949,9 @@ class MainWindow(QMainWindow):
 
     def status_note(self, text: str, folder: Optional[Path] = None) -> None:
         """一度きりの知らせ（U-05）。保存したものなら、そこから保存先を開ける（U-11・I §3.4）。"""
-        self.st_note.setText(f"{time.strftime('%H:%M:%S')} {text}")
-        self.st_note.setToolTip(text)
-        self._note_folder = Path(folder) if folder else None
-        self.note_button.setVisible(folder is not None)
+        self.status.show_note(text, folder)
 
     _status_note = status_note
-
-    def _open_note_folder(self) -> None:
-        if self._note_folder is not None:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._note_folder)))
 
     @staticmethod
     def _dropped_paths(mime) -> list[str]:
@@ -1085,6 +983,7 @@ class MainWindow(QMainWindow):
         if lost and not self.confirm("閉じる", "閉じると次のようになります。閉じますか？\n" + "\n".join(lost)):
             e.ignore()
             return
+        self.listen.close()
         self.prefs.set("vsplit", self.vsplit.sizes())
         self.prefs.set("hsplit", self.hsplit.sizes())
         self._unsub()

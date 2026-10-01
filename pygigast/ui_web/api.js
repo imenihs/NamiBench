@@ -10,6 +10,8 @@
       this.code = e.code;
       this.field = e.field;
       this.detail = e.detail || {};
+      // 画面の文（サーバーが Qt と同じ texts.error_text で作って足す: view.py）
+      this.text = e.text || "";
       this.status = status;
     }
   }
@@ -37,7 +39,7 @@
     return res.json();
   }
 
-  // トレースのバイナリ（server.py の encode_trace）を読む:
+  // トレースと音のバイナリ（server.py の encode_trace・encode_audio）を読む:
   // [見出しの長さ uint32 LE][見出し JSON][値 float32 LE]。値の NaN（値なし）は null にする（uPlot の途切れ）
   function decodeTrace(buf) {
     const dv = new DataView(buf);
@@ -67,7 +69,9 @@
           const m = JSON.parse(ev.data);
           this.h.onEvent(m.kind, m.payload);
         } else {
-          this.h.onEvent("trace", decodeTrace(ev.data));
+          // バイナリはトレースと聞く機能の音（見出しの kind で分ける）
+          const m = decodeTrace(ev.data);
+          this.h.onEvent(m.kind === "audio" ? "audio" : "trace", m);
         }
       };
       ws.onclose = () => {

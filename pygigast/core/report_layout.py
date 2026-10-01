@@ -1,0 +1,446 @@
+"""画像出力（設計I）の配置・帯・マーカー表の規則。Qt と Web が同じものを使う（I §3.1・§3.5・J §5）。
+
+I §3.1 の「配置（帯の項目・順・文字の大きさ）はコアのデータとして1つ持ち、両方の描画がそれを使う」を
+実装したもの。Qt（ui_qt/png_export.py）は直接呼び、Web（ui_web/png.js）は Web の口の
+`POST /api/v1/png_layout` でここの結果を受け取る。
+
+- ここにあるのは「データ → 行の並び・配置の数」だけ。文字の幅を測って折り返すのと、線や文字を描くのは描く側
+  （書体の幅は描く部品でしか測れないため）
+- 帯とマーカー表の文字（「校正データ: なし」など）は画像の配置の一部（I §3.2）なのでここに置く。
+  画面の文言（ui_qt/texts.py）とは別に、画像にだけ焼き込む語
+- Qt を import しない（Web の口が画面なしで使う）
+
+データ（build_data の戻り値・png_export.render_png の data）の形::
+
+    {
+      "measured_at": "2026-10-01T09:15:30+09:00",   # ISO 8601。時差なしならこの PC の時差とみなす
+      "device": {"model": "GigaSt v5", "serial": "..."},
+      "app_version": "0.1.0",
+      "mode": "スペクトラムアナライザ",
+      "conditions": {"start_hz", "stop_hz", "rbw_hz", "points", "step_hz", "image_cancel" (None なら出さない),
+                     "ref_level", "db_per_div", "unit"},
+      "calibration": {"source": "...", "at": "..."} | None,      # None は「校正データ: なし」
+      "normalization": {"name", "at", "applied", "before_power_cycle", "reason"} | None,
+      "traces": [{"number", "action", "average", "count", "count_target", "label", "color", "visible",
+                  "start_hz", "step_hz", "points", "values_db", "flags"}],   # 値は Qt が描くときだけ
+      "markers": [{"name", "kind", "trace", "freq_hz", "value", "ref", "delta_freq_hz", "delta_value",
+                   "child", "note"}],
+      "warnings": ["..."],
+      "note": "",
+    }
+"""
+from __future__ import annotations
+
+import datetime as _dt
+import math
+from typing import Any, Iterable, Optional, Union
+
+from .units import format_freq
+
+META_KEY = "pygigast"
+META_FORMAT = 1
+DIVISIONS = 10
+MIN_SIZE = (320, 240)
+
+# 配色の初期値（設計J §4.4 の表）。Qt の画面・PNG と Web の画面・PNG が同じ値を使う。
+# J §4.4 は「マーカー」の色を名前だけ挙げて値を決めていないので、文字の色と同じにしている（I §3.5）
+DARK_DEFAULT: dict[str, str] = {
+    "graph_bg": "#15181d",
+    "panel_bg": "#1e232b",
+    "text": "#e6e9ee",
+    "text_dim": "#aab3c0",
+    "accent": "#4fa3ff",
+    "warn": "#ffcc66",
+    "grid": "#2a313c",
+    "axis": "#3a4452",
+    "trace1": "#ffd24a",
+    "trace2": "#4fd1c5",
+    "trace3": "#ff7aa8",
+    "trace4": "#9fe870",
+    "zero_db": "#7fb3ff",
+    "running": "#1f6f3a",
+    "marker": "#e6e9ee",
+}
+LIGHT_DEFAULT: dict[str, str] = {
+    "graph_bg": "#ffffff",
+    "panel_bg": "#f4f6f9",
+    "text": "#1b1f24",
+    "text_dim": "#4a5562",
+    "accent": "#1f5fae",
+    "warn": "#6f4600",
+    "grid": "#d5dbe3",
+    "axis": "#5a6573",
+    "trace1": "#d18a00",
+    "trace2": "#00897b",
+    "trace3": "#c2185b",
+    "trace4": "#2e7d32",
+    "zero_db": "#1f5fae",
+    "running": "#2e7d32",
+    "marker": "#1b1f24",
+}
+
+# 配置（I §3.1: 帯の項目・順・文字の大きさ）。文字の大きさは画像の大きさに比例させる（1600×1000 で 16 画素）。
+# 長さはどれも文字の大きさ（px）に対する倍率
+LAYOUT = {
+    "base_px_at_1600x1000": 16.0,
+    "min_px": 11.0,
+    "line_height": 1.4,       # 1行の高さ。Qt と Web で同じ行の数が収まるよう、書体の測り方に頼らず決める
+    "margin": 1.4,            # 画像の外周の余白
+    "gap": 0.84,              # 区画どうしの間
+    "item_gap": 1.6,          # 帯の項目どうしの間（全角1字の幅に対する倍率）
+    "table_max_ratio": 0.30,  # マーカー表に使ってよい高さ（画像の高さに対する割合）
+    "table_two_columns_from": 7,  # この行数を超えたら2列に（I §3.2）
+    # 帯の段（I §3.2 の 1〜3・6・5 の順）。マーカー表（4）はグラフのすぐ下に置く
+    "band_rows": ("when", "conditions", "correction", "warnings", "note"),
+}
+
+JP_FONT_FALLBACKS = ("Yu Gothic UI", "Meiryo UI", "Meiryo", "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans")
+
+MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", "Δ周波数 (MHz)", "Δ値 (dB)", "")
+# 数える列は右寄せ（U-17）
+MARKER_RIGHT = (False, True, True, True, False, True, True, False)
+X_AXIS_TITLE = "周波数 (MHz)"
+X_AXIS_TITLE_ZERO_SPAN = "点（ゼロスパン）"
+
+
+# ---------------------------------------------------------------- 配色
+
+def resolve_palette(palette: Union[str, dict, None]) -> dict[str, str]:
+    """"light" / "dark" / 色の組（ユーザー設定）から、全部の名前が揃った配色を返す。
+
+    ユーザー設定に欠けた名前があれば、ライトの初期値で埋める（画像が描けなくなるのを避ける）。
+    """
+    if palette is None or palette == "light":
+        return dict(LIGHT_DEFAULT)
+    if palette == "dark":
+        return dict(DARK_DEFAULT)
+    if isinstance(palette, dict):
+        out = dict(LIGHT_DEFAULT)
+        out.update({k: v for k, v in palette.items() if isinstance(v, str)})
+        return out
+    raise ValueError(f"palette は 'light'・'dark'・dict のどれか: {palette!r}")
+
+
+# ---------------------------------------------------------------- 大きさ
+
+def font_px(width: int, height: int) -> float:
+    """文字の大きさ（画素）。画像の大きさに比例させ、下限を持つ。"""
+    px = LAYOUT["base_px_at_1600x1000"] * min(width / 1600.0, height / 1000.0)
+    return max(LAYOUT["min_px"], px)
+
+
+def line_px(px: float) -> float:
+    return px * LAYOUT["line_height"]
+
+
+def check_size(width: int, height: int) -> None:
+    if width < MIN_SIZE[0] or height < MIN_SIZE[1]:
+        raise ValueError(f"画像が小さすぎる: {width}x{height}")
+
+
+# ---------------------------------------------------------------- 帯の文字
+
+def format_measured_at(value: Union[str, _dt.datetime, None]) -> str:
+    """`2026-10-01 09:15:30 +09:00` の形（I §3.2）。時差の無い値はこの PC の時差とみなす。"""
+    if value is None:
+        dt = _dt.datetime.now().astimezone()
+    elif isinstance(value, _dt.datetime):
+        dt = value
+    else:
+        dt = _dt.datetime.fromisoformat(str(value))
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+    off = dt.strftime("%z")  # +0900
+    return dt.strftime("%Y-%m-%d %H:%M:%S ") + f"{off[:3]}:{off[3:]}"
+
+
+def _hz(v: Any) -> str:
+    return format_freq(int(round(float(v))))
+
+
+def _num(v: float) -> str:
+    return f"{float(v):g}"
+
+
+def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[str, list[str]]]:
+    """帯の段ごとの項目（(色の名前, 項目の並び)）。空の段は出さない（U-15）。"""
+    c = data.get("conditions") or {}
+    unit = c.get("unit", "dBm")
+    rows: dict[str, tuple[str, list[str]]] = {}
+
+    dev = data.get("device") or {}
+    dev_text = " ".join(str(x) for x in (dev.get("model"), f"S/N {dev['serial']}" if dev.get("serial") else None) if x)
+    when = [format_measured_at(data.get("measured_at"))]
+    if dev_text:
+        when.append(dev_text)
+    when.append(f"pyGigaSt {data.get('app_version') or app_version}".strip())
+    rows["when"] = ("text", when)
+
+    cond: list[str] = []
+    if data.get("mode"):
+        cond.append(str(data["mode"]))
+    if c.get("start_hz") is not None and c.get("stop_hz") is not None:
+        start, stop = float(c["start_hz"]), float(c["stop_hz"])
+        cond += [f"Start {_hz(start)}", f"Stop {_hz(stop)}",
+                 f"Center {_hz((start + stop) / 2)}", f"Span {_hz(stop - start)}"]
+    if c.get("rbw_hz") is not None:
+        cond.append(f"RBW {_hz(c['rbw_hz'])}")
+    if c.get("points") is not None:
+        s = f"{int(c['points'])} 点"
+        if c.get("step_hz") is not None:
+            s += f"（Step {_hz(c['step_hz'])}）"
+        cond.append(s)
+    if c.get("image_cancel") is not None:
+        cond.append("イメージキャンセル " + ("ON" if c["image_cancel"] else "OFF"))
+    if c.get("ref_level") is not None:
+        cond.append(f"REF {_num(c['ref_level'])} {unit}")
+    if c.get("db_per_div") is not None:
+        cond.append(f"{_num(c['db_per_div'])} dB/div")
+    rows["conditions"] = ("text", cond)
+
+    corr: list[str] = []
+    cal = data.get("calibration")
+    if cal:
+        s = f"校正データ: {cal.get('source', '')}"
+        if cal.get("at"):
+            s += f"（{cal['at']}）"
+        corr.append(s)
+    else:
+        # 無いこと自体が情報（U-15）
+        corr.append("校正データ: なし")
+    nz = data.get("normalization")
+    if nz:
+        s = f"ノーマライズ: {nz.get('name', '')}"
+        if nz.get("at"):
+            s += f"（{nz['at']}）"
+        if nz.get("before_power_cycle"):
+            s += " 電源の入れ直し前の基準"
+        if nz.get("applied") is False:
+            s += " 当てていない"
+            if nz.get("reason"):
+                s += f": {nz['reason']}"
+        corr.append(s)
+    rows["correction"] = ("text", corr)
+
+    warns = [f"注意: {w}" for w in (data.get("warnings") or []) if w]
+    rows["warnings"] = ("warn", warns)
+    memo = (note or data.get("note") or "").strip()
+    rows["note"] = ("text", [f"メモ: {memo}"] if memo else [])
+    return [rows[k] for k in LAYOUT["band_rows"] if rows[k][1]]
+
+
+def legend_text(tr: dict) -> str:
+    """凡例の1項目: トレースの番号・動作・平均の種類・回数（U-14: 動作は凡例の隣）。"""
+    parts = [str(tr.get("number", "")), str(tr.get("action") or "")]
+    if tr.get("average"):
+        parts.append(str(tr["average"]))
+    if tr.get("count") is not None:
+        cnt = str(tr["count"])
+        if tr.get("count_target"):
+            cnt += f"/{tr['count_target']}"
+        parts.append(cnt)
+    if tr.get("label"):
+        parts.append(str(tr["label"]))
+    return " ".join(p for p in parts if p)
+
+
+def freq_decimals(values_hz: Iterable[Optional[float]]) -> int:
+    """MHz で出すときの小数の桁。全部の値が桁を落とさずに出る最小の桁数（最大 6 = 1Hz）。"""
+    vals = [float(v) for v in values_hz if v is not None]
+    for d in range(7):
+        if all(abs(round(v / 1e6, d) - v / 1e6) < 1e-9 for v in vals):
+            return d
+    return 6
+
+
+# ---------------------------------------------------------------- マーカー表
+
+def marker_table_rows(data: dict) -> list[list[str]]:
+    """マーカー表の行の文字（列は MARKER_COLUMNS）。コピー用の表と同じ中身。"""
+    ms = data.get("markers") or []
+    freqs = [m.get("freq_hz") for m in ms] + [m.get("delta_freq_hz") for m in ms]
+    d = freq_decimals(f for f in freqs if f is not None)
+    unit = (data.get("conditions") or {}).get("unit", "dBm")
+    out = []
+    for m in ms:
+        name = str(m.get("name", ""))
+        if m.get("child"):
+            name = "  " + name
+        f, v = m.get("freq_hz"), m.get("value")
+        df, dv = m.get("delta_freq_hz"), m.get("delta_value")
+        out.append([
+            name,
+            str(m["trace"]) if m.get("trace") is not None else "",
+            f"{f / 1e6:.{d}f}" if f is not None else "",
+            f"{v:.2f} {m.get('unit') or unit}" if v is not None else "",
+            str(m.get("ref") or ""),
+            f"{df / 1e6:+.{d}f}" if df is not None else "",
+            f"{dv:+.2f}" if dv is not None else "",
+            str(m.get("note") or ""),
+        ])
+    return out
+
+
+def fit_table(rows: list[list[str]], height: float, line_h: float) -> tuple[list[list[str]], int, int]:
+    """表を画像の高さの上限（table_max_ratio）に収める。(行, 列の数, 1列あたりの行数) を返す。
+
+    行が table_two_columns_from を超えたら2列。収まらない分は最後の行を「ほか N 行」にする
+    （黙って切らない。全行は tEXt と保存に残る: I §3.5）。見出しの1行は行数に含めない。
+    """
+    if not rows:
+        return [], 1, 0
+    cols = 2 if len(rows) > LAYOUT["table_two_columns_from"] else 1
+    rows_per_col = math.ceil(len(rows) / cols)
+    max_rows = max(1, int((height * LAYOUT["table_max_ratio"]) / line_h) - 1)
+    if rows_per_col > max_rows:
+        keep = max_rows * cols - 1
+        rest = len(rows) - keep
+        rows = rows[:keep] + [[f"ほか {rest} 行"] + [""] * (len(MARKER_COLUMNS) - 1)]
+        rows_per_col = max_rows
+    return rows, cols, rows_per_col
+
+
+# ---------------------------------------------------------------- 目盛
+
+def y_labels(ref: float, div: float) -> list[str]:
+    """縦軸の数字（上から。REF が一番上: J §4.1）。"""
+    return [_num(ref - i * div) for i in range(DIVISIONS + 1)]
+
+
+def x_labels(start: float, stop: float) -> list[str]:
+    """横軸の数字（MHz。全部の目盛で桁をそろえる）。"""
+    ticks = [start + (stop - start) * i / DIVISIONS for i in range(DIVISIONS + 1)]
+    d = freq_decimals(ticks)
+    return [f"{t / 1e6:.{d}f}" for t in ticks]
+
+
+def x_label_every(step_px: float, widest_px: float) -> int:
+    """横軸の数字を何目盛ごとに出すか（重ならない最小の間隔）。"""
+    return next((n for n in (1, 2, 5, 10) if step_px * n >= widest_px), 10)
+
+
+# ---------------------------------------------------------------- メタデータ
+
+def png_metadata(data: dict, note: str = "", app_version: str = "") -> dict:
+    """tEXt に入れる JSON（I §3.3: 帯と同じ内容。トレースの値は入れない——データは保存で残す: I §2）。"""
+    keys = ("device", "mode", "conditions", "calibration", "normalization", "markers", "warnings")
+    meta: dict[str, Any] = {"format": META_FORMAT,
+                            "measured_at": format_measured_at(data.get("measured_at")),
+                            "app_version": data.get("app_version") or app_version}
+    for k in keys:
+        if data.get(k) is not None:
+            meta[k] = data[k]
+    meta["traces"] = [{k: t.get(k) for k in ("number", "action", "average", "count", "count_target", "label")}
+                      for t in data.get("traces") or [] if t.get("visible", True)]
+    memo = (note or data.get("note") or "").strip()
+    if memo:
+        meta["note"] = memo
+    return meta
+
+
+def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str = "") -> dict:
+    """描く側（Web の canvas）へ渡す配置の一式。Qt の png_export も同じ関数の結果で描く。
+
+    返すもの: 文字の大きさ・行の高さ・余白・帯の段・マーカー表（見出し・行・右寄せ・列の数）・凡例・
+    縦軸と横軸の数字・PNG の tEXt の中身。帯の折り返し（文字の幅で決まる）は描く側が行う。
+    """
+    w, h = int(size[0]), int(size[1])
+    check_size(w, h)
+    px = font_px(w, h)
+    lh = line_px(px)
+    c = data.get("conditions") or {}
+    rows, cols, per_col = fit_table(marker_table_rows(data), h, lh)
+    start = float(c.get("start_hz") or 0.0)
+    stop = float(c.get("stop_hz") or start + 1.0)
+    if stop <= start:
+        stop = start + 1.0
+    return {
+        "size": [w, h],
+        "font_px": px,
+        "line_px": lh,
+        "margin_px": px * LAYOUT["margin"],
+        "gap_px": px * LAYOUT["gap"],
+        "item_gap": LAYOUT["item_gap"],
+        "fonts": list(JP_FONT_FALLBACKS),
+        "band": [[color, items] for color, items in band_rows(data, note, app_version)],
+        "table": {"header": list(MARKER_COLUMNS), "right": list(MARKER_RIGHT), "rows": rows,
+                  "cols": cols, "rows_per_col": per_col},
+        "legend": [{"number": t.get("number"), "color": t.get("color") or f"trace{t.get('number', 1)}",
+                    "text": legend_text(t)}
+                   for t in data.get("traces") or [] if t.get("visible", True)],
+        "y_labels": y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0))),
+        "x_labels": x_labels(start, stop),
+        "x_title": X_AXIS_TITLE,
+        "unit": c.get("unit", "dBm"),
+        "meta": png_metadata(data, note, app_version),
+        "meta_key": META_KEY,
+    }
+
+
+# ---------------------------------------------------------------- 状態から中身を作る
+
+def _when(ts: Optional[float]) -> str:
+    if not ts:
+        return ""
+    return _dt.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
+
+
+def calibration_of(state: dict) -> Optional[dict]:
+    """帯の「校正データ」。GigaSt は校正ファイル、RTL-SDR は個体の校正（ppm・レベル: 設計Q §6.6）。"""
+    conn = state.get("connection") or {}
+    rtl = state.get("rtlsdr") or {}
+    if rtl.get("connected") or conn.get("sweep_kind") == "fft":
+        cal = rtl.get("calibration")
+        if not cal:
+            return None
+        parts = [f"ppm {cal.get('ppm', 0):+d}"]
+        if cal.get("level_offset_db"):
+            parts.append("レベルの補正あり")
+        return {"source": "RTL-SDR 個体の校正（" + "・".join(parts) + "）", "at": cal.get("created_at")}
+    cal = state.get("calibration")
+    if not cal:
+        return None
+    return {"source": (cal.get("source") or {}).get("file_name") or "校正データ", "at": cal.get("created_at")}
+
+
+def normalization_of(state: dict, reasons: Optional[dict] = None) -> Optional[dict]:
+    norm = state.get("normalization") or {}
+    if not norm.get("used"):
+        return None
+    sel = norm.get("selected") or {}
+    reason = norm.get("reason") or ""
+    return {"name": sel.get("name", ""), "at": _when(sel.get("taken_at")),
+            "applied": bool(norm.get("applied")), "before_power_cycle": bool(norm.get("power_cycled")),
+            "reason": (reasons or {}).get(reason, reason) if not norm.get("applied") else ""}
+
+
+def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, mode_name: str,
+               traces: list[dict], markers: list[dict], warnings: list[str], note: str = "",
+               measured_at: Optional[str] = None, app_version: str = "",
+               norm_reasons: Optional[dict] = None) -> dict:
+    """画面の状態と、画面が決める中身（縦軸・モードの名前・凡例・マーカー表の行・注意）から画像の中身を作る。"""
+    sw = state.get("sweep") or {}
+    conn = state.get("connection") or {}
+    ident = conn.get("identity") or {}
+    if measured_at is None:
+        latest = max((t.get("last_update_time") or 0 for t in state.get("traces") or []
+                      if t.get("visible") and t.get("has_values")), default=0)
+        when = _dt.datetime.fromtimestamp(latest).astimezone() if latest else _dt.datetime.now().astimezone()
+        measured_at = when.isoformat(timespec="seconds")
+    return {
+        "measured_at": measured_at,
+        "device": {"model": ident.get("model") or conn.get("display_name") or conn.get("profile_model"),
+                   "serial": ident.get("serial")},
+        "app_version": app_version,
+        "mode": mode_name,
+        "conditions": {"start_hz": sw.get("start_hz"), "stop_hz": sw.get("stop_hz"), "rbw_hz": sw.get("rbw_hz"),
+                       "points": sw.get("points"), "step_hz": sw.get("step_hz"),
+                       "image_cancel": None if conn.get("sweep_kind") == "fft" else sw.get("image_cancel"),
+                       "ref_level": ref_level, "db_per_div": db_per_div, "unit": unit},
+        "calibration": calibration_of(state),
+        "normalization": normalization_of(state, norm_reasons),
+        "traces": traces,
+        "markers": markers,
+        "warnings": list(warnings),
+        "note": note,
+    }

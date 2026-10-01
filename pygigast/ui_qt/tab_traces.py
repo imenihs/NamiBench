@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import format_freq
-from . import texts
+from . import screen_model, texts
 from .theme import trace_color
 
 if TYPE_CHECKING:
@@ -194,6 +194,7 @@ class TraceTab(QWidget):
         self.win = win
         inner = QWidget()
         lay = QVBoxLayout(inner)
+        self.body = lay  # 他の欄（受信: rtl_panel.py）を差し込む
         lay.setContentsMargins(4, 4, 4, 4)
 
         g_traces = QGroupBox("トレース")
@@ -226,6 +227,12 @@ class TraceTab(QWidget):
         self.image_cancel = QCheckBox("イメージキャンセル（2回で1画面）")
         self.image_cancel.toggled.connect(lambda on: win.call("set_sweep", image_cancel=on))
         form.addRow(self.image_cancel)
+        # この機器で使えない欄の理由（FFT の機器: 点数は RBW と Span で決まる・ゼロスパンを持たない: 設計Q §6.9）
+        self.sweep_note = QLabel("")
+        self.sweep_note.setObjectName("dim")
+        self.sweep_note.setWordWrap(True)
+        self.sweep_note.hide()
+        form.addRow(self.sweep_note)
         self.freq_offset = QCheckBox("周波数オフセット")
         set_enabled(self.freq_offset, REASON_FREQ_OFFSET)
         form.addRow(self.freq_offset)
@@ -264,9 +271,15 @@ class TraceTab(QWidget):
             r = self.rows.get(int(s["number"]))
             if r is not None:
                 r.apply(s)
+        why = screen_model.sweep_reasons(st)
         self.points_auto.blockSignals(True)
         self.points_auto.setChecked(sw.get("points_setting") in (None, 0))
-        self.points_spin.setEnabled(not self.points_auto.isChecked())
+        set_enabled(self.points_auto, why["points"])
+        if why["points"]:
+            set_enabled(self.points_spin, why["points"])
+        else:
+            self.points_spin.setToolTip("")
+            self.points_spin.setEnabled(not self.points_auto.isChecked())
         self.points_auto.blockSignals(False)
         self.points_spin.blockSignals(True)
         self.points_spin.setValue(sw["points"])
@@ -276,6 +289,10 @@ class TraceTab(QWidget):
         self.image_cancel.blockSignals(True)
         self.image_cancel.setChecked(sw["image_cancel"])
         self.image_cancel.blockSignals(False)
+        set_enabled(self.image_cancel, why["image_cancel"])
+        notes = [w for w in (why["points"], why["zero_span"]) if w]
+        self.sweep_note.setText("\n".join(notes))
+        self.sweep_note.setVisible(bool(notes))
         self._apply_files(st.get("files") or [])
 
     def _apply_files(self, files: list[dict]) -> None:

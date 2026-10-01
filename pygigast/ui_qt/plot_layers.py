@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 from . import texts
-from .png_export import legend_text
+from ..core.report_layout import legend_text
 from .theme import trace_color
 
 LIVE_TRACES = (1, 2, 3, 4)

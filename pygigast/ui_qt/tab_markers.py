@@ -52,6 +52,7 @@ class MarkerTab(QWidget):
         self._marker: Optional[dict] = None
         inner = QWidget()
         lay = QVBoxLayout(inner)
+        self.body = lay  # 他の欄（聞く: listen.py）を差し込む
         lay.setContentsMargins(4, 4, 4, 4)
 
         # ---- 選んでいるマーカー

@@ -1,7 +1,31 @@
-"""コアが返す理由のコードを、画面の文言にする（U-22: 画面の言い方と記録の言い方を分ける）。"""
+"""画面の文言の正本（U-22: 画面の言い方と記録の言い方を分ける。J §5: Qt と Web は同じ語）。
+
+- コアが返す理由のコードを画面の文言にする表と、文を組み立てる型（TEMPLATES）を持つ
+- Web は同じ表を `GET /api/v1/texts` で受け取る（大文字の名前の表がそのまま JSON になる）。
+  Web の texts.js・app.js は文言を持たず、ここの表と TEMPLATES を組み合わせるだけ
+- TEMPLATES の差し込みは `{名前}` だけ（書式の指定を使わない）。Python と JavaScript の両方で
+  同じ置き換えで作れるようにするため。数値の桁は差し込む前にそろえる
+- Qt を import しない（Web の口が画面なしで使う）
+"""
 from __future__ import annotations
 
+from pathlib import PurePath
+from typing import Optional
+
 from ..core.units import format_freq
+from .texts_ui import *  # noqa: F401,F403 — 画面の部品の語の表（メニュー・RTL-SDR など）。同じ texts として配る
+from .texts_ui import TEMPLATES
+from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタンの語（LABELS）。Web へも同じ表で配る
+from .texts_labels import LABELS
+
+
+def tpl(key: str, **kw) -> str:
+    """TEMPLATES の `{名前}` を差し込む（JavaScript の GSTexts.fmt と同じ動き）。"""
+    text = TEMPLATES[key]
+    for k, v in kw.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
 
 FIELD_NAMES = {
     "start_hz": "Start",
@@ -12,6 +36,8 @@ FIELD_NAMES = {
     "rbw_hz": "RBW",
     "sg_hz": "SG 周波数",
     "step_hz": "Step",
+    "mode": "モード",
+    "image_cancel": "イメージキャンセル",
 }
 
 FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz", "span_hz", "sg_hz", "step_hz", "rbw_hz"}
@@ -21,9 +47,18 @@ def adjustment_text(adj: dict) -> str:
     """調整1件を「◯◯ に合わせました（理由）」にする。"""
     field = adj.get("field", "")
     v = adj.get("adopted")
-    value = format_freq(v) if field in FREQ_FIELDS and isinstance(v, int) else str(v)
+    if field in FREQ_FIELDS and isinstance(v, int):
+        value = format_freq(v)
+    elif field == "points" and v is None:
+        value = TEMPLATES["points_auto"]
+    elif field == "mode":
+        value = MODE_NAMES.get(v, str(v))
+    elif isinstance(v, bool):
+        value = TEMPLATES["on"] if v else TEMPLATES["off"]
+    else:
+        value = str(v)
     reason = REASONS.get(adj.get("reason", ""), adj.get("reason", ""))
-    return f"{value} に合わせました（{reason}）" if reason else f"{value} に合わせました"
+    return tpl("adjusted_with_reason", value=value, reason=reason) if reason else tpl("adjusted", value=value)
 
 
 REASONS = {
@@ -33,10 +68,18 @@ REASONS = {
     "min_span": "この点数で作れる最小の Span",
     "step_max": "Step は 1MHz まで",
     "points_max": "点数の上限",
+    "points_min": "点数の下限",
     "sg_range": "SG の範囲",
     "rbw_fixed": "この条件では RBW 180kHz 固定",
     "keep_center": "Center を保つため、範囲に収まる最大の Span",
     "keep_span": "Span 固定のため、Span を保って Center を移動",
+    "zero_span_unsupported": "この機器はゼロスパンを持ちません（FFT で測るため）",
+    "points_by_rbw": "この機器の点数は RBW と Span で決まります",
+    "rbw_points_max": "点数の上限を超えるため RBW を広げました",
+    "mode_unsupported": "この機器はこのモードで測れません",
+    "image_cancel_unsupported": "この機器はイメージキャンセルを持ちません",
+    "device_default_range": "機器の範囲の外なので、その機器の既定の範囲",
+    "device_changed": "機器が変わったため既定",
 }
 
 # 範囲の規則で値を動かした理由（設計C §5.11）。この知らせには反対の規則のボタンを添える
@@ -47,19 +90,43 @@ def alternative_label(alt: dict) -> str:
     """反対の規則の結果のボタンの文字（設計C §5.11 の 3）。"""
     span = alt["stop_hz"] - alt["start_hz"]
     center = alt["start_hz"] + span // 2
-    if alt.get("rule") == "keep_span":
-        return f"Span {format_freq(span)} を保って Center を {format_freq(center)} にする"
-    return f"Center {format_freq(center)} を保って Span を {format_freq(span)} にする"
+    key = "alt_keep_span" if alt.get("rule") == "keep_span" else "alt_keep_center"
+    return tpl(key, span=format_freq(span), center=format_freq(center))
 
 
 def alternative_done_text(center_hz: int, span_hz: int) -> str:
-    return f"Center {format_freq(center_hz)}・Span {format_freq(span_hz)} に置き換えました（この1回だけ）"
+    return tpl("alt_done", center=format_freq(center_hz), span=format_freq(span_hz))
+
 
 WARNINGS = {
     "rbw180k_narrow_span": "RBW 180kHz で Span 0.3MHz 未満: 平らな上面しか見えません（レベルは正しい）",
     "rbw30k_fine_step": "RBW 30kHz で Step 2kHz 未満: 形が狭く出ます（レベルは正しい）",
     "rbw15k_unstable": "RBW 15kHz は1回の掃引ではレベルと形が揺れます。平均を使ってください",
 }
+
+
+def condition_lines(st: dict) -> list[str]:
+    """上段の下に出し続ける条件の注意（U-02・U-08）。PNG の帯の注意と同じ文（I §3.2 の 6）。"""
+    sw = st.get("sweep") or {}
+    if not sw:
+        return []
+    fft = (st.get("connection") or {}).get("sweep_kind") == "fft"
+    out = []
+    if sw.get("rbw_hz") != sw.get("rbw_preference_hz"):
+        out.append(tpl("cond_rbw_widened" if fft else "cond_rbw_fixed", rbw=format_freq(sw["rbw_hz"]),
+                       pref=format_freq(sw["rbw_preference_hz"])))
+    out += [WARNINGS.get(w, w) for w in sw.get("warnings", [])]
+    if sw.get("tail_gap"):
+        out.append(TEMPLATES["cond_tail_gap"])
+    rtl = st.get("rtlsdr") or {}
+    if rtl.get("connected") and rtl.get("overload"):
+        out.append(NOTICES["rtlsdr_overload"])
+    fixed = rtl.get("fixed_center") if rtl.get("connected") else None
+    if fixed:
+        out.append(tpl("cond_fixed_center", cause=FIXED_CENTER_CAUSES.get(fixed.get("cause"), fixed.get("cause")),
+                       center=format_freq(int(fixed["tuner_center_hz"]))))
+    return out
+
 
 NOTICES = {
     "sweep_discarded": "掃引を1回捨てました",
@@ -74,6 +141,20 @@ NOTICES = {
     "reference_unreadable": "前回使っていた基準が読めません（選び直してください）",
     "settings_reset": "設定ファイルが読めないため初期値で起動しました",
     "settings_unwritable": "設定ファイルに書けません",
+    "device_profile_changed": "機器が変わったので、掃引条件をその機器に合わせました",
+    "rtlsdr_overload": "入力が振り切れています。利得を下げてください（振り切れた間の値は正しくありません）",
+    "rtlsdr_setting_failed": "RTL-SDR に利得・ppm を入れられませんでした（測定は続けます）",
+    "rtlsdr_shared_serial": "同じシリアル番号の RTL-SDR が複数つながっています。校正はシリアル番号ごとなので共有になります",
+    "rtlsdr_span_limited": "チューナーの中心を動かせない間は、表示の範囲を使える幅に限りました",
+    "rtlsdr_span_limit_failed": "表示の範囲をチューナーの使える幅に合わせられませんでした",
+    "rtltcp_freq_from_client": "rtl_tcp から周波数が変わりました",
+    "rtltcp_gain_from_client": "rtl_tcp から利得が変わりました",
+    "rtltcp_port_in_use": "rtl_tcp: そのポートは使われています。別のポートを選んでください",
+    "rtltcp_start_failed": "rtl_tcp の送出を始められませんでした",
+    "rtltcp_sample_rate_unsupported": "rtl_tcp から来たサンプリング速度は使えないので、使える速さで送ります",
+    "rtltcp_started": "rtl_tcp の送出を始めました",
+    "rtltcp_stopped": "rtl_tcp の送出を止めました",
+    "listen_stopped": "聞くのをやめました",
 }
 
 DISCARD_REASONS = {
@@ -87,11 +168,26 @@ ERRORS = {
     "not_connected": "機器に繋がっていません",
     "device_not_selected": "機器を選んでください",
     "device_not_found": "その機器が見つかりません",
+    "device_ambiguous": "同じシリアル番号の機器が複数あります。一覧から番号付きのポートを選んでください",
     "probe_failed": "GigaSt の応答が返りませんでした（別の機器かもしれません）",
     "open_failed": "ポートを開けませんでした",
     "legacy_unreadable": "旧校正ファイルが読めません",
+    "legacy_calibration_not_for_device": "この機器には旧校正ファイルを使えません",
     "file_unreadable": "ファイルが読めません",
     "not_integer": "数値が正しくありません",
+    "unknown_backend": "その種類の機器は使えません",
+    "unknown_mode": "そのモードはありません",
+    "bad_arguments": "命令の引数が正しくありません",
+    "server_unreachable": "サーバーに繋がりません",
+    "rtlsdr_dll_not_found": "RTL-SDR の DLL（rtlsdr.dll）が見つかりません",
+    "rtlsdr_not_connected": "RTL-SDR に繋がっていません",
+    "rtlsdr_level_needs_manual_gain": "レベルの校正は利得を手動にしてから行います（AGC の間は利得が分からないため）",
+    "rtlsdr_stitching_blocked": "チューナーの中心を動かせない間（聞いている・rtl_tcp の相手がつながっている）は、使える幅より広い Span にできません",
+    "listen_needs_iq_device": "聞く機能は IQ を持つ機器（RTL-SDR）だけで使えます",
+    "listen_rtltcp_active": "rtl_tcp の相手がつながっている間は、マーカーの位置へチューナーを動かせません",
+    "marker_no_value": "マーカーの点に値がありません",
+    "marker_not_on_rtlsdr_trace": "RTL-SDR で測ったトレースに載ったマーカーを選んでください",
+    "calibration_unwritable": "校正を保存できません",
 }
 
 CONN_STATES = {
@@ -105,27 +201,61 @@ RUN_STATES = {
     "continuous": "連続",
     "single": "単発",
     "stopping": "停止中（掃引の終わりを待っています）",
+    "reference": "基準を取っています",
 }
 
 
 def notice_text(n: dict) -> str:
     code = n.get("code", "")
     text = NOTICES.get(code, code)
-    detail = n.get("detail") or {}
+    d = n.get("detail") or {}
     if code == "sweep_discarded":
-        r = detail.get("reason", "")
-        text += f"（{DISCARD_REASONS.get(r, r)}）"
+        r = d.get("reason", "")
+        text += tpl("paren", text=DISCARD_REASONS.get(r, r))
+    elif code == "device_profile_changed" and d.get("model"):
+        text += tpl("paren", text=str(d["model"]))
+    elif code in ("rtltcp_started", "rtltcp_stopped", "rtltcp_port_in_use") and d.get("port"):
+        text += tpl("paren", text=tpl("port", port=d["port"]))
+    elif code == "rtltcp_start_failed" and d.get("message"):
+        text += tpl("paren", text=d["message"])
+    elif code == "rtltcp_freq_from_client" and d.get("freq_hz") is not None:
+        f = format_freq(int(d["freq_hz"]))
+        if d.get("applied"):
+            text += tpl("paren", text=f)
+        else:
+            why = ERRORS.get(d.get("code") or "", d.get("code") or "")
+            text = tpl("rtltcp_freq_refused", freq=f, reason=why)
+    elif code == "rtltcp_gain_from_client":
+        g = TEMPLATES["gain_agc"] if d.get("agc") else (f"{d['gain_db']:g} dB" if d.get("gain_db") is not None else "")
+        if g:
+            text += tpl("paren", text=g)
+    elif code == "rtltcp_sample_rate_unsupported" and d.get("used"):
+        text += tpl("paren", text=f"{d.get('requested')} → {d['used']}")
+    elif code == "rtlsdr_span_limited" and d.get("start_hz") is not None:
+        cause = FIXED_CENTER_CAUSES.get(d.get("cause"), d.get("cause") or "")
+        text = tpl("span_limited", cause=cause, start=format_freq(int(d["start_hz"])),
+                   stop=format_freq(int(d["stop_hz"])))
+    elif code == "rtlsdr_overload" and d.get("ratio") is not None:
+        text += tpl("paren", text=f"{d['ratio'] * 100:.2f} %")
+    elif code == "listen_stopped":
+        r = LISTEN_STOP_REASONS.get(d.get("reason"), d.get("reason") or "")
+        if r:
+            text += tpl("paren", text=r)
     return text
 
 
-def error_text(e: Exception) -> str:
+def error_text(e) -> str:
     code = getattr(e, "code", None)
     if code is None:
         return str(e)
-    text = ERRORS.get(code, code)
+    text = ERRORS.get(code) or STORAGE_ERRORS.get(code) or code
     detail = getattr(e, "detail", {}) or {}
     if code == "legacy_unreadable" and "line" in detail:
-        text += f"（{detail['line']} 行目の {detail['field']} 番目の欄）"
+        text += tpl("legacy_line", line=detail["line"], field=detail["field"])
+    elif code == "rtlsdr_stitching_blocked" and detail.get("max_span_hz"):
+        text += tpl("paren", text=tpl("max_span", span=format_freq(int(detail["max_span_hz"]))))
+    elif code == "bad_value" and "min" in detail and "max" in detail:
+        text += tpl("paren", text=tpl("range_min_max", min=detail["min"], max=detail["max"]))
     return text
 
 
@@ -164,6 +294,10 @@ RESET_CAUSES = {
     "image_cancel": "イメージキャンセル",
     "calibration": "校正データ",
     "reference": "ノーマライズの基準",
+    "gain": "受信の利得",
+    "ppm": "周波数の補正（ppm）",
+    "level": "レベルの補正",
+    "level_calibration": "レベルの補正",
 }
 
 TRACE_NOTICES = {
@@ -175,24 +309,37 @@ TRACE_NOTICES = {
 
 
 def trace_reset_text(detail: dict) -> str:
-    cause = RESET_CAUSES.get(detail.get("cause", ""), detail.get("cause", ""))
-    return f"条件変更（{cause}）でリセット" if cause else TRACE_NOTICES["reset_by_condition"]
+    c = detail.get("cause", "")
+    cause = RESET_CAUSES.get(c, c)
+    return tpl("trace_reset_cause", cause=cause) if cause else TRACE_NOTICES["reset_by_condition"]
 
 
 def legend_parts(t: dict) -> dict:
-    """凡例の1項目を png_export.legend_text の形にする（動作は凡例の隣: U-14）。"""
+    """凡例の1項目を report_layout.legend_text の形にする（動作は凡例の隣: U-14）。
+
+    t はトレースのイベント（count が今の回数）か状態の traces の1つ（current_count が今の回数）。
+    """
     action = t.get("action")
     out = {"number": t.get("trace", t.get("number")), "action": TRACE_ACTIONS.get(action, action or "")}
-    if action == "average" and t.get("average_type"):
-        out["average"] = AVERAGE_TYPES.get(t["average_type"], t["average_type"])
+    if action == "average" and (t.get("average_type") or t.get("average_type_effective")):
+        at = t.get("average_type") or t.get("average_type_effective")
+        out["average"] = AVERAGE_TYPES.get(at, at)
     if action in ("average", "max_hold", "min_hold"):
-        out["count"] = t.get("count")
+        out["count"] = t.get("count") if "trace" in t else t.get("current_count")
         out["count_target"] = t.get("count_target")
     else:
         out["count"] = None
     if t.get("axis_differs"):
-        out["label"] = "（いまの軸と違う）"
+        out["label"] = TEMPLATES["axis_differs"]
     return out
+
+
+def file_trace_label(f: dict, tid: str) -> str:
+    """参照トレース（開いたファイル）の凡例の文字: 名前・番号・日時・機器。"""
+    num = str(tid).split(".", 1)[-1]
+    when = str(f.get("created_at") or "")[:16].replace("T", " ")
+    dev = f.get("device_serial") or ""
+    return " ".join(p for p in (f.get("name", tid), f"#{num}", when, dev) if p)
 
 
 # ---------------------------------------------------------------- マーカー（設計G）
@@ -221,6 +368,9 @@ MARKER_NOTES = {
     "rbw15k_unstable": "RBW 15kHz の1回の掃引",
     "rbw180k_narrow_span": "RBW 180kHz で狭い Span",
     "rbw30k_fine_step": "RBW 30kHz で細かい Step",
+    "no_value": "値なし",
+    # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
+    "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
 }
 
 # 印のうち読み値の注意にしないもの（細かい基準は正常）
@@ -268,16 +418,16 @@ def age_text(seconds) -> str:
         return ""
     s = int(seconds)
     if s < 60:
-        return f"{s} 秒前"
+        return tpl("age_s", n=s)
     if s < 3600:
-        return f"{s // 60} 分前"
+        return tpl("age_m", n=s // 60)
     if s < 86400:
-        return f"{s // 3600} 時間前"
-    return f"{s // 86400} 日前"
+        return tpl("age_h", n=s // 3600)
+    return tpl("age_d", n=s // 86400)
 
 
 def ranges_text(ranges) -> str:
-    return "・".join(f"{format_freq(lo)}〜{format_freq(hi)}" for lo, hi in ranges)
+    return "・".join(tpl("range", lo=format_freq(lo), hi=format_freq(hi)) for lo, hi in ranges)
 
 
 def normalization_text(n: dict) -> str:
@@ -287,20 +437,19 @@ def normalization_text(n: dict) -> str:
     sel = n.get("selected")
     if not n.get("applied"):
         reason = NORM_REASONS.get(n.get("reason") or "", n.get("reason") or "")
-        return f"基準なし（受けた電力）: {reason}" if reason else "基準なし（受けた電力）"
-    parts = [f"基準: {sel['name']}" if sel else "基準"]
+        return tpl("norm_none_reason", reason=reason) if reason else TEMPLATES["norm_none"]
+    parts = [tpl("norm_ref", name=sel["name"]) if sel else TEMPLATES["norm_ref_noname"]]
     acc = ACCURACY.get(n.get("accuracy") or "", "")
     if acc:
         parts.append(acc)
     age = age_text(n.get("age_s"))
     if age:
         parts.append(age)
-    text = "・".join(parts)
     if n.get("power_cycled"):
-        text += "・⚠ 電源の入れ直し前の基準（取り直しを勧めます）"
+        parts.append(TEMPLATES["norm_power_cycled"])
     if n.get("out_of_range_hz"):
-        text += f"・基準の範囲外: {ranges_text(n['out_of_range_hz'])}"
-    return text
+        parts.append(tpl("norm_out_of_range", ranges=ranges_text(n["out_of_range_hz"])))
+    return "・".join(parts)
 
 
 # ---------------------------------------------------------------- 長い処理（設計H §4.1）
@@ -369,10 +518,10 @@ def task_label(t: dict) -> str:
     kind = t.get("task") or t.get("kind") or ""
     text = TASK_NAMES.get(kind, kind)
     if t.get("total"):
-        text += f"  {t.get('done', 0)}/{t['total']}"
-    text += f"  経過 {int(t.get('elapsed_s') or 0)} 秒"
+        text += tpl("task_progress", done=t.get("done", 0), total=t["total"])
+    text += tpl("task_elapsed", s=int(t.get("elapsed_s") or 0))
     if t.get("cancelling"):
-        text += "（やめています）"
+        text += TEMPLATES["task_cancelling"]
     return text
 
 
@@ -402,3 +551,193 @@ ERRORS.update({
     "unknown_task": "その処理はもう終わっています",
     "unknown_file": "そのファイルはもう外しています",
 })
+
+
+# ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語
+
+def fmt_clock(seconds) -> str:
+    s = int(seconds or 0)
+    return f"{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+
+def fmt_bytes(n) -> str:
+    n = float(n or 0)
+    units = ("B", "KB", "MB", "GB")
+    i = 0
+    while n >= 1024 and i < len(units) - 1:
+        n /= 1024
+        i += 1
+    return f"{n:.1f} {units[i]}" if i else f"{int(n)} {units[i]}"
+
+
+def calibration_status(st: dict) -> str:
+    """「補正: …」。RTL-SDR は個体の校正（ppm・レベル: 設計Q §6.6）と、単位（dB（未校正）など）。"""
+    rtl = st.get("rtlsdr") or {}
+    if rtl.get("connected"):
+        cal = rtl.get("calibration")
+        ppm = rtl.get("ppm") if rtl.get("ppm") is not None else (cal or {}).get("ppm", 0)
+        unit = rtl.get("level_unit") or ""
+        level = TEMPLATES["rtl_level_cal"] if cal and cal.get("level_offset_db") else ""
+        if cal:
+            return tpl("status_cal_rtl", ppm=f"{int(ppm):+d}", level=level, at=cal.get("created_at") or "",
+                       unit=unit)
+        return tpl("status_cal_rtl_none", ppm=f"{int(ppm or 0):+d}", unit=unit)
+    cal = st.get("calibration")
+    return tpl("status_cal", at=cal["created_at"]) if cal else TEMPLATES["status_cal_none"]
+
+
+def recording_text(rec: dict) -> str:
+    if rec.get("active"):
+        text = tpl("status_rec_active", clock=fmt_clock(rec.get("elapsed_s")), sweeps=rec.get("sweeps", 0))
+    elif rec.get("stopped"):
+        text = TEMPLATES["status_rec_stopped"]
+    else:
+        return ""
+    if rec.get("file_bytes"):
+        text += "・" + fmt_bytes(rec["file_bytes"])
+    return text
+
+
+def source_text(st: dict) -> str:
+    """信号源が出ていることの表示（U-05: 状態は画面が示す）。掃引している間だけ出す。"""
+    if not st or not st.get("run") or not st.get("sweep"):
+        return ""
+    running = st["run"]["state"] in ("continuous", "single", "stopping", "reference")
+    if (st.get("connection") or {}).get("state") != "connected" or not running:
+        return ""
+    sw = st["sweep"]
+    if sw["mode"] == "sg" and sw.get("sg_hz") is not None:
+        return tpl("source_sg", freq=format_freq(sw["sg_hz"]))
+    if sw["mode"] in ("tg", "s11"):
+        return TEMPLATES["source_tg"]
+    return ""
+
+
+def rtltcp_status(r: dict) -> tuple[str, str]:
+    """(文字, 種類)。出している間は「rtl_tcp 送出中 :1234・接続 N」（ポートを開けていることを見せる: 設計Q §4.3）。"""
+    if not r:
+        return "", ""
+    if r.get("running"):
+        text = tpl("status_rtltcp", port=r.get("port"), clients=r.get("clients", 0))
+        if r.get("bind") == "lan":
+            text += TEMPLATES["status_rtltcp_lan"]
+        return text, "warn"
+    err = r.get("error")
+    if r.get("enabled") and err:
+        why = TEMPLATES["rtltcp_port_in_use"] if err.get("code") == "port_in_use" else (err.get("message") or "")
+        return tpl("status_rtltcp_error", port=err.get("port", r.get("port")), reason=why), "warn"
+    return "", ""
+
+
+def listen_status(lst: dict) -> str:
+    """「聞いている: 84.7MHz・FM放送」（M-04: 動作中の機能を出す）。"""
+    if not lst or not lst.get("active"):
+        return ""
+    return tpl("status_listen", freq=format_freq(int(lst["freq_hz"])),
+               mode=LISTEN_MODES.get(lst.get("mode"), lst.get("mode") or ""))
+
+
+def status_items(st: dict) -> list[dict]:
+    """状態バーの項目（key・text・cls）。Qt と Web が同じ並び・同じ文字で出す。空の text は出さない。"""
+    conn = st.get("connection") or {}
+    ident = conn.get("identity") or {}
+    who = f" {ident.get('serial', '')} {ident.get('port', '')}" if ident else ""
+    dev = conn.get("display_name") if conn.get("state") == "connected" else ""
+    run = st.get("run") or {}
+    rs = RUN_STATES.get(run.get("state"), run.get("state"))
+    if run.get("state") == "single" or (run.get("state") == "stopped" and run.get("last_stop_reason") == "single_done"):
+        rs += tpl("status_single_count", done=run.get("single_done"), target=run.get("single_target"))
+    nt = normalization_text(st.get("normalization") or {})
+    norm = st.get("normalization") or {}
+    rt_text, rt_cls = rtltcp_status(st.get("rtltcp") or {})
+    tasks = st.get("tasks") or []
+    items = [
+        {"key": "conn", "text": tpl("status_conn", state=CONN_STATES.get(conn.get("state"), conn.get("state")),
+                                    who=who + (f" {dev}" if dev else "")),
+         "cls": "ok" if conn.get("state") == "connected" else "warn"},
+        {"key": "run", "text": tpl("status_run", state=rs), "cls": ""},
+        {"key": "time", "text": tpl("status_sweep_time", s=f"{run['last_sweep_s']:.2f}") if run.get("last_sweep_s")
+         else TEMPLATES["status_sweep_time_none"], "cls": ""},
+        {"key": "discard", "text": tpl("status_discard", n=run.get("discard_count", 0)), "cls": ""},
+        {"key": "cal", "text": calibration_status(st), "cls": ""},
+        {"key": "norm", "text": nt, "cls": "" if norm.get("applied") else "warn"},
+        {"key": "src", "text": source_text(st), "cls": "warn"},
+        {"key": "listen", "text": listen_status(st.get("listen") or {}), "cls": "warn"},
+        {"key": "rtltcp", "text": rt_text, "cls": rt_cls},
+        {"key": "rec", "text": recording_text(st.get("recording") or {}), "cls": "warn"},
+        {"key": "tasks", "text": tpl("status_tasks", n=len(tasks)) if tasks else "", "cls": ""},
+    ]
+    return [i for i in items if i["text"]]
+
+
+# ---------------------------------------------------------------- 一度きりの知らせを画面に出す形（Qt と Web で同じ）
+
+def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
+    """長い処理の終わりの知らせ（H §4.1）。(文, 保存したファイルのパス or None)。"""
+    kind = d.get("task", "")
+    if code == "task_done":
+        res = d.get("result") or {}
+        text = TASK_DONE.get(kind, kind)
+        path = res.get("path")
+        if path:
+            text = tpl("task_done_path", done=text, name=PurePath(path).name)
+        if kind == "open":
+            text = tpl("open_done", n=len(res.get("files") or []))
+            errs = res.get("errors") or []
+            if errs:
+                text += tpl("open_errors", list="、".join(
+                    tpl("open_error_item", name=PurePath(e["path"]).name, reason=storage_error_text(e)) for e in errs))
+        elif kind == "export_csv":
+            text += tpl("export_rows", rows=res.get("rows", 0))
+            warns = [EXPORT_WARNINGS.get(w, w) for w in res.get("warnings") or []]
+            if warns:
+                text += "・" + "・".join(warns)
+        elif kind == "reference_take":
+            text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
+                                                                                         name=res.get("name", ""))
+        return text, path
+    if code == "task_cancelled":
+        return TASK_CANCELLED.get(kind, TEMPLATES["cancelled_generic"]), None
+    err = d.get("error") or {}
+    text = tpl("task_failed", failed=TASK_FAILED.get(kind, kind), error=storage_error_text(err))
+    detail = err.get("detail") or {}
+    if detail.get("message"):
+        text += tpl("paren", text=detail["message"])
+    if kind in ("record_finish", "finish_unfinished"):
+        text += TEMPLATES["work_file_kept"]
+    return text, None
+
+
+def notice_view(n: dict, state: Optional[dict] = None) -> dict:
+    """知らせ1件の出し方: {"text": 状態バーの文, "traces": {番号: トレースの欄の文}, "path": 保存先 or None}。"""
+    code = n.get("code", "")
+    d = n.get("detail") or {}
+    traces: dict = {}
+    path = None
+    if code in ("task_done", "task_failed", "task_cancelled"):
+        text, path = task_end_text(code, d)
+    elif code == "trace":
+        t = "・".join(TRACE_NOTICES.get(c, c) for c in d.get("codes") or [])
+        traces[d.get("trace")] = t
+        text = tpl("trace_note", n=d.get("trace"), text=t)
+    elif code == "trace_reset":
+        t = trace_reset_text(d)
+        nums = list(d.get("traces") or [])
+        traces = {num: t for num in nums}
+        text = tpl("trace_note", n="・".join(str(x) for x in nums), text=t)
+    elif code in TRACE_NOTICES:
+        t = TRACE_NOTICES[code]
+        if d.get("trace"):
+            traces[d["trace"]] = t
+            text = tpl("trace_note", n=d["trace"], text=t)
+        else:
+            text = t
+    elif code == "normalization":
+        text = normalization_text({**((state or {}).get("normalization") or {}), **d, "used": True})             or TEMPLATES["norm_changed"]
+    else:
+        text = notice_text(n)
+    return {"text": text, "traces": {str(k): v for k, v in traces.items() if k is not None}, "path": path}
+
+
+def waiting_text(remaining_s: float) -> str:
+    return tpl("waiting_sweep_end", s=f"{float(remaining_s):.1f}")

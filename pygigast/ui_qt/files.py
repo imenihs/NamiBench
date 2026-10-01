@@ -179,45 +179,11 @@ class FileActions:
     # ---------------------------------------------------------------- 長い処理の終わり（H §4.1）
 
     def on_task_end(self, code: str, d: dict) -> None:
-        kind = d.get("task", "")
-        if code == "task_done":
-            res = d.get("result") or {}
-            text = texts.TASK_DONE.get(kind, kind)
-            folder = None
-            if res.get("path"):
-                p = Path(res["path"])
-                text += f": {p.name}"
-                folder = p.parent
-            if kind == "open":
-                files = res.get("files") or []
-                text = f"開きました: {len(files)} ファイル"
-                errs = res.get("errors") or []
-                if errs:
-                    text += "・開けなかったもの: " + "、".join(
-                        f"{Path(e['path']).name}（{texts.storage_error_text(e)}）" for e in errs)
-            elif kind == "export_csv":
-                text += f"（{res.get('rows', 0)} 行）"
-                warns = [texts.EXPORT_WARNINGS.get(w, w) for w in res.get("warnings") or []]
-                if warns:
-                    text += "・" + "・".join(warns)
-            elif kind == "reference_take":
-                if res.get("next") == "short":
-                    text = "オープンを測りました。ショートを繋いで「ショートを測る」を押してください"
-                else:
-                    text = f"基準を取りました: {res.get('name', '')}"
-                    self.win.source_tab.refresh()
-            self.win.status_note(text, folder=folder)
-        elif code == "task_cancelled":
-            self.win.status_note(texts.TASK_CANCELLED.get(kind, "やめました"))
-        else:
-            err = d.get("error") or {}
-            text = f"{texts.TASK_FAILED.get(kind, kind)}: {texts.storage_error_text(err)}"
-            detail = err.get("detail") or {}
-            if detail.get("message"):
-                text += f"（{detail['message']}）"
-            if kind in ("record_finish", "finish_unfinished"):
-                text += "。記録の作業ファイルは残っていて、あとでまとめられます"
-            self.win.status_note(text)
+        """長い処理の終わり。文は texts.task_end_text（Web と同じ）。保存したものは保存先を開ける（U-11）。"""
+        text, path = texts.task_end_text(code, d)
+        if code == "task_done" and d.get("task") == "reference_take" and (d.get("result") or {}).get("next") != "short":
+            self.win.source_tab.refresh()
+        self.win.status_note(text, folder=Path(path).parent if path else None)
 
 
 class ExportDialog(QDialog):

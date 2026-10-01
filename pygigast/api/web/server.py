@@ -6,6 +6,9 @@
 - トレースはバイナリ（先頭4バイトが見出しの長さ、JSON の見出し、float32 の値）。
   番号ごとに 30回/秒 までに間引き、途中のものは捨てる（A §4.3: 画面の更新だけ。保存・記録はコアが行うので間引かない）
 - 状態とマーカー表は全体を毎回送るので、遅い画面には最新の1つだけを送る（途中の版は要らない）
+- 聞く機能の音（イベント audio）もバイナリ（見出し JSON の kind が "audio"、float32 の標本）。遅い画面には
+  新しい方を残して古い音を捨てる（遅れをためない）
+- 画面の文言は view.py が足す（状態の ui・知らせの view・失敗の text・戻り値の texts。Qt と同じ関数で作る: J §5）
 """
 from __future__ import annotations
 
@@ -30,6 +33,8 @@ from fastapi.staticfiles import StaticFiles
 
 from ... import __version__
 from ..local import CommandError, LocalApi
+from ...core import report_layout as rl
+from . import view
 
 UI_WEB_DIR = Path(__file__).resolve().parents[2] / "ui_web"
 
@@ -37,6 +42,8 @@ UI_WEB_DIR = Path(__file__).resolve().parents[2] / "ui_web"
 TRACE_RATE_HZ = 30.0
 # 遅い画面に溜める知らせ・進み具合の上限。超えたら古いものから捨てる（状態は最新の全体が別に届く）
 MAX_PENDING_NOTICES = 500
+# 遅い画面に溜める音の塊の上限（1塊は数 ms〜十数 ms。超えたら古い音から捨てる）
+MAX_PENDING_AUDIO = 64
 
 # 失敗のコードと HTTP の状態（設計に無い判断: 命令が無いは 404、それ以外の命令の失敗は 400）
 _STATUS_OF = {"unknown_command": 404}
@@ -124,6 +131,18 @@ def encode_trace(payload: dict) -> bytes:
     return struct.pack("<I", len(hb)) + hb + values.tobytes()
 
 
+def encode_audio(payload: dict) -> bytes:
+    """イベント `audio`（設計Q §6.8）をバイナリにする。形はトレースと同じ（見出しの kind が "audio"）。"""
+    values = np.asarray(payload.get("samples", ()), dtype="<f4")
+    header = {k: v for k, v in payload.items() if k != "samples"}
+    header["kind"] = "audio"
+    header["value_type"] = "float32"
+    header["value_count"] = int(values.size)
+    hb = dumps(header).encode("utf-8")
+    hb += b" " * ((-len(hb)) % 4)
+    return struct.pack("<I", len(hb)) + hb + values.tobytes()
+
+
 def texts_json() -> dict:
     """画面の文言（ui_qt/texts.py の表）。Qt と Web で1つの正本を使う（J §5: 同じ語）。
 
@@ -156,6 +175,7 @@ class _Client:
         self._latest: dict[str, tuple[int, str]] = {}  # state / markers → (版, JSON)
         self._notices: collections.deque[str] = collections.deque(maxlen=MAX_PENDING_NOTICES)
         self._traces: dict[str, bytes] = {}
+        self._audio: collections.deque[bytes] = collections.deque(maxlen=MAX_PENDING_AUDIO)
         self._wake = asyncio.Event()
 
     def put_latest(self, kind: str, version: int, text: str) -> None:
@@ -171,6 +191,10 @@ class _Client:
 
     def put_trace(self, key: str, data: bytes) -> None:
         self._traces[key] = data
+        self._wake.set()
+
+    def put_audio(self, data: bytes) -> None:
+        self._audio.append(data)
         self._wake.set()
 
     async def run(self) -> None:
@@ -193,6 +217,8 @@ class _Client:
                     await self.ws.send_text(item[1])
             while self._notices:
                 await self.ws.send_text(self._notices.popleft())
+            while self._audio:
+                await self.ws.send_bytes(self._audio.popleft())
             while self._traces:
                 key = next(iter(self._traces))
                 await self.ws.send_bytes(self._traces.pop(key))
@@ -211,6 +237,7 @@ class _Hub:
         self._pending: dict[str, dict] = {}
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._markers_seq = 0
+        self.last_state: Optional[dict] = None
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -238,6 +265,20 @@ class _Hub:
         if kind == "trace":
             self._trace(payload)
             return
+        if kind == "audio":
+            data = encode_audio(payload)
+            for c in self.clients:
+                c.put_audio(data)
+            return
+        if kind == "state":
+            self.last_state = payload
+            payload = view.state_view(payload)
+        elif kind == "markers":
+            payload = view.markers_view(payload, view.default_unit(self.last_state))
+        elif kind == "notice":
+            payload = view.notice_view(payload, self.last_state)
+        elif kind == "progress":
+            payload = view.progress_view(payload)
         text = dumps({"kind": kind, "payload": payload})
         if kind == "state":
             ver = int(payload.get("version", 0))
@@ -311,7 +352,7 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
             st = await _await(api.get_state())
         except Exception as e:  # noqa: BLE001
             return JSONResponse(error_body(e), status_code=500)
-        return JSONResponse(to_jsonable(st))
+        return JSONResponse(to_jsonable(view.state_view(st)))
 
     @app.get("/api/v1/texts")
     async def get_texts() -> JSONResponse:
@@ -320,8 +361,23 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
     @app.get("/api/v1/info")
     async def get_info() -> JSONResponse:
         # 保存先の欄の初期値（サーバーの PC の上のパス。設計に無い判断: 利用者のホーム）
+        # 配色の初期値（J §4.4。Qt と同じ値を1か所から: U-09）も渡す
         return JSONResponse({"app": "pyGigaSt", "version": __version__, "lan": lan,
-                             "default_dir": str(Path.home()), "trace_rate_hz": trace_rate_hz})
+                             "default_dir": str(Path.home()), "trace_rate_hz": trace_rate_hz,
+                             "palettes": {"dark": rl.DARK_DEFAULT, "light": rl.LIGHT_DEFAULT}})
+
+    @app.post("/api/v1/png_layout")
+    async def png_layout(request: Request) -> JSONResponse:
+        """Web の PNG の配置（I §3.1: 配置はコアに1つ。Qt と同じ report_layout の結果）。"""
+        try:
+            req = json.loads(await request.body() or b"{}")
+            if not isinstance(req, dict):
+                raise ValueError("not an object")
+            st = await _await(api.get_state())
+            return JSONResponse(to_jsonable(view.png_layout(st, req)))
+        except ValueError as e:
+            return JSONResponse(view.error_view({"error": {"code": "bad_value", "field": None,
+                                                           "detail": {"message": str(e)}}}), status_code=400)
 
     @app.post("/api/v1/{command}")
     async def post_command(command: str, request: Request) -> JSONResponse:
@@ -337,10 +393,10 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
             fut = api.call(command, **args)
             result = await _await(fut)
         except CommandError as e:
-            return JSONResponse(to_jsonable(e.to_dict()), status_code=_STATUS_OF.get(e.code, 400))
+            return JSONResponse(to_jsonable(view.error_view(e.to_dict())), status_code=_STATUS_OF.get(e.code, 400))
         except Exception as e:  # noqa: BLE001
             return JSONResponse(error_body(e), status_code=500)
-        return JSONResponse(to_jsonable({} if result is None else result))
+        return JSONResponse(to_jsonable(view.result_view(command, args, {} if result is None else result)))
 
     @app.websocket("/api/v1/events")
     async def events(ws: WebSocket) -> None:
@@ -351,7 +407,8 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         sender = asyncio.create_task(client.run())
         try:
             st = await _await(api.get_state())
-            client.put_latest("state", int(st.get("version", 0)), dumps({"kind": "state", "payload": st}))
+            client.put_latest("state", int(st.get("version", 0)),
+                              dumps({"kind": "state", "payload": view.state_view(st)}))
             # 途中から繋いだ画面にも、いま出ているトレースを描かせる
             ids: list = [t["number"] for t in st.get("traces", []) if t.get("has_values") and t.get("visible")]
             ids += [tr["id"] for f in st.get("files", []) for tr in f.get("traces", [])]
