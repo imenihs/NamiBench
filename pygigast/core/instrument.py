@@ -27,6 +27,7 @@ from typing import Callable, Optional
 from .devices.base import Device, load_profile
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
 from .devices.rtlsdr.dll import DllNotFound
+from .instrument_diff import DiffMixin
 from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
 from .instrument_listen import ListenMixin
@@ -161,7 +162,7 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin):
+class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -221,6 +222,7 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
         self._init_display(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
+        self._init_diff(saved if isinstance(saved, dict) else None)  # トレースと参照トレースの後（2本を探すため）
         self._init_rtltcp()
         self._init_rtlsdr()
         self._init_listen()
@@ -271,6 +273,7 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin
             "span_lock_hz": a.span_lock_hz,
             **self._display_state_to_save(),
             **self._files_state_to_save(),
+            **self._diff_state_to_save(),
         }
 
     def _error(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> CommandError:
@@ -415,6 +418,7 @@ class Instrument(DisplayMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin
             "source": self._source_state(),
             **self._display_snapshot(),
             "files": self._files_state(),
+            "difference": self._diff_state(),
             "recording": self._recording_state(),
             "tasks": self._tasks_state(),
             "rtltcp": self._rtltcp_state(),

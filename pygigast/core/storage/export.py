@@ -131,6 +131,12 @@ def _trace_desc(t: TraceData) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _column_id(t) -> str:
+    """列名のトレースの名前。差のトレース（info.trace が "D"）は D、ほかは番号（設計F §5.4・H §7.3）。"""
+    tag = (t.info or {}).get("trace") if isinstance(getattr(t, "info", None), dict) else None
+    return str(tag) if isinstance(tag, str) else str(int(t.number))
+
+
 def export_traces_csv(
     path: Path | str,
     traces: Sequence[TraceData],
@@ -171,7 +177,7 @@ def export_traces_csv(
     with _AtomicText(path) as out:
         out.fh.write(_meta_line(meta, {"kind": "traces", "unit": unit, "traces": [_trace_desc(t) for t in cut]}))
         w = csv.writer(out.fh, lineterminator=_NEWLINE)
-        w.writerow(["frequency_hz"] + [f"trace{int(t.number)}_{unit}" for t in cut])
+        w.writerow(["frequency_hz"] + [f"trace{_column_id(t)}_{unit}" for t in cut])
         for i in range(n):
             if i % 4096 == 0:
                 prog.check()

@@ -22,6 +22,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from .instrument_common import CommandError
+from .instrument_diff import DIFF_TRACE_ID
 from .instrument_display import NORMALIZED_MODES, db_values, unit_for
 from .normalize import (
     KIND_FINE,
@@ -589,6 +590,8 @@ class FilesMixin:
                 files.append(self._file_summary(entry))
                 for tid in entry["traces"]:
                     self._emit("trace", self._file_trace_payload(tid))
+            if files:
+                self._diff_refresh()  # 差で選んでいたファイルを開き直した（設計F §5.4）
             return {"files": files, "errors": errors}
 
         return self._start_task("open", lambda p, c: self._writer.submit(job, p, c), then, total=len(paths))
@@ -645,6 +648,7 @@ class FilesMixin:
     def _cmd_close_file(self, file_id: str) -> dict:
         if self._files.pop(file_id, None) is None:
             raise self._error("unknown_file", "file_id", {"file_id": file_id})
+        self._diff_refresh()  # 差の片側だったら、差は作れなくなる
         self._changed()
         return {}
 
@@ -664,6 +668,8 @@ class FilesMixin:
                 if t.values is None:
                     raise self._error("no_trace_data", "traces", {"trace": tid})
                 tds.append(self._live_trace_data(t))
+            elif tid == DIFF_TRACE_ID:
+                tds.append(self._diff_trace_data())  # トレース間の差（設計F §5.4。dB の比）
             else:
                 tds.append(self._find_file_trace(str(tid)))
         if not tds:

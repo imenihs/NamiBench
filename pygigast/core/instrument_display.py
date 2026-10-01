@@ -19,6 +19,7 @@ from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
 from .marker.markers import Marker
 from .instrument_common import CommandError, adopted_to_dict
+from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
 from .trace import ConditionChange, TraceAction, TraceSet, to_db
 from .types import AdoptedSweep, Frame, Mode, Quantity, RawSweep, ValueKind
@@ -318,6 +319,8 @@ class DisplayMixin:
             t = self._traces[u.number]
             if t.visible and u.changed:
                 self._emit("trace", self._trace_payload(t))
+        # A か B が生きたトレースなら差も変わる（設計F §5.4）
+        self._diff_refresh(swept=frozenset(u.number for u in updates if u.changed))
         self._emit("markers", {"sweep_no": self._sweep_count, "moved": moved, **self._marker_snap})
 
     def _trace_payload(self, t) -> dict:
@@ -360,6 +363,7 @@ class DisplayMixin:
         原因を分けて見せたいときに渡す。
         """
         resets = self._traces.on_condition_change(kind)
+        self._diff_refresh()
         if resets:
             self._notice("trace_reset", {"traces": sorted(resets), "cause": cause or kind.value,
                                          "codes": {str(k): v for k, v in resets.items()}})
@@ -437,6 +441,7 @@ class DisplayMixin:
         for t in self._traces:
             if t.visible and t.values is not None:
                 self._emit("trace", self._trace_payload(t))
+        self._diff_refresh()
 
     def _cmd_set_trace(self, number, action=_UNSET, count=_UNSET, visible=_UNSET, average_type=_UNSET,
                        average_after=_UNSET, hold_after=_UNSET) -> dict:
@@ -458,6 +463,7 @@ class DisplayMixin:
         self._refresh_markers()
         if t.visible and t.values is not None:
             self._emit("trace", self._trace_payload(t))
+        self._diff_refresh()  # 動作を変えて蓄積を捨てたとき
         self._changed()
         return {"trace": self._trace_state(t), "notices": list(notices)}
 
@@ -466,6 +472,7 @@ class DisplayMixin:
         t.discard()
         self._rebuild_views()
         self._refresh_markers()
+        self._diff_refresh()
         self._changed()
         return {"trace": self._trace_state(t)}
 
@@ -476,6 +483,8 @@ class DisplayMixin:
             if t.values is None:
                 raise self._error("no_trace_data", "id")
             return self._trace_payload(t)
+        if id == DIFF_TRACE_ID:
+            return self._diff_payload()  # トレース間の差（設計F §5.4）
         return self._file_trace_payload(str(id))
 
     # ------------------------------------------------------------------ 振幅（設計J §4.1）
