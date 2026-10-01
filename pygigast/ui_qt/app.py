@@ -8,13 +8,14 @@ from PySide6.QtWidgets import QApplication
 
 from ..api.local import create_default
 from .main_window import MainWindow
+from .prefs import UiPrefs
 
 
 def main(argv: Optional[list[str]] = None, traffic_log_dir=None, web: Optional[dict] = None) -> int:
     """web: 起動の引数で Web の口を開くとき {"enabled", "port", "lan"}（`--web`・`--lan`: 設計A §4.3.2）。"""
     app = QApplication(argv if argv is not None else sys.argv)
     api = create_default(traffic_log_dir=traffic_log_dir)
-    win = MainWindow(api, web=web)
+    win = MainWindow(api, prefs=UiPrefs.for_app(), web=web)
     win.resize(1600, 1000)
     win.show()
     try:

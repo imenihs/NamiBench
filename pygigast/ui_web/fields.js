@@ -167,5 +167,113 @@
       </div>`,
   };
 
-  root.GSFields = { NumField, Steady };
+  // ---- トレースの回数の欄（設計F §2。Qt の ui_qt/fields.py の CountField と同じ決まり） ----
+  // 一覧は「回数なし」（回数を持てる動作のときだけ）と COUNT_CHOICES。打てば 1〜COUNT_MAX のどれでも
+  const COUNT_CHOICES = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1000];
+  const COUNT_MAX = 10000;
+  function countWords() {
+    const X = root.GSTexts;
+    return { none: X ? X.w("no_count") : "", suffix: X ? X.w("times_suffix") : "" };
+  }
+  function countText(v) {
+    const w = countWords();
+    return v == null ? w.none : `${v}${w.suffix}`;
+  }
+  // 打った文字を回数にする。{ value }（null は回数なし）か、受け付けないとき null
+  function parseCount(text, allowNone) {
+    const w = countWords();
+    // 全角の数字も数字として読む（Qt の str.isdigit と同じ）
+    let t = String(text == null ? "" : text).normalize("NFKC").trim();
+    // 「回数なし」は単位の字（回）を外す前に比べる（外すと「数なし」になって見分けられない）
+    if (t === "" || t === w.none.normalize("NFKC")) return allowNone ? { value: null } : null;
+    const suf = w.suffix.trim();
+    if (suf) t = t.split(suf).join("").trim();
+    if (!/^\d+$/.test(t)) return null;
+    const v = Number(t);
+    return v >= 1 && v <= COUNT_MAX ? { value: v } : null;
+  }
+  // ↑↓・ホイールで送った回数（下は回数を持てるなら 0 = 回数なし、平均なら 1。上は COUNT_MAX）
+  function stepCount(value, exp, dir, allowNone) {
+    const lo = allowNone ? 0 : 1;
+    const v = Math.min(Math.max((value || 0) + dir * 10 ** Math.max(exp, 0), lo), COUNT_MAX);
+    return v || null;
+  }
+
+  // 打てるドロップダウン: 欄に数を打つか、右の一覧から選ぶ（NumField の一覧と同じ形）。
+  // 確定は Enter・欄を離れる・一覧から選ぶ。Esc は打つ前に戻す。打っている間は状態の値で書き直さない（v-steady）。
+  // 受け付けない文字は今の値に戻して invalid を出す（呼ぶ側が知らせを出す）
+  const CountField = {
+    name: "count-field",
+    directives: { steady: Steady },
+    props: {
+      value: { type: Number, default: null },
+      allowNone: { type: Boolean, default: true },
+      disabled: { type: Boolean, default: false },
+      title: String,
+    },
+    emits: ["commit", "invalid"],
+    data() { return { editing: false, draft: "" }; },
+    computed: {
+      shown() { return countText(this.value); },
+      items() {
+        const rows = COUNT_CHOICES.map((v) => ({ key: String(v), value: v, text: countText(v) }));
+        return this.allowNone ? [{ key: "none", value: null, text: countText(null) }, ...rows] : rows;
+      },
+    },
+    methods: {
+      onInput(e) { this.editing = true; this.draft = e.target.value; },
+      send(v) {
+        steadyEcho(this.$refs.input);
+        if (v === this.value) { this.$refs.input.value = this.shown; return; }
+        this.$emit("commit", v);
+      },
+      commit() {
+        if (!this.editing) return;
+        this.editing = false;
+        const r = parseCount(this.draft, this.allowNone);
+        this.draft = this.shown;
+        if (r) { this.send(r.value); return; }
+        this.$refs.input.value = this.shown;
+        this.$emit("invalid");
+      },
+      onKey(e) {
+        if (e.key === "Enter") { e.preventDefault(); this.commit(); return; }
+        if (e.key === "Escape") { this.editing = false; this.draft = this.shown; e.target.value = this.shown; return; }
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          const pos = e.target.selectionStart == null ? 0 : e.target.selectionStart;
+          const exp = GSUnits.digitExponent(e.target.value, pos);
+          this.step(exp === null ? 0 : exp, e.key === "ArrowUp" ? 1 : -1);
+        }
+      },
+      onWheel(e) {
+        if (this.disabled) return;
+        e.preventDefault();
+        this.step(0, e.deltaY < 0 ? 1 : -1);  // ホイールは 1 ずつ（一覧の行を送らない）
+      },
+      step(exp, dir) {
+        this.editing = false;
+        this.send(stepCount(this.value, exp, dir, this.allowNone));
+      },
+      pick(e) {
+        const i = e.target.value;
+        e.target.value = "";
+        const it = this.items.find((x) => x.key === i);
+        if (!it) return;
+        this.editing = false;
+        this.send(it.value);
+      },
+    },
+    template: `
+      <span class="count-field" :title="title">
+        <input ref="input" class="count-input" v-steady="editing ? draft : shown" :disabled="disabled" spellcheck="false"
+               @input="onInput" @keydown="onKey" @blur="commit" @wheel="onWheel">
+        <select class="field-choices" :disabled="disabled" @change="pick" @wheel="onWheel">
+          <option value="" hidden></option>
+          <option v-for="it in items" :key="it.key" :value="it.key">{{ it.text }}</option>
+        </select>
+      </span>`,
+  };
+
+  root.GSFields = { NumField, CountField, Steady, COUNT_CHOICES, COUNT_MAX, countText, parseCount, stepCount };
 })(window);

@@ -9,6 +9,9 @@
   const U = GSUnits;
   const X = GSTexts;
   const W = (k, kw) => X.w(k, kw);
+  // 回数を持つ動作と、平均を選んだときの既定の回数（設計F §2。Qt の tab_traces と同じ）
+  const COUNTED = ["average", "max_hold", "min_hold"];
+  const DEFAULT_AVERAGE_COUNT = 16;
   const call = GSApi.call;
 
   const DB_PER_DIV_CHOICES = [1, 2, 5, 10];
@@ -46,6 +49,7 @@
         tab: "trace",
         selectedMarker: null,
         traceNotes: {},
+        icNote: false,  // イメージキャンセルを入れたときだけ一度出す注意（ずっとは出さない）
         fileHidden: {},
         progress: {},
         waiting: "",
@@ -394,6 +398,12 @@
           }
         }
       },
+      setImageCancel(on) {
+        this.sweep({ image_cancel: on });
+        clearTimeout(this._icNoteTimer);
+        this.icNote = on;
+        if (on) this._icNoteTimer = setTimeout(() => { this.icNote = false; }, 10000);
+      },
       traceNote(n, text) {
         this.traceNotes = { ...this.traceNotes, [n]: text };
         setTimeout(() => { if (this.traceNotes[n] === text) { const t = { ...this.traceNotes }; delete t[n]; this.traceNotes = t; } }, 8000);
@@ -641,13 +651,23 @@
         const args = { number: n, [key]: value };
         this.cmd("set_trace", args, { field: "trace" + n });
       },
-      setTraceCount(n, text) {
-        const t = String(text).trim();
-        if (t === "") { this.setTrace(n, "count", null); return; }
-        const v = Number(t);
-        if (!Number.isInteger(v)) { this.note("trace" + n, X.get("ERRORS", "not_integer")); return; }
-        this.setTrace(n, "count", v);
+      setTraceAction(t, action) {
+        const args = { number: t.number, action };
+        // 平均は回数を持つ（設計F §2）。回数が無ければ既定の回数で始める（Qt の tab_traces と同じ）
+        if (action === "average" && !t.count) args.count = DEFAULT_AVERAGE_COUNT;
+        this.cmd("set_trace", args, { field: "trace" + t.number });
       },
+      // 行の2段目の文（Qt の tab_traces と同じ文）: 動作・いまの回数/目標・値が無いとき・横軸が違うとき。
+      // 狭い枠ではまとまりの切れ目で折り返すよう、まとまりごとに分けて返す
+      traceStatus(t) {
+        let head = X.get("TRACE_ACTIONS", t.action, t.action);
+        if (COUNTED.includes(t.action)) head += ` ${t.current_count || 0}` + (t.count_target ? `/${t.count_target}` : "");
+        const parts = [head];
+        if (!t.has_values) parts.push(W("no_value_paren"));
+        if (t.axis_differs) parts.push(X.fmt("axis_differs"));
+        return parts;
+      },
+      traceTip(key, reason) { return W(key) + (reason ? " — " + reason : ""); },
       setPointsAuto(auto) {
         if (auto) this.sweep({ points_auto: true }, "points");
         else this.sweep({ points: this.sw.points }, "points");
@@ -817,6 +837,7 @@
 
   const app = createApp(base);
   app.component("num-field", GSFields.NumField);
+  app.component("count-field", GSFields.CountField);
   // 状態を映す入力は、触っている間は書き直さない（fields.js の Steady）
   app.directive("steady", GSFields.Steady);
   // 設定の画面・プリセットの窓・確かめる窓（app_windows.js）

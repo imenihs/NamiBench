@@ -91,8 +91,8 @@ class TestWebControl(UiBase):
         self.assertTrue(self.web.enabled)
         self.assertFalse(self.win.status.web.isVisible())
         self.assertFalse(self.menu_action("web_connect").isEnabled())
-        # LAN に開いたことは覚えない（次の起動は自分の PC だけ）
-        self.assertIsNone(self.win.prefs.get("web_lan"))
+        # LAN を切ったことを覚える（前回 ON のときだけ、次の起動で「切っています」と知らせる: test_ui_qt_prefs）
+        self.assertFalse(self.win.prefs.get("web_lan"))
 
     def test_regenerate_shows_new_keys(self):
         self.web.set_enabled(True)

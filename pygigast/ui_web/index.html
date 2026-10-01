@@ -224,7 +224,8 @@
               <div class="fnote" v-if="notes.points">{{ notes.points.text }}</div></div>
             <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? W('zero_span_mark') : '' }}</div>
             <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(2), n: sw.preroll_points}) }}</div>
-            <label></label><div><label class="inline" :class="{disabled: !!sweepReasons.image_cancel}" :title="sweepReasons.image_cancel || ''"><input type="checkbox" :checked="sw.image_cancel" :disabled="!!sweepReasons.image_cancel" @change="sweep({image_cancel: $event.target.checked})"> {{ W('image_cancel') }}</label></div>
+            <label></label><div><label class="inline" :class="{disabled: !!sweepReasons.image_cancel}" :title="sweepReasons.image_cancel || W('image_cancel_short')"><input type="checkbox" :checked="sw.image_cancel" :disabled="!!sweepReasons.image_cancel" @change="setImageCancel($event.target.checked)"> {{ W('image_cancel') }}</label>
+              <div class="fnote warn" v-if="icNote">{{ W('image_cancel_short') }}</div></div>
             <!-- 周波数オフセット（設計O・変換器の観測用）。表示だけを換算し、機器へ送る周波数は変えない -->
             <label>{{ V('freq_offset') }}</label>
             <div><input class="mid" data-field="freq_offset" v-steady="freqOffText" :placeholder="V('freq_offset_placeholder')" :title="V('freq_offset_tip')" @change="commitOffset($event.target.value)">
@@ -234,41 +235,38 @@
         </section>
         <section class="tsec" data-sec="traces">
           <h3>{{ W('traces') }}</h3>
-          <table class="ttable">
-            <thead><tr><th></th><th>{{ W('visible') }}</th><th>{{ W('action') }}</th><th>{{ W('count') }}</th><th></th></tr></thead>
-            <tbody>
-              <template v-for="t in traceRows" :key="t.number">
-                <tr>
-                  <td class="nowrap"><span class="swatch" :style="{background: t.color}"></span>{{ t.number }}</td>
-                  <td><input type="checkbox" :checked="t.visible" @change="setTrace(t.number, 'visible', $event.target.checked)"></td>
-                  <td><select :value="t.action" @change="setTrace(t.number, 'action', $event.target.value)">
-                    <option v-for="(l, c) in Td('TRACE_ACTIONS')" :key="c" :value="c">{{ l }}</option></select></td>
-                  <td class="nowrap"><input class="num" v-steady="t.count == null ? '' : t.count" placeholder="—"
-                      :disabled="!['average', 'max_hold', 'min_hold'].includes(t.action)" @change="setTraceCount(t.number, $event.target.value)">
-                    <span class="dim" v-if="['average', 'max_hold', 'min_hold'].includes(t.action)"> {{ t.current_count }}{{ t.count_target ? '/' + t.count_target : '' }}</span></td>
-                  <td><button class="small" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">{{ W('clear') }}</button></td>
-                </tr>
-                <!-- 平均の種類と N 回の後（設計F §5.2.1）。平均・保持のときだけ出す -->
-                <tr v-if="t.action === 'average'" class="sub">
-                  <td></td><td colspan="4">
-                    <select :value="t.average_type || ''" :title="W('average_type')" @change="setTrace(t.number, 'average_type', $event.target.value || null)">
-                      <option value="">{{ t.average_type_effective ? W('default_with', { type: Td('AVERAGE_TYPES')[t.average_type_effective] }) : W('default') }}</option>
-                      <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c" :disabled="c === 'vector' && t.value_kind !== 'complex'"
-                              :title="c === 'vector' && t.value_kind !== 'complex' ? Td('REASON_TEXTS').vector_only : ''">{{ l }}</option></select>
-                    <select :value="t.average_after" :title="W('after_n')" @change="setTrace(t.number, 'average_after', $event.target.value)">
-                      <option v-for="(l, c) in Td('AVERAGE_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
-                </tr>
-                <tr v-else-if="t.action === 'max_hold' || t.action === 'min_hold'" class="sub">
-                  <td></td><td colspan="4">
-                    <select :value="t.hold_after" :title="W('after_n')" @change="setTrace(t.number, 'hold_after', $event.target.value)">
-                      <option v-for="(l, c) in Td('HOLD_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
-                </tr>
-                <tr v-if="traceNotes[t.number] || notes['trace' + t.number] || t.axis_differs" class="tnote">
-                  <td></td><td colspan="4">{{ traceNotes[t.number] || (notes['trace' + t.number] || {}).text || '' }}{{ t.axis_differs ? ' ' + F('axis_differs') : '' }}</td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
+          <!-- トレースごとに2段（Qt の tab_traces と同じ並び）: 1段目 色と番号・表示・動作・回数・クリア、
+               2段目 いまの様子・平均の種類（動作の下）・N 回の後（回数の下）。使えない欄は消さずに無効にして理由を出す（U-08） -->
+          <div class="tgrid">
+            <span class="th"></span><span class="th">{{ W('visible') }}</span><span class="th">{{ W('action') }}</span><span class="th">{{ W('count') }}</span><span class="th"></span>
+            <template v-for="t in traceRows" :key="t.number">
+              <span class="tnum"><span class="swatch" :style="{background: t.color}"></span>{{ t.number }}</span>
+              <span class="tvis"><input type="checkbox" :checked="t.visible" :title="W('visible')" @change="setTrace(t.number, 'visible', $event.target.checked)"></span>
+              <select class="tact" :value="t.action" @change="setTraceAction(t, $event.target.value)">
+                <option v-for="(l, c) in Td('TRACE_ACTIONS')" :key="c" :value="c">{{ l }}</option></select>
+              <!-- 回数: 打てるドロップダウン（一覧から選ぶ・数を打つ。平均は回数が要るので「回数なし」を出さない: 設計F §2） -->
+              <count-field class="tcnt" :value="t.count" :allow-none="t.action !== 'average'"
+                           :disabled="!['average', 'max_hold', 'min_hold'].includes(t.action)"
+                           :title="traceTip('count_n', ['average', 'max_hold', 'min_hold'].includes(t.action) ? null : Td('REASON_TEXTS').count_only)"
+                           @commit="setTrace(t.number, 'count', $event)" @invalid="traceNote(t.number, W('bad_count'))"></count-field>
+              <button class="small tclr" :title="W('clear_tip')" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">{{ W('clear') }}</button>
+              <span class="tstat dim"><span v-for="(part, i) in traceStatus(t)" :key="i">{{ part }}</span></span>
+              <!-- 平均の種類と N 回の後（設計F §5.2.1） -->
+              <select class="tavg" :value="t.average_type || ''" :disabled="t.action !== 'average'"
+                      :title="traceTip('average_type', t.action === 'average' ? null : Td('REASON_TEXTS').average_type_only)"
+                      @change="setTrace(t.number, 'average_type', $event.target.value || null)">
+                <option value="">{{ t.average_type_effective ? W('default_with', { type: Td('AVERAGE_TYPES')[t.average_type_effective] }) : W('default') }}</option>
+                <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c" :disabled="c === 'vector' && t.value_kind !== 'complex'"
+                        :title="c === 'vector' && t.value_kind !== 'complex' ? Td('REASON_TEXTS').vector_only : ''">{{ l }}</option></select>
+              <select class="taft" :value="t.action === 'average' ? t.average_after : t.hold_after"
+                      :disabled="!(['average', 'max_hold', 'min_hold'].includes(t.action) && t.count)"
+                      :title="traceTip('after_n', ['average', 'max_hold', 'min_hold'].includes(t.action) && t.count ? null : Td('REASON_TEXTS').after_only)"
+                      @change="setTrace(t.number, t.action === 'average' ? 'average_after' : 'hold_after', $event.target.value)">
+                <option v-for="(l, c) in Td(t.action === 'average' ? 'AVERAGE_AFTER' : 'HOLD_AFTER')" :key="c" :value="c">{{ l }}</option></select>
+              <div class="tnote" v-if="traceNotes[t.number] || notes['trace' + t.number]">{{ traceNotes[t.number] || notes['trace' + t.number].text }}</div>
+              <div class="tsep"></div>
+            </template>
+          </div>
         </section>
         <section class="tsec" data-sec="files">
           <h3>{{ W('files') }}</h3>

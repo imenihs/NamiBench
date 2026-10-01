@@ -15,7 +15,8 @@ from typing import Optional
 
 
 def _add_web_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--port", type=int, default=8080, help="ブラウザから使うときのポート番号（既定 8080）")
+    p.add_argument("--port", type=int, default=None,
+                   help="ブラウザから使うときのポート番号（既定: 画面では前回の番号、serve では 8080）")
     p.add_argument("--lan", action="store_true",
                    help="同じネットワークのスマホや PC からも使えるようにする（QR コードか認証番号で入る）")
 
@@ -31,7 +32,8 @@ def serve_main(argv: list[str]) -> int:
     from .ui_qt import texts
 
     api = create_default(traffic_log_dir=args.traffic_log)
-    service = WebService(api, port=args.port, lan=args.lan)
+    port = args.port or 8080
+    service = WebService(api, port=port, lan=args.lan)
     try:
         # 画面が無いので、起動したら繋ぐ（Qt の画面と同じ: 覚えた機器が見つかれば自動で繋ぐ。設計B §7.3）
         if args.simulator:
@@ -39,7 +41,7 @@ def serve_main(argv: list[str]) -> int:
         else:
             api.call("connect_last")
         if not service.start():
-            print(texts.tpl_web("state_error", reason=texts.ERRORS.get(service.error, service.error)) + f" :{args.port}",
+            print(texts.tpl_web("state_error", reason=texts.ERRORS.get(service.error, service.error)) + f" :{port}",
                   file=sys.stderr)
             return 1
         run_console(service)

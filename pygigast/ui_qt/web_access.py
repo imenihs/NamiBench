@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -72,12 +73,30 @@ class WebControl:
         self.clients_window: Optional[ClientsWindow] = None
         prefs = win.prefs
         enabled = bool(options.get("enabled")) if options else _truthy(prefs.get("web_enabled", False))
-        self.port = int(options.get("port") or DEFAULT_PORT) if options else int(prefs.get("web_port", DEFAULT_PORT))
+        # 起動の引数で番号を指定しなければ、前回の番号（設定の画面で変えた番号を覚える）
+        self.port = int((options or {}).get("port") or prefs.get("web_port", DEFAULT_PORT))
         if enabled:
             self.set_enabled(True)
             if options and options.get("lan"):
                 self.set_lan(True)
+        # 同じネットワークへ出す設定は覚えるが、起動したときは出さない（暗号化していないので、知らない
+        # ネットワークで黙って公開しない）。前回出していたなら、切ったことを知らせる（黙って切らない）
+        self.lan_was_on = _truthy(prefs.get("web_lan", False)) and not (options and options.get("lan"))
+        if self.lan_was_on:
+            prefs.set("web_lan", False)
+            QTimer.singleShot(0, self._tell_lan_off)
         self.refresh()
+
+    def _tell_lan_off(self) -> None:
+        W = texts.WEB_LABELS
+        box = QMessageBox(QMessageBox.Icon.Information, W["lan_off_at_start_title"], W["lan_off_at_start"],
+                          QMessageBox.StandardButton.Close, self.win)
+        go = box.addButton(W["open_settings"], QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(QMessageBox.StandardButton.Close)
+        box.setModal(False)
+        box.buttonClicked.connect(lambda b: self.win._settings_dialog("web") if b is go else None)
+        box.show()
+        self._lan_box = box
 
     # ---- 状態
     @property
@@ -122,9 +141,11 @@ class WebControl:
             self.service.stop()
             if self.service.lan:
                 self.service.access.set_lan(False)
+            self.win.prefs.set("web_lan", False)  # 閉じたら同じネットワークへも出していない
         self.refresh()
 
     def set_lan(self, on: bool) -> None:
+        self.win.prefs.set("web_lan", bool(on))
         s = self._service()
         s.set_lan(bool(on))
         self.refresh()

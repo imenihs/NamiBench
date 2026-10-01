@@ -105,6 +105,10 @@ class _Edit(QLineEdit):
         if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             self._step(+1 if e.key() == Qt.Key.Key_Up else -1)
             return
+        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # 確定のキーは戻りを映す印を消さない（打てるドロップダウンでは同じ Enter が2回届く）
+            super().keyPressEvent(e)
+            return
         self._echo = False  # 打つ・範囲を選ぶ・カーソルを動かす。以後は書き直さない（Enter は確定で戻る）
         super().keyPressEvent(e)
 
@@ -473,3 +477,123 @@ class RefLevelField(DbField):
         # 値と単位が全部見え、一覧の矢印の分も取る（J §4.3: 欄を切らない）
         widest = self.edit.fontMetrics().horizontalAdvance(f"{MINUS}120.0 {self._unit}")
         self.combo.setMinimumWidth(max(self.edit.minimumWidth(), widest + 16) + 24)
+
+
+# トレースの回数の一覧（設計F §2。打てば 1〜COUNT_MAX のどれでも）
+COUNT_CHOICES = (2, 4, 8, 16, 32, 64, 128, 256, 512, 1000)
+COUNT_MAX = 10000
+_NO_COUNT = -1  # 一覧の「回数なし」の行の印（itemData の None は「印なし」と見分けられないため）
+
+
+class CountField(QComboBox):
+    """トレースの回数の欄: 打てるドロップダウン（一覧から選ぶ・数を打つ）。
+
+    - 一覧は「回数なし」（回数を持てる動作のときだけ）と COUNT_CHOICES。打てば 1〜COUNT_MAX
+    - 「回数なし」は一覧から選ぶか、欄を空にして確定する
+    - ↑↓・ホイールは 1 ずつ（カーソルのある桁: 数値の欄と同じ）。確定は Enter・Tab・欄を離れる。Esc は打つ前に戻す
+    - 状態の値は打っている間は書かない（_Edit と同じ。フォーカスが外れたら入れる）
+    """
+
+    invalid = Signal()
+
+    def __init__(self, on_commit: Callable[[Optional[int]], None], no_count_text: str, suffix: str) -> None:
+        super().__init__()
+        self._on_commit = on_commit
+        self._no_count = no_count_text
+        self._suffix = suffix
+        self._value: Optional[int] = None
+        self._allow_none: Optional[bool] = None
+        self.edit = _Edit()
+        self.setEditable(True)
+        self.setLineEdit(self.edit)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.setCompleter(None)  # 打っている途中に一覧の値で補わない（「1」が「16」にならない）
+        self.edit.committed.connect(self._commit_text)
+        self.edit.stepped.connect(self._stepped)
+        # 一覧から選んだときだけ受ける。欄を離れたときにも、欄の文字と同じ行があると QComboBox が activated を出すので
+        # （古い表示の値を送り返してしまう）、一覧を開いていた間の選択に限る
+        self._from_list = False
+        self.activated.connect(self._activated)
+        self.set_state(None, True)
+
+    def showPopup(self) -> None:
+        self._from_list = True
+        super().showPopup()
+
+    def hidePopup(self) -> None:
+        super().hidePopup()
+        QTimer.singleShot(0, self._list_closed)  # 一覧の行を選んだ activated は、閉じたのと同じ流れの中で届く
+
+    def _list_closed(self) -> None:
+        self._from_list = False
+
+    def _activated(self, i: int) -> None:
+        if self._from_list:
+            self._from_list = False
+            self.choose(i)
+
+    def text_of(self, v: Optional[int]) -> str:
+        return self._no_count if v is None else f"{v}{self._suffix}"
+
+    def value(self) -> Optional[int]:
+        return self._value
+
+    def set_state(self, value: Optional[int], allow_none: bool) -> None:
+        """状態の値と、「回数なし」を選べるか（平均は回数が要る: 設計F §2）。"""
+        if allow_none != self._allow_none:
+            self._allow_none = allow_none
+            self.blockSignals(True)
+            self.clear()
+            if allow_none:
+                self.addItem(self._no_count, _NO_COUNT)
+            for v in COUNT_CHOICES:
+                self.addItem(self.text_of(v), v)
+            self.setCurrentIndex(-1)
+            self.blockSignals(False)
+            self.edit._shown = ""  # 一覧を入れ替えると欄の文字が消えるので、次の show_value で必ず書く
+        self._value = value
+        self.edit.show_value(self.text_of(value))
+
+    def _send(self, v: Optional[int]) -> None:
+        self.edit._echo = True  # 確定した値の戻りはフォーカスがあっても映す
+        if v == self._value:
+            self.edit.setText(self.text_of(v))
+            self.edit.setModified(False)
+            return
+        self._on_commit(v)
+
+    def choose(self, i: int) -> None:
+        """一覧の i 行目を選ぶ（一覧から選んだのと同じ）。"""
+        d = self.itemData(i)
+        if d is None:
+            return
+        self._send(None if d == _NO_COUNT else int(d))
+
+    def _commit_text(self, text: str) -> None:
+        t = text.strip()
+        # 「回数なし」は単位の字（回）を含むので、単位を取り除く前に比べる
+        if t != self._no_count and self._suffix.strip():
+            t = t.replace(self._suffix.strip(), "").strip()
+        if t in ("", self._no_count):
+            if self._allow_none:
+                self._send(None)
+                return
+        elif t.isdigit() and 1 <= int(t) <= COUNT_MAX:
+            self._send(int(t))
+            return
+        self.edit.setText(self.text_of(self._value))
+        self.edit.setModified(False)
+        self.invalid.emit()
+
+    def _stepped(self, _exp: int, direction: int) -> None:
+        exp = max(_exp, 0)
+        lo = 0 if self._allow_none else 1
+        v = min(max((self._value or 0) + direction * 10 ** exp, lo), COUNT_MAX)
+        self._send(v or None)
+
+    def wheelEvent(self, e: QWheelEvent) -> None:
+        # 一覧の矢印の上のホイールも 1 ずつ（一覧の行を送らない）
+        dy = e.angleDelta().y()
+        if dy:
+            self._stepped(0, +1 if dy > 0 else -1)
+        e.accept()

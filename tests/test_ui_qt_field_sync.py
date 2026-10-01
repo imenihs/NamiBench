@@ -47,9 +47,9 @@ class FieldSyncTest(UiBase):
         self.cmd("set_trace", number=1, count=32)
         self.sweeps()
         self.assert_kept(le, sel, pos)
-        self.assertEqual(spin.value(), 16)
+        self.assertEqual(le.text(), "16 回")
         self.leave()
-        self.assertEqual(spin.value(), 32)
+        self.assertEqual(le.text(), "32 回")
 
     def test_ref_field_keeps_selection_and_follows_after_focus_out(self):
         self.connect_and_sweep(single=False)

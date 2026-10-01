@@ -89,6 +89,7 @@ LABELS.update({
     "peaks_found_floor": "{n} 個（床 {floor} {unit}）",
     # ---- トレース・掃引のタブ
     "no_count": "回数なし",
+    "bad_count": "回数は 1〜10000 の整数で入れてください（回数なしは一覧から選ぶか、欄を空にする）",
     "times_suffix": " 回",
     "clear_tip": "このトレースの蓄積を捨てる",
     "default": "既定",

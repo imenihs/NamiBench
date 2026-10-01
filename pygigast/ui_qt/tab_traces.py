@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from ..core.units import format_freq
 from . import screen_model, texts, widget_sync
+from .fields import CountField
 from .theme import trace_color
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 COUNTED = ("average", "max_hold", "min_hold")
 DEFAULT_AVERAGE_COUNT = 16
 TRACE_NOTE_MS = 6000
+IC_NOTE_MS = 10000  # イメージキャンセルを入れたときの注意を出しておく長さ
 REASON_COUNT = texts.REASON_TEXTS["count_only"]
 REASON_AVG_TYPE = texts.REASON_TEXTS["average_type_only"]
 REASON_AFTER = texts.REASON_TEXTS["after_only"]
@@ -85,12 +87,10 @@ class _TraceRow:
         for code, name in texts.TRACE_ACTIONS.items():
             self.action.addItem(name, code)
         self.action.activated.connect(self._action_chosen)
-        self.count = QSpinBox()
-        self.count.setRange(0, 10000)
-        self.count.setSpecialValueText(L["no_count"])
-        self.count.setKeyboardTracking(False)
-        self.count.setSuffix(L["times_suffix"])
-        self.count.valueChanged.connect(self._count_changed)
+        # 回数は打てるドロップダウン（一覧から選ぶ・数を打つ。回数なしも一覧から選べる）
+        self.count = CountField(lambda v: win.call("set_trace", number=number, count=v), L["no_count"],
+                                L["times_suffix"])
+        self.count.invalid.connect(lambda: self.flash(L["bad_count"]))
         self.clear = QPushButton(L["clear"])
         self.clear.setObjectName("small")
         self.clear.setToolTip(L["clear_tip"])
@@ -135,14 +135,6 @@ class _TraceRow:
             kw["count"] = DEFAULT_AVERAGE_COUNT
         self.tab.win.call("set_trace", number=self.n, **kw)
 
-    def _count_changed(self, v: int) -> None:
-        if self._state.get("action") == "average" and v == 0:
-            self.count.blockSignals(True)
-            self.count.setValue(self._state.get("count") or DEFAULT_AVERAGE_COUNT)
-            self.count.blockSignals(False)
-            return
-        self.tab.win.call("set_trace", number=self.n, count=v or None)
-
     def _after_chosen(self, _i: int) -> None:
         code = self.after.currentData()
         if self._state.get("action") == "average":
@@ -159,17 +151,9 @@ class _TraceRow:
         a = s["action"]
         widget_sync.set_checked(self.visible, bool(s["visible"]))
         widget_sync.set_data(self.action, a)
-        count = s.get("count") or 0
-        minimum = 1 if a == "average" else 0
-
-        def show_count() -> None:
-            # 打っている途中・範囲を選んでいる間は書き直さない（フォーカスが外れたら入れる）
-            if self.count.minimum() != minimum:
-                self.count.blockSignals(True)
-                self.count.setMinimum(minimum)
-                self.count.blockSignals(False)
-            widget_sync.set_value(self.count, max(count, minimum))
-        widget_sync.when_idle(self.count, "range", show_count)
+        # 打っている途中は欄が自分で書かずに待つ（フォーカスが外れたら入れる。確定した値の戻りはその場で映す）。
+        # 平均は回数が要るので「回数なし」を一覧に出さない（設計F §2）
+        self.count.set_state(s.get("count"), a != "average")
         set_enabled(self.count, None if a in COUNTED else REASON_COUNT, L["count_n"])
         eff = s.get("average_type_effective")
         default_text = texts.w("default_with", type=texts.AVERAGE_TYPES.get(eff, eff)) if eff else L["default"]
@@ -231,8 +215,17 @@ class TraceTab(QWidget):
         self.est_label.setWordWrap(True)
         form.addRow(L["estimate"], self.est_label)
         self.image_cancel = QCheckBox(L["image_cancel"])
-        self.image_cancel.toggled.connect(lambda on: win.call("set_sweep", image_cancel=on))
+        self.image_cancel.toggled.connect(self._image_cancel_toggled)
         form.addRow(self.image_cancel)
+        # 入れたときだけ一度出す注意（ずっとは出さない。いつでも読めるようにツールチップにも置く）
+        self.ic_note = QLabel(L["image_cancel_short"])
+        self.ic_note.setObjectName("warn")
+        self.ic_note.setWordWrap(True)
+        self.ic_note.hide()
+        self._ic_note_timer = QTimer(self)
+        self._ic_note_timer.setSingleShot(True)
+        self._ic_note_timer.timeout.connect(self.ic_note.hide)
+        form.addRow(self.ic_note)
         # この機器で使えない欄の理由（FFT の機器: 点数は RBW と Span で決まる・ゼロスパンを持たない: 設計Q §6.9）
         self.sweep_note = QLabel("")
         self.sweep_note.setObjectName("dim")
@@ -283,6 +276,16 @@ class TraceTab(QWidget):
         """機器に固有の欄（④）を一番下（余白の手前）に足す。出し入れは欄の側が決める（J §4.5）。"""
         self._body.insertWidget(self._body.count() - 1, w)
 
+    def _image_cancel_toggled(self, on: bool) -> None:
+        # 利用者が切り替えたときだけ届く（状態を映すときは知らせを止めている: widget_sync）
+        self.win.call("set_sweep", image_cancel=on)
+        if on:
+            self.ic_note.show()
+            self._ic_note_timer.start(IC_NOTE_MS)
+        else:
+            self._ic_note_timer.stop()
+            self.ic_note.hide()
+
     def _points_auto_toggled(self, auto: bool) -> None:
         self.points_spin.setEnabled(not auto)
         if auto:
@@ -310,7 +313,7 @@ class TraceTab(QWidget):
         self.step_label.setText(format_freq(sw["step_hz"]) + (L["zero_span_mark"] if sw["step_hz"] == 0 else ""))
         self.est_label.setText(texts.w("estimate_value", s=f"{sw['estimated_sweep_s']:.2f}", n=sw["preroll_points"]))
         widget_sync.set_checked(self.image_cancel, sw["image_cancel"])
-        set_enabled(self.image_cancel, why["image_cancel"])
+        set_enabled(self.image_cancel, why["image_cancel"], L["image_cancel_short"])
         notes = [w for w in (why["points"], why["zero_span"]) if w]
         self.sweep_note.setText("\n".join(notes))
         self.sweep_note.setVisible(bool(notes))

@@ -107,9 +107,10 @@ class TraceTabTest(UiBase):
         self.assertEqual((t["action"], t["count"]), ("average", 16))
         self.assertTrue(row.count.isEnabled())
         self.assertTrue(row.avg.isEnabled())
-        row.count.setValue(8)
-        self.pump()
+        self.type_count(row, "8")
         self.assertEqual(self.state()["traces"][0]["count"], 8)
+        # 平均は回数が要るので、一覧に「回数なし」が無い
+        self.assertEqual(row.count.findText("回数なし"), -1)
         j = row.avg.findData("log")
         row.avg.setCurrentIndex(j)
         row.avg.activated.emit(j)
@@ -117,6 +118,45 @@ class TraceTabTest(UiBase):
         self.assertEqual(self.state()["traces"][0]["average_type"], "log")
         # 対数平均を選んだらその場で知らせる（F §5.2.1・U-02）
         self.assertIn("2.5dB", row.note.text())
+
+    def type_count(self, row, text):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        e = row.count.lineEdit()
+        e.setFocus()
+        self.pump(0.1)
+        e.selectAll()
+        # QTest.keyClicks は日本語の文字を渡すと Python ごと止まる（PySide6）。打ったのと同じく欄へ入れる
+        e.insert(text)
+        QTest.keyClick(e, Qt.Key.Key_Return)
+        self.pump()
+
+    def test_hold_count_dropdown_and_typing(self):
+        """最大保持の回数: 一覧から選ぶ・打つ・「回数なし」を選ぶ・読めない値は戻して知らせる。"""
+        self.cmd("set_trace", number=2, action="max_hold", visible=True)
+        self.pump()
+        row = self.win.trace_tab.rows[2]
+        i = row.count.findData(64)
+        row.count.choose(i)
+        self.pump()
+        self.assertEqual(self.state()["traces"][1]["count"], 64)
+        self.assertEqual(row.count.lineEdit().text(), "64 回")
+        self.type_count(row, "100")
+        self.assertEqual(self.state()["traces"][1]["count"], 100)
+        self.assertEqual(row.count.lineEdit().text(), "100 回")
+        i = row.count.findText("回数なし")
+        self.assertGreaterEqual(i, 0)
+        row.count.choose(i)
+        self.pump()
+        self.assertIsNone(self.state()["traces"][1]["count"])
+        self.assertEqual(row.count.lineEdit().text(), "回数なし")
+        self.type_count(row, "64")
+        self.type_count(row, "回数なし")  # 打っても「回数なし」になる
+        self.assertIsNone(self.state()["traces"][1]["count"])
+        self.type_count(row, "abc")
+        self.assertIsNone(self.state()["traces"][1]["count"])
+        self.assertEqual(row.count.lineEdit().text(), "回数なし")
+        self.assertIn("1〜10000", row.note.text())
 
     def test_update_disables_count_with_reason(self):
         row = self.win.trace_tab.rows[3]
@@ -208,3 +248,27 @@ class TaskPanelTest(UiBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageCancelNoteTest(UiBase):
+    def test_note_only_when_turned_on(self):
+        """イメージキャンセルを入れたときだけ、短い信号が消えることを一度出す（ずっとは出さない）。"""
+        tab = self.win.trace_tab
+        cb = tab.image_cancel
+        self.assertIn("短い時間だけ出る信号は消えます", cb.toolTip())
+        if cb.isChecked():
+            cb.click()
+            self.pump()
+        self.assertTrue(tab.ic_note.isHidden())
+        cb.click()
+        self.pump()
+        self.assertTrue(self.state()["sweep"]["image_cancel"])
+        self.assertFalse(tab.ic_note.isHidden())
+        cb.click()
+        self.pump()
+        self.assertTrue(tab.ic_note.isHidden())
+        # 状態を映すだけ（ほかの口で入れた）では出さない
+        self.cmd("set_sweep", image_cancel=True)
+        self.pump()
+        self.assertTrue(cb.isChecked())
+        self.assertTrue(tab.ic_note.isHidden())
