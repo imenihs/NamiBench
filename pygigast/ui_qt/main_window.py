@@ -583,6 +583,10 @@ class MainWindow(QMainWindow):
         sw = self.state.get("sweep")
         if self._freq_ops_reason() or not sw:
             return
+        if sw.get("span_lock_hz") is not None:
+            # Span 固定中は幅を変えない。命令を送らず、Span の欄で変えることをその場で知らせる（C §5.12）
+            self.f_span.flash_note(texts.LABELS["span_lock_wheel"])
+            return
         k = ZOOM_STEP ** steps
         start, stop = sw["start_hz"], sw["stop_hz"]
         new_start = x - (x - start) * k

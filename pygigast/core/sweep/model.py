@@ -8,7 +8,7 @@
 - 純粋な計算だけ。スレッド・入出力を持たない
 - Step の決め方はプロファイルの sweep_kind で分ける（設計Q §6.4）: "stepped"（GigaSt。既定）は設計C §5.3〜§5.6、
   "fft"（SDR）は Step = fs/N（RBW から決まる）・点数 = ceil(Span/Step)+1・前置きなし。
-  Start・Stop・Center・Span の規則（設計C §5.1・§5.2・§5.11）はどちらも同じ
+  Start・Stop・Center・Span の規則（設計C §5.1・§5.2・§5.11・§5.12）はどちらも同じ
 """
 from __future__ import annotations
 
@@ -36,6 +36,10 @@ _FREQ_FIELDS = (START, STOP, CENTER, SPAN)
 # Center を触って範囲を超えたときの規則（設計C §5.11）。調整の理由のコードにも使う
 RULE_KEEP_CENTER = "keep_center"
 RULE_KEEP_SPAN = "keep_span"
+# Span 固定中に Start か Stop を打って範囲を超えたときの反対の結果: 打った欄を守り Span を縮める（設計C §5.12）
+RULE_KEEP_TYPED = "keep_typed"
+# Span 固定のために、打っていない欄（Start を打ったときの Stop など）を動かした理由のコード（設計C §5.12）
+REASON_SPAN_LOCK = "span_lock"
 
 # 信用できない条件の知らせ（設計C §5.3 の2）のプロファイルのキー。コードは rbw{kHz}k_narrow_span
 # （Span が狭い）・rbw{kHz}k_fine_step（Step が細かい）・rbw{kHz}k_unstable（常に）
@@ -219,23 +223,26 @@ class SweepModel:
         rule = RULE_KEEP_SPAN if lock_on else RULE_KEEP_CENTER
 
         min_span = self._min_span(points_setting)
-        start, stop = self._resolve_range(request, current, min_span, adj, rule, lock_hz)
-
-        alternative = None
         edited = self._edited(request)
-        if CENTER in edited and adj.reasons() & {RULE_KEEP_CENTER, RULE_KEEP_SPAN}:
-            # 規則で値を動かした: 反対の規則の結果を1つ添える（その1回だけ選べる。設計C §5.11 の 3）
-            other = RULE_KEEP_CENTER if rule == RULE_KEEP_SPAN else RULE_KEEP_SPAN
-            a_start, a_stop = self._resolve_range(request, current, min_span, _Adj(), other, lock_hz)
-            if (a_start, a_stop) != (start, stop):
-                alternative = Alternative(rule=other, start_hz=a_start, stop_hz=a_stop)
+        alternative = None
+        if lock_hz is not None and not request.one_shot and set(edited) & {START, STOP}:
+            # Span 固定中に Start・Stop・ドラッグで変えた: 固定 Span を守る（設計C §5.12 の表）。
+            # その1回だけの命令はこの規則を通さず、送った Start・Stop をそのまま使う（範囲だけ守る）
+            start, stop, alternative = self._resolve_locked_edges(request, current, edited, min_span, adj, lock_hz)
+        else:
+            start, stop = self._resolve_range(request, current, min_span, adj, rule, lock_hz)
+            if CENTER in edited and adj.reasons() & {RULE_KEEP_CENTER, RULE_KEEP_SPAN}:
+                # 規則で値を動かした: 反対の規則の結果を1つ添える（その1回だけ選べる。設計C §5.11 の 3）
+                other = RULE_KEEP_CENTER if rule == RULE_KEEP_SPAN else RULE_KEEP_SPAN
+                a_start, a_stop = self._resolve_range(request, current, min_span, _Adj(), other, lock_hz)
+                if (a_start, a_stop) != (start, stop):
+                    alternative = Alternative(rule=other, start_hz=a_start, stop_hz=a_stop)
 
-        if lock_on:
-            touched_span = bool(set(edited) & {START, STOP, SPAN})
-            if lock_hz is None or (touched_span and not request.one_shot):
-                # ON にした時点・利用者が Span を直接変えたときは、固定 Span を新しい Span にする。
-                # その1回だけの命令（反対の結果のボタン）は固定 Span を変えない（設計C §5.11 の 3）
-                lock_hz = stop - start
+        if lock_on and (lock_hz is None or (SPAN in edited and not request.one_shot)):
+            # ON にした時点と、利用者が Span の欄に値を打ったときだけ、固定 Span を採用した Span にする。
+            # 固定中に Span が変わるのは Span を打ったときだけ（固定の意味。設計C §5.12）。
+            # その1回だけの命令（反対の結果のボタン）は固定 Span を変えない（設計C §5.11 の 3）
+            lock_hz = stop - start
 
         return self._finish(
             start=start, stop=stop, points_setting=points_setting,
@@ -340,7 +347,7 @@ class SweepModel:
         span = current.span_hz
         if 0 < span < min_span:
             adj.add(SPAN, span, min_span, "min_span")
-            return self._place_center_span(current.center_hz, min_span, (SPAN,), min_span, adj, requested_center=None)
+            return self._place_center_span(current.center_hz, min_span, adj, requested_center=None)
         return current.start_hz, current.stop_hz
 
     def _round_field(self, name: str, value: int, adj: _Adj) -> int:
@@ -385,6 +392,72 @@ class SweepModel:
         adj.add(START, current.start_hz, new_start, "min_span")
         return new_start, stop
 
+    def _resolve_locked_edges(self, request, current, edited, min_span, adj, lock_hz):
+        """Span 固定中に Start・Stop を打った・ドラッグしたとき（設計C §5.12）。(start, stop, alternative) を返す。
+
+        守る順番は ①機器の範囲 ②固定 Span ③打った欄。
+        - Start だけ: Stop = Start + 固定 Span（窓ごと動かす）。Stop が上限を超えるなら Start = 上限 − 固定 Span
+          にして、反対の結果（打った Start を守り、Stop を上限にして Span を縮める）を添える。Stop だけも同じ形
+        - 両方（ドラッグ）: 選んだ範囲の真ん中を Center にし、幅は固定 Span（Center を打ったときと同じ規則）
+        """
+        lo, hi = self._min, self._max
+        span = lock_hz
+        if 0 < span < min_span:
+            # 点数を増やして最小 Span が固定 Span より上がったとき。作れる最小 Span で守る
+            span = min_span
+        span = min(span, hi - lo)
+        if START in edited and STOP in edited:
+            return self._locked_drag(request, span, min_span, adj)
+
+        typed = START if START in edited else STOP
+        req = getattr(request, typed)
+        v = self._round_field(typed, req, adj)
+        if v < lo:
+            v = adj.replace(typed, req, lo, "lower_limit")
+        elif v > hi:
+            v = adj.replace(typed, req, hi, "upper_limit")
+        alternative = None
+        if typed == START:
+            start, stop = v, v + span
+            if stop > hi:
+                # 固定 Span を守って Start を下げる。反対の結果は打った Start を守り Span を縮めたもの
+                start, stop = hi - span, hi
+                adj.replace(START, req, start, RULE_KEEP_SPAN)
+                a_start = min(v, hi - min_span)
+                if (a_start, hi) != (start, stop):
+                    alternative = Alternative(rule=RULE_KEEP_TYPED, start_hz=a_start, stop_hz=hi)
+            adj.add(STOP, current.stop_hz, stop, REASON_SPAN_LOCK)
+        else:
+            start, stop = v - span, v
+            if start < lo:
+                start, stop = lo, lo + span
+                adj.replace(STOP, req, stop, RULE_KEEP_SPAN)
+                a_stop = max(v, lo + min_span)
+                if (lo, a_stop) != (start, stop):
+                    alternative = Alternative(rule=RULE_KEEP_TYPED, start_hz=lo, stop_hz=a_stop)
+            adj.add(START, current.start_hz, start, REASON_SPAN_LOCK)
+        return start, stop, alternative
+
+    def _locked_drag(self, request, span, min_span, adj):
+        """Span 固定中のドラッグ: 選んだ範囲の真ん中を Center にし、幅は固定 Span（設計C §5.12。ユーザー決定 A）。"""
+        a, b = sorted((request.start_hz, request.stop_hz))
+        # 真ん中は打った値ではないので、単位への丸めは知らせない
+        center = _round_to_unit(a + (b - a) // 2, self._unit)
+        tmp = _Adj()
+        start, stop = self._place_by_center(center, span, min_span, tmp, center, RULE_KEEP_SPAN)
+        alternative = None
+        moved = [x for x in tmp.items() if x.reason == RULE_KEEP_SPAN]
+        for x in moved:
+            # 範囲に収めるため Center を動かした: Center の欄に知らせ、反対の結果（Center を守って Span を縮める）を添える
+            adj.add(x.field, x.requested, x.adopted, x.reason)
+        if moved:
+            a_start, a_stop = self._place_by_center(center, span, min_span, _Adj(), center, RULE_KEEP_CENTER)
+            if (a_start, a_stop) != (start, stop):
+                alternative = Alternative(rule=RULE_KEEP_CENTER, start_hz=a_start, stop_hz=a_stop)
+        adj.add(START, request.start_hz, start, REASON_SPAN_LOCK)
+        adj.add(STOP, request.stop_hz, stop, REASON_SPAN_LOCK)
+        return start, stop, alternative
+
     def _resolve_center_span(self, request, current, edited, min_span, adj, rule, lock_hz) -> tuple[int, int]:
         center = current.center_hz
         span = current.span_hz
@@ -411,7 +484,7 @@ class SweepModel:
             span = min_span
         if CENTER in edited:
             return self._place_by_center(center, span, min_span, adj, req_center, rule)
-        return self._place_center_span(center, span, edited, min_span, adj, requested_center=req_center)
+        return self._place_center_span(center, span, adj, requested_center=req_center)
 
     def _place_by_center(self, center: int, span: int, min_span: int, adj: _Adj, req_center: int,
                          rule: str) -> tuple[int, int]:
@@ -465,9 +538,13 @@ class SweepModel:
         adj.replace(CENTER, adj.requested_of(CENTER, req_center), new_center, RULE_KEEP_SPAN)
         return start, stop
 
-    def _place_center_span(self, center: int, span: int, edited, min_span: int, adj: _Adj,
+    def _place_center_span(self, center: int, span: int, adj: _Adj,
                            requested_center) -> tuple[int, int]:
-        """Center と Span から Start/Stop を作り、範囲へ収める（設計C §5.2）。"""
+        """Center と Span から Start/Stop を作り、範囲へ収める。
+
+        Span を守り、収まらない分だけ Center を内側へ動かす（Span が範囲より広ければ範囲いっぱい）。
+        Span を打って範囲を超えたときも、打った Span を守る（守る順番は 範囲 → Span 固定 → 打った欄。設計C §5.12）。
+        """
         lo, hi = self._min, self._max
         full = hi - lo
         req_span = span
@@ -475,24 +552,6 @@ class SweepModel:
             span = full
             adj.replace(SPAN, adj.requested_of(SPAN, req_span), span, "upper_limit")
 
-        span_only = SPAN in edited and CENTER not in edited
-        if span_only:
-            start, stop = self._around(center, span)
-            if start < lo or stop > hi:
-                # Center を守って Span を縮める
-                reason = "upper_limit" if stop > hi else "lower_limit"
-                room = min(center - lo, hi - center)
-                fit = max(2 * room, 0) // self._unit * self._unit
-                while fit > 0:
-                    start, stop = self._around(center, fit)
-                    if lo <= start and stop <= hi:
-                        break
-                    # Center が単位の半分ずれていると丸めで1単位はみ出す。1単位縮めて収める
-                    fit -= self._unit
-                if span > 0 and fit >= min_span and fit > 0:
-                    adj.replace(SPAN, adj.requested_of(SPAN, req_span), fit, reason)
-                    return start, stop
-                # 縮めると最小 Span を割る: Span を守って Center を動かす（下で行う）
         start, stop = self._around(center, span)
         reason = None
         if start < lo:

@@ -161,6 +161,7 @@ TEMPLATES = {
     "adjusted": "{value} に合わせました",
     "alt_keep_span": "Span {span} を保って Center を {center} にする",
     "alt_keep_center": "Center {center} を保って Span を {span} にする",
+    "alt_keep_typed": "Span を {span} に縮めて {start}〜{stop} にする",
     "alt_done": "Center {center}・Span {span} に置き換えました（この1回だけ）",
     "points_auto": "自動",
     "on": "ON",

@@ -179,6 +179,20 @@ class TestFft(Base):
         self.assertEqual((s.start_hz, s.stop_hz), (FMAX - 10 * MHZ, FMAX))
         self.assertAxisOk(s)
 
+    def test_span_lock_start_stop_drag(self):
+        # 設計C §5.12 も stepped と同じ: 固定中の Start・Stop・ドラッグは固定 Span を守る。Span を打って範囲を超えたら Center を動かす
+        locked = self.req(current=self.at(100 * MHZ, 110 * MHZ), span_lock=True)
+        s = self.req(current=locked, start_hz=200 * MHZ, edited=("start_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (200 * MHZ, 210 * MHZ))
+        s = self.req(current=locked, start_hz=FMAX - 5 * MHZ, edited=("start_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (FMAX - 10 * MHZ, FMAX))
+        self.assertEqual(s.alternative.rule, "keep_typed")
+        s = self.at(300 * MHZ, 400 * MHZ, current=locked)
+        self.assertEqual((s.start_hz, s.stop_hz), (345 * MHZ, 355 * MHZ))
+        s = self.req(current=self.at(FMAX - 2 * MHZ, FMAX), span_hz=20 * MHZ, edited=("span_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (FMAX - 20 * MHZ, FMAX))
+        self.assertAxisOk(s)
+
     def test_limits(self):
         for start, want in ((FMIN - 1, FMIN), (FMIN, FMIN), (FMIN + 1, FMIN + 1)):
             s = self.req(start_hz=start, edited=("start_hz",))

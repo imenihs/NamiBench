@@ -223,22 +223,24 @@ class TestClamp(Base):
         self.assertEqual(adj_map(s)["span_hz"].reason, "upper_limit")
         self.assertDeviceOk(s)
 
-    def test_span_over_upper_keeps_center(self):
+    def test_span_over_upper_keeps_span(self):
+        # Span を打って範囲を超えた: 打った Span を守り、Center を内側へ動かす（設計C §5.12。旧 §5.2 の
+        # 「Center を守って Span を縮める」を置き換えた）
         cur = self.at(11900 * MHZ, 12000 * MHZ)  # Center 11950MHz
         s = self.req(cur, span_hz=1000 * MHZ, edited=("span_hz",))
-        self.assertEqual(s.center_hz, 11950 * MHZ)
-        self.assertEqual(s.span_hz, 300 * MHZ)
-        a = adj_map(s)["span_hz"]
-        self.assertEqual((a.requested, a.adopted, a.reason), (1000 * MHZ, 300 * MHZ, "upper_limit"))
-        self.assertNotIn("center_hz", adj_map(s))
+        self.assertEqual((s.start_hz, s.stop_hz), (11100 * MHZ, 12100 * MHZ))
+        a = adj_map(s)["center_hz"]
+        self.assertEqual((a.requested, a.adopted, a.reason), (11950 * MHZ, 11600 * MHZ, "upper_limit"))
+        self.assertNotIn("span_hz", adj_map(s))
+        self.assertIsNone(s.alternative)
 
-    def test_span_center_at_edge_shrinks_to_min(self):
-        # Center が上限ぎりぎり: Center を守り、最小 Span まで縮める
+    def test_span_center_at_edge_keeps_span(self):
+        # Center が上限ぎりぎり: 打った Span を守って Center を内側へ（設計C §5.12）
         cur = self.at(MAX_HZ - 49_900, MAX_HZ)  # 最小 Span、Center = 上限 − 24950Hz
         s = self.req(cur, span_hz=10 * MHZ, edited=("span_hz",))
-        self.assertEqual((s.start_hz, s.stop_hz), (MAX_HZ - 49_900, MAX_HZ))
-        self.assertEqual(adj_map(s)["span_hz"].reason, "upper_limit")
-        self.assertNotIn("center_hz", adj_map(s))
+        self.assertEqual((s.start_hz, s.stop_hz), (MAX_HZ - 10 * MHZ, MAX_HZ))
+        self.assertEqual(adj_map(s)["center_hz"].reason, "upper_limit")
+        self.assertNotIn("span_hz", adj_map(s))
         self.assertDeviceOk(s)
 
     def test_span_center_at_edge_moves_center(self):
@@ -281,6 +283,194 @@ class TestClamp(Base):
         self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, MIN_HZ + 49_900))
         self.assertEqual(adj_map(s)["stop_hz"].reason, "lower_limit")
         self.assertDeviceOk(s)
+
+
+class TestSpanLockTable(Base):
+    """設計C §5.12 の表: 変えた欄ごとに、Span 固定 OFF / ON で動くもの。"""
+
+    L = 100 * MHZ  # 固定 Span
+
+    def base(self, lock: bool, center=6000 * MHZ, span=None) -> AdoptedSweep:
+        cur = self.req(self.m.default(), center_hz=center, span_hz=span or self.L, edited=("center_hz", "span_hz"))
+        return self.req(cur, span_lock=lock)
+
+    # ---- Center
+    def test_center(self):
+        for lock in (False, True):
+            s = self.req(self.base(lock), center_hz=7000 * MHZ, edited=("center_hz",))
+            self.assertEqual((s.start_hz, s.stop_hz), (6950 * MHZ, 7050 * MHZ), lock)
+        # 範囲の外に出る: OFF は Center を守って Span を縮める、ON は固定 Span を守って Center を内側へ
+        off = self.req(self.base(False), center_hz=12080 * MHZ, edited=("center_hz",))
+        self.assertEqual((off.start_hz, off.stop_hz), (12060 * MHZ, 12100 * MHZ))
+        on = self.req(self.base(True), center_hz=12080 * MHZ, edited=("center_hz",))
+        self.assertEqual((on.start_hz, on.stop_hz), (12000 * MHZ, 12100 * MHZ))
+        self.assertEqual(on.span_lock_hz, self.L)
+
+    # ---- Span
+    def test_span(self):
+        for lock in (False, True):
+            s = self.req(self.base(lock), span_hz=200 * MHZ, edited=("span_hz",))
+            self.assertEqual((s.start_hz, s.stop_hz), (5900 * MHZ, 6100 * MHZ), lock)
+            if lock:
+                self.assertEqual(s.span_lock_hz, 200 * MHZ)  # 固定 Span は採用した Span に置き換わる
+            else:
+                self.assertIsNone(s.span_lock_hz)
+
+    def test_span_over_range_keeps_typed_span(self):
+        for lock in (False, True):
+            s = self.req(self.base(lock, center=12000 * MHZ), span_hz=1000 * MHZ, edited=("span_hz",))
+            self.assertEqual((s.start_hz, s.stop_hz), (11100 * MHZ, 12100 * MHZ), lock)
+            self.assertEqual(adj_map(s)["center_hz"].reason, "upper_limit")
+            self.assertNotIn("span_hz", adj_map(s))
+            if lock:
+                self.assertEqual(s.span_lock_hz, 1000 * MHZ)
+            s = self.req(self.base(lock, center=0), span_hz=1000 * MHZ, edited=("span_hz",))
+            self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, 900 * MHZ), lock)
+            self.assertEqual(adj_map(s)["center_hz"].reason, "lower_limit")
+
+    def test_span_wider_than_range(self):
+        for lock in (False, True):
+            s = self.req(self.base(lock), span_hz=20000 * MHZ, edited=("span_hz",))
+            self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, MAX_HZ), lock)
+            self.assertEqual(adj_map(s)["span_hz"].reason, "upper_limit")
+            if lock:
+                self.assertEqual(s.span_lock_hz, MAX_HZ - MIN_HZ)
+
+    def test_span_boundaries(self):
+        # Center 11000MHz で Stop が 上限 −100Hz / ちょうど / +100Hz になる Span
+        exact = 2 * (MAX_HZ - 11000 * MHZ)
+        for lock in (False, True):
+            for d, moved in ((-200, False), (0, False), (200, True)):
+                s = self.req(self.base(lock, center=11000 * MHZ), span_hz=exact + d, edited=("span_hz",))
+                self.assertEqual(s.span_hz, exact + d, (lock, d))
+                self.assertEqual(s.stop_hz, MAX_HZ if d >= 0 else MAX_HZ - 100, (lock, d))
+                self.assertEqual("center_hz" in adj_map(s), moved, (lock, d))
+                self.assertDeviceOk(s)
+
+    # ---- Start
+    def test_start(self):
+        off = self.req(self.base(False), start_hz=5000 * MHZ, edited=("start_hz",))
+        self.assertEqual((off.start_hz, off.stop_hz), (5000 * MHZ, 6050 * MHZ))
+        on = self.req(self.base(True), start_hz=5000 * MHZ, edited=("start_hz",))
+        self.assertEqual((on.start_hz, on.stop_hz), (5000 * MHZ, 5100 * MHZ))
+        self.assertEqual(on.span_lock_hz, self.L)
+        a = adj_map(on)["stop_hz"]
+        self.assertEqual((a.requested, a.adopted, a.reason), (6050 * MHZ, 5100 * MHZ, "span_lock"))
+        self.assertNotIn("start_hz", adj_map(on))
+        self.assertIsNone(on.alternative)
+
+    def test_start_over_upper_with_lock(self):
+        on = self.req(self.base(True), start_hz=12050 * MHZ, edited=("start_hz",))
+        self.assertEqual((on.start_hz, on.stop_hz), (12000 * MHZ, 12100 * MHZ))
+        a = adj_map(on)["start_hz"]
+        self.assertEqual((a.requested, a.adopted, a.reason), (12050 * MHZ, 12000 * MHZ, "keep_span"))
+        self.assertEqual(adj_map(on)["stop_hz"].reason, "span_lock")
+        # 反対の結果: 打った Start を守り、Stop を上限にして Span を縮める
+        alt = on.alternative
+        self.assertEqual((alt.rule, alt.start_hz, alt.stop_hz), ("keep_typed", 12050 * MHZ, MAX_HZ))
+        # ボタン（その1回だけの命令）: 送った Start・Stop をそのまま使い、固定 Span は変えない
+        b = self.req(on, start_hz=alt.start_hz, stop_hz=alt.stop_hz, edited=("start_hz", "stop_hz"), one_shot=True)
+        self.assertEqual((b.start_hz, b.stop_hz, b.span_lock_hz), (12050 * MHZ, MAX_HZ, self.L))
+        self.assertEqual(b.adjustments, ())
+
+    def test_start_beyond_upper_with_lock(self):
+        on = self.req(self.base(True), start_hz=13000 * MHZ, edited=("start_hz",))
+        self.assertEqual((on.start_hz, on.stop_hz), (12000 * MHZ, MAX_HZ))
+        self.assertEqual(adj_map(on)["start_hz"].reason, "keep_span")
+        self.assertEqual((on.alternative.start_hz, on.alternative.stop_hz), (MAX_HZ - 49_900, MAX_HZ))
+        self.assertDeviceOk(on)
+
+    # ---- Stop
+    def test_stop(self):
+        off = self.req(self.base(False), stop_hz=7000 * MHZ, edited=("stop_hz",))
+        self.assertEqual((off.start_hz, off.stop_hz), (5950 * MHZ, 7000 * MHZ))
+        on = self.req(self.base(True), stop_hz=7000 * MHZ, edited=("stop_hz",))
+        self.assertEqual((on.start_hz, on.stop_hz), (6900 * MHZ, 7000 * MHZ))
+        a = adj_map(on)["start_hz"]
+        self.assertEqual((a.requested, a.adopted, a.reason), (5950 * MHZ, 6900 * MHZ, "span_lock"))
+        self.assertIsNone(on.alternative)
+        self.assertEqual(on.span_lock_hz, self.L)
+
+    def test_stop_below_lower_with_lock(self):
+        on = self.req(self.base(True), stop_hz=-50 * MHZ, edited=("stop_hz",))
+        self.assertEqual((on.start_hz, on.stop_hz), (MIN_HZ, 0))
+        a = adj_map(on)["stop_hz"]
+        self.assertEqual((a.requested, a.adopted, a.reason), (-50 * MHZ, 0, "keep_span"))
+        alt = on.alternative
+        self.assertEqual((alt.rule, alt.start_hz, alt.stop_hz), ("keep_typed", MIN_HZ, -50 * MHZ))
+        b = self.req(on, start_hz=alt.start_hz, stop_hz=alt.stop_hz, edited=("start_hz", "stop_hz"), one_shot=True)
+        self.assertEqual((b.start_hz, b.stop_hz, b.span_lock_hz), (MIN_HZ, -50 * MHZ, self.L))
+
+    def test_user_reported_case(self):
+        # 2026-10-01 ユーザー指摘: 固定 ON・Span 44.571MHz で Start に 470MHz → Stop 514.571MHz、Span は変わらない
+        cur = self.base(True, center=1000 * MHZ, span=44_571_000)
+        self.assertEqual(cur.span_lock_hz, 44_571_000)
+        s = self.req(cur, start_hz=470 * MHZ, edited=("start_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (470 * MHZ, 514_571_000))
+        self.assertEqual((s.span_hz, s.span_lock_hz), (44_571_000, 44_571_000))
+
+    # ---- ドラッグ
+    def test_drag(self):
+        off = self.at(1000 * MHZ, 1500 * MHZ, current=self.base(False))
+        self.assertEqual((off.start_hz, off.stop_hz), (1000 * MHZ, 1500 * MHZ))
+        on = self.at(1000 * MHZ, 1500 * MHZ, current=self.base(True))
+        # 選んだ範囲の真ん中（1250MHz）を Center に、幅は固定 Span のまま
+        self.assertEqual((on.start_hz, on.stop_hz), (1200 * MHZ, 1300 * MHZ))
+        self.assertEqual(on.span_lock_hz, self.L)
+        self.assertEqual(adj_map(on)["start_hz"].reason, "span_lock")
+        self.assertEqual(adj_map(on)["stop_hz"].reason, "span_lock")
+        self.assertIsNone(on.alternative)
+
+    def test_drag_at_edge_with_lock(self):
+        cur = self.base(True, span=1000 * MHZ)
+        on = self.at(12000 * MHZ, 12100 * MHZ, current=cur)
+        self.assertEqual((on.start_hz, on.stop_hz), (11100 * MHZ, 12100 * MHZ))
+        self.assertEqual(adj_map(on)["center_hz"].reason, "keep_span")
+        # 反対の結果は Center（選んだ範囲の真ん中 12050MHz）を守って Span を縮めたもの（§5.11 と同じ）
+        alt = on.alternative
+        self.assertEqual((alt.rule, alt.start_hz, alt.stop_hz), ("keep_center", 12000 * MHZ, 12100 * MHZ))
+
+    def test_one_shot_bypasses_lock(self):
+        on = self.at(200 * MHZ, 250 * MHZ, current=self.base(True), one_shot=True)
+        self.assertEqual((on.start_hz, on.stop_hz, on.span_lock_hz), (200 * MHZ, 250 * MHZ, self.L))
+        # 範囲だけは守る
+        on = self.at(12050 * MHZ, 12200 * MHZ, current=self.base(True), one_shot=True)
+        self.assertEqual((on.start_hz, on.stop_hz, on.span_lock_hz), (12050 * MHZ, MAX_HZ, self.L))
+        self.assertEqual(adj_map(on)["stop_hz"].reason, "upper_limit")
+
+    # ---- 境界（N−1 / N / N+1）
+    def test_start_boundaries_with_lock(self):
+        n = MAX_HZ - self.L
+        for start, moved in ((n - 100, False), (n, False), (n + 100, True)):
+            s = self.req(self.base(True), start_hz=start, edited=("start_hz",))
+            self.assertEqual(s.span_hz, self.L, start)
+            self.assertEqual(s.start_hz, n if moved else start)
+            self.assertEqual(s.alternative is not None, moved, start)
+            self.assertEqual("start_hz" in adj_map(s), moved, start)
+            self.assertDeviceOk(s)
+
+    def test_stop_boundaries_with_lock(self):
+        n = MIN_HZ + self.L
+        for stop, moved in ((n - 100, True), (n, False), (n + 100, False)):
+            s = self.req(self.base(True), stop_hz=stop, edited=("stop_hz",))
+            self.assertEqual(s.span_hz, self.L, stop)
+            self.assertEqual(s.stop_hz, n if moved else stop)
+            self.assertEqual(s.alternative is not None, moved, stop)
+            self.assertDeviceOk(s)
+
+    def test_full_range_lock(self):
+        # 固定 Span が範囲いっぱい: Start・Stop・ドラッグのどれでも範囲いっぱいのまま。反対の結果を添える
+        cur = self.req(self.m.default(), span_lock=True)
+        self.assertEqual(cur.span_lock_hz, MAX_HZ - MIN_HZ)
+        s = self.req(cur, start_hz=1000 * MHZ, edited=("start_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, MAX_HZ))
+        self.assertEqual((s.alternative.start_hz, s.alternative.stop_hz), (1000 * MHZ, MAX_HZ))
+        s = self.req(cur, stop_hz=1000 * MHZ, edited=("stop_hz",))
+        self.assertEqual((s.start_hz, s.stop_hz), (MIN_HZ, MAX_HZ))
+        self.assertEqual((s.alternative.start_hz, s.alternative.stop_hz), (MIN_HZ, 1000 * MHZ))
+        d = self.at(1000 * MHZ, 2000 * MHZ, current=cur)
+        self.assertEqual((d.start_hz, d.stop_hz), (MIN_HZ, MAX_HZ))
+        self.assertEqual((d.alternative.start_hz, d.alternative.stop_hz), (MIN_HZ, 3100 * MHZ))
 
 
 class TestFreqUnit(Base):
@@ -557,7 +747,8 @@ class TestInvariant(Base):
         cur = self.cur
         fields = ("start_hz", "stop_hz", "center_hz", "span_hz")
         for _ in range(3000):
-            kind = rnd.choice(("start", "stop", "center", "span", "cs", "drag", "points", "rbw", "mode"))
+            kind = rnd.choice(("start", "stop", "center", "span", "cs", "drag", "points", "rbw", "mode", "lock",
+                               "oneshot"))
             f = lambda: rnd.randint(-2000 * MHZ, 14000 * MHZ)
             if kind == "start":
                 r = SweepRequest(start_hz=f(), edited=("start_hz",))
@@ -571,14 +762,27 @@ class TestInvariant(Base):
                 r = SweepRequest(center_hz=f(), span_hz=rnd.randint(0, 3000 * MHZ), edited=("center_hz", "span_hz"))
             elif kind == "drag":
                 r = SweepRequest(start_hz=f(), stop_hz=f(), edited=("start_hz", "stop_hz"))
+            elif kind == "lock":
+                r = SweepRequest(span_lock=rnd.choice((True, False)))
+            elif kind == "oneshot":
+                r = SweepRequest(start_hz=f(), stop_hz=f(), edited=("start_hz", "stop_hz"), one_shot=True)
             elif kind == "points":
                 r = SweepRequest(points=rnd.choice((POINTS_AUTO, 1, 2, 3, 101, 500, 12000, 12001, rnd.randint(2, 13000))))
             elif kind == "rbw":
                 r = SweepRequest(rbw_preference_hz=rnd.choice((180 * KHZ, 30 * KHZ, 15 * KHZ)))
             else:
                 r = SweepRequest(mode=rnd.choice(list(Mode)), image_cancel=rnd.choice((True, False)))
+            prev_lock = cur.span_lock_hz
             cur = self.m.apply(r, cur)
             self.assertDeviceOk(cur)
+            if prev_lock is not None and kind in ("start", "stop", "drag"):
+                # 固定中に Start・Stop・ドラッグで変えても Span は固定 Span のまま（設計C §5.12）
+                n = 500 if cur.points_setting is None else cur.points_setting
+                expect = prev_lock if prev_lock == 0 or prev_lock >= 100 * (n - 1) else 100 * (n - 1)
+                self.assertEqual(cur.span_hz, expect, kind)
+                self.assertEqual(cur.span_lock_hz, prev_lock)
+            if prev_lock is not None and kind == "oneshot":
+                self.assertEqual(cur.span_lock_hz, prev_lock)
             if cur.span_hz:
                 n = 500 if cur.points_setting is None else cur.points_setting
                 self.assertGreaterEqual(cur.span_hz, 100 * (n - 1))

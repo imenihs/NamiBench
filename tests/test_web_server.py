@@ -164,6 +164,27 @@ class WebServerTest(unittest.TestCase):
         # 周波数は Hz の整数のまま（float にしない: A §2.1）
         self.assertIsInstance(body["adopted"]["start_hz"], int)
 
+    def test_set_sweep_span_lock_start_and_keep_typed(self):
+        # Span 固定中に Start を打つ: Stop を動かして固定 Span を守る（C §5.12。ユーザーの指摘の例）
+        self.post("set_sweep", {"start_hz": 1_000_000_000, "stop_hz": 1_044_571_000})
+        self.post("set_sweep", {"span_lock": True})
+        st, body = self.post("set_sweep", {"start_hz": 470_000_000})
+        self.assertEqual((body["adopted"]["start_hz"], body["adopted"]["stop_hz"]), (470_000_000, 514_571_000))
+        self.assertEqual([(a["field"], a["reason"]) for a in body["adjustments"]], [("stop_hz", "span_lock")])
+        self.assertEqual(body["texts"]["adjustments"][0]["rule"], False)
+        # 上限を超える: Start を下げ、Start の欄に反対の結果（打った Start を守り Span を縮める）のボタン
+        st, body = self.post("set_sweep", {"start_hz": 12_080_000_000})
+        self.assertEqual(body["adopted"]["start_hz"], 12_100_000_000 - 44_571_000)
+        rules = {a["field"]: a["rule"] for a in body["texts"]["adjustments"]}
+        self.assertEqual(rules, {"start_hz": True, "stop_hz": False})
+        self.assertEqual(body["alternative"]["rule"], "keep_typed")
+        self.assertEqual(body["texts"]["alternative_label"], "Span を 20 MHz に縮めて 12.08 GHz〜12.1 GHz にする")
+        # ボタン（その1回だけの命令）は固定 Span を変えない
+        st, body = self.post("set_sweep", {"start_hz": body["alternative"]["start_hz"],
+                                           "stop_hz": body["alternative"]["stop_hz"],
+                                           "edited": ["start_hz", "stop_hz"], "one_shot": True})
+        self.assertEqual((body["adopted"]["start_hz"], body["adopted"]["span_lock_hz"]), (12_080_000_000, 44_571_000))
+
     def test_single_sweep_binary_trace(self):
         self.post("set_sweep", {"start_hz": 100_000_000, "stop_hz": 200_000_000})
         self.assertEqual(self.post("connect", {"backend": "simulator", "serial": "SIM00001"})[0], 200)
@@ -321,6 +342,45 @@ class UnitsJsTest(unittest.TestCase):
                 expect_p.append(None)
         self.assertEqual(got["p"], expect_p)
         self.assertEqual(got["f"], [format_freq(h) for h in self.HZ])
+
+
+@unittest.skipUnless(shutil.which("node"), "Node が無い")
+class AppJsWheelTest(unittest.TestCase):
+    """app.js の周波数軸のホイール: Span 固定中は命令を送らず Span の欄に知らせる（C §5.12）。
+
+    Vue と他の部品は形だけの代わりを置き、createApp に渡された methods をそのまま呼ぶ。
+    """
+
+    SCRIPT = r"""
+globalThis.window = globalThis; window.addEventListener = () => {};
+let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() {}, mount() {} }; }, markRaw: (x) => x };
+globalThis.GSUnits = {}; globalThis.GSTexts = { w: (k) => "W:" + k, get: () => "", dict: () => ({}), fmt: (k) => k };
+globalThis.GSApi = { call: async () => ({}) };
+for (const n of ["GSAppMenu", "GSAppFiles", "GSAppRtl", "GSAppDevices"]) globalThis[n] = {};
+globalThis.GSFields = { NumField: {} };
+require(process.argv[1]);
+const out = {};
+for (const lock of [null, 2e9]) {
+  const sent = [], notes = [];
+  const self = { freqOpsReason: null, sw: { start_hz: 0, stop_hz: 2e9, span_lock_hz: lock },
+                 sweep: (a, f) => sent.push([a, f]), note: (f, t) => notes.push([f, t]) };
+  opts.methods.onFreqWheel.call(self, 5e8, 1);
+  out[lock == null ? "off" : "on"] = { sent, notes };
+}
+console.log(JSON.stringify(out));
+"""
+
+    def test_wheel_with_lock(self):
+        out = subprocess.run(["node", "-e", self.SCRIPT, str(UI_WEB / "app.js")],
+                             capture_output=True, text=True, encoding="utf-8", timeout=30, check=True).stdout
+        got = json.loads(out)
+        # 固定 ON: 命令を送らず、Span の欄に「Span 固定中」の文（表の span_lock_wheel）を出す
+        self.assertEqual(got["on"], {"sent": [], "notes": [["span", "W:span_lock_wheel"]]})
+        # 固定 OFF: いままでどおり Center と Span を送る（1段で 0.8 倍）
+        self.assertEqual(len(got["off"]["sent"]), 1)
+        args, field = got["off"]["sent"][0]
+        self.assertEqual((args["span_hz"], args["edited"], field), (1_600_000_000, ["center_hz", "span_hz"], "span"))
+        self.assertEqual(got["off"]["notes"], [])
 
 
 if __name__ == "__main__":

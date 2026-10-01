@@ -59,6 +59,19 @@ class ReferenceTest(InstrumentCase):
         self.assertTrue(self.call("reference_delete", id=ref_id)["deleted"])
         self.assertIsNone(self.call("get_state")["normalization"]["selected"])
 
+    def test_wide_reference_ignores_span_lock(self):
+        # Span 固定中でも「広く取る」の範囲はアプリが決めた範囲のまま（固定の規則を通さない: C §5.12 の one_shot）
+        from pygigast.core.normalize.reference import wide_range_hz
+        self.connect(100_000_000, 200_000_000)
+        self.call("set_mode", mode="tg")
+        self.call("set_sweep", span_lock=True)
+        self.take_wide()
+        lo, hi, _step = wide_range_hz(self.inst._profile)
+        seg = self.inst._ref.segments[0]
+        self.assertEqual(seg.axis.start_hz, lo)
+        self.assertGreaterEqual(seg.axis.last_hz, hi - seg.axis.step_hz)
+        self.assertEqual(self.call("get_state")["sweep"]["span_lock_hz"], 100_000_000)
+
     def test_fine_reference_merges_into_selected(self):
         self.connect(100_000_000, 200_000_000)
         self.call("set_mode", mode="tg")

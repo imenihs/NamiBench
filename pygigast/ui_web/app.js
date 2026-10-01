@@ -439,13 +439,15 @@
         this.$graph.setXY(this.markers.xy);
       },
       onRangeSelected(a, b) {
-        // ドラッグは Start と Stop を同時に触ったものとして扱う（C §5.1）
+        // ドラッグは Start と Stop を同時に触ったものとして扱う（C §5.1）。Span 固定の規則はコアが当てる（C §5.12）
         if (this.freqOpsReason) return;
         this.sweep({ start_hz: Math.round(Math.min(a, b)), stop_hz: Math.round(Math.max(a, b)), edited: ["start_hz", "stop_hz"] }, "start");
       },
       onFreqWheel(x, steps) {
         const s = this.sw;
         if (this.freqOpsReason || !s) return;
+        // Span 固定中は幅を変えない。命令を送らず、Span の欄で変えることをその場で知らせる（C §5.12。Qt と同じ）
+        if (s.span_lock_hz != null) { this.note("span", W("span_lock_wheel")); return; }
         // カーソルの位置の周波数を画面上の同じ位置に保って拡大・縮小する（Qt と同じ）
         const k = ZOOM_STEP ** steps;
         const ns = x - (x - s.start_hz) * k;

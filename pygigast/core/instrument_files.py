@@ -403,8 +403,11 @@ class FilesMixin:
                 raise self._error("s11_open_missing", "standard")
         if kind == KIND_WIDE:
             lo, hi, _step = wide_range_hz(self._profile)
+            # 基準の範囲はアプリが決めるもの（利用者のドラッグではない）。Span 固定の規則を通さず、
+            # 送った Start・Stop をそのまま使う（その1回だけの命令。固定 Span も変えない: C §5.12）
             adopted = self._model.apply(
-                SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"), points=0), self._adopted)
+                SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"), points=0, one_shot=True),
+                self._adopted)
         else:
             adopted = self._adopted
         task = self._new_task("reference_take", total=averages,

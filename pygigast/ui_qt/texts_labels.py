@@ -12,7 +12,9 @@ LABELS = {
     "span_lock": "Span 固定",
     "span_locked": "固定",
     "span_locked_at": "固定 {span}",
-    "span_lock_tip": "ON: Center を変えても Span を保つ（範囲を超える分は Center が動く）\nOFF: Center を保ち、範囲を超える分だけ Span を縮める",
+    "span_lock_tip": "ON: Span は Span の欄に打ったときだけ変わる（Center・Start・Stop・ドラッグでは幅を保ち、範囲を超える分は位置が動く）\nOFF: Center を変えたら Center を保ち、範囲を超える分だけ Span を縮める",
+    # 周波数軸のホイールは Span 固定中は何もせず、その場で1回知らせる（C §5.12）
+    "span_lock_wheel": "Span 固定中です（幅は Span の欄で変えます）",
     "ref_level": "REF レベル",
     "ref_auto": "自動",
     "ref_auto_tip": "表示中のトレースの最大値が上から1目盛下に来るよう REF レベルを合わせる（局発の漏れ・TG の範囲外・掃引の始めの不安定な点・値の無い点は使わない）",

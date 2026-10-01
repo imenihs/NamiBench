@@ -86,6 +86,7 @@ REASONS = {
     "rbw_fixed": "この条件では RBW 180kHz 固定",
     "keep_center": "Center を保つため、範囲に収まる最大の Span",
     "keep_span": "Span 固定のため、Span を保って Center を移動",
+    "span_lock": "Span 固定のため",
     "zero_span_unsupported": "この機器はゼロスパンを持ちません",
     "points_by_rbw": "この機器の点数は RBW と Span で決まります",
     "rbw_points_max": "点数の上限を超えるため RBW を広げました",
@@ -95,7 +96,7 @@ REASONS = {
     "device_changed": "機器が変わったため既定",
 }
 
-# 範囲の規則で値を動かした理由（設計C §5.11）。この知らせには反対の規則のボタンを添える
+# 範囲の規則で値を動かした理由（設計C §5.11・§5.12）。この知らせには反対の規則のボタンを添える
 RULE_REASONS = {"keep_center", "keep_span"}
 
 
@@ -103,6 +104,10 @@ def alternative_label(alt: dict) -> str:
     """反対の規則の結果のボタンの文字（設計C §5.11 の 3）。"""
     span = alt["stop_hz"] - alt["start_hz"]
     center = alt["start_hz"] + span // 2
+    if alt.get("rule") == "keep_typed":
+        # Span 固定中に打った Start・Stop を守り、Span を縮める結果（C §5.12）
+        return tpl("alt_keep_typed", span=format_freq(span), start=format_freq(alt["start_hz"]),
+                   stop=format_freq(alt["stop_hz"]))
     key = "alt_keep_span" if alt.get("rule") == "keep_span" else "alt_keep_center"
     return tpl(key, span=format_freq(span), center=format_freq(center))
 

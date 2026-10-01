@@ -753,7 +753,8 @@ class RtlSdrMixin:
         if a.axis.start_hz >= c - h and a.axis.last_hz <= c + h:
             return None
         lo, hi = self._rtlsdr_window(c)
-        req = SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"))
+        # チューナーの使える幅はアプリが決める範囲。Span 固定の規則を通さず、そのまま使う（C §5.12 の one_shot）
+        req = SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"), one_shot=True)
         if record_undo:
             out = self._apply(req)
         else:
@@ -808,7 +809,8 @@ class RtlSdrMixin:
         self._rtl_tcp_center = f
         lo, hi = self._rtlsdr_window(f, a.span_hz // 2)
         try:
-            out = self._apply(SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz")))
+            # 外のソフトが決めた中心の使える幅。Span 固定の規則を通さず、そのまま使う（C §5.12 の one_shot）
+            out = self._apply(SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"), one_shot=True))
         except CommandError as e:
             self._rtl_tcp_center = old
             self._notice("rtltcp_freq_from_client", {"freq_hz": freq_hz, "applied": False, "code": e.code})

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from pygigast.api.local import LocalApi, _SimulatorBackend  # noqa: E402
 from pygigast.core.devices.base import load_profile  # noqa: E402
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
+from pygigast.ui_qt import texts  # noqa: E402
 from pygigast.ui_qt.main_window import MainWindow  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
@@ -249,6 +250,52 @@ class SpanLockTest(_Base):
         self.pump()
         self.assertIsNone(self.sweep()["span_lock_hz"])
         self.assertEqual(self.win.span_lock.text(), "Span 固定")
+
+    def lock(self, **kw):
+        self.set_sweep(**kw)
+        self.win.span_lock.click()
+        self.pump()
+        self.assertIsNotNone(self.sweep()["span_lock_hz"])
+
+    def test_wheel_with_lock_sends_nothing_and_notes(self):
+        """固定 ON: 周波数軸のホイールは命令を送らず、Span の欄に1回知らせる（C §5.12）。"""
+        self.lock(start_hz=0, stop_hz=2_000_000_000)
+        sw0 = self.sweep()
+        x = self.view_to_widget(500e6, -50).x()
+        self.wheel(QPoint(x, self.axis_point("bottom").y()), clicks=1)
+        self.pump()
+        self.assertEqual(self.sweep(), sw0)
+        self.assertEqual(self.win.f_span.note.text(), texts.LABELS["span_lock_wheel"])
+        self.assertEqual(texts.LABELS["span_lock_wheel"], "Span 固定中です（幅は Span の欄で変えます）")
+
+    def test_drag_with_lock_keeps_span(self):
+        """固定 ON: ドラッグは選んだ範囲の真ん中を Center にし、幅は固定 Span のまま（C §5.12）。"""
+        self.lock(start_hz=0, stop_hz=100_000_000)
+        self.set_sweep(start_hz=0, stop_hz=2_000_000_000, one_shot=True)  # 表示を広げる（固定 Span は 100MHz のまま）
+        self.drag(self.view_to_widget(500e6, -50), self.view_to_widget(800e6, -50))
+        sw = self.sweep()
+        self.assertEqual(sw["span_hz"], 100_000_000)
+        tol = 2e9 / self.vb.width() * 3
+        self.assertAlmostEqual(sw["center_hz"], 650e6, delta=tol)
+
+    def test_start_with_lock_and_keep_typed_button(self):
+        """固定 ON で Start を打つ: Stop が動いて Span を守る。上限を超えたら Start の欄に反対の結果のボタン。"""
+        self.lock(start_hz=1_000_000_000, stop_hz=1_044_571_000)
+        self.type_into(self.win.f_start, "470")
+        sw = self.sweep()
+        self.assertEqual((sw["start_hz"], sw["stop_hz"]), (470_000_000, 514_571_000))
+        self.assertIn("514.571 MHz に合わせました", self.win.f_stop.note.text())
+        self.type_into(self.win.f_start, "12080")
+        sw = self.sweep()
+        self.assertEqual((sw["start_hz"], sw["stop_hz"]), (12_100_000_000 - 44_571_000, 12_100_000_000))
+        btn = self.win.f_start.note_action
+        self.assertTrue(btn.isVisible())
+        self.assertEqual(btn.text(), "Span を 20 MHz に縮めて 12.08 GHz〜12.1 GHz にする")
+        btn.click()
+        self.pump()
+        sw = self.sweep()
+        self.assertEqual((sw["start_hz"], sw["stop_hz"], sw["span_lock_hz"]),
+                         (12_080_000_000, 12_100_000_000, 44_571_000))
 
 
 class MenuAndKeyTest(_Base):
