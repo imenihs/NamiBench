@@ -1,8 +1,10 @@
 """右のタブ「トレース・掃引」（設計J §4.5・F §5・C §5.3）。
 
-- トレース 1〜4: 色・表示するか・動作・回数・平均の種類・N 回の後・いまの回数・一度きりの知らせ（F §3）
-- 掃引: 点数（自動・手動）・Step・掃引時間の見積もり・イメージキャンセル
-- 参照トレース: 開いたファイルのトレース（表示するか・外す）（F §5.4・H §6）
+並びは用事と頻度の順（J §4.5・U-10。よく変える掃引の設定をスクロールせずに見える一番上に置く）:
+- ① 掃引: 点数（自動・手動）・Step・掃引時間の見積もり・イメージキャンセル
+- ② トレース 1〜4: 色・表示するか・動作・回数・平均の種類・N 回の後・いまの回数・一度きりの知らせ（F §3）
+- ③ 参照トレース: 開いたファイルのトレース（表示するか・外す）（F §5.4・H §6）
+- ④ 機器に固有の欄（RTL-SDR の受信: rtl_panel.py）。その機器に繋いでいるときだけ出す（add_device_section）
 - 周波数オフセット（設計O）は次の回。消さずに無効にして理由を出す（U-08）
 """
 from __future__ import annotations
@@ -194,15 +196,7 @@ class TraceTab(QWidget):
         self.win = win
         inner = QWidget()
         lay = QVBoxLayout(inner)
-        self.body = lay  # 他の欄（受信: rtl_panel.py）を差し込む
         lay.setContentsMargins(4, 4, 4, 4)
-
-        g_traces = QGroupBox("トレース")
-        grid = QGridLayout(g_traces)
-        grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(2)
-        self.rows = {n: _TraceRow(self, n, grid, (n - 1) * 3) for n in (1, 2, 3, 4)}
-        lay.addWidget(g_traces)
 
         g_sweep = QGroupBox("掃引")
         form = QFormLayout(g_sweep)
@@ -238,6 +232,13 @@ class TraceTab(QWidget):
         form.addRow(self.freq_offset)
         lay.addWidget(g_sweep)
 
+        g_traces = QGroupBox("トレース")
+        grid = QGridLayout(g_traces)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(2)
+        self.rows = {n: _TraceRow(self, n, grid, (n - 1) * 3) for n in (1, 2, 3, 4)}
+        lay.addWidget(g_traces)
+
         g_files = QGroupBox("参照トレース（開いたファイル）")
         self.files_lay = QVBoxLayout(g_files)
         self.files_lay.setSpacing(2)
@@ -253,10 +254,16 @@ class TraceTab(QWidget):
         self.files_lay.addWidget(open_btn, 0, Qt.AlignmentFlag.AlignLeft)
         lay.addWidget(g_files)
         lay.addStretch(1)
+        self._body = lay
+        self.g_sweep, self.g_traces, self.g_files = g_sweep, g_traces, g_files
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll(inner))
+
+    def add_device_section(self, w: QWidget) -> None:
+        """機器に固有の欄（④）を一番下（余白の手前）に足す。出し入れは欄の側が決める（J §4.5）。"""
+        self._body.insertWidget(self._body.count() - 1, w)
 
     def _points_auto_toggled(self, auto: bool) -> None:
         self.points_spin.setEnabled(not auto)

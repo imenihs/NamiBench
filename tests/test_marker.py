@@ -142,6 +142,27 @@ class PeakTest(unittest.TestCase):
         v = ratio_view([0, 10, 0, 5, 0], flags={"no_reference": nr})
         self.assertEqual(find_peaks(v).tolist(), [1, 3])
 
+    def test_lo_leak_points_are_compared_but_never_chosen(self):
+        # 設計J §4.8: 0Hz の局発の漏れの帯（2〜4）の点はピークにしない。帯の端の裾（5）も
+        # 帯の中の点と比べるので局所最大にならず、ピークにならない。帯の外の 8 だけが残る
+        #               0  1  2   3   4   5  6  7  8   9
+        db = [0, 0, 20, 40, 20, 12, 0, 0, 15, 0]
+        leak = np.zeros(10, bool)
+        leak[2:5] = True
+        v = ratio_view(db, flags={"lo_leak": leak})
+        self.assertEqual(highest_index(v), 8)
+        self.assertEqual(find_peaks(v).tolist(), [8])
+        self.assertEqual(top_peaks(v, 5), [8])
+        self.assertEqual(next_peak_index(v, 3, RIGHT), 8)
+        self.assertIsNone(next_peak_index(v, 8, LEFT))
+        self.assertEqual(next_peak_index(v, 3, LOWER), 8)
+        _, rows = peak_list(v, floor_margin_db=3.0)
+        self.assertEqual([r.freq_hz for r in rows], [f(8)])
+        # 漏れの帯の点しか残らなければピークは無い
+        only = ratio_view([0, 40, 0], flags={"lo_leak": np.array([True, True, True])})
+        self.assertIsNone(highest_index(only))
+        self.assertEqual(find_peaks(only).size, 0)
+
     def test_next_peak_directions(self):
         v = ratio_view([0, 10, 0, 20, 0, 15, 0])
         self.assertEqual(next_peak_index(v, 3, RIGHT), 5)

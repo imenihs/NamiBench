@@ -20,6 +20,11 @@ from ..types import FreqAxis, Frame, Quantity
 EXCLUDE_FLAGS = ("transient", "out_of_cal_range", "no_reference")
 # 値そのものが無い点の印（設計E §6.4: マーカーは「値なし」と出す）
 NO_VALUE_FLAGS = ("no_reference",)
+# 値はあるが、ピークとして選ばない点の印（設計J §4.8: 0Hz の局発の漏れの山は入力の信号ではなく、
+# そこに載るピークは意味の無い結果）。盛り上がりの比べ方では区間を切らずに比べる点として残す
+# ——切ると帯の端の裾が「外側に比べる点の無い端の点」になり、ピークとして拾われるため。
+# 手で置く M（周波数の指定・クリック）はこの印の点にも置ける
+PEAK_SKIP_FLAGS = ("lo_leak",)
 
 UNIT_DBM = "dBm"
 UNIT_DB = "dB"
@@ -153,6 +158,16 @@ class TraceView:
         v = float(self.level_db[idx])
         return v if math.isfinite(v) else None
 
+    @property
+    def peak_candidate(self) -> np.ndarray:
+        """ピークとして選んでよい点（searchable から PEAK_SKIP_FLAGS の点を除いたもの）。"""
+        out = self.searchable.copy()
+        for name in PEAK_SKIP_FLAGS:
+            a = self.flags.get(name)
+            if a is not None and np.shape(a) == out.shape:
+                out &= ~np.asarray(a, dtype=bool)
+        return out
+
     def point_flags(self, idx: int) -> list[str]:
         """その点に付いている印の名前（読み値に添える注意: 設計G §3.3）。"""
         out = []
@@ -164,11 +179,12 @@ class TraceView:
 
 
 def highest_index(view: TraceView) -> Optional[int]:
-    """ピーク: 表示範囲の中で最大の点（設計G §3.2）。印の付いた点・値なしの点は探さない。
+    """ピーク: 表示範囲の中で最大の点（設計G §3.2）。印の付いた点・値なしの点・0Hz の局発の漏れの帯の点
+    （PEAK_SKIP_FLAGS: 設計J §4.8）は探さない。
 
     同じ最大値が複数あれば最も低い周波数の点。探せる点が無ければ None。
     """
-    seg = np.where(view.searchable[view.lo:view.hi], view.level_db[view.lo:view.hi], -np.inf)
+    seg = np.where(view.peak_candidate[view.lo:view.hi], view.level_db[view.lo:view.hi], -np.inf)
     if seg.size == 0 or not np.isfinite(seg).any():
         return None
     return view.lo + int(np.argmax(seg))
@@ -185,6 +201,7 @@ def find_peaks(
     excursion_db 以上高いこと。探せない点（印・値なし）は区間の切れ目として扱い、またいで比べない。
     区間の端の点は、外側に比べる点が無いので内側だけで判定する（内側に1点以上要る）。
     平らな頂上は最も低い周波数の点を代表にする。threshold より低いピークは除く。
+    0Hz の局発の漏れの帯の点（PEAK_SKIP_FLAGS: 設計J §4.8）は比べる相手には使うが、ピークとしては返さない。
     """
     if excursion_db <= 0:
         raise ValueError("excursion_db は正の値")
@@ -201,6 +218,8 @@ def find_peaks(
             j += 1
         found.extend(view.lo + i + k for k in _peaks_in_run(level[i:j], excursion_db))
         i = j
+    candidate = view.peak_candidate
+    found = [k for k in found if candidate[k]]
     if threshold is not None:
         found = [k for k in found if view.level_db[k] >= threshold]
     return np.asarray(found, dtype=np.int64)

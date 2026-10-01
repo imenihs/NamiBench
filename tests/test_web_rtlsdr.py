@@ -56,6 +56,9 @@ class WebRtlTest(unittest.TestCase):
         ui = json.loads(body)["ui"]
         self.assertEqual([c["hz"] for c in ui["rbw"][0]["choices"]], [180000, 30000, 15000])
         self.assertTrue(ui["rtl"]["reason"])
+        self.assertFalse(ui["rtl"]["shown"])  # 繋いでいない: 受信の欄を出さない（設計J §4.5）
+        self.assertEqual(self.post("connect", {"backend": "simulator", "serial": "SIM00001"})[0], 200)
+        self.assertFalse(json.loads(self.get("/api/v1/state")[1])["ui"]["rtl"]["shown"])  # GigaSt でも出さない
         self.assertEqual(ui["status"], texts.status_items(json.loads(body)))
         with self.ws() as ws:
             self.connect_rtl(ws)
@@ -64,9 +67,21 @@ class WebRtlTest(unittest.TestCase):
         self.assertEqual(ui["mode_reasons"]["tg"], texts.MODE_UNSUPPORTED)
         self.assertEqual(ui["sweep_reasons"]["points"], texts.RTL_LABELS["points_fft"])
         self.assertIsNone(ui["rtl"]["reason"])
+        self.assertTrue(ui["rtl"]["shown"])
         self.assertEqual(len(ui["rtl"]["gains"]), 30)
         self.assertIn(UNCAL, ui["rtl"]["unit_text"])
         self.assertTrue(any(i["key"] == "cal" and UNCAL in i["text"] for i in ui["status"]))
+
+    def test_trace_tab_section_order(self):
+        # 「トレース・掃引」のタブ: ①掃引 ②トレース ③参照トレース ④機器に固有の欄（RTL-SDR のときだけ: J §4.5）
+        html = (UI_WEB / "index.html").read_text(encoding="utf-8")
+        a = html.index("v-show=\"showTab('trace')\"")
+        b = html.index("v-show=\"showTab('marker')\"")
+        secs = re.findall(r'<section class="tsec" data-sec="(\w+)"([^>]*)>', html[a:b])
+        self.assertEqual([s[0] for s in secs], ["sweep", "traces", "files", "rtlsdr"])
+        self.assertIn('v-if="rtlView.shown"', secs[3][1])
+        # 受信の欄の部品はその section の中だけにある
+        self.assertNotIn("RTL_LABELS", html[a:html.index('data-sec="rtlsdr"')])
 
     def test_markers_rows_and_calibration_texts(self):
         with self.ws() as ws:

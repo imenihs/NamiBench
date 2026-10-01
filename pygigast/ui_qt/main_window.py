@@ -321,7 +321,7 @@ class MainWindow(QMainWindow):
 
         self.trace_tab = TraceTab(self)
         self.rtl_panel = RtlPanel(self)
-        self.trace_tab.body.insertWidget(1, self.rtl_panel)
+        self.trace_tab.add_device_section(self.rtl_panel)
         self.marker_tab = MarkerTab(self)
         self.listen = ListenControl(self)
         self.marker_tab.body.insertWidget(1, self.listen.panel)

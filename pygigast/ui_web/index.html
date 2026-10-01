@@ -211,95 +211,102 @@
 
       <!-- ---- トレース・掃引（J §4.5） ---- -->
       <div class="tab-body" v-show="showTab('trace')">
-        <h3>{{ W('traces') }}</h3>
-        <table class="ttable">
-          <thead><tr><th></th><th>{{ W('visible') }}</th><th>{{ W('action') }}</th><th>{{ W('count') }}</th><th></th></tr></thead>
-          <tbody>
-            <template v-for="t in traceRows" :key="t.number">
-              <tr>
-                <td class="nowrap"><span class="swatch" :style="{background: t.color}"></span>{{ t.number }}</td>
-                <td><input type="checkbox" :checked="t.visible" @change="setTrace(t.number, 'visible', $event.target.checked)"></td>
-                <td><select :value="t.action" @change="setTrace(t.number, 'action', $event.target.value)">
-                  <option v-for="(l, c) in Td('TRACE_ACTIONS')" :key="c" :value="c">{{ l }}</option></select></td>
-                <td class="nowrap"><input class="num" :value="t.count == null ? '' : t.count" placeholder="—"
-                    :disabled="!['average', 'max_hold', 'min_hold'].includes(t.action)" @change="setTraceCount(t.number, $event.target.value)">
-                  <span class="dim" v-if="['average', 'max_hold', 'min_hold'].includes(t.action)"> {{ t.current_count }}{{ t.count_target ? '/' + t.count_target : '' }}</span></td>
-                <td><button class="small" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">{{ W('clear') }}</button></td>
-              </tr>
-              <!-- 平均の種類と N 回の後（設計F §5.2.1）。平均・保持のときだけ出す -->
-              <tr v-if="t.action === 'average'" class="sub">
-                <td></td><td colspan="4">
-                  <select :value="t.average_type_effective || t.average_type" :title="W('average_type')" @change="setTrace(t.number, 'average_type', $event.target.value)">
-                    <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c">{{ l }}</option></select>
-                  <select :value="t.average_after" :title="W('after_n')" @change="setTrace(t.number, 'average_after', $event.target.value)">
-                    <option v-for="(l, c) in Td('AVERAGE_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
-              </tr>
-              <tr v-else-if="t.action === 'max_hold' || t.action === 'min_hold'" class="sub">
-                <td></td><td colspan="4">
-                  <select :value="t.hold_after" :title="W('after_n')" @change="setTrace(t.number, 'hold_after', $event.target.value)">
-                    <option v-for="(l, c) in Td('HOLD_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
-              </tr>
-              <tr v-if="traceNotes[t.number] || notes['trace' + t.number] || t.axis_differs" class="tnote">
-                <td></td><td colspan="4">{{ traceNotes[t.number] || (notes['trace' + t.number] || {}).text || '' }}{{ t.axis_differs ? ' ' + F('axis_differs') : '' }}</td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-
-        <!-- 受信（RTL-SDR: 設計Q §6.5・§6.6）。繋いでいないときは消さずに無効にして理由を出す（U-08） -->
-        <h3>{{ T('RTL_LABELS', 'group') }}</h3>
-        <div class="form" :class="{disabled: !!rtlView.reason}">
-          <label>{{ T('RTL_LABELS', 'gain') }}</label>
-          <select :value="rtlGainValue" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'gain_tip')" @change="setGain($event.target.value)">
-            <option v-for="g in rtlView.gains" :key="String(g.value)" :value="g.value == null ? 'agc' : String(g.value)">{{ g.text }}</option>
-          </select>
-          <label></label>
-          <button class="small" :disabled="!!rtlView.fit_reason || readOnly" :title="T('RTL_LABELS', 'fit_gain_tip') + (rtlView.fit_reason ? ' — ' + rtlView.fit_reason : '')" @click="cmd('rtlsdr_fit_gain', {}, {field: 'rtl'})">{{ T('RTL_LABELS', 'fit_gain') }}</button>
-          <label>{{ T('RTL_LABELS', 'ppm') }}</label>
-          <input class="num" :value="rtlView.ppm" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'ppm_tip')" @change="setPpm($event.target.value)">
-        </div>
-        <div class="fnote" v-if="notes.rtl">{{ notes.rtl.text }}</div>
-        <div class="dim">{{ rtlView.reason || rtlView.cal_text }}</div>
-        <div v-if="rtlView.unit_text">{{ rtlView.unit_text }}</div>
-        <div class="warn" v-if="rtlView.shared_text">{{ rtlView.shared_text }}</div>
-        <div class="form">
-          <label>{{ T('RTL_LABELS', 'cal_marker') }}</label>
-          <select v-model="rtlMarker" :disabled="!!(rtlView.reason || rtlNoMarker)" :title="rtlView.reason || rtlNoMarker || ''">
-            <option v-for="m in markers.markers" :key="m.id" :value="m.id">{{ m.id }}</option>
-          </select>
-          <label>{{ T('RTL_LABELS', 'cal_true_freq') }}</label>
-          <input class="mid" v-model="rtlTrueFreq" :disabled="!!(rtlView.ppm_reason || rtlNoMarker)">
-          <label></label>
-          <button :disabled="!!(rtlView.ppm_reason || rtlNoMarker)" :title="T('RTL_LABELS', 'cal_ppm_tip') + ((rtlView.ppm_reason || rtlNoMarker) ? ' — ' + (rtlView.ppm_reason || rtlNoMarker) : '')" @click="calPpm">{{ T('RTL_LABELS', 'cal_ppm_button') }}</button>
-          <label>{{ T('RTL_LABELS', 'cal_true_dbm') }}</label>
-          <input class="mid" v-model="rtlTrueDbm" :disabled="!!(rtlView.level_reason || rtlNoMarker)">
-          <label></label>
-          <button :disabled="!!(rtlView.level_reason || rtlNoMarker)" :title="T('RTL_LABELS', 'cal_level_tip') + ((rtlView.level_reason || rtlNoMarker) ? ' — ' + (rtlView.level_reason || rtlNoMarker) : '')" @click="calLevel">{{ T('RTL_LABELS', 'cal_level_button') }}</button>
-        </div>
-        <div class="fnote" v-if="notes.rtlcal">{{ notes.rtlcal.text }}</div>
-        <div class="warn" v-if="rtlResult">{{ rtlResult }}</div>
-
-        <h3>{{ W('sweep') }}</h3>
-        <div class="form" v-if="sw">
-          <label>{{ W('points') }}</label>
-          <div><label class="inline" :class="{disabled: !!sweepReasons.points}" :title="sweepReasons.points || ''"><input type="checkbox" :checked="!sw.points_setting" :disabled="!!sweepReasons.points" @change="setPointsAuto($event.target.checked)"> {{ F('points_auto') }}</label>
-            <input class="num" type="number" min="2" max="12000" :value="sw.points" :disabled="!sw.points_setting || !!sweepReasons.points" :title="sweepReasons.points || ''" @change="setPoints($event.target.value)">
-            <div class="fnote" v-if="notes.points">{{ notes.points.text }}</div></div>
-          <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? W('zero_span_mark') : '' }}</div>
-          <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(2), n: sw.preroll_points}) }}</div>
-          <label></label><div><label class="inline" :class="{disabled: !!sweepReasons.image_cancel}" :title="sweepReasons.image_cancel || ''"><input type="checkbox" :checked="sw.image_cancel" :disabled="!!sweepReasons.image_cancel" @change="sweep({image_cancel: $event.target.checked})"> {{ W('image_cancel') }}</label></div>
-        </div>
-        <div class="dim" v-for="r in [sweepReasons.points, sweepReasons.zero_span].filter((x) => x)" :key="r">{{ r }}</div>
-
-        <h3>{{ W('files') }}</h3>
-        <div class="dim" v-if="!files.length">{{ W('no_files') }}</div>
-        <div class="file" v-for="f in files" :key="f.file_id">
-          <div class="file-head"><b>{{ f.name }}</b> <span class="dim">{{ f.created_at }} {{ f.device_model }} {{ f.device_serial }}</span>
-            <button class="small" @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
-          <div v-for="tr in f.traces" :key="tr.id" class="file-trace">
-            <label class="inline"><input type="checkbox" :checked="!fileHidden[tr.id]" @change="toggleFileTrace(tr.id)"> {{ W('file_trace_row', {id: tr.id, number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
+        <!-- 並びは用事と頻度の順（J §4.5・U-10）: ①掃引 ②トレース ③参照トレース ④機器に固有の欄 -->
+        <section class="tsec" data-sec="sweep">
+          <h3>{{ W('sweep') }}</h3>
+          <div class="form" v-if="sw">
+            <label>{{ W('points') }}</label>
+            <div><label class="inline" :class="{disabled: !!sweepReasons.points}" :title="sweepReasons.points || ''"><input type="checkbox" :checked="!sw.points_setting" :disabled="!!sweepReasons.points" @change="setPointsAuto($event.target.checked)"> {{ F('points_auto') }}</label>
+              <input class="num" type="number" min="2" max="12000" :value="sw.points" :disabled="!sw.points_setting || !!sweepReasons.points" :title="sweepReasons.points || ''" @change="setPoints($event.target.value)">
+              <div class="fnote" v-if="notes.points">{{ notes.points.text }}</div></div>
+            <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? W('zero_span_mark') : '' }}</div>
+            <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(2), n: sw.preroll_points}) }}</div>
+            <label></label><div><label class="inline" :class="{disabled: !!sweepReasons.image_cancel}" :title="sweepReasons.image_cancel || ''"><input type="checkbox" :checked="sw.image_cancel" :disabled="!!sweepReasons.image_cancel" @change="sweep({image_cancel: $event.target.checked})"> {{ W('image_cancel') }}</label></div>
           </div>
-        </div>
+          <div class="dim" v-for="r in [sweepReasons.points, sweepReasons.zero_span].filter((x) => x)" :key="r">{{ r }}</div>
+        </section>
+        <section class="tsec" data-sec="traces">
+          <h3>{{ W('traces') }}</h3>
+          <table class="ttable">
+            <thead><tr><th></th><th>{{ W('visible') }}</th><th>{{ W('action') }}</th><th>{{ W('count') }}</th><th></th></tr></thead>
+            <tbody>
+              <template v-for="t in traceRows" :key="t.number">
+                <tr>
+                  <td class="nowrap"><span class="swatch" :style="{background: t.color}"></span>{{ t.number }}</td>
+                  <td><input type="checkbox" :checked="t.visible" @change="setTrace(t.number, 'visible', $event.target.checked)"></td>
+                  <td><select :value="t.action" @change="setTrace(t.number, 'action', $event.target.value)">
+                    <option v-for="(l, c) in Td('TRACE_ACTIONS')" :key="c" :value="c">{{ l }}</option></select></td>
+                  <td class="nowrap"><input class="num" :value="t.count == null ? '' : t.count" placeholder="—"
+                      :disabled="!['average', 'max_hold', 'min_hold'].includes(t.action)" @change="setTraceCount(t.number, $event.target.value)">
+                    <span class="dim" v-if="['average', 'max_hold', 'min_hold'].includes(t.action)"> {{ t.current_count }}{{ t.count_target ? '/' + t.count_target : '' }}</span></td>
+                  <td><button class="small" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">{{ W('clear') }}</button></td>
+                </tr>
+                <!-- 平均の種類と N 回の後（設計F §5.2.1）。平均・保持のときだけ出す -->
+                <tr v-if="t.action === 'average'" class="sub">
+                  <td></td><td colspan="4">
+                    <select :value="t.average_type_effective || t.average_type" :title="W('average_type')" @change="setTrace(t.number, 'average_type', $event.target.value)">
+                      <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c">{{ l }}</option></select>
+                    <select :value="t.average_after" :title="W('after_n')" @change="setTrace(t.number, 'average_after', $event.target.value)">
+                      <option v-for="(l, c) in Td('AVERAGE_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
+                </tr>
+                <tr v-else-if="t.action === 'max_hold' || t.action === 'min_hold'" class="sub">
+                  <td></td><td colspan="4">
+                    <select :value="t.hold_after" :title="W('after_n')" @change="setTrace(t.number, 'hold_after', $event.target.value)">
+                      <option v-for="(l, c) in Td('HOLD_AFTER')" :key="c" :value="c">{{ l }}</option></select></td>
+                </tr>
+                <tr v-if="traceNotes[t.number] || notes['trace' + t.number] || t.axis_differs" class="tnote">
+                  <td></td><td colspan="4">{{ traceNotes[t.number] || (notes['trace' + t.number] || {}).text || '' }}{{ t.axis_differs ? ' ' + F('axis_differs') : '' }}</td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </section>
+        <section class="tsec" data-sec="files">
+          <h3>{{ W('files') }}</h3>
+          <div class="dim" v-if="!files.length">{{ W('no_files') }}</div>
+          <div class="file" v-for="f in files" :key="f.file_id">
+            <div class="file-head"><b>{{ f.name }}</b> <span class="dim">{{ f.created_at }} {{ f.device_model }} {{ f.device_serial }}</span>
+              <button class="small" @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
+            <div v-for="tr in f.traces" :key="tr.id" class="file-trace">
+              <label class="inline"><input type="checkbox" :checked="!fileHidden[tr.id]" @change="toggleFileTrace(tr.id)"> {{ W('file_trace_row', {id: tr.id, number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
+            </div>
+          </div>
+        </section>
+        <!-- 受信（RTL-SDR: 設計Q §6.5・§6.6）。RTL-SDR に繋いでいるときだけ出す（J §4.5）。
+             繋いでいる間に使えない操作（AGC の間のレベルの校正など）は、消さずに無効にして理由を出す（U-08） -->
+        <section class="tsec" data-sec="rtlsdr" v-if="rtlView.shown">
+          <h3>{{ T('RTL_LABELS', 'group') }}</h3>
+          <div class="form" :class="{disabled: !!rtlView.reason}">
+            <label>{{ T('RTL_LABELS', 'gain') }}</label>
+            <select :value="rtlGainValue" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'gain_tip')" @change="setGain($event.target.value)">
+              <option v-for="g in rtlView.gains" :key="String(g.value)" :value="g.value == null ? 'agc' : String(g.value)">{{ g.text }}</option>
+            </select>
+            <label></label>
+            <button class="small" :disabled="!!rtlView.fit_reason || readOnly" :title="T('RTL_LABELS', 'fit_gain_tip') + (rtlView.fit_reason ? ' — ' + rtlView.fit_reason : '')" @click="cmd('rtlsdr_fit_gain', {}, {field: 'rtl'})">{{ T('RTL_LABELS', 'fit_gain') }}</button>
+            <label>{{ T('RTL_LABELS', 'ppm') }}</label>
+            <input class="num" :value="rtlView.ppm" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'ppm_tip')" @change="setPpm($event.target.value)">
+          </div>
+          <div class="fnote" v-if="notes.rtl">{{ notes.rtl.text }}</div>
+          <div class="dim">{{ rtlView.reason || rtlView.cal_text }}</div>
+          <div v-if="rtlView.unit_text">{{ rtlView.unit_text }}</div>
+          <div class="warn" v-if="rtlView.shared_text">{{ rtlView.shared_text }}</div>
+          <div class="form">
+            <label>{{ T('RTL_LABELS', 'cal_marker') }}</label>
+            <select v-model="rtlMarker" :disabled="!!(rtlView.reason || rtlNoMarker)" :title="rtlView.reason || rtlNoMarker || ''">
+              <option v-for="m in markers.markers" :key="m.id" :value="m.id">{{ m.id }}</option>
+            </select>
+            <label>{{ T('RTL_LABELS', 'cal_true_freq') }}</label>
+            <input class="mid" v-model="rtlTrueFreq" :disabled="!!(rtlView.ppm_reason || rtlNoMarker)">
+            <label></label>
+            <button :disabled="!!(rtlView.ppm_reason || rtlNoMarker)" :title="T('RTL_LABELS', 'cal_ppm_tip') + ((rtlView.ppm_reason || rtlNoMarker) ? ' — ' + (rtlView.ppm_reason || rtlNoMarker) : '')" @click="calPpm">{{ T('RTL_LABELS', 'cal_ppm_button') }}</button>
+            <label>{{ T('RTL_LABELS', 'cal_true_dbm') }}</label>
+            <input class="mid" v-model="rtlTrueDbm" :disabled="!!(rtlView.level_reason || rtlNoMarker)">
+            <label></label>
+            <button :disabled="!!(rtlView.level_reason || rtlNoMarker)" :title="T('RTL_LABELS', 'cal_level_tip') + ((rtlView.level_reason || rtlNoMarker) ? ' — ' + (rtlView.level_reason || rtlNoMarker) : '')" @click="calLevel">{{ T('RTL_LABELS', 'cal_level_button') }}</button>
+          </div>
+          <div class="fnote" v-if="notes.rtlcal">{{ notes.rtlcal.text }}</div>
+          <div class="warn" v-if="rtlResult">{{ rtlResult }}</div>
+        </section>
       </div>
 
       <!-- ---- マーカー（J §4.5・設計G §3.5） ---- -->

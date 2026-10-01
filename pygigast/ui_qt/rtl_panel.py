@@ -5,7 +5,8 @@
 - 周波数の補正（ppm）: 数で入れる。個体の校正としてシリアル番号ごとに保存（コアが行う）
 - 個体の校正: マーカーを既知の信号に置き、本当の周波数・レベルを入れて「ppm をこの信号で合わせる」
   「レベルをこの信号で合わせる」（Q §6.6。計算と保存はコア）
-- RTL-SDR に繋いでいないときは、欄を消さずに無効にして理由を出す（U-08）
+- 欄は RTL-SDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）。繋いでいる間に
+  使えない操作（AGC の間のレベルの校正・利得を合わせるなど）は、消さずに無効にして理由を出す（U-08）
 """
 from __future__ import annotations
 
@@ -82,11 +83,13 @@ class RtlPanel(QGroupBox):
         form.addRow(self.result)
         self._view: dict = {}
         self._gains_key: tuple = ()
+        self.hide()  # 状態を受けるまでは繋いでいない扱い
 
     # ---- 状態を映す
     def apply(self, st: dict) -> None:
         v = screen_model.rtl_view(st)
         self._view = v
+        self.setVisible(v["shown"])
         key = tuple(g["value"] for g in v["gains"])
         if key != self._gains_key:
             self._gains_key = key

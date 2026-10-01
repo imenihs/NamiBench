@@ -52,17 +52,39 @@ class RtlUiBase(UiBase):
 
 
 class TestRtlControls(RtlUiBase):
-    def test_disabled_until_connected_then_controls_follow_device(self):
+    def sections(self):
+        """「トレース・掃引」のタブの欄の並び（出ているものだけ）。"""
+        tab = self.win.trace_tab
+        names = {id(tab.g_sweep): "sweep", id(tab.g_traces): "traces", id(tab.g_files): "files",
+                 id(self.win.rtl_panel): "rtlsdr"}
+        lay = tab._body
+        out = []
+        for i in range(lay.count()):
+            w = lay.itemAt(i).widget()
+            if w is not None and id(w) in names and not w.isHidden():
+                out.append(names[id(w)])
+        return out
+
+    def test_shown_only_while_rtlsdr_connected_then_controls_follow_device(self):
+        # 機器に固有の欄は、その機器に繋いでいるときだけ出す（設計J §4.5）。掃引が一番上
         p = self.win.rtl_panel
-        self.assertFalse(p.gain.isEnabled())
-        self.assertIn(texts.RTL_LABELS["not_rtlsdr"], p.gain.toolTip())
+        self.assertTrue(p.isHidden())
+        self.assertEqual(self.sections(), ["sweep", "traces", "files"])
+        # GigaSt（シミュレータ）に繋いでも出さない
+        self.cmd("connect", backend="simulator", serial="SIM00001")
+        self.pump(0.3)
+        self.assertTrue(p.isHidden())
         self.connect_rtl()
+        self.assertEqual(self.sections(), ["sweep", "traces", "files", "rtlsdr"])
         self.assertTrue(p.gain.isEnabled())
         # 段（29）と AGC
         self.assertEqual(p.gain.count(), 30)
         self.assertEqual(p.gain.itemText(0), texts.TEMPLATES["gain_agc"])
         self.assertEqual(p.gain.currentData(), 29.7)
         self.assertIn(UNCAL, p.unit_text.text())
+        # 切ったら消える
+        self.cmd("disconnect")
+        self.wait(lambda: p.isHidden(), what="受信の欄が消える")
 
     def test_gain_and_agc_go_to_core_and_level_needs_manual_gain(self):
         self.connect_rtl()

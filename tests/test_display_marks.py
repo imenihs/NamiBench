@@ -164,6 +164,42 @@ class InstrumentMarksTest(InstrumentCase):
         self.assertIn("negative_mirror", rows["M2"]["notes"])
         self.assertNotIn("lo_leak", rows["M2"]["notes"])
 
+    def test_sa_peak_search_skips_lo_leak(self):
+        # 設計J §4.8: ピーク・次のピーク・上位 N 個・ピーク追従・ピークの一覧は 0Hz の漏れの帯の点を探さない
+        st, tr = self.sweep("sa")
+        band = (-5 * MHZ, 5 * MHZ)
+
+        def outside(hz):
+            return not band[0] <= hz <= band[1]
+
+        r = self.call("marker_peak", direction="highest", trace=1)
+        self.assertTrue(outside(r["freq_hz"]))
+        # 漏れ（+1.9dBm）の次に高いのはシミュレータの 100MHz の −30dBm の信号
+        self.assertGreater(r["freq_hz"], 95 * MHZ)
+        mid = r["id"]
+        for d in ("left", "right", "lower"):
+            try:
+                r2 = self.call("marker_peak", id=mid, direction=d)
+            except Exception:  # noqa: BLE001  ピークが無ければ no_peak（動かない）
+                continue
+            self.assertTrue(outside(r2["freq_hz"]), d)
+        placed = self.call("marker_top_peaks", trace=1, n=5)["placed"]
+        self.assertTrue(placed)
+        self.assertTrue(all(outside(p["freq_hz"]) for p in placed))
+        pl = self.call("peak_list", trace=1, floor_margin_db=3.0)
+        self.assertTrue(pl["peaks"])
+        self.assertTrue(all(outside(p["freq_hz"]) for p in pl["peaks"]))
+        # ピーク追従の P を漏れの帯の中から始めても、次の掃引で帯の外のピークへ動く
+        self.call("marker_clear")
+        self.call("marker_add", kind="P", trace=1, freq_hz=0)
+        self.call("marker_set", id="P1", peak_track=True)
+        self.single()
+        p1 = self.call("get_state")["markers"]["markers"][0]
+        self.assertTrue(outside(p1["freq_hz"]))
+        # 手で置く M は漏れの帯の中にも置ける
+        r = self.call("marker_add", kind="M", trace=1, freq_hz=0)
+        self.assertEqual(r["freq_hz"], 0)
+
     def test_tg_outside_range(self):
         st, tr = self.sweep("tg")
         ax = tr["axis"]

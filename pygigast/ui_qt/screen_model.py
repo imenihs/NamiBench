@@ -89,7 +89,10 @@ def mode_reasons(st: dict) -> dict:
 # ---------------------------------------------------------------- 受信（RTL-SDR: 設計Q §6.5・§6.6）
 
 def rtl_view(st: dict) -> dict:
-    """受信の欄の中身。繋いでいなければ全部を無効にする理由を持つ。"""
+    """受信の欄の中身。shown は欄を出すか（RTL-SDR に繋いでいるときだけ: 設計J §4.5）。
+
+    reason（繋いでいない理由）は設定の画面など、欄の外から RTL-SDR の操作を見せるところが使う。
+    """
     rtl = st.get("rtlsdr") or {}
     connected = bool(rtl.get("connected"))
     cal = rtl.get("calibration")
@@ -104,6 +107,7 @@ def rtl_view(st: dict) -> dict:
     dll = rtl.get("dll_folder")
     return {
         "connected": connected,
+        "shown": connected,
         "reason": reason,
         "gains": gains,
         "agc": bool(rtl.get("agc")),
