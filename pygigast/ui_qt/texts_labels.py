@@ -81,7 +81,7 @@ LABELS = {
     "zero_span_mark": "（ゼロスパン）",
     "estimate": "掃引時間の見積もり",
     "estimate_value": "{s} 秒（掃引の始めの不安定な点 {n} 点を含む）",
-    "image_cancel": "イメージキャンセル（2回で1画面）",
+    "image_cancel": "イメージキャンセル（4回で1画面）",
     "files": "参照トレース（開いたファイル）",
     "no_files": "ありません（メニュー ≡ →「開く…」で重ねられます）",
     "close_file": "外す",

@@ -72,6 +72,7 @@ def stylesheet(c: dict[str, str] = DARK) -> str:
         QProgressBar {{ border: 1px solid {c['axis']}; text-align: center; background: {c['graph_bg']}; }}
         QProgressBar::chunk {{ background: {c['accent']}; }}
         QFrame#taskPanel {{ border-top: 1px solid {c['warn']}; }}
+        QDockWidget::title {{ background: {c['graph_bg']}; border: 1px solid {c['axis']}; padding: 4px 8px; text-align: left; }}
         QMenu {{ border: 1px solid {c['axis']}; padding: 4px 0; }}
         QMenu::item {{ padding: 4px 28px 4px 20px; background: transparent; }}
         QMenu::item:selected {{ background: {c['accent']}; color: {c['graph_bg']}; }}

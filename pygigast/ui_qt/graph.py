@@ -109,6 +109,7 @@ class _GraphViewBox(pg.ViewBox):
         super().__init__(enableMenu=False)
         self._sig = sig
         self.freq_ops_enabled = True
+        self._range_drag = False
         self._band = pg.LinearRegionItem(movable=False, brush=pg.mkBrush(79, 163, 255, 60),
                                          pen=pg.mkPen(79, 163, 255, 200))
         self._band.setZValue(50)
@@ -116,7 +117,11 @@ class _GraphViewBox(pg.ViewBox):
         self.addItem(self._band, ignoreBounds=True)
 
     def mouseDragEvent(self, ev, axis=None) -> None:
-        if ev.button() != Qt.MouseButton.LeftButton or not self.freq_ops_enabled:
+        # 範囲の指定は Shift を押しながらのドラッグだけ（ほかの欄を触るつもりでグラフを押して範囲が変わる誤操作を防ぐ）。
+        # Shift は押し始めで決め、途中で離しても続ける
+        if ev.isStart():
+            self._range_drag = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if ev.button() != Qt.MouseButton.LeftButton or not self.freq_ops_enabled or not self._range_drag:
             ev.ignore()
             return
         ev.accept()
@@ -139,10 +144,12 @@ class _GraphViewBox(pg.ViewBox):
             p = self.mapSceneToView(ev.scenePos())
             self._sig.context_requested.emit(p.x(), p.y(), ev.screenPos().toPoint())
             return
-        if ev.button() == Qt.MouseButton.LeftButton and self.freq_ops_enabled:
+        if ev.button() == Qt.MouseButton.LeftButton:
+            # マーカーを置くのはダブルクリックだけ（1回のクリックはグラフを選ぶだけで何も変えない）
             ev.accept()
-            p = self.mapSceneToView(ev.scenePos())
-            self._sig.clicked.emit(p.x(), p.y())
+            if ev.double() and self.freq_ops_enabled:
+                p = self.mapSceneToView(ev.scenePos())
+                self._sig.clicked.emit(p.x(), p.y())
             return
         super().mouseClickEvent(ev)
 

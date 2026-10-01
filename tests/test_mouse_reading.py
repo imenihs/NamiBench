@@ -157,14 +157,22 @@ class QtMouseReadingTest(unittest.TestCase):
         self.assertEqual(mr.text, "")
         self.assertFalse(QToolTip.isVisible())
 
-    def test_click_still_places_marker(self):
+    def test_double_click_still_places_marker(self):
         from PySide6.QtCore import Qt
-        from PySide6.QtTest import QTest
 
         _single(self.win.api)
         self.ui.wait(lambda: self.win.traces.live_payload(1) is not None, what="画面に届く")
         at = self.move(50 * MHZ, -60.0)
-        QTest.mouseClick(self.win.plot.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, at)
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+
+        vp = self.win.plot.viewport()
+        L, N = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+        for kind, button, buttons in ((QEvent.Type.MouseButtonPress, L, L), (QEvent.Type.MouseButtonRelease, L, N),
+                                      (QEvent.Type.MouseButtonDblClick, L, L), (QEvent.Type.MouseButtonRelease, L, N)):
+            QApplication.sendEvent(vp, QMouseEvent(kind, QPointF(at), QPointF(vp.mapToGlobal(at)), button, buttons,
+                                                   Qt.KeyboardModifier.NoModifier))
         self.ui.wait(lambda: len(self.win.marker_snap.get("markers", [])) == 1, what="マーカーが置かれる")
         self.assertEqual(self.win.marker_snap["markers"][0]["freq_hz"], 50 * MHZ)
 

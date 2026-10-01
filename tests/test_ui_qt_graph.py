@@ -85,20 +85,29 @@ class _Base(unittest.TestCase):
         p = QPointF(r.left() - 15, r.center().y()) if name == "left" else QPointF(r.center().x(), r.bottom() + 12)
         return self.win.plot.mapFromScene(p)
 
-    def mouse(self, kind, pos: QPoint, button, buttons):
+    def mouse(self, kind, pos: QPoint, button, buttons, mods=Qt.KeyboardModifier.NoModifier):
         vp = self.win.plot.viewport()
-        ev = QMouseEvent(kind, QPointF(pos), QPointF(vp.mapToGlobal(pos)), button, buttons,
-                         Qt.KeyboardModifier.NoModifier)
+        ev = QMouseEvent(kind, QPointF(pos), QPointF(vp.mapToGlobal(pos)), button, buttons, mods)
         QApplication.sendEvent(vp, ev)
 
-    def drag(self, p0: QPoint, p1: QPoint):
+    def drag(self, p0: QPoint, p1: QPoint, shift=False):
         L = Qt.MouseButton.LeftButton
-        self.mouse(QEvent.Type.MouseButtonPress, p0, L, L)
+        mods = Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
+        self.mouse(QEvent.Type.MouseButtonPress, p0, L, L, mods)
         steps = 8
         for i in range(1, steps + 1):
             p = p0 + (p1 - p0) * (i / steps)
-            self.mouse(QEvent.Type.MouseMove, p, Qt.MouseButton.NoButton, L)
-        self.mouse(QEvent.Type.MouseButtonRelease, p1, L, Qt.MouseButton.NoButton)
+            self.mouse(QEvent.Type.MouseMove, p, Qt.MouseButton.NoButton, L, mods)
+        self.mouse(QEvent.Type.MouseButtonRelease, p1, L, Qt.MouseButton.NoButton, mods)
+        self.pump()
+
+    def click(self, pos: QPoint, double=False):
+        L = Qt.MouseButton.LeftButton
+        self.mouse(QEvent.Type.MouseButtonPress, pos, L, L)
+        self.mouse(QEvent.Type.MouseButtonRelease, pos, L, Qt.MouseButton.NoButton)
+        if double:
+            self.mouse(QEvent.Type.MouseButtonDblClick, pos, L, L)
+            self.mouse(QEvent.Type.MouseButtonRelease, pos, L, Qt.MouseButton.NoButton)
         self.pump()
 
     def wheel(self, pos: QPoint, clicks=1, ctrl=False):
@@ -111,11 +120,28 @@ class _Base(unittest.TestCase):
 
 
 class GraphOperationTest(_Base):
+    def test_plain_drag_and_click_change_nothing(self):
+        """Shift なしのドラッグ・1回のクリックでは範囲もマーカーも変えない（誤操作を防ぐ）。"""
+        self.set_sweep(start_hz=0, stop_hz=2_000_000_000)
+        p0 = self.view_to_widget(500e6, -50)
+        self.drag(p0, self.view_to_widget(800e6, -50))
+        self.click(p0)
+        self.pump(0.3)
+        sw = self.sweep()
+        self.assertEqual((sw["start_hz"], sw["stop_hz"]), (0, 2_000_000_000))
+        self.assertEqual(self.api.get_state().result(5)["markers"]["markers"], [])
+
+    def test_double_click_places_marker(self):
+        self.set_sweep(start_hz=0, stop_hz=2_000_000_000)
+        self.click(self.view_to_widget(500e6, -50), double=True)
+        self.pump(0.5)
+        self.assertEqual(len(self.api.get_state().result(5)["markers"]["markers"]), 1)
+
     def test_drag_sets_start_stop(self):
         self.set_sweep(start_hz=0, stop_hz=2_000_000_000)
         p0 = self.view_to_widget(500e6, -50)
         p1 = self.view_to_widget(800e6, -50)
-        self.drag(p0, p1)
+        self.drag(p0, p1, shift=True)
         sw = self.sweep()
         # 画素の細かさ（約 2GHz / 幅）の数画素ぶんの誤差を許す
         tol = 2e9 / self.vb.width() * 3
@@ -127,7 +153,7 @@ class GraphOperationTest(_Base):
         """数画素のドラッグは範囲の選択にしない（クリックのぶれ）。クリックならマーカーを置くだけ（G §3.2）。"""
         self.set_sweep(start_hz=0, stop_hz=2_000_000_000)
         p0 = self.view_to_widget(500e6, -50)
-        self.drag(p0, p0 + QPoint(2, 0))
+        self.drag(p0, p0 + QPoint(2, 0), shift=True)
         sw = self.sweep()
         self.assertEqual((sw["start_hz"], sw["stop_hz"]), (0, 2_000_000_000))
 
@@ -272,7 +298,7 @@ class SpanLockTest(_Base):
         """固定 ON: ドラッグは選んだ範囲の真ん中を Center にし、幅は固定 Span のまま（C §5.12）。"""
         self.lock(start_hz=0, stop_hz=100_000_000)
         self.set_sweep(start_hz=0, stop_hz=2_000_000_000, one_shot=True)  # 表示を広げる（固定 Span は 100MHz のまま）
-        self.drag(self.view_to_widget(500e6, -50), self.view_to_widget(800e6, -50))
+        self.drag(self.view_to_widget(500e6, -50), self.view_to_widget(800e6, -50), shift=True)
         sw = self.sweep()
         self.assertEqual(sw["span_hz"], 100_000_000)
         tol = 2e9 / self.vb.width() * 3
