@@ -18,7 +18,8 @@ RIGHT = (False, True, True, True, False, True, True, False)
 NUMERIC = (False, True, True, True, False, True, True, False)
 
 
-def _notes(codes) -> list[str]:
+def note_texts(codes) -> list[str]:
+    """注意のコードを画面の文にする（マーカーの読み値とマウスの位置の読み値で同じ文: G §3.3）。"""
     out = []
     for c in codes or []:
         if c in texts.MARKER_NOTES_SILENT:
@@ -68,7 +69,7 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
         delta = m.get("delta") or {}
         status = m.get("status", "ok")
         note = _join(texts.MARKER_STATUS.get(status, status), texts.LABELS["row_track"] if m.get("peak_track") else "",
-                     *_notes(m.get("notes")))
+                     *note_texts(m.get("notes")))
         if m.get("ref") and delta.get("status") not in (None, "ok"):
             note = _join(note, texts.MARKER_STATUS.get(delta["status"], delta["status"]))
         rows.append({
@@ -84,7 +85,7 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
                 "trace": m.get("trace"), "freq_hz": o.get("freq_hz"), "value": o.get("level"), "unit": o.get("unit"),
                 "ref": mid, "delta_freq_hz": o.get("offset_hz") if o.get("freq_hz") is not None else None,
                 "delta_value": o.get("delta_level_db"), "child": True,
-                "note": _join(texts.MARKER_STATUS.get(st, st), *_notes(o.get("notes"))), "status": st,
+                "note": _join(texts.MARKER_STATUS.get(st, st), *note_texts(o.get("notes"))), "status": st,
                 "offset": ("freq", i),
             })
         for i, o in enumerate(m.get("level_offsets") or []):

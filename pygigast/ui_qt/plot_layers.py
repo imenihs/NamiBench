@@ -18,20 +18,15 @@ from PySide6.QtGui import QColor
 
 from . import texts
 from ..core.report_layout import legend_text
+from .screen_model import nearest_point, trace_x
 from .theme import trace_color
 
 LIVE_TRACES = (1, 2, 3, 4)
 
 
 def x_of(payload: dict) -> np.ndarray:
-    """描くための横軸（float）。ゼロスパンは点の番号。周波数の正本は Hz の整数のまま。"""
-    ax = payload["axis"]
-    if "freqs_hz" in ax:
-        return np.asarray(ax["freqs_hz"], dtype=np.float64)
-    n = int(ax["points"])
-    if ax.get("step_hz", 0) == 0:
-        return np.arange(n, dtype=np.float64)
-    return (ax["start_hz"] + ax["step_hz"] * np.arange(n, dtype=np.int64)).astype(np.float64)
+    """描くための横軸（float）。ゼロスパンは点の番号。読み値と同じ関数（screen_model.trace_x）。"""
+    return trace_x(payload)
 
 
 def marked_points(payload: dict, n: int) -> np.ndarray:
@@ -294,25 +289,16 @@ class TraceLayer:
             curve.setBrush(None)
 
     def nearest_trace(self, x: float, y: float) -> Optional[int]:
-        """クリック位置に縦方向で最も近い、見えているトレースの番号（G §3.2）。"""
-        best, best_d = None, None
-        for n in LIVE_TRACES:
-            p = self.live_payload(n)
-            if p is None:
-                continue
-            xs = x_of(p)
-            if xs.size == 0:
-                continue
-            i = int(np.clip(np.searchsorted(xs, x), 0, xs.size - 1))
-            if i > 0 and abs(xs[i - 1] - x) < abs(xs[i] - x):
-                i -= 1
-            v = float(np.asarray(p["values"])[i])
-            if not np.isfinite(v):
-                continue
-            d = abs(v - y)
-            if best_d is None or d < best_d:
-                best, best_d = n, d
-        return best
+        """クリック位置に縦方向で最も近い、見えているトレースの番号（G §3.2。マウスの読み値と同じ選び方）。"""
+        shown = self.shown_payloads()
+        hit = nearest_point(shown, x, y)
+        if hit is None or not np.isfinite(float(np.asarray(shown[hit[0]]["values"])[hit[1]])):
+            return None
+        return int(shown[hit[0]]["trace"])
+
+    def shown_payloads(self) -> list[dict]:
+        """表示している測定中のトレース（マウスの位置の読み値を取る相手: G §2）。"""
+        return [p for p in (self.live_payload(n) for n in LIVE_TRACES) if p is not None]
 
 
 class MarkerLayer:

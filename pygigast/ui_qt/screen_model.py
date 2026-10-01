@@ -13,8 +13,10 @@ from __future__ import annotations
 import functools
 from typing import Optional
 
+import numpy as np
+
 from ..core.units import format_freq
-from . import texts
+from . import marker_rows, texts
 from .texts import RTL_LABELS, TEMPLATES, tpl
 
 
@@ -286,3 +288,90 @@ def ui_view(st: dict) -> dict:
         "ref_quick": ref_quick_view(st),
         "marks": marks_view(st),
     }
+
+
+# ---------------------------------------------------------------- マウスの位置の読み値（設計G §2・§3.3）
+
+def trace_x(payload: dict) -> np.ndarray:
+    """トレースの横軸（float）。ゼロスパンは点の番号。周波数の正本は Hz の整数のまま（描くときと読むときの共通）。"""
+    ax = payload["axis"]
+    if "freqs_hz" in ax:
+        return np.asarray(ax["freqs_hz"], dtype=np.float64)
+    n = int(ax["points"])
+    if ax.get("step_hz", 0) == 0:
+        return np.arange(n, dtype=np.float64)
+    return (ax["start_hz"] + ax["step_hz"] * np.arange(n, dtype=np.int64)).astype(np.float64)
+
+
+def nearest_point(payloads: list[dict], x: float, y: float) -> Optional[tuple[int, int]]:
+    """見えているトレースのうち、横の位置 x の最も近い点で縦に y へ最も近いもの（設計G §3.2 のクリックと同じ選び方）。
+
+    戻り値は (payloads の何番目, 点の番号)。どのトレースもその点に値が無ければ、最初のトレースのその点
+    （値なしと読ませる）。トレースが1本も無ければ None。縦の距離が同じなら並びの先のもの。
+    """
+    best = None
+    fallback = None
+    for k, p in enumerate(payloads):
+        xs = trace_x(p)
+        if xs.size == 0:
+            continue
+        i = int(np.clip(np.searchsorted(xs, x), 0, xs.size - 1))
+        if i > 0 and abs(xs[i - 1] - x) <= abs(xs[i] - x):
+            i -= 1
+        if fallback is None:
+            fallback = (k, i)
+        v = float(np.asarray(p["values"])[i])
+        if not np.isfinite(v):
+            continue
+        d = abs(v - y)
+        if best is None or d < best[0]:
+            best = (d, k, i)
+    return (best[1], best[2]) if best is not None else fallback
+
+
+def point_note_codes(payload: dict, i: int) -> list[str]:
+    """その点に付いている印の名前（イベント trace の flags から。マーカーの読み値の注意と同じ名前: G §3.3）。"""
+    fl = payload.get("flags") or {}
+    codes = set()
+    for name, arr in (fl.get("points") or {}).items():
+        a = np.asarray(arr)
+        if a.shape and i < a.shape[0] and bool(a[i]):
+            codes.add(name)
+    oc = fl.get("out_of_cal_range")
+    if oc is not None:
+        a = np.asarray(oc)
+        if a.shape and i < a.shape[0] and bool(a[i]):
+            codes.add("out_of_cal_range")
+    if i < int(fl.get("transient_head_points") or 0):
+        codes.add("transient")
+    return sorted(codes)
+
+
+def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = False) -> dict:
+    """グラフの上のマウスの位置の読み値（設計G §2: マウスの縦の位置ではなく波形の値を出す）。
+
+    payloads は画面が表示している測定中のトレース（イベント trace の形）、x・y はマウスの位置の軸の値。
+    読むのは最も近いトレースの最も近い点（マーカーをクリックで置くときと同じ選び方）で、周波数はその点の
+    周波数（値はその点のもの）。印の付いた点はマーカーと同じ注意を添える（G §3.3）。
+    トレースが無いときはマウスの位置の周波数だけ。Qt はツールチップに、Web の口は `mouse_reading` で返す。
+    """
+    hit = nearest_point(payloads, x, y)
+    if hit is None:
+        pos = int(round(x))
+        lines = [tpl("mouse_point", n=pos) if zero_span else format_freq(pos)]
+        return {"trace": None, "freq_hz": None if zero_span else pos, "point": pos if zero_span else None,
+                "level": None, "unit": None, "notes": [], "lines": lines, "text": "\n".join(lines)}
+    k, i = hit
+    p = payloads[k]
+    v = float(np.asarray(p["values"])[i])
+    level = v if np.isfinite(v) else None
+    unit = p.get("unit") or "dBm"
+    ax = p["axis"]
+    zero = zero_span or ("freqs_hz" not in ax and ax.get("step_hz", 0) == 0)
+    freq = None if zero else int(round(float(trace_x(p)[i])))
+    codes = point_note_codes(p, i)
+    value_text = f"{level:.2f} {unit}" if level is not None else texts.MARKER_STATUS["no_value"]
+    lines = [tpl("mouse_point", n=i) if zero else format_freq(freq),
+             tpl("trace_note", n=p.get("trace"), text=value_text), *marker_rows.note_texts(codes)]
+    return {"trace": p.get("trace"), "freq_hz": freq, "point": i if zero else None, "level": level, "unit": unit,
+            "notes": codes, "lines": lines, "text": "\n".join(lines)}

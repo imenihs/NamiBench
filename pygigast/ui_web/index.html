@@ -140,13 +140,13 @@
     <section class="left" v-show="show('graph') || show('markers') || (!part && (detached.graph || detached.markers))">
       <div class="graph-box" v-show="show('graph')">
         <div class="part-bar">
-          <span class="hover" v-if="hover && sw && sw.step_hz">{{ fmtFreq(Math.round(hover.x)) }}・{{ hover.y.toFixed(1) }} {{ axisUnit }}<template v-if="hoverMark()">・{{ hoverMark() }}</template></span>
           <span class="legend">
             <span v-for="t in traceRows" :key="t.number" v-show="t.visible && t.has_values" :style="{color: t.color}">{{ t.legend }}</span>
           </span>
           <button class="small" v-if="!part" @click="detach('graph')" :title="W('detach_item', {part: W('part_graph')})">{{ W('detach') }}</button>
         </div>
-        <div class="graph" ref="graph" :title="W('graph_tip')"></div>
+        <!-- グラフの操作の説明は、マウスの位置の読み値を出している間は出さない（2つの吹き出しを重ねない） -->
+        <div class="graph" ref="graph" :title="hoverLines ? '' : W('graph_tip')"></div>
       </div>
       <div class="detached-bar" v-if="!part && detached.graph">{{ W('detached_now', {part: W('part_graph')}) }} <button class="small" @click="reattach('graph')">{{ W('reattach') }}</button></div>
       <div class="hsplit" v-if="!part && show('graph') && show('markers')" @mousedown="startSplit($event, 'v')" :title="W('split_tip')"></div>
@@ -475,6 +475,9 @@
     </template>
     <span class="status-note" :title="status">{{ status }}</span>
   </footer>
+
+  <!-- マウスの位置の読み値（設計G §2。Qt のツールチップと同じ中身）。マウスの操作は受けない -->
+  <div class="hover-tip" v-if="hover && hoverLines" :style="hoverStyle()"><div v-for="(l, i) in hoverLines" :key="i">{{ l }}</div></div>
 
   <!-- 右クリックのメニュー（名前の付いた操作: J §3・U-12） -->
   <div class="ctxmenu" v-if="ctx" :style="{left: ctx.x + 'px', top: ctx.y + 'px'}" @click.stop>

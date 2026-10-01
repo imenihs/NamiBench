@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from ... import __version__
 from ..local import CommandError, LocalApi
 from ...core import report_layout as rl
+from ...ui_qt import screen_model
 from . import view
 from .access import KIND_OPERATE, Access
 from .guard import Guard
@@ -245,6 +246,8 @@ class _Hub:
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._markers_seq = 0
         self.last_state: Optional[dict] = None
+        # 測定中のトレース 1〜4 の最新の中身（間引く前）。マウスの位置の読み値（設計G §2）に使う
+        self.latest_traces: dict[str, dict] = {}
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -279,6 +282,10 @@ class _Hub:
             return
         if kind == "state":
             self.last_state = payload
+            # 隠した・値を捨てたトレースの中身は忘れる（隠している間の値はイベントで届かないので、出し直したら取り直す）
+            shown = {str(t.get("number")) for t in payload.get("traces") or [] if t.get("visible") and t.get("has_values")}
+            for key in [k for k in self.latest_traces if k not in shown]:
+                del self.latest_traces[key]
             payload = view.state_view(payload)
         elif kind == "markers":
             payload = view.markers_view(payload, view.default_unit(self.last_state))
@@ -310,6 +317,8 @@ class _Hub:
 
     def _trace(self, payload: dict) -> None:
         key = str(payload.get("trace"))
+        if payload.get("source") == "live":
+            self.latest_traces[key] = payload
         loop = self._loop
         now = loop.time()
         due = self._last_sent.get(key, -math.inf) + self._interval
@@ -326,6 +335,29 @@ class _Hub:
         payload = self._pending.pop(key, None)
         if payload is not None:
             self._send_trace(key, payload)
+
+    async def shown_traces(self) -> list[dict]:
+        """画面が表示している測定中のトレース（状態の visible かつ has_values。Qt の TraceLayer.shown_payloads と同じ）。
+
+        まだ中身を受けていないもの（繋いだ直後・出し直した直後）は get_trace で1回だけ取る。
+        """
+        st = self.last_state
+        if st is None:
+            st = self.last_state = await _await(self.api.get_state())
+        out = []
+        for t in st.get("traces") or []:
+            if not (t.get("visible") and t.get("has_values")):
+                continue
+            key = str(t.get("number"))
+            p = self.latest_traces.get(key)
+            if p is None:
+                try:
+                    p = await _await(self.api.call("get_trace", id=int(t["number"])))
+                except CommandError:
+                    continue
+                self.latest_traces.setdefault(key, p)
+            out.append(p)
+        return out
 
     def _send_trace(self, key: str, payload: dict) -> None:
         self._last_sent[key] = self._loop.time()
@@ -413,6 +445,24 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         except ValueError as e:
             return JSONResponse(view.error_view({"error": {"code": "bad_value", "field": None,
                                                            "detail": {"message": str(e)}}}), status_code=400)
+
+    @app.post("/api/v1/mouse_reading")
+    async def mouse_reading(request: Request) -> JSONResponse:
+        """グラフの上のマウスの位置の読み値（設計G §2）。中身は Qt のツールチップと同じ screen_model.mouse_reading。
+
+        本体の命令の列を通さない（マウスを動かすたびに測定の命令を待たせないため）。受けるのは
+        {"x": 軸の値, "y": 縦軸の値}。読むのはこのサーバーが受けた最新のトレース。
+        """
+        try:
+            req = json.loads(await request.body() or b"{}")
+            x, y = float(req["x"]), float(req["y"])
+            if not (math.isfinite(x) and math.isfinite(y)):
+                raise ValueError("not finite")
+        except (ValueError, KeyError, TypeError) as e:
+            return fail("bad_value", None, {"message": str(e)})
+        payloads = await hub.shown_traces()
+        zero = ((hub.last_state or {}).get("sweep") or {}).get("step_hz") == 0
+        return JSONResponse(to_jsonable(screen_model.mouse_reading(payloads, x, y, zero)))
 
     from .routes_access import add_access_routes
 

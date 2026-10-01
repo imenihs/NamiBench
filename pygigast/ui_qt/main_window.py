@@ -42,6 +42,7 @@ from .graph import make_plot
 from .listen import ListenControl
 from .mark_bands import MarkBands
 from .marker_table import MarkerPanel
+from .mouse_reading import MouseReading
 from .plot_layers import MarkerLayer, TraceLayer
 from .prefs import UiPrefs
 from .rtl_panel import RtlPanel
@@ -208,6 +209,9 @@ class MainWindow(QMainWindow):
         self.traces = TraceLayer(self.plot, self.pal)
         self.mark_bands = MarkBands(self.plot, self.pal)  # 範囲の外・意味の無い区間の帯（設計J §4.8）
         self.marker_layer = MarkerLayer(self.plot, self.pal, self._on_xy_moved)
+        # マウスの位置の読み値（設計G §2: 波形の値をカーソルの近くに）
+        self.mouse_reading = MouseReading(self.plot, self.traces.shown_payloads,
+                                          lambda: (self.state.get("sweep") or {}).get("step_hz") == 0)
 
     def _build_menu(self) -> None:
         """メニューバー（J §4.3.1）とキー（J §4.6）。並びと語は texts（Web と同じ）。上段・タブ・表のボタンも同じ項目を呼ぶ。"""

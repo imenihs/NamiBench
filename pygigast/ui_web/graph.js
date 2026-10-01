@@ -342,7 +342,8 @@
       });
       over.addEventListener("mousemove", (e) => {
         const r = over.getBoundingClientRect();
-        this.mouse = { x: u.posToVal(e.clientX - r.left, "x"), y: u.posToVal(e.clientY - r.top, "y") };
+        // cx・cy は画面の位置（マウスの位置の読み値をカーソルの近くに出すため）。buttons は押しているボタン
+        this.mouse = { x: u.posToVal(e.clientX - r.left, "x"), y: u.posToVal(e.clientY - r.top, "y"), cx: e.clientX, cy: e.clientY, buttons: e.buttons };
         if (this.o.onHover) this.o.onHover(this.mouse);
       });
       over.addEventListener("mouseleave", () => { this.mouse = null; if (this.o.onHover) this.o.onHover(null); });

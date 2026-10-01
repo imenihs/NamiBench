@@ -14,6 +14,8 @@
   const DB_PER_DIV_CHOICES = [1, 2, 5, 10];
   // 周波数軸の上のホイール1段で Span を何倍にするか（奥へ回すと拡大 = Span を狭く。Qt と同じ）
   const ZOOM_STEP = 0.8;
+  // マウスの位置の読み値を取り直す最短の間隔（ミリ秒）。1秒に30回まで（Qt の mouse_reading.py と同じ）
+  const HOVER_MS = 34;
   // 参照トレース（ファイル）の色。J §4.4 に無いので、トレースの色を順に使い点線で描く（設計に無い判断）
   const FILE_COLORS = ["trace2", "trace3", "trace4", "trace1"];
   const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source"];
@@ -57,6 +59,7 @@
         refs: [],
         refName: "",
         hover: null,
+        hoverLines: null,
         ampLocal: null,
         splitPct: 70,
         sidePx: 340,
@@ -291,11 +294,43 @@
       },
       // 機器の範囲の外・意味の無い区間の帯（J §4.8）。区間・説明・色はサーバーが付けた ui.marks
       marks() { return (this.ui.marks || []).map((m) => ({ ...m, fill: this.palette[m.color] || this.palette.warn })); },
-      hoverMark() {
+      // マウスの位置の読み値（設計G §2: マウスの縦の位置ではなく波形の値）。中身（周波数・最も近いトレースの点の値・
+      // 印の付いた点の注意）はサーバーが Qt のツールチップと同じ関数（screen_model.mouse_reading）で作る。
+      // 取りに行くのは1つずつ、HOVER_MS より詰めない。動かしている間に来た位置は最後の1つだけ取る
+      onGraphHover(m) {
+        this.hover = m;
+        const q = this.$hoverQ || (this.$hoverQ = { busy: false, want: null, timer: null });
+        // ボタンを押している間（範囲のドラッグ）は出さない（Qt と同じ）
+        if (!m || m.buttons) { q.want = null; this.hoverLines = null; return; }
+        q.want = m;
+        if (!q.busy && !q.timer) this.hoverFetch();
+      },
+      async hoverFetch() {
+        const q = this.$hoverQ;
+        const m = q.want;
+        q.want = null;
+        if (!m || !this.hover) return;
+        q.busy = true;
+        const t0 = performance.now();
+        try {
+          const r = await call("mouse_reading", { x: m.x, y: m.y });
+          if (this.hover && !this.hover.buttons) this.hoverLines = r.lines || null;
+        } catch (e) {
+          this.hoverLines = null; // 読めないときは出さない（グラフの操作は妨げない）
+        }
+        q.busy = false;
+        q.timer = setTimeout(() => {
+          q.timer = null;
+          if (q.want) this.hoverFetch();
+        }, Math.max(0, HOVER_MS - (performance.now() - t0)));
+      },
+      // 読み値の箱の位置。カーソルから右下へ離し、画面の右端・下端では左・上へ回す（カーソルの下に出さない）
+      hoverStyle() {
         const h = this.hover;
-        if (!h) return "";
-        const m = (this.ui.marks || []).find((b) => h.x >= b.start_hz && h.x <= b.stop_hz);
-        return m ? m.label : "";
+        if (!h) return {};
+        const left = h.cx + 16 + 260 > window.innerWidth ? { right: (window.innerWidth - h.cx + 12) + "px" } : { left: (h.cx + 16) + "px" };
+        const top = h.cy + 16 + 90 > window.innerHeight ? { bottom: (window.innerHeight - h.cy + 12) + "px" } : { top: (h.cy + 16) + "px" };
+        return { ...left, ...top };
       },
 
       // ---- 掃引・モード
@@ -369,7 +404,7 @@
           onLevelDrag: (start, frac) => this.onLevelDrag(start, frac),
           onClick: (x, y) => this.onGraphClick(x, y),
           onContext: (x, y, cx, cy) => this.onGraphContext(x, y, cx, cy),
-          onHover: (m) => { this.hover = m; },
+          onHover: (m) => this.onGraphHover(m),
         }));
         this.applyX();
         this.applyY();

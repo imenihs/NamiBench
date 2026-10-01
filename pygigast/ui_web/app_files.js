@@ -9,7 +9,7 @@
   const W = (k, kw) => X.w(k, kw);
   const WL = (k, kw) => X.fmtText(X.get("WEB_LABELS", k), kw);
   // 見るだけの接続でも送れる命令（サーバーの guard.py の READ_COMMANDS と同じ）
-  const READ_COMMANDS = new Set(["get_state", "get_trace", "peak_list", "reference_list", "png_layout"]);
+  const READ_COMMANDS = new Set(["get_state", "get_trace", "peak_list", "reference_list", "png_layout", "mouse_reading"]);
 
   function nowName() {
     const d = new Date();
