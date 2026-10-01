@@ -24,6 +24,7 @@ import numpy as np
 from .instrument_common import CommandError
 from .instrument_diff import DIFF_TRACE_ID
 from .instrument_display import NORMALIZED_MODES, db_values, unit_for
+from .report_layout import DIVISIONS
 from .normalize import (
     KIND_FINE,
     KIND_WIDE,
@@ -53,6 +54,9 @@ from .storage.recording import (
     new_recording_path,
 )
 from .types import Mode, SweepRequest
+
+# 縦軸の既定の dB/div（画面の既定と同じ。振幅に値が無いとき）
+DEFAULT_DB_PER_DIV = 10.0
 
 # 書き込みスレッドの仕事を、閉じるときに待つ上限
 WRITER_CLOSE_TIMEOUT_S = 10.0
@@ -98,6 +102,8 @@ class _RefJob:
     standard: Optional[str]
     prev_run: str
     frames: list = field(default_factory=list)
+    # 取ったら 0dB が見える REF レベルにする（上段の「直結を 0dB にする」: 設計E §6.2 の「すぐ 0dB を示す」）
+    show_zero: bool = False
 
 
 def _json_float(x) -> Optional[float]:
@@ -370,12 +376,16 @@ class FilesMixin:
             raise self._error("reference_in_progress")
 
     def _cmd_reference_take(self, kind: str = KIND_WIDE, name: Optional[str] = None, averages: int = 1,
-                            standard: Optional[str] = None) -> dict:
+                            standard: Optional[str] = None, show_zero: bool = False) -> dict:
         """基準を取る（設計E §6.2）。TG・S11 モードで、いまの条件とは別に掃引して区間を作る。
 
         kind: wide（機種の TG の範囲を 1MHz 刻み）/ fine（いまの Start・Stop・Step）。
         S11 は standard に open → short の順で2回呼ぶ（設計E §6.5）。
+        show_zero: 取り終えたとき 0dB が縦軸の外なら、0dB が上から1目盛下に来る REF レベルにする（変えたら
+        終わりの知らせの結果に ref_level を入れて知らせる: J §4 の「黙って変えない」）。
         """
+        if not isinstance(show_zero, bool):
+            raise self._error("bad_value", "show_zero")
         if self._conn != "connected":
             raise self._error("not_connected")
         self._check_not_taking_reference()
@@ -399,12 +409,23 @@ class FilesMixin:
             adopted = self._adopted
         task = self._new_task("reference_take", total=averages,
                               detail={"kind": kind, "mode": mode.value, "standard": standard})
-        self._ref_job = _RefJob(task, adopted, averages, kind, name, standard, self._run)
+        self._ref_job = _RefJob(task, adopted, averages, kind, name, standard, self._run, show_zero=show_zero)
         self._run = "reference"
         self._push_job()
         self._task_progress(task, 0, averages, 0.0)
         self._changed()
         return {"task_id": task.task_id}
+
+    def _show_zero_level(self) -> dict:
+        """0dB が縦軸の中（一番上の線より下・一番下の線より上）に無ければ、上から1目盛下に置く REF レベルにする。"""
+        amp = self._amplitude
+        ref = 0.0 if amp.get("ref_level") is None else float(amp["ref_level"])
+        div = float(amp.get("db_per_div") or DEFAULT_DB_PER_DIV)
+        if ref - DIVISIONS * div < 0.0 < ref:
+            return {}
+        amp["ref_level"] = div
+        self._changed()
+        return {"ref_level": div, "previous_ref_level": ref}
 
     def _on_ref_sweep(self, raw) -> None:
         job = self._ref_job
@@ -468,7 +489,8 @@ class FilesMixin:
                     self._end_task(job.task, exc)
                     return
                 self._set_reference(target)
-                self._end_task(job.task, None, {"reference_id": target.ref_id, "name": target.name})
+                extra = self._show_zero_level() if job.show_zero else {}
+                self._end_task(job.task, None, {"reference_id": target.ref_id, "name": target.name, **extra})
                 if prev_run not in ("continuous", "single") and self._conn == "connected":
                     # 取った基準ですぐ測って 0dB 付近になることを示す（設計E §6.2）
                     try:

@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 from ..api.local import LocalApi
 from ..core.units import format_freq
 from . import device_menu, marker_rows, menu_table, menus, png_data, screen_model, texts
-from .fields import DbField, FreqField, SpanLockButton, ValueField
+from .fields import FreqField, RefLevelField, SpanLockButton, ValueField
 from .files import FileActions
 from .graph import make_plot
 from .listen import ListenControl
@@ -54,7 +54,8 @@ from .tab_source import SourceTab
 from .tab_traces import TraceTab, disable_item
 from .tasks import TaskPanel
 from .theme import DARK, stylesheet
-from .topbar import ConnectDialog, TopBar
+from .ref_quick import RefQuick
+from .topbar import TopBar
 
 DB_PER_DIV_CHOICES = (1.0, 2.0, 5.0, 10.0)
 DIVISIONS = 10
@@ -69,7 +70,7 @@ TABLE_RATIO = 0.24
 MODES = texts.MODES
 MODE_NAMES = texts.MODE_NAMES
 
-__all__ = ["MainWindow", "ConnectDialog", "DARK"]
+__all__ = ["MainWindow", "DARK"]
 
 
 class _Bridge(QObject):
@@ -102,6 +103,7 @@ class MainWindow(QMainWindow):
         self._bridge.event.connect(self._on_event, Qt.ConnectionType.QueuedConnection)
         self._bridge.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
         self.files = FileActions(self)
+        self.device_window = None  # 機器の一覧の窓（J §4.7。device_menu.open_list が作る）
 
         self._build_plot()
         self._build_menu()
@@ -114,8 +116,8 @@ class MainWindow(QMainWindow):
 
         self._unsub = api.subscribe(lambda kind, payload: self._bridge.event.emit(kind, payload))
         self.call("get_state", on_ok=self._apply_state)
-        # 2回目からは、覚えた機器が見つかれば自動で繋ぐ（設計B §7.3）
-        self.call("connect_last", on_ok=lambda r: None)
+        # 2回目からは、覚えた機器が見つかれば自動で繋ぐ（設計B §7.3）。繋げなければ機器の一覧を開く（J §4.7）
+        device_menu.connect_last(self)
         if check_unfinished:
             # 起動時にまとめ終わっていない記録を示して聞く（H §4）
             self.files.check_unfinished()
@@ -167,6 +169,9 @@ class MainWindow(QMainWindow):
     def ask_save_path(self, title: str, default: str, filt: str) -> Optional[str]:
         path, _ = QFileDialog.getSaveFileName(self, title, default, filt)
         return path or None
+
+    def ask_folder(self, title: str) -> Optional[str]:
+        return QFileDialog.getExistingDirectory(self, title) or None
 
     # ------------------------------------------------------------------ 画面を組む
 
@@ -257,7 +262,8 @@ class MainWindow(QMainWindow):
         rbw_box.edit.hide()
         self.rbw_field = rbw_box
         top.addWidget(rbw_box)
-        self.f_ref = DbField("REF レベル", "dBm", self._set_ref, big=False)
+        # REF レベル: 打てるドロップダウン（+20〜−120・10dB 刻み）と欄の上のホイール 1dB（J §4.1）
+        self.f_ref = RefLevelField("REF レベル", "dBm", self._set_ref, big=False)
         # いまの波形の最大値が上から1目盛下に来るよう REF を合わせる（J §4.1）
         self.btn_ref_auto = QPushButton("自動")
         self.btn_ref_auto.setObjectName("small")
@@ -287,6 +293,9 @@ class MainWindow(QMainWindow):
         self.btn_cont.clicked.connect(lambda: self.actions["run_cont"].trigger())
         self.btn_single.clicked.connect(lambda: self.actions["run_single"].trigger())
         self.btn_stop.clicked.connect(lambda: self.actions["stop"].trigger())
+        # TG・S11 のときだけ「直結を 0dB にする」といまの基準（J §4.2: 基準を取るは1クリックで届く所）
+        self.ref_quick = RefQuick(self)
+        top.addWidget(self.ref_quick)
         outer.addWidget(self.topbar)
 
         # 使っている RBW が好みと違う理由・信用できない条件（その場で出し続ける: U-02・U-08）
@@ -765,7 +774,10 @@ class MainWindow(QMainWindow):
         device_menu.show_about(self)
 
     def _connect_dialog(self) -> None:
-        device_menu.connect_dialog(self)
+        device_menu.open_list(self)
+
+    def _disconnect(self) -> None:
+        device_menu.disconnect(self)
 
     def _settings_dialog(self) -> None:
         if self._settings is None:
@@ -795,6 +807,8 @@ class MainWindow(QMainWindow):
                 self.status_note(texts.waiting_text(payload["remaining_s"]))
         elif kind == "audio":
             self.listen.on_audio(payload)
+        elif kind == "devices":
+            device_menu.on_devices(self, payload)
 
     def _on_trace(self, payload: dict) -> None:
         t = {"trace": 1, "source": "live", **payload}
@@ -856,7 +870,9 @@ class MainWindow(QMainWindow):
     def _apply_state(self, st: dict) -> None:
         if st.get("version", -1) < self.state.get("version", -1):
             return
+        before = (self.state.get("connection") or {}).get("state")
         self.state = st
+        device_menu.on_state(self, st, before)
         sw = st["sweep"]
         self.f_center.set_hz(sw["center_hz"])
         self.f_span.set_hz(sw["span_hz"])
@@ -885,6 +901,7 @@ class MainWindow(QMainWindow):
         if self._settings is not None:
             self._settings.apply(st)
         self.source_tab.apply_state(st)
+        self.ref_quick.apply(st)
         for n in self.traces.apply_trace_states(st.get("traces") or []):
             self._request_trace(n)
         for tid in self.traces.apply_files(st.get("files") or []):

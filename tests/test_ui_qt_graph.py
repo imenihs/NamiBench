@@ -36,6 +36,12 @@ class _Base(unittest.TestCase):
         self.win.resize(1600, 900)
         self.win.show()
         self.pump()
+        # 起動時に繋がっていないので開く機器の一覧（J §4.7）を閉じ、主の窓でキーを試す
+        end = time.monotonic() + 8
+        while self.win.device_window is None and time.monotonic() < end:
+            self.pump(0.05)
+        self.win.device_window.close()
+        self.pump(0.05)
 
     def tearDown(self):
         self.win.close()

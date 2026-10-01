@@ -22,7 +22,8 @@ class AmplitudeTest(UiBase):
         self.assertAlmostEqual(hi, -37.0, delta=0.05)
         self.assertAlmostEqual(lo, -87.0, delta=0.05)
         self.assertEqual(self.win.div_combo.currentData(), 5.0)
-        self.assertEqual(self.win.f_ref.edit.text(), "-37.0 dBm")
+        # 負号は見間違えない字形「−」で出す（J §4.1）
+        self.assertEqual(self.win.f_ref.edit.text(), "−37.0 dBm")
 
     def test_div_combo_sends_to_core(self):
         i = self.win.div_combo.findData(2.0)

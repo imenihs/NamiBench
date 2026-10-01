@@ -172,7 +172,16 @@ class WebServerTest(unittest.TestCase):
             self.assertIn("sweep", first)  # 繋いだ直後に今の状態が届く
             st, body = self.post("run", {"mode": "single"})
             self.assertEqual((st, body), (200, {"run": "single"}))
-            header, values = self.recv_until(ws, lambda k, p: k == "trace")
+            # 同じ回に届いた状態はトレースより先に送られる（server._Client._run）ので、トレースを待つ間に来た
+            # 「単発が終わった」状態も覚えておく（後で待つと、もう来ない）
+            done = []
+
+            def trace_or_done(k, p):
+                if k == "state" and p["run"]["state"] == "stopped" and p["run"]["last_stop_reason"] == "single_done":
+                    done.append(p)
+                return k == "trace"
+
+            header, values = self.recv_until(ws, trace_or_done)
             self.assertEqual(header["kind"], "trace")
             self.assertEqual(header["trace"], 1)
             self.assertEqual(header["value_type"], "float32")
@@ -183,8 +192,9 @@ class WebServerTest(unittest.TestCase):
             self.assertIn("transient", header["flags"]["points"])
             # 値は画面の単位の dBm。シミュレータの 100MHz の信号（−30dBm 付近）が見える
             self.assertGreater(float(np.nanmax(values)), -45.0)
-            self.recv_until(ws, lambda k, p: k == "state" and p["run"]["state"] == "stopped"
-                            and p["run"]["last_stop_reason"] == "single_done")
+            if not done:
+                self.recv_until(ws, lambda k, p: k == "state" and p["run"]["state"] == "stopped"
+                                and p["run"]["last_stop_reason"] == "single_done")
 
     def test_two_clients_see_each_others_changes(self):
         with self.ws() as a, self.ws() as b:
@@ -209,7 +219,16 @@ class WebServerTest(unittest.TestCase):
             self.recv_until(ws, lambda k, p: k == "state" and p["run"]["last_stop_reason"] == "single_done")
         # 後から繋いだ画面にも、いま出ているトレースが届く
         with self.ws() as ws:
-            header, values = self.recv_until(ws, lambda k, p: k == "trace")
+            # 同じ回に届いた状態はトレースより先に送られる（server._Client._run）ので、トレースを待つ間に来た
+            # 「単発が終わった」状態も覚えておく（後で待つと、もう来ない）
+            done = []
+
+            def trace_or_done(k, p):
+                if k == "state" and p["run"]["state"] == "stopped" and p["run"]["last_stop_reason"] == "single_done":
+                    done.append(p)
+                return k == "trace"
+
+            header, values = self.recv_until(ws, trace_or_done)
             self.assertEqual(header["trace"], 1)
             self.assertEqual(len(values), header["axis"]["points"])
 

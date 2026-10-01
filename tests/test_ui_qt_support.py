@@ -41,6 +41,15 @@ class UiBase(unittest.TestCase):
         self.win.resize(*self.size)
         self.win.show()
         self.pump()
+        # 起動時に繋がっていないので機器の一覧が開く（J §4.7）。画面の試験はそれを閉じて主の窓で行う
+        # （一覧そのものは test_ui_qt_devices で確かめる）
+        self.close_device_list()
+
+    def close_device_list(self):
+        self.wait(lambda: self.win.device_window is not None, what="起動時に機器の一覧が開く")
+        self.win.device_window.close()
+        self.win.activateWindow()
+        self.pump(0.05)
 
     def make_window(self) -> MainWindow:
         win = MainWindow(self.api, prefs=UiPrefs(), check_unfinished=self.check_unfinished)

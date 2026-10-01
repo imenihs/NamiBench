@@ -175,6 +175,43 @@ def rtltcp_view(st: dict) -> dict:
             "bind": r.get("bind"), "text": text, "error_text": err_text, "dropped_text": dropped}
 
 
+# ---------------------------------------------------------------- 上段の「直結を 0dB にする」（設計J §4.2・E §6.2）
+
+def ref_quick_view(st: dict) -> dict:
+    """TG・S11 のときだけ上段に出す。ボタンの使えない理由・取っている間の進み具合・いまの基準の状態。"""
+    from .texts_devices import REF_QUICK_LABELS, hhmm
+
+    sw = st.get("sweep") or {}
+    visible = sw.get("mode") in ("tg", "s11")
+    task = next((t for t in st.get("tasks") or [] if t.get("kind") == "reference_take"), None)
+    if (st.get("connection") or {}).get("state") != "connected":
+        reason = texts.ERRORS["not_connected"]
+    elif sw.get("mode") == "s11":
+        reason = REF_QUICK_LABELS["s11_reason"]
+    elif task is not None:
+        reason = REF_QUICK_LABELS["taking_reason"]
+    else:
+        reason = None
+    n = st.get("normalization") or {}
+    sel = n.get("selected")
+    tip = ""
+    if sel and (n.get("applied") or not n.get("used")):
+        name, when = sel.get("name", ""), hhmm(sel.get("taken_at"))
+        # 既定の名前（「直結 12:24」）は時刻を含むので、同じ時刻を重ねて出さない
+        text = tpl("ref_quick_name", name=name) if when and when in name else             tpl("ref_quick_now", name=name, time=when)
+        if n.get("power_cycled"):
+            text += "・" + TEMPLATES["ref_quick_power_cycled"]
+            tip = TEMPLATES["norm_power_cycled"]
+    else:
+        text = TEMPLATES["ref_quick_none"]
+        if sel and n.get("reason"):
+            tip = texts.NORM_REASONS.get(n["reason"], n["reason"])
+    return {"visible": visible, "reason": reason, "text": text, "tip": tip,
+            "taking": task is not None, "task_id": task.get("task_id") if task else None,
+            "cancelling": bool(task and task.get("cancelling")),
+            "progress_text": texts.task_label({**task, "task": task.get("kind")}) if task else ""}
+
+
 # ---------------------------------------------------------------- まとめ（Web の口が state に付ける）
 
 def ui_view(st: dict) -> dict:
@@ -191,4 +228,5 @@ def ui_view(st: dict) -> dict:
         "rtltcp": rtltcp_view(st),
         "tasks": {t.get("task_id"): texts.task_label(t) for t in st.get("tasks") or []},
         "normalization": texts.normalization_text(st.get("normalization") or {}),
+        "ref_quick": ref_quick_view(st),
     }

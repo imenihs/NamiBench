@@ -1,20 +1,9 @@
-"""上段の並び（設計J §4.3.3）と、機器を選ぶ画面（設計B §7.3）。"""
+"""上段の並び（設計J §4.3.3）。"""
 from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QWidget
 
 
 class TopBar(QWidget):
@@ -63,37 +52,7 @@ class TopBar(QWidget):
         self._place(e.size().width() < self.needed_one_row())
         super().resizeEvent(e)
 
-
-class ConnectDialog(QDialog):
-    """機器を一覧から選ぶ（設計B §7.3: 初めての機器は利用者が選ぶ）。"""
-
-    def __init__(self, devices: list[dict], parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("機器に接続")
-        self.list = QListWidget()
-        for d in devices:
-            mark = "（前に使った機器）" if d.get("known") else ""
-            item = QListWidgetItem(f"{d.get('serial') or '（シリアル番号なし）'}  {d.get('port')}  {d.get('description', '')}{mark}")
-            item.setData(Qt.ItemDataRole.UserRole, d)
-            self.list.addItem(item)
-        if devices:
-            self.list.setCurrentRow(0)
-        note = QLabel(
-            "USB ID が FTDI 0403:6001 のポートを並べています。この部品は GigaSt 以外の機器にも使われるので、\n"
-            "初めての機器は確認の掃引を1回送り、GigaSt の応答が返るかを確かめてから繋ぎます。"
-            if devices else "GigaSt が見つかりません。USB ケーブルを確かめてください。"
-        )
-        note.setWordWrap(True)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("接続")
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(devices))
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        lay = QVBoxLayout(self)
-        lay.addWidget(note)
-        lay.addWidget(self.list)
-        lay.addWidget(buttons)
-
-    def selected(self) -> Optional[dict]:
-        item = self.list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
+    def relayout(self) -> None:
+        """中身の幅が変わったとき（TG で「直結を 0dB にする」が出た・消えた）に段を決め直す。"""
+        if self.width() > 0:
+            self._place(self.width() < self.needed_one_row())

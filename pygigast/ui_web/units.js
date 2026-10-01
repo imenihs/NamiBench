@@ -79,9 +79,12 @@
     return s + " MHz";
   }
 
-  // dB・dBm の欄。単位の文字は読み飛ばす
+  // 表示の負号を見間違えない字形「−」（U+2212）にする（J §4.1。Python の units.minus_sign と同じ）
+  function minusSign(text) { return String(text).replace(/-/g, "−"); }
+
+  // dB・dBm の欄。単位の文字は読み飛ばす。マイナスは「-」と「−」の両方を読む
   function parseDb(text) {
-    let t = String(text).trim();
+    let t = String(text).trim().replace(/−/g, "-");
     for (const suf of ["dBm", "dB", "dbm", "db"]) {
       if (t.endsWith(suf)) {
         t = t.slice(0, -suf.length).trim();
@@ -95,7 +98,7 @@
   // カーソルの左の桁が、小数点から見て 10 の何乗の位か。数字でなければ null（Qt の _digit_exponent と同じ）
   function digitExponent(text, pos) {
     let numEnd = 0;
-    while (numEnd < text.length && /[0-9+\-.]/.test(text[numEnd])) numEnd++;
+    while (numEnd < text.length && /[0-9+\-.−]/.test(text[numEnd])) numEnd++;
     let idx = Math.min(pos, numEnd) - 1;
     if (idx < 0 || !/[0-9]/.test(text[idx])) {
       // 先頭にいるときは最上位の桁
@@ -109,7 +112,7 @@
     return idx < dot ? dot - idx - 1 : dot - idx;
   }
 
-  const api = { ParseError, parseFreqHz, formatFreq, freqFieldText, parseDb, digitExponent };
+  const api = { ParseError, parseFreqHz, formatFreq, freqFieldText, parseDb, digitExponent, minusSign };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GSUnits = api;
 })(typeof window !== "undefined" ? window : globalThis);

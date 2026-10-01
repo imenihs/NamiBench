@@ -14,7 +14,7 @@ from typing import Callable, Optional, Protocol
 import serial
 import serial.tools.list_ports
 
-from ...types import DeviceDisconnected, SweepDiscarded
+from ...types import DeviceDisconnected, PortInUse, SweepDiscarded
 from .protocol import Limits
 from .traffic_log import TrafficLog
 
@@ -65,8 +65,29 @@ class PortLike(Protocol):
     def close(self) -> None: ...
 
 
+# ポートがほかのアプリに開かれているときの OS の失敗（Windows はアクセス拒否、POSIX は使用中・排他のロック）
+_IN_USE_ERRNO = {13, 16}
+_IN_USE_TEXT = ("PermissionError", "Access is denied", "アクセスが拒否", "exclusively lock", "Device or resource busy")
+
+
+def is_port_in_use(e: BaseException) -> bool:
+    """開けなかった理由が「ほかのアプリが使っている」か（設計J §4.7: 確認の掃引の失敗と分けて知らせる）。
+
+    pyserial は OS の失敗を SerialException の文に入れて返す（Windows: "PermissionError(13, ...)"）ので、
+    errno と文の両方を見る。
+    """
+    for x in (e, e.__cause__, e.__context__):
+        if x is None:
+            continue
+        if isinstance(x, PermissionError) or getattr(x, "errno", None) in _IN_USE_ERRNO:
+            return True
+        if any(t in str(x) for t in _IN_USE_TEXT):
+            return True
+    return False
+
+
 def open_serial(port: str) -> serial.Serial:
-    """ポートを開く。開けなければ DeviceDisconnected。"""
+    """ポートを開く。ほかのアプリが使っていれば PortInUse、それ以外で開けなければ DeviceDisconnected。"""
     try:
         s = serial.Serial(
             port=port,
@@ -84,6 +105,8 @@ def open_serial(port: str) -> serial.Serial:
             s.set_buffer_size(rx_size=RX_BUFFER, tx_size=4096)
         return s
     except (serial.SerialException, OSError, ValueError) as e:
+        if is_port_in_use(e):
+            raise PortInUse(f"ほかのアプリが使用中: {e}") from e
         raise DeviceDisconnected(f"ポートを開けない: {e}") from e
 
 

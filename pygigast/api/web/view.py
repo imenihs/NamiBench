@@ -49,6 +49,11 @@ def markers_view(snap: dict, unit: str = "dBm") -> dict:
     return {**snap, "rows": out, "columns": list(marker_rows.COLUMNS), "right": list(marker_rows.RIGHT)}
 
 
+def devices_view(p: dict) -> dict:
+    """機器の一覧（イベント devices・命令 list_devices の戻り値）に、行の文と空のときの案内を足す（J §4.7）。"""
+    return {**p, **texts.devices_view(p.get("devices") or [])}
+
+
 def notice_view(n: dict, state: Optional[dict]) -> dict:
     return {**n, "view": texts.notice_view(n, state)}
 
@@ -69,7 +74,12 @@ def error_view(err: dict) -> dict:
         code = e.get("code")
         detail = e.get("detail") or {}
 
-    return {**err, "error": {**e, "text": texts.error_text(_E) if e.get("code") else ""}}
+    text = texts.error_text(_E) if e.get("code") else ""
+    out = {**e, "text": text}
+    if e.get("code") in texts.CONNECT_NEXT_STEPS:
+        # 繋げなかったときの理由と次の手（J §4.7 の 5。名前は画面が差し込む: TEMPLATES の device_connect_failed）
+        out["text_next"] = texts.connect_failed_text("", text, e.get("code"))
+    return {**err, "error": out}
 
 
 def result_view(command: str, args: dict, result: Any) -> Any:
@@ -86,6 +96,8 @@ def result_view(command: str, args: dict, result: Any) -> Any:
     if args.get("one_shot") and isinstance(result.get("adopted"), dict) and "center_hz" in result["adopted"]:
         a = result["adopted"]
         t["alternative_done"] = texts.alternative_done_text(a["center_hz"], a["span_hz"])
+    if command == "list_devices" and "devices" in result:
+        return devices_view(result)
     if command == "rtlsdr_calibrate_ppm" and "ppm" in result:
         t["done"] = screen_model.ppm_done_text(result)
     elif command == "rtlsdr_calibrate_level" and "level_offset_db" in result:

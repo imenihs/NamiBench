@@ -48,10 +48,11 @@ class _GigaStBackend(DeviceBackend):
             self._log = TrafficLog(Path(traffic_log_dir) / time.strftime("traffic_%Y%m%d_%H%M%S"))
 
     def discover(self) -> list[dict]:
-        from ..core.devices.gigast.transport import discover
+        from ..core.devices.gigast.transport import FTDI_PID, FTDI_VID, discover
 
+        usb_id = f"{FTDI_VID:04X}:{FTDI_PID:04X}"
         return [
-            {"port": p.port, "serial": p.serial, "description": p.description}
+            {"port": p.port, "serial": p.serial, "description": p.description, "usb_id": usb_id}
             for p in discover()
         ]
 
@@ -78,7 +79,7 @@ class _SimulatorBackend(DeviceBackend):
         self._profile = profile
 
     def discover(self) -> list[dict]:
-        return [{"port": "SIM", "serial": self.SERIAL, "description": "Simulator"}]
+        return [{"port": "simulator", "serial": self.SERIAL, "description": "Simulator"}]
 
     def probe(self, port: str) -> bool:
         return True

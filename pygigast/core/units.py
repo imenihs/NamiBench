@@ -12,6 +12,15 @@ _PREFIX = {"": 0, "k": 3, "K": 3, "m": 6, "M": 6, "g": 9, "G": 9}
 _FREQ_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*([kKmMgG]?)\s*(?:[hH][zZ])?\s*$")
 
 
+# 表示に使うマイナスの字形（ハイフンより見間違えにくい: J §4.1）
+MINUS = "−"
+
+
+def minus_sign(text: str) -> str:
+    """表示の文字列の負号を「−」にする。"""
+    return text.replace("-", MINUS)
+
+
 class ParseError(ValueError):
     pass
 
@@ -48,8 +57,8 @@ def format_freq(hz: int, unit_exp: Optional[int] = None) -> str:
 
 
 def parse_db(text: str) -> float:
-    """dB・dBm の欄。単位の文字は読み飛ばす。"""
-    t = text.strip()
+    """dB・dBm の欄。単位の文字は読み飛ばす。マイナスは「-」と「−」（U+2212。表示に使う字形）の両方を読む。"""
+    t = text.strip().replace(MINUS, "-")
     for suffix in ("dBm", "dB", "dbm", "db"):
         if t.endswith(suffix):
             t = t[: -len(suffix)].strip()

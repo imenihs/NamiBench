@@ -1,6 +1,7 @@
 // 数値の欄（設計J §3。Qt の ui_qt/fields.py と同じ振る舞い）。
 // - 単位付きの自由入力。確定は Enter・Tab・欄を離れる のどれでも。Esc は打つ前の値に戻す（J §4.6）
-// - ホイールと ↑↓ はカーソルのある桁を1つ増減（実機のノブの感覚）
+// - ホイールと ↑↓ はカーソルのある桁を1つ増減（実機のノブの感覚）。wheelExp を決めた欄はホイールだけその桁
+// - choices を渡すと、欄の右に一覧（ドロップダウン）を付ける（REF レベル: J §4.1）
 // - 名前を上、値を下。欄の下に一度きりの知らせを重ねて出し、ボタンを1つ添えられる（設計C §5.11 の 3）
 (function (root) {
   "use strict";
@@ -18,6 +19,10 @@
       big: { type: Boolean, default: false },
       disabled: { type: Boolean, default: false },
       title: String,
+      // 一覧から選べる値（[{ value, text }]。REF レベル: J §4.1）。選ぶと text を確定する
+      choices: { type: Array, default: null },
+      // ホイールで増減する桁を決めておく（REF レベルは 0 = 1dB）。null はカーソルのある桁
+      wheelExp: { type: Number, default: null },
     },
     emits: ["commit", "step", "clear-note"],
     data() {
@@ -57,7 +62,14 @@
       onWheel(e) {
         if (this.disabled) return;
         e.preventDefault();
-        this.step(e.target, e.deltaY < 0 ? 1 : -1);
+        const dir = e.deltaY < 0 ? 1 : -1;
+        if (this.wheelExp !== null) { this.editing = false; this.$emit("step", this.wheelExp, dir); return; }
+        this.step(this.$refs.input, dir);
+      },
+      pick(e) {
+        const t = e.target.value;
+        e.target.value = "";
+        if (t !== "") { this.editing = false; this.$emit("commit", t); }
       },
       step(input, dir) {
         const pos = input.selectionStart == null ? 0 : input.selectionStart;
@@ -81,8 +93,14 @@
     template: `
       <div class="field" :class="{big}" :title="title">
         <div class="field-head"><span class="field-name">{{ label }}</span><slot name="head"></slot></div>
-        <input class="field-input" :value="editing ? draft : text" :disabled="disabled" spellcheck="false"
-               @input="onInput" @keydown="onKey" @blur="commit" @wheel="onWheel">
+        <div class="field-line">
+          <input ref="input" class="field-input" :value="editing ? draft : text" :disabled="disabled" spellcheck="false"
+                 @input="onInput" @keydown="onKey" @blur="commit" @wheel="onWheel">
+          <select v-if="choices" class="field-choices" :disabled="disabled" @change="pick" @wheel="onWheel">
+            <option value="" hidden></option>
+            <option v-for="c in choices" :key="c.value" :value="c.text">{{ c.text }}</option>
+          </select>
+        </div>
         <div v-if="note" class="note-pop" @mouseenter="hovered=true" @mouseleave="hovered=false">
           <span>{{ note.text }}</span>
           <button v-if="note.action" class="note-action" @click="runAction">{{ note.action.label }}</button>

@@ -12,6 +12,8 @@
       this.detail = e.detail || {};
       // 画面の文（サーバーが Qt と同じ texts.error_text で作って足す: view.py）
       this.text = e.text || "";
+      // 繋げなかったときの理由と次の手（機器の一覧に出す: J §4.7）
+      this.next = e.text_next || this.text;
       this.status = status;
     }
   }

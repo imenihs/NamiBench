@@ -26,7 +26,7 @@ from typing import Callable, Optional
 
 from .devices.base import Device, load_profile
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
-from .devices.rtlsdr.dll import DllNotFound
+from .instrument_devices import DevicesMixin
 from .instrument_diff import DiffMixin
 from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
@@ -162,7 +162,7 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin):
+class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -226,6 +226,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         self._init_rtltcp()
         self._init_rtlsdr()
         self._init_listen()
+        self._init_devices()
 
         self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
         self._running = True
@@ -311,7 +312,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
 
     def _loop(self) -> None:
         while self._running:
-            timeout = RECONNECT_POLL_S if self._conn == "reconnecting" else None
+            # 再接続を待つ間・機器の一覧を見ている間は、0.5s ごとにポートの一覧を見る（設計B §7.3・J §4.7）
+            timeout = RECONNECT_POLL_S if self._conn == "reconnecting" or self._devices_polling() else None
             try:
                 item = self._q.get(timeout=timeout)
             except queue.Empty:
@@ -323,6 +325,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                     self._notice("internal_error", {"trace": traceback.format_exc()})
             if self._conn == "reconnecting" and time.monotonic() >= self._next_reconnect:
                 self._try_reconnect()
+            self._poll_devices()
 
     def _handle(self, item: tuple) -> None:
         kind = item[0]
@@ -403,6 +406,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                 "profile_model": self._profile.get("model"),
                 "display_name": self._profile.get("display_name"),
                 "sweep_kind": self._profile.get("sweep_kind", "stepped"),
+                "name": self._current_device_name(),  # 利用者が付けた名前か既定の名前（設計J §4.7）
             },
             "sweep": adopted_to_dict(self._adopted),
             "run": {
@@ -692,87 +696,6 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
 
     def _cmd_get_state(self) -> dict:
         return self._snapshot()
-
-    def _cmd_list_devices(self, backend: str = "gigast") -> dict:
-        b = self._backends.get(backend)
-        if b is None:
-            raise CommandError("unknown_backend", "backend", {"backend": backend})
-        known = self._settings.known_serials()
-        ports = self._discover(b)
-        for p in ports:
-            p["known"] = p.get("serial") in known
-        return {"devices": ports}
-
-    def _discover(self, b: DeviceBackend) -> list[dict]:
-        """機器の一覧。RTL-SDR の DLL が無ければ理由のコードで返す（GigaSt はそのまま使える: 設計Q §6.2）。"""
-        try:
-            return b.discover()
-        except DllNotFound as e:
-            raise CommandError("rtlsdr_dll_not_found", "dll_folder",
-                               {"message": str(e), "dll_folder": self._rtlsdr_cfg["dll_folder"]}) from e
-
-    def _cmd_connect(self, backend: str = "gigast", serial: Optional[str] = None, port: Optional[str] = None) -> dict:
-        """繋ぐ。初めての機器は確認の掃引で GigaSt と確かめてから覚える（設計B §7.3）。"""
-        b = self._backends.get(backend)
-        if b is None:
-            raise CommandError("unknown_backend", "backend", {"backend": backend})
-        if self._device is not None or self._conn == "reconnecting":
-            if self._ref_job is not None:
-                self._abort_ref_job(CommandError("disconnected"))
-            self._drop_device()
-            self._conn = "disconnected"
-        known = self._settings.known_serials()
-        if port is None and serial is None:
-            raise CommandError("device_not_selected", "serial")
-        if port is None:
-            ports = [p for p in self._discover(b) if p.get("serial") == serial and p.get("available", True)]
-            if not ports:
-                raise CommandError("device_not_found", "serial", {"serial": serial})
-            if len(ports) > 1:
-                # 同じシリアル番号が複数（RTL-SDR）: 番号付きのポートで選んでもらう（設計Q §6.6）
-                raise CommandError("device_ambiguous", "port",
-                                   {"serial": serial, "ports": [p["port"] for p in ports]})
-            port = ports[0]["port"]
-            if serial not in known and not b.probe(port):
-                raise CommandError("probe_failed", "port", {"port": port})
-        else:
-            match = [p for p in self._discover(b) if p.get("port") == port]
-            serial = match[0].get("serial") if match else serial
-            if serial not in known and not b.probe(port):
-                raise CommandError("probe_failed", "port", {"port": port})
-        try:
-            device = b.open(serial, port)
-        except (DeviceError, OSError) as e:
-            raise CommandError("open_failed", "port", {"port": port, "message": str(e)}) from e
-        ident = device.identity()
-        if ident.serial:
-            self._settings.remember_device(ident.serial)
-        self._attach(device, backend)
-        return {"identity": self._identity}
-
-    def _cmd_connect_last(self, backend: str = "gigast") -> dict:
-        """覚えた機器が見つかれば自動で繋ぐ（設計B §7.3: 2回目から）。見つからなければ何もしない。"""
-        b = self._backends.get(backend)
-        if b is None:
-            raise CommandError("unknown_backend", "backend", {"backend": backend})
-        ports = self._discover(b)
-        last = self._settings.last_serial()
-        order = ([last] if last else []) + self._settings.known_serials()
-        for s in order:
-            # 同じシリアル番号が1本だけのときに限る（RTL-SDR は全製品共通のことがある: 設計Q §6.6）
-            if len([p for p in ports if p.get("serial") == s and p.get("available", True)]) == 1:
-                return self._cmd_connect(backend=backend, serial=s)
-        return {"identity": None}
-
-    def _cmd_disconnect(self) -> dict:
-        if self._ref_job is not None:
-            self._abort_ref_job(CommandError("disconnected"))
-        self._drop_device()
-        self._identity = None
-        self._backend_name = None
-        self._run = "stopped"
-        self._set_conn("disconnected")
-        return {}
 
     def _set_adopted(self, new: AdoptedSweep) -> None:
         """採用値を置き換える。値の意味が変わる条件ならトレースの蓄積を捨てる（設計F §5.3）。"""

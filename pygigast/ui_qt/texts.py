@@ -17,6 +17,8 @@ from .texts_ui import *  # noqa: F401,F403 — 画面の部品の語の表（メ
 from .texts_ui import TEMPLATES
 from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタンの語（LABELS）。Web へも同じ表で配る
 from .texts_labels import LABELS
+from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「直結を 0dB にする」の語（J §4.7・§4.2）
+from .texts_devices import device_name
 
 
 def tpl(key: str, **kw) -> str:
@@ -155,6 +157,7 @@ NOTICES = {
     "rtltcp_started": "rtl_tcp の送出を始めました",
     "rtltcp_stopped": "rtl_tcp の送出を止めました",
     "listen_stopped": "聞くのをやめました",
+    "auto_connected": "前回の機器に繋ぎました",
 }
 
 DISCARD_REASONS = {
@@ -171,6 +174,7 @@ ERRORS = {
     "device_ambiguous": "同じシリアル番号の機器が複数あります。一覧から番号付きのポートを選んでください",
     "probe_failed": "GigaSt の応答が返りませんでした（別の機器かもしれません）",
     "open_failed": "ポートを開けませんでした",
+    "port_in_use": "ポートを開けません。GS5.exe など別のアプリが使っていないか確かめてください",
     "legacy_unreadable": "旧校正ファイルが読めません",
     "legacy_calibration_not_for_device": "この機器には旧校正ファイルを使えません",
     "file_unreadable": "ファイルが読めません",
@@ -237,6 +241,8 @@ def notice_text(n: dict) -> str:
                    stop=format_freq(int(d["stop_hz"])))
     elif code == "rtlsdr_overload" and d.get("ratio") is not None:
         text += tpl("paren", text=f"{d['ratio'] * 100:.2f} %")
+    elif code == "auto_connected" and d.get("name"):
+        text = tpl("auto_connected", name=d["name"])
     elif code == "listen_stopped":
         r = LISTEN_STOP_REASONS.get(d.get("reason"), d.get("reason") or "")
         if r:
@@ -641,8 +647,9 @@ def status_items(st: dict) -> list[dict]:
     """状態バーの項目（key・text・cls）。Qt と Web が同じ並び・同じ文字で出す。空の text は出さない。"""
     conn = st.get("connection") or {}
     ident = conn.get("identity") or {}
-    who = f" {ident.get('serial', '')} {ident.get('port', '')}" if ident else ""
-    dev = conn.get("display_name") if conn.get("state") == "connected" else ""
+    # 名前（利用者が付けた名前か、機種名＋シリアル番号の末尾4桁）とポート（J §4.7: いま使っている機器は状態バーで分かる）
+    who = tpl("status_conn_who", name=conn.get("name") or device_name({"kind": conn.get("backend")}),
+              port=ident.get("port", "")) if ident else ""
     run = st.get("run") or {}
     rs = RUN_STATES.get(run.get("state"), run.get("state"))
     if run.get("state") == "single" or (run.get("state") == "stopped" and run.get("last_stop_reason") == "single_done"):
@@ -652,8 +659,8 @@ def status_items(st: dict) -> list[dict]:
     rt_text, rt_cls = rtltcp_status(st.get("rtltcp") or {})
     tasks = st.get("tasks") or []
     items = [
-        {"key": "conn", "text": tpl("status_conn", state=CONN_STATES.get(conn.get("state"), conn.get("state")),
-                                    who=who + (f" {dev}" if dev else "")),
+        {"key": "conn", "text": TEMPLATES["status_conn_none"] if conn.get("state") == "disconnected" else
+         tpl("status_conn", state=CONN_STATES.get(conn.get("state"), conn.get("state")), who=who),
          "cls": "ok" if conn.get("state") == "connected" else "warn"},
         {"key": "run", "text": tpl("status_run", state=rs), "cls": ""},
         {"key": "time", "text": tpl("status_sweep_time", s=f"{run['last_sweep_s']:.2f}") if run.get("last_sweep_s")
@@ -695,6 +702,9 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
         elif kind == "reference_take":
             text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
                                                                                          name=res.get("name", ""))
+            if res.get("ref_level") is not None:
+                # 0dB が見えるよう REF レベルを動かした（「直結を 0dB にする」: 黙って変えない J §4）
+                text += tpl("ref_zero_shown", ref=f"{res['ref_level']:+g}".replace("-", "−"))
         return text, path
     if code == "task_cancelled":
         return TASK_CANCELLED.get(kind, TEMPLATES["cancelled_generic"]), None

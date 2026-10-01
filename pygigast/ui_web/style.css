@@ -168,3 +168,27 @@ input.mid { width: 11em; }
   .statusbar { position: sticky; bottom: 0; background: var(--panel-bg); }
 }
 .ttable tr.sub td { border-bottom: 0; padding-top: 0; }
+
+/* ---- 数値の欄の一覧（REF レベル: J §4.1）。欄の右に矢印だけの選択を付ける ---- */
+.field-line { display: flex; align-items: stretch; }
+.field-choices { width: 22px; padding: 0; margin-left: -1px; cursor: pointer; }
+
+/* ---- 上段の「直結を 0dB にする」（J §4.2）。TG・S11 のときだけ ---- */
+.refquick { display: flex; gap: 6px; align-items: center; }
+.refquick .run-btn { min-width: 0; font-size: 15px; padding: 0 10px; }
+.refquick-state { max-width: 16em; font-size: 12px; line-height: 1.3; }
+.refquick progress { width: 70px; }
+
+/* ---- 機器の一覧（J §4.7）。名前を変える窓（.modal-back）をこの上に重ねる ---- */
+.devwin-back { z-index: 45; }
+.devwin .dev-empty { text-align: center; padding: 18px 0; font-size: 15px; }
+.devwin .dev-empty button { margin-top: 10px; }
+.dev-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 2px 8px; align-items: center;
+           border: 1px solid var(--axis); padding: 6px 8px; margin: 6px 0; }
+.dev-name { grid-column: 1; grid-row: 1; font-weight: 600; font-size: 14px; }
+.dev-state { grid-column: 1; grid-row: 2; font-size: 12px; }
+.dev-more { grid-column: 2; grid-row: 1 / span 2; }
+.dev-rename { grid-column: 3; grid-row: 1 / span 2; }
+.dev-act { grid-column: 4; grid-row: 1 / span 2; min-width: 6em; }
+.dev-details { grid-column: 1 / -1; grid-row: 3; font-size: 12px; color: var(--text-dim); user-select: text; }
+.dev-status { margin-top: 8px; }

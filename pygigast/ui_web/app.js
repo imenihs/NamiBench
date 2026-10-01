@@ -109,7 +109,16 @@
           sg: s.sg_hz != null ? U.freqFieldText(s.sg_hz) : "",
         };
       },
-      refText() { return `${this.amp.ref.toFixed(1)} ${this.axisUnit}`; },
+      // 負号は見間違えない字形「−」で出す（J §4.1）。打つときは「-」でも「−」でもよい
+      refText() { return U.minusSign(`${this.amp.ref.toFixed(1)} ${this.axisUnit}`); },
+      // REF レベルの一覧（J §4.1: +20〜−120 を 10dB 刻み。Qt の fields.REF_CHOICES と同じ）
+      refChoices() {
+        const out = [];
+        for (let v = 20; v >= -120; v -= 10) out.push({ value: v, text: U.minusSign(v > 0 ? `+${v}` : `${v}`) + " " + this.axisUnit });
+        return out;
+      },
+      // 上段の「直結を 0dB にする」（J §4.2。出すか・理由・文はサーバーの screen_model.ref_quick_view）
+      refQuick() { return this.ui.ref_quick || { visible: false }; },
       spanLockText() {
         const s = this.sw;
         if (!s || s.span_lock_hz == null) return W("span_lock");
@@ -309,6 +318,7 @@
           for (const id of Object.keys(this.progress)) if (!alive.has(id)) delete this.progress[id];
           if (!this.running && this.run.state !== "stopping") this.waiting = "";
           this.onStateRtl(p);
+          this.onStateDevices(p);
           this.applyX();
           this.applyY();
           this.redraw();
@@ -319,9 +329,12 @@
         } else if (kind === "trace") {
           this.$traces.set(String(p.trace), markRaw(p));
           this.traceVersion++;
+          this.applyY(); // 値の単位（dBm ⇔ dB）は届いたトレースで変わる。縦軸の名前を合わせる
           this.redraw();
         } else if (kind === "audio") {
           this.onAudio(p);
+        } else if (kind === "devices") {
+          this.onDevices(p);
         } else if (kind === "notice") {
           const v = p.view || { text: p.code, traces: {} };
           for (const [n, text] of Object.entries(v.traces || {})) this.traceNote(Number(n), text);
@@ -603,6 +616,12 @@
       async takeRef(kind) {
         await this.cmd("reference_take", { kind, name: this.refName || null }, { field: "refs" });
       },
+      takeDirect() {
+        // 広く取り、すぐ1回測って 0dB を見せる（縦軸の外ならコアが REF を動かして知らせる: show_zero）
+        const d = new Date();
+        const p = (n) => String(n).padStart(2, "0");
+        this.cmd("reference_take", { kind: "wide", name: X.fmt("ref_direct_name", { time: `${p(d.getHours())}:${p(d.getMinutes())}` }), show_zero: true });
+      },
       async refAction(name, args) { await this.cmd(name, args, { field: "refs" }); this.loadRefs(); },
       renameRef(r) {
         this.openModal(W("rename_ref_title"), [{ key: "name", label: W("name"), value: r.name }], (v) => this.refAction("reference_rename", { id: r.id, name: v.name }));
@@ -658,27 +677,6 @@
           { key: "path", label: W("save_path"), value: joinPath(this.info.default_dir, nowName() + ".h5") },
         ], (v) => this.cmd("record_finish", { path: v.path }));
       },
-      async connectDialog() {
-        const r = await this.cmd("list_devices", { backend: "gigast" });
-        if (!r) return;
-        const devs = r.devices || [];
-        const C = X.dict("CONNECT_TEXTS");
-        this.modal = {
-          title: C.title, devices: devs, pick: devs.length ? 0 : -1, fields: [],
-          note: devs.length ? C.gigast_note : C.gigast_none,
-          ok: (v, m) => {
-            const d = devs[m.pick];
-            if (!d) return;
-            this.note(null, W("connecting"));
-            this.cmd("connect", { backend: "gigast", serial: d.serial, port: d.port });
-          },
-        };
-      },
-      deviceLabel(d) {
-        const C = X.dict("CONNECT_TEXTS");
-        return X.fmt("connect_device_row", { serial: d.serial || C.no_serial, port: d.port, desc: d.description || "", known: d.known ? X.fmt("connect_known") : "", shared: "" });
-      },
-
       // ------------------------------------------------------------ PNG（設計I。配置はサーバーの report_layout、描くのは canvas）
       pngBlob(note) {
         return GSPng.render({
@@ -792,6 +790,7 @@
   }
   merge(base, GSAppMenu);
   merge(base, GSAppRtl);
+  merge(base, GSAppDevices);
 
   const app = createApp(base);
   app.component("num-field", GSFields.NumField);

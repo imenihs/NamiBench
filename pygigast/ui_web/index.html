@@ -21,6 +21,7 @@
 <script src="audio.js"></script>
 <script src="app_menu.js"></script>
 <script src="app_rtl.js"></script>
+<script src="app_devices.js"></script>
 <script src="app.js"></script>
 </head>
 <body>
@@ -86,8 +87,9 @@
         </select>
         <div v-if="notes.rbw" class="note-pop"><span>{{ notes.rbw.text }}</span></div>
       </div>
+      <!-- REF レベル: 打てる欄＋一覧（+20〜−120・10dB 刻み）＋欄の上のホイールで 1dB（J §4.1） -->
       <num-field :label="W('ref_level')" :text="refText" :note="notes.ref" @clear-note="clearNote('ref')"
-                 @commit="commitRef" @step="stepRef">
+                 :choices="refChoices" :wheel-exp="0" @commit="commitRef" @step="stepRef">
         <template #head>
           <button class="small" :disabled="!!refAutoReason()" @click="trigger('ref_auto')"
                   :title="W('ref_auto_tip') + (refAutoReason() ? ' — ' + refAutoReason() : '')">{{ W('ref_auto') }}</button>
@@ -106,6 +108,16 @@
                 :title="W('run_single_tip') + keyHint('run_single')" @click="trigger('run_single')">⏵| <span class="lbl">{{ T('MENU_ITEMS', 'run_single') }}</span></button>
         <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
                 :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">■ <span class="lbl">{{ T('MENU_ITEMS', 'stop') }}</span></button>
+      </div>
+      <!-- TG・S11 のとき「直結を 0dB にする」といまの基準（J §4.2: 基準を取るは1クリックで届く所に） -->
+      <div class="refquick" v-if="refQuick.visible">
+        <button class="run-btn" :disabled="!!refQuick.reason" @click="takeDirect"
+                :title="T('REF_QUICK_LABELS', 'tip') + (refQuick.reason ? ' — ' + refQuick.reason : '')">{{ T('REF_QUICK_LABELS', 'button') }}</button>
+        <template v-if="refQuick.taking">
+          <progress></progress>
+          <button class="small" :disabled="refQuick.cancelling" @click="cmd('cancel_task', {task_id: refQuick.task_id}, {quiet: ['unknown_task']})">{{ T('REF_QUICK_LABELS', 'cancel') }}</button>
+        </template>
+        <span class="refquick-state dim" :title="[refQuick.taking ? refQuick.progress_text : refQuick.text, refQuick.tip].filter((t) => t).join('\n')">{{ refQuick.taking ? refQuick.progress_text : refQuick.text }}</span>
       </div>
       <div class="filebtns">
         <button class="top-btn" :title="W('save') + keyHint('save')" @click="trigger('save')">{{ W('save') }}</button>
@@ -446,16 +458,33 @@
     <button v-for="(it, i) in ctx.items" :key="i" :disabled="!!it.why" :title="it.why || ''" @click="ctx = null; it.run()">{{ it.label }}</button>
   </div>
 
-  <!-- 入力の窓（保存先・開くファイル・接続する機器・アプリ設定など） -->
+  <!-- 機器の一覧（J §4.7。Qt の device_list.py と同じ）。名前を変える窓はこの上に重ねる -->
+  <div class="modal-back devwin-back" v-if="devWin" @click="closeDevices">
+    <div class="modal devwin" @click.stop>
+      <h3>{{ D('title') }}</h3>
+      <p class="modal-note">{{ D('auto_update') }}</p>
+      <div class="dev-empty" v-if="devWin.empty">
+        <div>{{ D('empty') }}</div>
+        <button v-if="devWin.simulator" :disabled="!!devWin.busy" @click="connectDevice(devWin.simulator)">{{ D('try_sim') }}</button>
+      </div>
+      <div class="dev-row" v-for="d in devWin.rows" :key="d.id">
+        <span class="dev-name">{{ d.view.name }}</span>
+        <button class="small dev-more" @click="toggleDetails(d.id)">{{ devWin.open[d.id] ? '▾' : '▸' }} {{ D('details') }}</button>
+        <button class="small dev-rename" v-if="d.view.renamable" @click="renameDevice(d)">{{ D('rename') }}</button>
+        <button class="dev-act" :disabled="!!d.view.action_reason || !!devWin.busy" :title="d.view.action_reason || ''" @click="deviceAction(d)">{{ d.view.action_label }}</button>
+        <span class="dev-state" :class="d.view.state_cls === 'warn' ? 'warn' : 'dim'">{{ d.view.state_text }}</span>
+        <span class="dev-details" v-if="devWin.open[d.id]">{{ d.view.details }}</span>
+      </div>
+      <div class="dev-status" :class="devWin.warn ? 'warn' : 'dim'" v-if="devWin.status">{{ devWin.status }}</div>
+      <div class="modal-btns"><button @click="closeDevices">{{ D('close') }}</button></div>
+    </div>
+  </div>
+
+  <!-- 入力の窓（保存先・開くファイル・アプリ設定など） -->
   <div class="modal-back" v-if="modal" @click="modal = null">
     <div class="modal" @click.stop>
       <h3>{{ modal.title }}</h3>
       <p v-if="modal.note" class="modal-note">{{ modal.note }}</p>
-      <div v-if="modal.devices" class="devlist">
-        <label v-for="(d, i) in modal.devices" :key="i" class="inline dev">
-          <input type="radio" :value="i" v-model="modal.pick"> {{ deviceLabel(d) }}
-        </label>
-      </div>
       <table v-if="modal.keys" class="mtable"><tbody><tr v-for="(r, i) in keyRows" :key="i"><td>{{ r[0] }}</td><td>{{ r[1] }}</td></tr></tbody></table>
       <p v-if="modal.keys" class="modal-note">{{ W('keys_note') }}</p>
       <!-- アプリ設定（O §1.3。Qt の settings_dialog.py と同じ欄。変えたらすぐ効く） -->
@@ -489,7 +518,7 @@
         <input v-else v-model="f.value" @keydown.enter="modalOk">
       </div>
       <div class="modal-btns">
-        <button v-if="modal.ok" class="primary" :disabled="modal.devices && modal.pick < 0" @click="modalOk">{{ modal.devices ? T('CONNECT_TEXTS', 'button') : 'OK' }}</button>
+        <button v-if="modal.ok" class="primary" @click="modalOk">OK</button>
         <button @click="modal = null">{{ modal.ok ? W('cancel') : T('SETTINGS_LABELS', 'close') }}</button>
       </div>
     </div>

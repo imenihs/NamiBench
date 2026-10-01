@@ -216,10 +216,6 @@ TEMPLATES = {
     "rtltcp_running": "送出中: ポート {port}・接続 {clients}（{bind}）",
     "rtltcp_stopped_state": "止まっています",
     "rtltcp_dropped": "遅い相手に送れず捨てたバイト: {n}",
-    "connect_device_row": "{serial}  {port}  {desc}{known}{shared}",
-    "connect_shared": "（同じシリアル番号が {n} 本）",
-    "connect_known": "（前に使った機器）",
-    "connect_unavailable": "（ほかのアプリが使用中）",
     "saved": "保存しました: {name}",
     "trace_note": "トレース {n}: {text}",
     "task_done_path": "{done}: {name}",
@@ -235,23 +231,6 @@ TEMPLATES = {
     "norm_changed": "ノーマライズの状態が変わりました",
     "file_trace_label": "{name} #{number}",
     "marker_copied": "マーカー表をコピーしました（{n} 行）",
-}
-
-# ---------------------------------------------------------------- 機器の一覧（設計B §7.3・Q §6.2・§6.6）
-
-CONNECT_TEXTS = {
-    "title": "機器に接続",
-    "button": "接続",
-    "gigast_head": "GigaSt（USB シリアル）",
-    "rtlsdr_head": "RTL-SDR",
-    "gigast_note": "USB ID が FTDI 0403:6001 のポートを並べています。この部品は GigaSt 以外の機器にも使われるので、初めての機器は確認の掃引を1回送り、GigaSt の応答が返るかを確かめてから繋ぎます。",
-    "gigast_none": "GigaSt が見つかりません。USB ケーブルを確かめてください。",
-    "rtlsdr_none": "RTL-SDR が見つかりません（DLL は読めました）。",
-    "rtlsdr_dll_missing": "RTL-SDR の DLL（rtlsdr.dll）が見つかりません。DLL のあるフォルダを選ぶと一覧に出ます（GigaSt はそのまま使えます）。",
-    "rtlsdr_shared_note": "RTL-SDR はシリアル番号が全製品で同じことがあります。同じ番号が複数あるときは、番号付きのポート（rtlsdr:0 など）で選んでください。校正は同じシリアル番号で共有になります。",
-    "choose_dll": "DLL のフォルダを選ぶ…",
-    "no_serial": "（シリアル番号なし）",
-    "none_at_all": "繋げる機器が見つかりません。",
 }
 
 # ---------------------------------------------------------------- RTL-SDR（設計Q §6）

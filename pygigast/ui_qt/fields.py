@@ -15,6 +15,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QKeyEvent, QKeySequence, QPainter, QPen, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.units import ParseError, parse_db, parse_freq_hz
+from ..core.units import MINUS, ParseError, minus_sign, parse_db, parse_freq_hz
 
 NOTE_SHOW_MS = 4000
 # ボタンを添えた知らせは、読んで押すまでの時間を取る。マウスが知らせの上にある間は消さない
@@ -41,6 +42,8 @@ class _Edit(QLineEdit):
     def __init__(self) -> None:
         super().__init__()
         self._shown = ""
+        # ホイールで増減する桁を決めておく欄（REF レベル: 1目盛で 1dB）。None はカーソルのある桁
+        self.wheel_exp: Optional[int] = None
         self.editingFinished.connect(self._on_finished)
 
     def show_value(self, text: str) -> None:
@@ -77,7 +80,9 @@ class _Edit(QLineEdit):
 
     def wheelEvent(self, e: QWheelEvent) -> None:
         dy = e.angleDelta().y()
-        if dy:
+        if dy and self.wheel_exp is not None:
+            self.stepped.emit(self.wheel_exp, +1 if dy > 0 else -1)
+        elif dy:
             self._step(+1 if dy > 0 else -1)
         e.accept()
 
@@ -91,7 +96,7 @@ class _Edit(QLineEdit):
         text = self.text()
         pos = self.cursorPosition()
         num_end = 0
-        while num_end < len(text) and (text[num_end].isdigit() or text[num_end] in "+-."):
+        while num_end < len(text) and (text[num_end].isdigit() or text[num_end] in "+-." + MINUS):
             num_end += 1
         idx = min(pos, num_end) - 1
         if idx < 0 or not text[idx].isdigit():
@@ -349,3 +354,76 @@ class DbField(ValueField):
 
     def _stepped(self, exp: int, direction: int) -> None:
         self._on_commit(self._value + direction * (10.0 ** exp))
+
+
+# REF レベルの一覧（J §4.1: +20〜−120 を 10dB 刻み）
+REF_CHOICES = tuple(range(20, -121, -10))
+
+
+def ref_choice_text(v: int, unit: str) -> str:
+    return minus_sign(f"{v:+d}" if v else "0") + (f" {unit}" if unit else "")
+
+
+class _RefCombo(QComboBox):
+    """一覧の矢印の上のホイールも、欄の上と同じく 1dB ずつにする（一覧の行を送らない）。"""
+
+    def __init__(self, edit: "_Edit") -> None:
+        super().__init__()
+        self._edit = edit
+
+    def wheelEvent(self, e: QWheelEvent) -> None:
+        dy = e.angleDelta().y()
+        if dy:
+            self._edit.stepped.emit(0, +1 if dy > 0 else -1)
+        e.accept()
+
+
+class RefLevelField(DbField):
+    """REF レベルの欄（J §4.1）: 打てるドロップダウン（+20〜−120 を 10dB 刻み）と、欄の上のホイールで 1dB。
+
+    ホイールはカーソルの桁によらず1目盛で 1dB（J §3 の桁の増減の例外）。↑↓ と直接入力（例 −37.5）は
+    ほかの数値の欄と同じ。負の数は「−」の字形で出し、打つときは「-」でも「−」でもよい。
+    """
+
+    def __init__(self, name: str, unit: str, on_commit: Callable[[float], None], big: bool = True) -> None:
+        super().__init__(name, unit, on_commit, big)
+        self.combo = _RefCombo(self.edit)
+        self.combo.setEditable(True)
+        self.combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.layout().replaceWidget(self.edit, self.combo)
+        self.combo.setLineEdit(self.edit)
+        self.combo.setCompleter(None)  # 打っている途中に一覧の値で補わない（「+1」が「+10」にならない）
+        self.edit.wheel_exp = 0
+        self.combo.setFont(self.edit.font())
+        self._fit_width()
+        self._fill_choices()
+        self.combo.activated.connect(self._chosen)
+
+    def _fill_choices(self) -> None:
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        for v in REF_CHOICES:
+            self.combo.addItem(ref_choice_text(v, self._unit), float(v))
+        self.combo.setCurrentIndex(-1)
+        self.combo.blockSignals(False)
+        self.edit.show_value(self.edit._shown)
+
+    def _chosen(self, i: int) -> None:
+        v = self.combo.itemData(i)
+        if v is not None:
+            self._on_commit(float(v))
+
+    def set_value(self, v: float) -> None:
+        self._value = v
+        self.edit.show_value(minus_sign(f"{v:.1f} {self._unit}".rstrip()))
+
+    def set_unit(self, unit: str) -> None:
+        if unit != self._unit:
+            super().set_unit(unit)
+            self._fit_width()
+            self._fill_choices()
+
+    def _fit_width(self) -> None:
+        # 値と単位が全部見え、一覧の矢印の分も取る（J §4.3: 欄を切らない）
+        widest = self.edit.fontMetrics().horizontalAdvance(f"{MINUS}120.0 {self._unit}")
+        self.combo.setMinimumWidth(max(self.edit.minimumWidth(), widest + 16) + 24)

@@ -21,6 +21,7 @@ from ...types import (
     DeviceError,
     DeviceIdentity,
     Mode,
+    PortInUse,
     RawSweep,
     SweepDiscarded,
 )
@@ -181,6 +182,8 @@ class GigaStDevice(SweepRunner, Device):
         )
         try:
             s = open_serial(port)
+        except PortInUse:
+            raise  # ほかのアプリが使っている: 「GigaSt でない」とは別に知らせる（設計J §4.7）
         except DeviceDisconnected:
             return False
         t = Transport(s, traffic_log)

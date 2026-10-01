@@ -279,6 +279,8 @@ class _Hub:
             payload = view.notice_view(payload, self.last_state)
         elif kind == "progress":
             payload = view.progress_view(payload)
+        elif kind == "devices":
+            payload = view.devices_view(payload)
         text = dumps({"kind": kind, "payload": payload})
         if kind == "state":
             ver = int(payload.get("version", 0))

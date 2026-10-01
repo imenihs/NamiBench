@@ -218,6 +218,10 @@ class DeviceDisconnected(DeviceError):
     """機器が切れた（読み書きの例外・ポートが消えた）。"""
 
 
+class PortInUse(DeviceDisconnected):
+    """ポートをほかのアプリが開いている（設計J §4.7）。GigaSt の応答が無いのとは別の理由として扱う。"""
+
+
 class SweepDiscarded(DeviceError):
     """その掃引は使えないので捨てた（バイト数の不足・上限時間の超過）。次の掃引へ進んでよい。"""
 

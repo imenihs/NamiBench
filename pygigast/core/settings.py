@@ -24,6 +24,8 @@ DEFAULTS: dict[str, Any] = {
     "rtltcp": {"enabled": False, "port": 1234, "bind": "local"},
     # RTL-SDR（設計Q §6.2・§6.5）: DLL のフォルダ（None は既定の探し方）・受信の利得（None は機種の既定）・AGC
     "rtlsdr": {"dll_folder": None, "gain_db": None, "agc": False},
+    # 利用者が機器に付けた名前（設計J §4.7）。キーは "種類:シリアル番号"
+    "device_names": {},
 }
 
 
@@ -88,9 +90,26 @@ class Settings:
     def last_serial(self) -> Optional[str]:
         return self.data["known_devices"].get("last")
 
-    def remember_device(self, serial: str) -> None:
+    def last_backend(self) -> Optional[str]:
+        return self.data["known_devices"].get("last_backend")
+
+    def remember_device(self, serial: str, backend: Optional[str] = None) -> None:
         kd = self.data["known_devices"]
         if serial not in kd["serials"]:
             kd["serials"].append(serial)
         kd["last"] = serial
+        if backend:
+            kd["last_backend"] = backend
+        self.save()
+
+    # 機器の名前（設計J §4.7）
+    def device_name(self, key: str) -> Optional[str]:
+        v = self.data["device_names"].get(key)
+        return v if isinstance(v, str) and v else None
+
+    def set_device_name(self, key: str, name: Optional[str]) -> None:
+        if name:
+            self.data["device_names"][key] = name
+        else:
+            self.data["device_names"].pop(key, None)
         self.save()

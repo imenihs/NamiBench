@@ -33,7 +33,7 @@ def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
         "undo": lambda: win._undo_redo("undo"), "redo": lambda: win._undo_redo("redo"),
         "connect": win._connect_dialog,
         "connect_sim": lambda: win.call("connect", backend="simulator", serial="SIM00001"),
-        "disconnect": lambda: win.call("disconnect"),
+        "disconnect": win._disconnect,
         "run_cont": lambda: win.call("run", mode="continuous"),
         "run_single": lambda: win.call("run", mode="single"),
         "stop": lambda: win.call("stop"),
