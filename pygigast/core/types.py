@@ -191,7 +191,8 @@ class Frame:
     axis は機器が測った点（Stop を超える最後の点を含みうる）。表示・マーカー・保存・書き出しは
     display_start_hz〜display_stop_hz で切る（設計C §5.3）。
     flags は点ごとの印（bool の配列）: "transient"（前置き不足）・"out_of_cal_range"（補正の範囲外）・
-    "no_reference"（ノーマライズの基準が無い点）など。
+    "no_reference"（ノーマライズの基準が無い点）・"lo_leak"・"negative_mirror"・"outside_tg_range"
+    （機器の範囲の外・意味の無い点: core/display_marks.py）など。
     profile は測った機器の機種のプロファイルの写し（設計Q §2.1）。
     """
 

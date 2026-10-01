@@ -38,6 +38,8 @@
     "tg_range_hz": [1000000, 4000000000],
     "level_adjustable": false
   },
+  "lo_leak_band_hz": [-5000000, 5000000],
+  "lo_leak_basis": "measured_on_one_unit",
   "sweep_quirks": {
     "transient_s": 0.030,
     "transient_basis": "estimated_from_one_unit"

@@ -11,7 +11,7 @@ import numpy as np
 
 from .. import __version__ as APP_VERSION
 from ..core import report_layout as rl
-from . import marker_rows, texts
+from . import marker_rows, screen_model, texts
 from .plot_layers import marked_points
 
 if TYPE_CHECKING:
@@ -40,5 +40,5 @@ def build(win: "MainWindow") -> dict:
     return rl.build_data(
         st, ref_level=win.ref_level(), db_per_div=win.db_div(), unit=win.display_unit(),
         mode_name=texts.MODE_NAMES.get(sw.get("mode"), sw.get("mode")), traces=traces,
-        markers=marker_rows.png_rows(win.marker_row_list), warnings=texts.condition_lines(st),
+        markers=marker_rows.png_rows(win.marker_row_list), warnings=screen_model.png_warnings(st),
         app_version=APP_VERSION, norm_reasons=texts.NORM_REASONS)

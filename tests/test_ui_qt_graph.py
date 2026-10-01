@@ -172,16 +172,8 @@ class GraphOperationTest(_Base):
         self.drag(p0, p0 + QPoint(0, int(h / 10)))  # 1目盛ぶん下へ
         self.assertAlmostEqual(self.win._ref_dbm, 10.0, delta=0.6)
 
-    def test_ref_auto_puts_max_one_division_below_top(self):
-        sw = self.sweep()
-        n = sw["points"]
-        values = [-80.0] * n
-        values[n // 2] = -33.3
-        self.win._on_event("trace", {"axis": {"start_hz": sw["start_hz"], "step_hz": sw["step_hz"], "points": n},
-                                     "values": values, "flags": {}})
-        self.assertTrue(self.win.btn_ref_auto.isEnabled())
-        self.win.btn_ref_auto.click()
-        self.assertAlmostEqual(self.win._ref_dbm, -23.3, delta=0.05)
+    # 「自動」が最大値を上から1目盛下に置くこと（局発の漏れを除く・複数のトレース）は test_ui_qt_marks.py
+    # （コアが出すトレースごとの最大値を使うので、本体の掃引で確かめる）
 
     def test_ref_auto_disabled_without_trace(self):
         self.assertFalse(self.win.btn_ref_auto.isEnabled())

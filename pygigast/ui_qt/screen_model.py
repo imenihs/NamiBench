@@ -212,6 +212,46 @@ def ref_quick_view(st: dict) -> dict:
             "progress_text": texts.task_label({**task, "task": task.get("kind")}) if task else ""}
 
 
+# ---------------------------------------------------------------- 範囲の外・意味の無い区間の帯（設計J §4.8）
+
+# 帯の色（配色トークン: J §4.4）。値が意味を持たない区間は「注意」、読める（低く出るだけ）負の側は控えめな色
+MARK_COLORS = {"outside_tg_range": "warn", "lo_leak": "warn", "negative_mirror": "text_dim"}
+
+
+def marks_view(st: dict) -> list[dict]:
+    """グラフに描く帯 [{kind, start_hz, stop_hz, label, tip, color}]。区間はコアの display_marks（表示範囲で切ってある）。"""
+    out = []
+    for m in st.get("display_marks") or []:
+        label = texts.DISPLAY_MARKS.get(m["kind"], m["kind"])
+        out.append({**m, "label": label, "color": MARK_COLORS.get(m["kind"], "warn"),
+                    "tip": tpl("mark_range", label=label, start=format_freq(int(m["start_hz"])),
+                               stop=format_freq(int(m["stop_hz"])))})
+    return out
+
+
+def png_warnings(st: dict) -> list[str]:
+    """PNG の帯の注意（I §3.2 の 6）: 上段の条件の注意と、グラフに出ている帯の説明（範囲つき）。"""
+    return texts.condition_lines(st) + [m["tip"] for m in marks_view(st)]
+
+
+def ref_auto_view(st: dict, shown: list[str], unit: str, db_per_div: float,
+                  has_wave: bool) -> dict:
+    """REF の「自動」（J §4.1・§4.8）: 合わせる REF レベルと、使えない理由。
+
+    shown は画面が表示しているトレースの id（"1"〜"4"・参照トレースの "F1.1"・差の "D"）。
+    コアが出したトレースごとの最大値（state.ref_auto: 局発の漏れ・前置き不足・値の無い点・TG の範囲の外・
+    表示範囲の外を除いたもの）のうち、縦軸と単位が同じものの最大を使う。
+    """
+    from ..core.display_marks import auto_ref_level
+
+    if not has_wave:
+        return {"level": None, "reason": texts.REASON_TEXTS["no_wave"]}
+    peaks = (st.get("ref_auto") or {}).get("peaks") or {}
+    vals = [p.get("max") for tid, p in peaks.items() if tid in shown and p.get("unit") == unit]
+    level = auto_ref_level(vals, db_per_div)
+    return {"level": level, "reason": None if level is not None else texts.REASON_TEXTS["no_auto_points"]}
+
+
 # ---------------------------------------------------------------- まとめ（Web の口が state に付ける）
 
 def ui_view(st: dict) -> dict:
@@ -229,4 +269,5 @@ def ui_view(st: dict) -> dict:
         "tasks": {t.get("task_id"): texts.task_label(t) for t in st.get("tasks") or []},
         "normalization": texts.normalization_text(st.get("normalization") or {}),
         "ref_quick": ref_quick_view(st),
+        "marks": marks_view(st),
     }

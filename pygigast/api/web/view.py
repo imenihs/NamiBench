@@ -121,7 +121,7 @@ def png_layout(st: dict, req: dict) -> dict:
     data = rl.build_data(st, ref_level=float(req.get("ref_level", 0.0)), db_per_div=float(req.get("db_per_div", 10.0)),
                          unit=str(req.get("unit") or "dBm"),
                          mode_name=texts.MODE_NAMES.get(sw.get("mode"), sw.get("mode")), traces=traces,
-                         markers=rows, warnings=texts.condition_lines(st), app_version=__version__,
+                         markers=rows, warnings=screen_model.png_warnings(st), app_version=__version__,
                          norm_reasons=texts.NORM_REASONS)
     size = (int(req.get("width", 1600)), int(req.get("height", 1000)))
     return rl.layout(data, size, str(req.get("note") or ""), __version__)

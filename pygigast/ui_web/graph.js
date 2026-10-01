@@ -31,6 +31,7 @@
       this.div = 10;
       this.unit = "dBm";
       this.traces = [];
+      this.bands = [];
       this.markers = [];
       this.selectedMarker = null;
       this.xy = null;
@@ -134,6 +135,8 @@
     }
 
     setTraces(list) { this.traces = list; this.u.redraw(false); }
+    // 機器の範囲の外・意味の無い区間の帯（J §4.8）: [{start_hz, stop_hz, label, fill}]
+    setBands(list) { this.bands = list || []; this.u.redraw(false); }
     setMarkers(rows, selected) { this.markers = rows || []; this.selectedMarker = selected; this.u.redraw(false); }
     setXY(xy) { this.xy = xy; this.u.redraw(false); }
 
@@ -147,11 +150,51 @@
       ctx.rect(b.left, b.top, b.width, b.height);
       ctx.clip();
       const dpr = b.width / Math.max(1, u.over ? u.over.clientWidth || b.width : b.width);
+      if (!this.zeroSpan) this._drawBands(u, dpr || 1);
       if (this.zeroLine) this._hline(u, 0, this.colors.zero_db, [], 1.5);
       for (const t of this.traces) this._drawTrace(u, t);
       this._drawCursors(u);
       this._drawMarkers(u, dpr || 1);
       ctx.restore();
+    }
+
+    // 帯は薄く塗ってトレースの下に敷く（トレースを隠さない）。説明は帯の左上に控えめな字で出し、横書きが
+    // 入らない狭い帯は縦に、字も入らないほど狭い帯は出さない（Qt の mark_bands.py と同じ）
+    _drawBands(u, dpr) {
+      const ctx = u.ctx;
+      const b = u.bbox;
+      const s = Math.max(1, dpr);
+      const pad = 4 * s;
+      ctx.font = `${Math.round(11 * s)}px sans-serif`;
+      ctx.textBaseline = "top";
+      ctx.textAlign = "left";
+      for (const m of this.bands) {
+        const x0 = Math.max(b.left, u.valToPos(m.start_hz, "x", true));
+        const x1 = Math.min(b.left + b.width, u.valToPos(m.stop_hz, "x", true));
+        if (!(x1 > x0)) continue;
+        ctx.globalAlpha = 0.14;
+        ctx.fillStyle = m.fill;
+        ctx.fillRect(x0, b.top, x1 - x0, b.height);
+        ctx.globalAlpha = 0.35;
+        ctx.strokeStyle = m.fill;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + 0.5, b.top, Math.max(0, x1 - x0 - 1), b.height);
+        ctx.globalAlpha = 1;
+        const w = x1 - x0;
+        if (w < 14 * s || !m.label) continue;
+        ctx.fillStyle = m.fill;
+        if (w >= ctx.measureText(m.label).width + 2 * pad) {
+          ctx.fillText(m.label, x0 + pad, b.top + pad);
+        } else {
+          // 右へ90度回して、帯の左端に沿って上から下へ読む
+          ctx.save();
+          ctx.translate(x0 + pad, b.top + pad);
+          ctx.rotate(Math.PI / 2);
+          ctx.textBaseline = "bottom";
+          ctx.fillText(m.label, 0, 0);
+          ctx.restore();
+        }
+      }
     }
 
     _hline(u, level, color, dash, width) {

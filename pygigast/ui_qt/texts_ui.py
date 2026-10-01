@@ -127,6 +127,7 @@ REASON_TEXTS = {
     "select_marker": "マーカーを選んでください（表の行・グラフの印・ピークのボタン）",
     "delta_ref": "デルタの基準を選ぶと使えます",
     "no_wave": "波形がまだありません（掃引すると使えます）",
+    "no_auto_points": "合わせる点がありません（局発の漏れ・TG の範囲外・前置き不足・値の無い点は使いません）",
     "no_state": "状態がまだありません",
     "no_undo": "戻す変更がありません",
     "no_redo": "やり直す変更がありません",
@@ -137,9 +138,17 @@ REASON_TEXTS = {
     "part_window": "別ウィンドウの中からは開けません",
 }
 
+# 機器の範囲の外・意味の無い区間の帯の説明（設計J §4.8）。グラフの帯・PNG の注意・マーカーの読み値の注意で同じ文
+DISPLAY_MARKS = {
+    "outside_tg_range": "TG の範囲外（値は通過特性ではありません）",
+    "lo_leak": "局発の漏れ（入力の信号ではありません）",
+    "negative_mirror": "正の周波数の鏡（約 1〜2dB 低く読む）",
+}
+
 # ---------------------------------------------------------------- 文の型（`{名前}` を差し込む。texts.tpl・GSTexts.fmt）
 
 TEMPLATES = {
+    "mark_range": "{label}: {start}〜{stop}",
     "adjusted_with_reason": "{value} に合わせました（{reason}）",
     "adjusted": "{value} に合わせました",
     "alt_keep_span": "Span {span} を保って Center を {center} にする",

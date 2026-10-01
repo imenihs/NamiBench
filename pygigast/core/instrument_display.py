@@ -14,6 +14,7 @@ from typing import Optional
 
 import numpy as np
 
+from . import display_marks as dm
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
@@ -135,6 +136,7 @@ class DisplayMixin:
         self._no_calibration = True
         self._last_raw: Optional[RawSweep] = None
         self._last_quantity = Quantity.POWER
+        self._ref_auto_file_cache: dict = {}  # REF の自動の参照トレースの最大値（_ref_auto_state）
         st = st or {}
         # 前回終了時のトレースの設定・マーカーの置き方を戻す（設計O §1.2）。読めないものは既定のまま
         for d in st.get("traces") or []:
@@ -185,7 +187,47 @@ class DisplayMixin:
             "normalization": self._normalization_state(),
             "amplitude": dict(self._amplitude),
             "undo": {"can_undo": bool(self._undo), "can_redo": bool(self._redo)},
+            # 機器の範囲の外・意味の無い区間の帯（設計J §4.8）。画面は計算し直さずに描く
+            "display_marks": dm.display_marks(self._adopted.mode, self._profile, int(self._adopted.start_hz),
+                                              int(self._adopted.stop_hz)),
+            "ref_auto": self._ref_auto_state(),
         }
+
+    def _ref_auto_state(self) -> dict:
+        """REF の「自動」に使う、トレースごとの最大値（設計J §4.8）。id は "1"〜"4"・"D"（差）・"F1.1"（参照）。
+
+        参照トレースの表示・非表示は画面ごとの状態なので、参照トレースは全部を出し、画面が表示中で縦軸と単位が
+        同じものの最大を取る（ui_qt/screen_model.ref_auto_view）。測定中のトレースは表示中のものだけ（隠したものは
+        どの画面にも出ない。RTL-SDR の 20 万点を掃引ごとに数えないため）。参照トレースは値が変わらないので、
+        表示範囲ごとに覚えておく。
+        使わない点: 局発の漏れ・前置き不足・値の無い点・TG の範囲の外（display_marks.AUTO_REF_EXCLUDE）と、
+        いまの表示範囲の外（ゼロスパンは横軸が時間なので範囲で切らない）。
+        """
+        a = self._adopted
+        lo, hi = (a.start_hz, a.stop_hz) if a.axis.step_hz > 0 else (None, None)
+        peaks: dict[str, dict] = {}
+
+        def put(tid: str, values_db, freqs, flags, unit) -> None:
+            peaks[tid] = {"unit": unit, "max": dm.usable_max(values_db, freqs, flags, lo, hi)}
+
+        for t in self._traces:
+            if t.visible and t.values is not None and t.axis is not None and t.quantity is not None:
+                put(str(t.number), db_values(t.values, t.quantity), t.axis.freqs(), t.flags,
+                    unit_for(t.quantity, t.profile))
+        cache = self._ref_auto_file_cache
+        new_cache = {}
+        for e in self._files.values():
+            for tid, td in e["traces"].items():
+                key = (tid, id(td), lo, hi)
+                if key not in cache:
+                    put(tid, db_values(td.values, td.quantity), td.freqs(), td.flags, unit_for(td.quantity, td.profile))
+                    cache[key] = peaks[tid]
+                peaks[tid] = new_cache[key] = cache[key]
+        self._ref_auto_file_cache = new_cache
+        d = self._diff_last
+        if d is not None:
+            put(DIFF_TRACE_ID, d["db"], d["freqs"], None, "dB")
+        return {"peaks": peaks}
 
     def _normalization_state(self) -> dict:
         ref = self._ref
@@ -306,6 +348,7 @@ class DisplayMixin:
 
     def _process_frame(self, frame: Frame) -> None:
         """基準 → トレース → マーカー → イベント（設計A §4.3.1: トレースは番号ごと、マーカー表は掃引ごと）。"""
+        frame = self._mark_frame(frame)
         frame = self._normalize(frame)
         self._last_quantity = frame.quantity
         updates = self._traces.apply(frame)
@@ -322,6 +365,16 @@ class DisplayMixin:
         # A か B が生きたトレースなら差も変わる（設計F §5.4）
         self._diff_refresh(swept=frozenset(u.number for u in updates if u.changed))
         self._emit("markers", {"sweep_no": self._sweep_count, "moved": moved, **self._marker_snap})
+
+    @staticmethod
+    def _mark_frame(frame: Frame) -> Frame:
+        """機器の範囲の外・意味の無い点の印（局発の漏れ・負の側の鏡・TG の範囲の外: 設計J §4.8）を足す。
+        印は点の周波数とモードと測った機器のプロファイルだけで決まる。マーカーの読み値の注意にもなる（設計G §3.3）。"""
+        mode = frame.adopted.mode if frame.adopted is not None else None
+        marks = dm.point_marks(frame.axis.freqs(), mode, frame.profile)
+        if not marks:
+            return frame
+        return dataclasses.replace(frame, flags={**frame.flags, **marks})
 
     def _trace_payload(self, t) -> dict:
         """イベント `trace` の中身（設計A §4.3・§4.3.1）。値は画面の単位の float32。"""

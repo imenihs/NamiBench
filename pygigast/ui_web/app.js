@@ -267,31 +267,37 @@
       },
       stepRef(exp, dir) { this.setAmp({ ref_level: Math.round((this.amp.ref + dir * 10 ** exp) * 100) / 100 }); },
       setDiv(v) { this.setAmp({ db_per_div: Number(v) }); },
-      refAutoReason() {
-        void this.traceVersion;
-        return this.traceMax() === null ? X.get("REASON_TEXTS", "no_wave") : null;
-      },
+      refAutoReason() { return this.refAutoView().reason; },
       refAuto() {
-        const peak = this.traceMax();
-        if (peak === null) { this.note("ref", X.get("REASON_TEXTS", "no_wave")); return; }
-        // いまの波形の最大値が上から1目盛下に来るよう REF を合わせる。表示の桁（0.1dB）へ切り上げる
-        this.setAmp({ ref_level: Math.ceil((peak + this.amp.div) * 10 - 1e-9) / 10 });
+        const v = this.refAutoView();
+        if (v.level === null) { this.note("ref", v.reason); return; }
+        this.setAmp({ ref_level: v.level });
       },
-      traceMax() {
+      // REF の自動（J §4.1・§4.8。Qt の screen_model.ref_auto_view と同じ規則）。使わない点（局発の漏れ・前置き不足・
+      // 値の無い点・TG の範囲の外・表示範囲の外）を除いたトレースごとの最大値はコアが出す（state.ref_auto）。
+      // ここは表示中で縦軸と単位が同じトレースの最大を取り、最大値が上から1目盛下に来る REF を 0.1dB へ切り上げる
+      refAutoView() {
+        void this.traceVersion;
+        const shown = [];
+        for (const n of [1, 2, 3, 4]) if (this.$traces.get(String(n)) && this.traceShown(n)) shown.push(String(n));
+        for (const f of this.shownFiles(this.palette)) if (this.$traces.get(f.id)) shown.push(f.id);
+        if (!shown.length) return { level: null, reason: X.get("REASON_TEXTS", "no_wave") };
+        const peaks = (this.st && this.st.ref_auto && this.st.ref_auto.peaks) || {};
         let best = null;
-        const stop = this.sw ? this.sw.stop_hz : null;
-        for (const n of [1, 2, 3, 4]) {
-          const t = this.$traces.get(String(n));
-          if (!t || !this.traceShown(n)) continue;
-          const ax = t.axis;
-          for (let i = 0; i < t.values.length; i++) {
-            // Stop の先に出た最後の点（C §5.3）は表示の外なので数えない
-            if (ax.step_hz > 0 && stop != null && ax.start_hz + ax.step_hz * i > stop) break;
-            const v = t.values[i];
-            if (Number.isFinite(v) && (best === null || v > best)) best = v;
-          }
+        for (const id of shown) {
+          const p = peaks[id];
+          if (p && p.unit === this.axisUnit && p.max !== null && p.max !== undefined && (best === null || p.max > best)) best = p.max;
         }
-        return best;
+        if (best === null) return { level: null, reason: X.get("REASON_TEXTS", "no_auto_points") };
+        return { level: Math.ceil((best + this.amp.div) * 10 - 1e-9) / 10, reason: null };
+      },
+      // 機器の範囲の外・意味の無い区間の帯（J §4.8）。区間・説明・色はサーバーが付けた ui.marks
+      marks() { return (this.ui.marks || []).map((m) => ({ ...m, fill: this.palette[m.color] || this.palette.warn })); },
+      hoverMark() {
+        const h = this.hover;
+        if (!h) return "";
+        const m = (this.ui.marks || []).find((b) => h.x >= b.start_hz && h.x <= b.stop_hz);
+        return m ? m.label : "";
       },
 
       // ---- 掃引・モード
@@ -423,6 +429,7 @@
         requestAnimationFrame(() => {
           this.rafPending = false;
           if (!this.$graph) return;
+          this.$graph.setBands(this.marks());
           this.$graph.setTraces(this.graphTraces(this.palette));
           this.drawMarkers();
         });

@@ -134,7 +134,7 @@
     <section class="left" v-show="show('graph') || show('markers') || (!part && (detached.graph || detached.markers))">
       <div class="graph-box" v-show="show('graph')">
         <div class="part-bar">
-          <span class="hover" v-if="hover && sw && sw.step_hz">{{ fmtFreq(Math.round(hover.x)) }}・{{ hover.y.toFixed(1) }} {{ axisUnit }}</span>
+          <span class="hover" v-if="hover && sw && sw.step_hz">{{ fmtFreq(Math.round(hover.x)) }}・{{ hover.y.toFixed(1) }} {{ axisUnit }}<template v-if="hoverMark()">・{{ hoverMark() }}</template></span>
           <span class="legend">
             <span v-for="t in traceRows" :key="t.number" v-show="t.visible && t.has_values" :style="{color: t.color}">{{ t.legend }}</span>
           </span>

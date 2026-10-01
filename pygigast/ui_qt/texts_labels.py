@@ -15,7 +15,7 @@ LABELS = {
     "span_lock_tip": "ON: Center を変えても Span を保つ（範囲を超える分は Center が動く）\nOFF: Center を保ち、範囲を超える分だけ Span を縮める",
     "ref_level": "REF レベル",
     "ref_auto": "自動",
-    "ref_auto_tip": "いまの波形の最大値が上から1目盛下に来るよう REF レベルを合わせる",
+    "ref_auto_tip": "表示中のトレースの最大値が上から1目盛下に来るよう REF レベルを合わせる（局発の漏れ・TG の範囲外・前置き不足・値の無い点は使わない）",
     "run_cont_tip": "連続で掃引する",
     "run_single_tip": "単発で掃引する",
     "stop_tip": "いまの掃引の終わりで止める",

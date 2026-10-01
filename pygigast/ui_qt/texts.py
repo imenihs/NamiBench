@@ -14,7 +14,7 @@ from typing import Optional
 
 from ..core.units import format_freq
 from .texts_ui import *  # noqa: F401,F403 — 画面の部品の語の表（メニュー・RTL-SDR など）。同じ texts として配る
-from .texts_ui import TEMPLATES
+from .texts_ui import DISPLAY_MARKS, TEMPLATES
 from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタンの語（LABELS）。Web へも同じ表で配る
 from .texts_labels import LABELS
 from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「直結を 0dB にする」の語（J §4.7・§4.2）
@@ -377,6 +377,8 @@ MARKER_NOTES = {
     "no_value": "値なし",
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
     "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
+    # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
+    **DISPLAY_MARKS,
 }
 
 # 印のうち読み値の注意にしないもの（細かい基準は正常）

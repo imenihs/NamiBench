@@ -204,7 +204,8 @@ class MarkerTabTest(MarkerBase):
         QTest.keyClicks(self.tab.freq.edit, "1234.5678")
         QTest.keyClick(self.tab.freq.edit, Qt.Key.Key_Return)
         self.wait(lambda: self.marker("M1")["freq_hz"] == 1_235_000_000, what="近い点へ")
-        self.assertIn("の点に置きました", self.tab.freq.note.text())
+        # 命令の結果（知らせ）はマーカーの更新の後に届く。届くのを待つ
+        self.wait(lambda: "の点に置きました" in self.tab.freq.note.text(), what="点に置いた知らせ")
 
     def test_xy_cursors(self):
         self.tab.xy_checks["x1_hz"].setChecked(True)

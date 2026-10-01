@@ -11,11 +11,9 @@
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Callable, Optional
 
-import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
 from PySide6.QtGui import QCursor, QFont, QGuiApplication
@@ -42,6 +40,7 @@ from .fields import FreqField, RefLevelField, SpanLockButton, ValueField
 from .files import FileActions
 from .graph import make_plot
 from .listen import ListenControl
+from .mark_bands import MarkBands
 from .marker_table import MarkerPanel
 from .plot_layers import MarkerLayer, TraceLayer
 from .prefs import UiPrefs
@@ -210,6 +209,7 @@ class MainWindow(QMainWindow):
         # REF レベルは最も読みたい値なので、軸の端でも数字を隠さない（J §4.3）
         left.setStyle(hideOverlappingLabels=False)
         self.traces = TraceLayer(self.plot, self.pal)
+        self.mark_bands = MarkBands(self.plot, self.pal)  # 範囲の外・意味の無い区間の帯（設計J §4.8）
         self.marker_layer = MarkerLayer(self.plot, self.pal, self._on_xy_moved)
 
     def _build_menu(self) -> None:
@@ -492,38 +492,25 @@ class MainWindow(QMainWindow):
         self._send_amplitude(db_per_div=int(v))
 
     def _ref_auto(self) -> None:
-        """いまの波形の最大値が上から1目盛下に来るよう REF レベルを合わせる。"""
-        peak = self._trace_max()
-        if peak is None:
-            self.f_ref.flash_note("合わせる波形がまだありません")
+        """表示中のトレースの最大値が上から1目盛下に来るよう REF レベルを合わせる（J §4.1・§4.8）。"""
+        v = self._ref_auto_view()
+        if v["level"] is None:
+            self.f_ref.flash_note(v["reason"])
             return
-        # 表示の桁（0.1dB）へ切り上げる。切り捨てると最大値が1目盛の線をわずかに超える
-        self._set_ref(math.ceil((peak + self._db_div) * 10 - 1e-9) / 10)
+        self._set_ref(v["level"])
 
-    def _trace_max(self) -> Optional[float]:
-        best = None
-        stop = self.state.get("sweep", {}).get("stop_hz")
-        for n in (1, 2, 3, 4):
-            t = self.traces.live_payload(n)
-            if not t:
-                continue
-            y = np.asarray(t["values"], dtype=np.float64)
-            ax = t["axis"]
-            if ax.get("step_hz", 0) > 0 and stop is not None:
-                # Stop の先に出た最後の点（C §5.3）は表示の外なので数えない
-                x = ax["start_hz"] + ax["step_hz"] * np.arange(ax["points"], dtype=np.int64)
-                y = y[x <= stop]
-            y = y[np.isfinite(y)]
-            if y.size:
-                best = float(y.max()) if best is None else max(best, float(y.max()))
-        return best
+    def _ref_auto_view(self) -> dict:
+        """表示中のトレース（測定中の 1〜4・重ねた参照トレース）から screen_model.ref_auto_view（Web と同じ規則）。"""
+        shown = [str(n) for n in (1, 2, 3, 4) if self.traces.live_payload(n) is not None]
+        shown += [tid for tid in self.traces.files if self.traces.file_drawn(tid)]
+        return screen_model.ref_auto_view(self.state, shown, self.display_unit(), self._db_div,
+                                          has_wave=bool(shown))
 
     def _update_ref_auto(self) -> None:
-        why = None if self.traces.any_live() is not None else "波形がまだありません（掃引すると使えます）"
+        why = self._ref_auto_view()["reason"]
         menus.set_reason(self.actions["ref_auto"], why)
         self.btn_ref_auto.setEnabled(why is None)
-        self.btn_ref_auto.setToolTip(
-            "いまの波形の最大値が上から1目盛下に来るよう REF レベルを合わせる" + (f" — {why}" if why else ""))
+        self.btn_ref_auto.setToolTip(texts.LABELS["ref_auto_tip"] + (f" — {why}" if why else ""))
 
     def _on_level_wheel(self, steps: int, ctrl: bool) -> None:
         if ctrl:
@@ -908,6 +895,7 @@ class MainWindow(QMainWindow):
             self._request_trace(tid)
         n = st.get("normalization") or {}
         self.traces.set_bands(n.get("out_of_range_hz") if n.get("used") else [])
+        self.mark_bands.set_marks(screen_model.marks_view(st))
         self._update_unit()
         self._update_ref_auto()
         if "markers" in st:
