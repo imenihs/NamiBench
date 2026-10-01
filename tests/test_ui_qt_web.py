@@ -61,7 +61,7 @@ class TestWebControl(UiBase):
         self.assertEqual(cw.code.text().replace(" ", ""), code)
         self.assertIn("あと", cw.left.text())
         self.assertTrue(self.menu_action("web_connect").isEnabled())
-        self.assertEqual(self.win.status.web.text(), "Web: LAN に公開中・接続 0（操作 0・見るだけ 0）")
+        self.assertEqual(self.win.status.web.text(), texts.tpl_web("status", n=0, a=0, b=0))
         self.assertTrue(self.win.status.web.isVisible())
         # 開き直すと新しい番号（前の番号の窓は無効と出す）
         self.web.show_connect()
@@ -73,7 +73,7 @@ class TestWebControl(UiBase):
         s = self.web.service.access.login_key(self.web.service.access.keys["view"], "192.168.1.77")
         self.web.service.access.add_conn("view", "192.168.1.77", s.token, False, lambda: closed.append(1))
         self.pump(0.2)
-        self.assertEqual(self.win.status.web.text(), "Web: LAN に公開中・接続 1（操作 0・見るだけ 1）")
+        self.assertEqual(self.win.status.web.text(), texts.tpl_web("status", n=1, a=0, b=1))
         self.win.status.web.click()
         self.pump(0.1)
         cl = self.web.clients_window
@@ -113,7 +113,7 @@ class TestWebControl(UiBase):
         dlg.web_lan.setChecked(True)
         self.pump(0.2)
         self.assertTrue(self.web.lan)
-        self.assertIn("LAN に公開中", dlg.web_state.text())
+        self.assertIn(texts.WEB_LABELS["state_lan"].split("{")[0], dlg.web_state.text())
         dlg.web_enable.setChecked(False)
         self.pump(0.2)
         self.assertFalse(self.web.enabled)

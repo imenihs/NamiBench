@@ -328,7 +328,8 @@
         </div>
         <div class="dim" v-if="!selMarker">{{ T('REASON_TEXTS', 'select_marker') }}</div>
 
-        <!-- 聞く（設計Q §6.8）。選んでいるマーカーの位置を、方式を選んで聞く -->
+        <!-- 聞く（設計Q §6.8）。選んでいるマーカーの位置を、方式を選んで聞く。IQ を持つ機器に繋いでいるときだけ出す（設計J §4.5） -->
+        <template v-if="listenView.shown">
         <h3>{{ T('LISTEN_LABELS', 'group') }}</h3>
         <div class="row">
           <span>{{ T('LISTEN_LABELS', 'mode') }}</span>
@@ -341,6 +342,7 @@
         <div class="warn pre" v-if="listenText">{{ listenText }}</div>
         <div class="fnote" v-if="notes.listen">{{ notes.listen.text }}</div>
         <div class="dim">{{ F('listen_note') }}</div>
+        </template>
 
         <h3>{{ W('offsets') }}</h3>
         <div class="row" :class="{disabled: !selMarker}">
@@ -532,7 +534,7 @@
       <h3>{{ modal.title }}</h3>
       <p v-if="modal.note" class="modal-note">{{ modal.note }}</p>
       <table v-if="modal.keys" class="mtable"><tbody><tr v-for="(r, i) in keyRows" :key="i"><td>{{ r[0] }}</td><td>{{ r[1] }}</td></tr></tbody></table>
-      <p v-if="modal.keys" class="modal-note">{{ W('keys_note') }}</p>
+      <p v-if="modal.keys" class="modal-note">{{ W('keys_note') }}{{ W('keys_note_browser') }}</p>
       <!-- アプリ設定（O §1.3。Qt の settings_dialog.py と同じ欄。変えたらすぐ効く） -->
       <template v-if="modal.settings">
         <p class="modal-note">{{ T('SETTINGS_LABELS', 'note') }}</p>

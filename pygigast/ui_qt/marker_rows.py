@@ -12,7 +12,7 @@ from ..core.units import format_freq
 from . import texts
 from ..core.report_layout import freq_decimals as _freq_decimals
 
-COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", "Δ周波数 (MHz)", "Δ値 (dB)", "注意")
+COLUMNS = texts.MARKER_COLUMNS
 # 数える列は右寄せ（U-17）
 RIGHT = (False, True, True, True, False, True, True, False)
 NUMERIC = (False, True, True, True, False, True, True, False)
@@ -51,9 +51,9 @@ def _band_note(b: dict) -> str:
     if b.get("left_hz") is not None and b.get("right_hz") is not None:
         parts.append(f"{_mhz(b['left_hz'])}〜{_mhz(b['right_hz'])}")
     if b.get("center_hz") is not None:
-        parts.append(f"中心 {_mhz(b['center_hz'])}")
+        parts.append(texts.w("band_center", v=_mhz(b["center_hz"])))
     if b.get("width_hz") is not None:
-        parts.append(f"幅 {_mhz(b['width_hz'])}")
+        parts.append(texts.w("band_width", v=_mhz(b["width_hz"])))
     text = "・".join(parts) + (" MHz" if parts else "")
     if b.get("q") is not None:
         text += f"・Q {b['q']:.1f}"
@@ -67,7 +67,7 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
         mid = m["id"]
         delta = m.get("delta") or {}
         status = m.get("status", "ok")
-        note = _join(texts.MARKER_STATUS.get(status, status), "追従" if m.get("peak_track") else "",
+        note = _join(texts.MARKER_STATUS.get(status, status), texts.LABELS["row_track"] if m.get("peak_track") else "",
                      *_notes(m.get("notes")))
         if m.get("ref") and delta.get("status") not in (None, "ok"):
             note = _join(note, texts.MARKER_STATUS.get(delta["status"], delta["status"]))
@@ -99,14 +99,14 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
             })
         for b in m.get("bandwidth") or []:
             rows.append({
-                "id": f"{mid}.bw{b['n_db']:g}", "parent": mid, "name": f"{mid} {b['n_db']:g}dB 帯域幅",
+                "id": f"{mid}.bw{b['n_db']:g}", "parent": mid, "name": texts.w("row_bw", m=mid, n=f"{b['n_db']:g}"),
                 "kind": "function", "trace": m.get("trace"), "freq_hz": None, "value": None,
                 "unit": m.get("unit"), "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": _band_note(b), "status": b.get("status"),
             })
         if m.get("shape_factor") is not None:
             rows.append({
-                "id": f"{mid}.sf", "parent": mid, "name": f"{mid} シェープファクタ", "kind": "function",
+                "id": f"{mid}.sf", "parent": mid, "name": texts.w("row_sf", m=mid), "kind": "function",
                 "trace": m.get("trace"), "freq_hz": None, "value": None, "unit": None, "ref": None,
                 "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": f"{m['shape_factor']:.2f}", "status": "ok",
@@ -115,7 +115,7 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
         if th:
             side = texts.THRESHOLD_SIDES.get(th.get("side"), th.get("side"))
             rows.append({
-                "id": f"{mid}.th", "parent": mid, "name": f"{mid} しきい値 {th['level']:g} {side}",
+                "id": f"{mid}.th", "parent": mid, "name": texts.w("row_th", m=mid, level=f"{th['level']:g}", side=side),
                 "kind": "function", "trace": m.get("trace"), "freq_hz": None, "value": None,
                 "unit": m.get("unit"), "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": _band_note(th), "status": th.get("status"),

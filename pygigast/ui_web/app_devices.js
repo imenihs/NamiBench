@@ -71,9 +71,8 @@
           (v) => this.cmd("rename_device", { kind: d.kind, serial: d.serial, name: String(v.name).trim() || null }));
       },
       chooseDll() {
-        // Web はサーバーの PC の上のパスを打つ（フォルダを選ぶ窓はブラウザから開けない）
-        this.openModal(this.D("dll_folder_title"), [{ key: "folder", label: X.w("dll_folder_placeholder"), value: "" }],
-          (v) => this.cmd("rtlsdr_set", { dll_folder: String(v.folder).trim() || null }, { ok: () => this.refreshDevices() }));
+        // ブラウザからは PC のフォルダを指定できない（サーバーが path_not_allowed で断る）ので、変える場所を知らせる
+        this.openModal(this.D("dll_folder_title"), [], null, X.w("dll_folder_web"));
       },
       disconnectAndList() { this.cmd("disconnect", {}, { ok: () => this.openDevices() }); },
     },

@@ -45,7 +45,7 @@ class StatusBar:
         # 一度きりの知らせは幅が足りないとき先に縮める（状態の項目を切らない。全文はツールチップ）
         self.note.setMinimumWidth(1)
         self.note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.note_button = self._small("フォルダを開く", self._open_folder)
+        self.note_button = self._small(texts.LABELS["open_folder"], self._open_folder)
         sb.addWidget(self.note, 1)
         sb.addWidget(self.note_button)
         self._folder: Optional[Path] = None

@@ -35,8 +35,8 @@ from .fields import FreqField
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-H5_FILTER = "pyGigaSt の保存ファイル (*.h5);;すべて (*)"
-CSV_FILTER = "CSV (*.csv);;すべて (*)"
+H5_FILTER = texts.LABELS["filter_h5"]
+CSV_FILTER = texts.LABELS["filter_csv"]
 
 
 def default_name(ext: str, when: Optional[datetime.datetime] = None) -> str:
@@ -70,7 +70,7 @@ class FileActions:
 
     def open_files(self, paths: Optional[list[str]] = None) -> None:
         if paths is None:
-            paths = self.win.ask_open_paths("開く", str(self.last_dir()), H5_FILTER)
+            paths = self.win.ask_open_paths(texts.LABELS["open_dialog"], str(self.last_dir()), H5_FILTER)
         paths = [str(p) for p in paths or []]
         if not paths:
             return
@@ -78,7 +78,7 @@ class FileActions:
         self.win.call("open", paths=paths)
 
     def save(self) -> None:
-        path = self.win.ask_save_path("保存", str(self.last_dir() / default_name(".h5")), H5_FILTER)
+        path = self.win.ask_save_path(texts.LABELS["save_title"], str(self.last_dir() / default_name(".h5")), H5_FILTER)
         if not path:
             return
         self._remember(path)
@@ -94,7 +94,7 @@ class FileActions:
 
     def _export_chosen(self, dlg: "ExportDialog") -> None:
         traces, start, stop = dlg.choice()
-        path = self.win.ask_save_path("書き出し（CSV）", str(self.last_dir() / default_name(".csv")), CSV_FILTER)
+        path = self.win.ask_save_path(texts.LABELS["export_dialog"], str(self.last_dir() / default_name(".csv")), CSV_FILTER)
         if not path:
             return
         self._remember(path)
@@ -118,30 +118,31 @@ class FileActions:
             d.mkdir(parents=True, exist_ok=True)
             out = png_export.save_png(d, self._png_bytes())
         except (OSError, ValueError, RuntimeError) as e:
-            self.win.status_note(f"PNG を保存できませんでした: {e}")
+            self.win.status_note(texts.w("png_save_failed", why=e))
             return None
-        self.win.status_note(f"保存しました: {out.name}", folder=out.parent)
+        self.win.status_note(texts.tpl("saved", name=out.name), folder=out.parent)
         return out
 
     def png_copy(self) -> None:
         try:
             png_export.copy_png_to_clipboard(self._png_bytes())
         except (ValueError, RuntimeError) as e:
-            self.win.status_note(f"PNG をコピーできませんでした: {e}")
+            self.win.status_note(texts.w("png_copy_failed", why=e))
             return
-        self.win.status_note("PNG をクリップボードへコピーしました")
+        self.win.status_note(texts.LABELS["png_copied"])
 
     # ---------------------------------------------------------------- 記録（H §4・§7.2）
 
     def record_start(self) -> None:
-        self.win.call("record_start", on_ok=lambda r: self.win.status_note("記録を始めました"))
+        self.win.call("record_start", on_ok=lambda r: self.win.status_note(texts.LABELS["record_started"]))
 
     def record_stop(self) -> None:
         self.win.call("record_stop", on_ok=lambda r: self.win.status_note(
-            "記録を止めました。「記録をまとめる…」で保存ファイルにします"))
+            texts.LABELS["record_stopped"]))
 
     def record_finish(self) -> None:
-        path = self.win.ask_save_path("記録をまとめる", str(self.last_dir() / default_name(".h5")), H5_FILTER)
+        path = self.win.ask_save_path(texts.LABELS["record_finish_title"], str(self.last_dir() / default_name(".h5")),
+                                      H5_FILTER)
         if not path:
             return
         self._remember(path)
@@ -161,7 +162,8 @@ class FileActions:
         self.win.call("list_unfinished", on_ok=show)
 
     def finish_unfinished(self, work_path: str) -> bool:
-        path = self.win.ask_save_path("記録をまとめる", str(self.last_dir() / default_name(".h5")), H5_FILTER)
+        path = self.win.ask_save_path(texts.LABELS["record_finish_title"], str(self.last_dir() / default_name(".h5")),
+                                      H5_FILTER)
         if not path:
             return False
         self._remember(path)
@@ -169,11 +171,10 @@ class FileActions:
         return True
 
     def discard_unfinished(self, row: dict) -> bool:
-        if not self.win.confirm("記録を捨てる", f"作業ファイルを消します。{row.get('n_sweeps', 0)} 回の掃引の記録が"
-                                                 "失われ、戻せません。"):
+        if not self.win.confirm(texts.LABELS["discard_title"], texts.w("discard_confirm", n=row.get("n_sweeps", 0))):
             return False
         self.win.call("discard_unfinished", path=row["path"],
-                      on_ok=lambda r: self.win.status_note("まとめ終わっていない記録を捨てました"))
+                      on_ok=lambda r: self.win.status_note(texts.LABELS["discarded"]))
         return True
 
     # ---------------------------------------------------------------- 長い処理の終わり（H §4.1）
@@ -191,39 +192,41 @@ class ExportDialog(QDialog):
 
     def __init__(self, win: "MainWindow") -> None:
         super().__init__(win)
-        self.setWindowTitle("書き出し（CSV）")
+        self.setWindowTitle(texts.LABELS["export_title"])
         self.win = win
         lay = QVBoxLayout(self)
-        g = QGroupBox("トレース")
+        g = QGroupBox(texts.LABELS["traces"])
         v = QVBoxLayout(g)
         self.trace_checks: list[tuple[QCheckBox, object]] = []
         for s in win.state.get("traces") or []:
             if not s.get("has_values"):
                 continue
             unit = s.get("unit") or ""
-            cb = QCheckBox(f"トレース {s['number']}（{texts.TRACE_ACTIONS.get(s['action'], s['action'])}・{unit}）")
+            cb = QCheckBox(texts.w("export_trace_item", n=s["number"], unit=unit,
+                                   action=texts.TRACE_ACTIONS.get(s["action"], s["action"])))
             cb.setChecked(bool(s.get("visible")))
             v.addWidget(cb)
             self.trace_checks.append((cb, int(s["number"])))
         for f in win.state.get("files") or []:
             for t in f.get("traces") or []:
-                cb = QCheckBox(f"{f['name']} #{t['number']}（{t['unit']}）")
+                cb = QCheckBox(texts.w("export_file_item", name=f["name"], number=t["number"], unit=t["unit"]))
                 v.addWidget(cb)
                 self.trace_checks.append((cb, t["id"]))
         if not self.trace_checks:
-            v.addWidget(QLabel("書き出せるトレースがありません（掃引するか、ファイルを開いてください）"))
-        note = QLabel("周波数の点が違うトレースは同じ表に並べられません")
+            v.addWidget(QLabel(texts.LABELS["export_none"]))
+        note = QLabel(texts.STORAGE_ERRORS["axis_mismatch"])
         note.setObjectName("dim")
         v.addWidget(note)
         lay.addWidget(g)
 
-        g = QGroupBox("周波数の範囲")
+        g = QGroupBox(texts.LABELS["export_range"])
         grid = QGridLayout(g)
         sw = win.state.get("sweep") or {}
         self.range_group = QButtonGroup(self)
-        self.r_view = QRadioButton(f"いまの表示（{format_freq(sw.get('start_hz', 0))}〜{format_freq(sw.get('stop_hz', 0))}）")
-        self.r_custom = QRadioButton("数値で指定")
-        self.r_all = QRadioButton("トレースの全部の点")
+        self.r_view = QRadioButton(texts.w("export_view", start=format_freq(sw.get("start_hz", 0)),
+                                           stop=format_freq(sw.get("stop_hz", 0))))
+        self.r_custom = QRadioButton(texts.LABELS["export_custom"])
+        self.r_all = QRadioButton(texts.LABELS["export_all"])
         self.r_view.setChecked(True)
         for b in (self.r_view, self.r_custom, self.r_all):
             self.range_group.addButton(b)
@@ -244,7 +247,7 @@ class ExportDialog(QDialog):
         grid.addWidget(self.r_all, 3, 0, 1, 2)
         lay.addWidget(g)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("書き出す…")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(texts.LABELS["export_ok"])
         buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(self.trace_checks))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -266,10 +269,11 @@ class UnfinishedDialog(QDialog):
 
     def __init__(self, files: FileActions, rows: list[dict]) -> None:
         super().__init__(files.win)
-        self.setWindowTitle("まとめ終わっていない記録があります")
+        L = texts.LABELS
+        self.setWindowTitle(L["unfinished_title"])
         self.files = files
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("前回、保存ファイルへまとめる前に終わった記録です。まとめるか、捨てるかを選んでください。"))
+        lay.addWidget(QLabel(L["unfinished_note"]))
         self.row_widgets: list[QWidget] = []
         for r in rows:
             w = QWidget()
@@ -277,17 +281,17 @@ class UnfinishedDialog(QDialog):
             h.setContentsMargins(0, 0, 0, 0)
             started = str(r.get("started_at") or "")
             dur = r.get("duration_s")
-            desc = f"{started}  {r.get('n_sweeps', 0)} 回の掃引"
+            desc = texts.w("unfinished_row", started=started, n=r.get("n_sweeps", 0))
             if dur:
-                desc += f"・{dur / 60:.1f} 分"
+                desc += texts.w("unfinished_minutes", m=f"{dur / 60:.1f}")
             if r.get("device_model"):
                 desc += f"・{r['device_model']}"
             if r.get("error"):
-                desc += f"・読めない所あり（{r['error']}）"
+                desc += texts.w("unfinished_unreadable", why=r["error"])
             label = QLabel(desc)
             label.setToolTip(r["path"])
-            b_finish = QPushButton("まとめる…")
-            b_discard = QPushButton("捨てる…")
+            b_finish = QPushButton(L["unfinished_finish"])
+            b_discard = QPushButton(L["unfinished_discard"])
             b_finish.setObjectName("small")
             b_discard.setObjectName("small")
             b_finish.clicked.connect(lambda _=False, row=r, ww=w: self._done(ww, files.finish_unfinished(row["path"])))
@@ -297,7 +301,7 @@ class UnfinishedDialog(QDialog):
             h.addWidget(b_discard)
             lay.addWidget(w)
             self.row_widgets.append(w)
-        later = QPushButton("あとで（次の起動でもう一度聞く）")
+        later = QPushButton(L["unfinished_later"])
         later.clicked.connect(self.reject)
         lay.addWidget(later, 0, Qt.AlignmentFlag.AlignRight)
 

@@ -33,13 +33,15 @@ from .tab_traces import scroll, set_enabled
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-REASON_REF_MODE = "基準は TG・S11 モードで取ります"
-REASON_NOT_CONNECTED = "機器に繋ぐと使えます"
-REASON_TAKING = "基準を取っている間は使えません"
-REASON_S11 = "S11（反射）モードは次の回で実装します（設計E §6.5）"
-REASON_STEP = "ステップ掃引は次の回で実装します（設計L）"
-REASON_NF = "NF 測定は次の回で実装します（設計M）"
-REASON_NO_SELECTION = "一覧から基準を選んでください"
+REASON_REF_MODE = texts.ERRORS["mode_not_normalizable"]
+REASON_NOT_CONNECTED = texts.REASON_TEXTS["needs_connection"]
+REASON_TAKING = texts.REASON_TEXTS["taking_reference"]
+# まだ作っていないもの（S11 のオープン・ショート: 設計E §6.5、ステップ掃引: 設計L、NF: 設計M）
+REASON_S11 = texts.NOT_YET["s11"]
+REASON_STEP = texts.NOT_YET["step"]
+REASON_NF = texts.NOT_YET["nf"]
+REASON_NO_SELECTION = texts.REASON_TEXTS["select_reference"]
+L = texts.LABELS
 ID_ROLE = Qt.ItemDataRole.UserRole
 
 
@@ -58,41 +60,41 @@ class SourceTab(QWidget):
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(4, 4, 4, 4)
 
-        g = QGroupBox("SG（信号源）")
+        g = QGroupBox(L["sg_group"])
         form = QFormLayout(g)
-        self.f_sg = FreqField("SG 周波数", self._set_sg, big=False)
+        self.f_sg = FreqField(L["sg_freq"], self._set_sg, big=False)
         form.addRow(self.f_sg)
         self.sg_state = QLabel("")
         self.sg_state.setObjectName("dim")
         form.addRow(self.sg_state)
-        self.step_sweep = QPushButton("ステップ掃引…")
+        self.step_sweep = QPushButton(L["step_sweep"])
         set_enabled(self.step_sweep, REASON_STEP)
         form.addRow(self.step_sweep)
         lay.addWidget(g)
 
-        g = QGroupBox("TG・S11 の基準（ノーマライズ）")
+        g = QGroupBox(L["references_long"])
         v = QVBoxLayout(g)
         self.ref_state = QLabel("")
         self.ref_state.setWordWrap(True)
         v.addWidget(self.ref_state)
         grid = QGridLayout()
-        grid.addWidget(QLabel("名前"), 0, 0)
+        grid.addWidget(QLabel(L["name"]), 0, 0)
         self.take_name = QLineEdit("")
-        self.take_name.setPlaceholderText("空なら「TG 日時」")
+        self.take_name.setPlaceholderText(L["take_name_placeholder"])
         grid.addWidget(self.take_name, 0, 1, 1, 2)
-        grid.addWidget(QLabel("平均"), 1, 0)
+        grid.addWidget(QLabel(L["average"]), 1, 0)
         self.take_avg = QSpinBox()
         self.take_avg.setRange(1, 64)
-        self.take_avg.setSuffix(" 回")
+        self.take_avg.setSuffix(L["times_suffix"])
         grid.addWidget(self.take_avg, 1, 1)
-        self.take_wide = QPushButton("広く取る")
-        self.take_fine = QPushButton("いまの条件で細かく取る")
+        self.take_wide = QPushButton(L["take_wide"])
+        self.take_fine = QPushButton(L["take_fine"])
         self.take_wide.clicked.connect(lambda: self._take("wide"))
         self.take_fine.clicked.connect(lambda: self._take("fine"))
         grid.addWidget(self.take_wide, 2, 0, 1, 2)
         grid.addWidget(self.take_fine, 2, 2)
-        self.s11_open = QPushButton("S11: オープンを測る")
-        self.s11_short = QPushButton("S11: ショートを測る")
+        self.s11_open = QPushButton(L["s11_open"])
+        self.s11_short = QPushButton(L["s11_short"])
         set_enabled(self.s11_open, REASON_S11)
         set_enabled(self.s11_short, REASON_S11)
         grid.addWidget(self.s11_open, 3, 0, 1, 2)
@@ -104,10 +106,10 @@ class SourceTab(QWidget):
         self.ref_list.itemDoubleClicked.connect(lambda _it: self._select())
         v.addWidget(self.ref_list)
         row = QHBoxLayout()
-        self.btn_select = QPushButton("使う")
-        self.btn_unselect = QPushButton("使わない")
-        self.btn_rename = QPushButton("名前…")
-        self.btn_delete = QPushButton("消す…")
+        self.btn_select = QPushButton(L["use"])
+        self.btn_unselect = QPushButton(L["not_use"])
+        self.btn_rename = QPushButton(L["rename_dots"])
+        self.btn_delete = QPushButton(L["erase_dots"])
         for b in (self.btn_select, self.btn_unselect, self.btn_rename, self.btn_delete):
             b.setObjectName("small")
             row.addWidget(b)
@@ -144,13 +146,13 @@ class SourceTab(QWidget):
         sw = st["sweep"]
         if sw.get("sg_hz") is not None:
             self.f_sg.set_hz(sw["sg_hz"])
-        self.sg_state.setText(self.win.source_text() or "出力していません（SG モードで出力します）")
+        self.sg_state.setText(self.win.source_text() or L["sg_not_output"])
         n = st.get("normalization") or {}
         sel = n.get("selected")
         text = texts.normalization_text(n)
         if not text:
             # 無いこと自体が情報（U-15）
-            text = f"選んでいる基準: {sel['name']}（{_when(sel.get('taken_at'))}）" if sel else "ノーマライズ: 未取得"
+            text = texts.w("ref_selected", name=sel["name"], when=_when(sel.get("taken_at"))) if sel else L["ref_none"]
         self.ref_state.setText(text)
         conn = st["connection"]
         serial = (conn.get("identity") or {}).get("serial")
@@ -166,8 +168,8 @@ class SourceTab(QWidget):
             reason = REASON_REF_MODE
         elif taking:
             reason = REASON_TAKING
-        tip_w = "TG の範囲を 1MHz 刻みで取る（TG 出力と SP 入力を直結してから）"
-        tip_f = "いまの Start・Stop・Step でその範囲だけ取り、いまの基準へ上書き合成する"
+        tip_w = L["take_wide_tip"]
+        tip_f = L["take_fine_tip"]
         set_enabled(self.take_wide, reason, tip_w)
         set_enabled(self.take_fine, reason, tip_f)
         self._update_buttons()
@@ -203,7 +205,7 @@ class SourceTab(QWidget):
         for b in (self.btn_select, self.btn_rename, self.btn_delete):
             set_enabled(b, None if has else REASON_NO_SELECTION)
         selected = any(r.get("selected") for r in self._refs)
-        set_enabled(self.btn_unselect, None if selected else "選んでいる基準がありません")
+        set_enabled(self.btn_unselect, None if selected else texts.REASON_TEXTS["no_reference_selected"])
 
     # ---------------------------------------------------------------- 操作
 
@@ -221,7 +223,7 @@ class SourceTab(QWidget):
         ref = next((r for r in self._refs if r["id"] == rid), None)
         if ref is None:
             return
-        name = self.win.ask_text("基準の名前", "新しい名前", ref["name"])
+        name = self.win.ask_text(L["rename_ref_title"], L["new_name"], ref["name"])
         if name and name.strip() and name != ref["name"]:
             self.win.call("reference_rename", id=rid, name=name.strip(), on_ok=lambda r: self.refresh())
 
@@ -230,6 +232,6 @@ class SourceTab(QWidget):
         ref = next((r for r in self._refs if r["id"] == rid), None)
         if ref is None:
             return
-        extra = "\nいま使っている基準なので、TG の表示は受けた電力（dBm）に戻ります。" if ref.get("selected") else ""
-        if self.win.confirm("基準を消す", f"基準「{ref['name']}」を消します。取り直すまで戻せません。{extra}"):
+        extra = L["ref_delete_in_use"] if ref.get("selected") else ""
+        if self.win.confirm(L["ref_delete_title"], texts.w("ref_delete_confirm", name=ref["name"]) + extra):
             self.win.call("reference_delete", id=rid, on_ok=lambda r: self.refresh())

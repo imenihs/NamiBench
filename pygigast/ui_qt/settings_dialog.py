@@ -121,6 +121,11 @@ class SettingsDialog(QDialog):
         self.dll_folder.setWordWrap(True)
         form.addRow(self.dll_state)
         form.addRow(self.dll_folder)
+        # 何を選ぶフォルダかを選ぶボタンのそばに書く（32 ビット版の DLL は読めない）
+        self.dll_help = QLabel(S["rtlsdr_choose_note"])
+        self.dll_help.setWordWrap(True)
+        self.dll_help.setObjectName("dim")
+        form.addRow(self.dll_help)
         row = QHBoxLayout()
         choose = QPushButton(S["rtlsdr_choose"])
         choose.setObjectName("small")
@@ -191,6 +196,6 @@ class SettingsDialog(QDialog):
         self.dll_folder.setText(rtl["dll_text"])
 
     def _choose_dll(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, texts.SETTINGS_LABELS["rtlsdr_group"])
+        folder = QFileDialog.getExistingDirectory(self, texts.SETTINGS_LABELS["rtlsdr_choose_note"])
         if folder:
             self.win.call("rtlsdr_set", dll_folder=folder)

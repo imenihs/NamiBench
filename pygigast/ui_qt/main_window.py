@@ -191,23 +191,16 @@ class MainWindow(QMainWindow):
         self.plot.setMenuEnabled(False)
         pi = self.plot.getPlotItem()
         # 軸の上の操作は軸のツールチップに書く（隠れた操作を作らない: U-12）
-        pi.getAxis("bottom").setToolTip(
-            "ホイール: カーソルの位置を中心に拡大・縮小\n"
-            "グラフの中を横にドラッグ: その範囲を Start/Stop に\n"
-            "グラフの中をクリック: 近いトレースに M を置く\n"
-            "右クリック: この位置への操作（Center に・マーカー・REF に）")
-        pi.getAxis("left").setToolTip(
-            "ホイール: REF レベルを1目盛ずつ\n"
-            "Ctrl+ホイール: dB/div を1段\n"
-            "ドラッグ: REF レベルを連続で動かす")
+        pi.getAxis("bottom").setToolTip(texts.LABELS["axis_x_tip"])
+        pi.getAxis("left").setToolTip(texts.LABELS["axis_y_tip"])
         self.plot.setMouseEnabled(x=False, y=False)
         self.plot.hideButtons()
         # 横の目盛線は自分で引く。軸の部品に描かせると、軸の外にはみ出す一番上の数字（REF）が切られる
         pi.showGrid(x=True, y=False, alpha=0.35)
         pi.layout.setContentsMargins(0, 10, 8, 0)
         self._hgrid: list[pg.InfiniteLine] = []
-        pi.setLabel("bottom", "周波数", units="Hz")
-        pi.setLabel("left", "レベル", units="dBm")
+        pi.setLabel("bottom", texts.LABELS["freq"], units="Hz")
+        pi.setLabel("left", texts.LABELS["level"], units="dBm")
         left = pi.getAxis("left")
         left.enableAutoSIPrefix(False)
         # REF レベルは最も読みたい値なので、軸の端でも数字を隠さない（J §4.3）
@@ -250,9 +243,7 @@ class MainWindow(QMainWindow):
         self.f_stop = FreqField("Stop", lambda hz: self._set_sweep(stop_hz=hz, field=self.f_stop))
         # Span 固定の切り替え（設計C §5.11 の 2）。Span の欄に付けて、状態を欄の上で見せる
         self.span_lock = SpanLockButton(self.pal["accent"], self.pal["text_dim"])
-        self.span_lock.setToolTip(
-            "ON: Center を変えても Span を保つ（範囲を超える分は Center が動く）\n"
-            "OFF: Center を保ち、範囲を超える分だけ Span を縮める")
+        self.span_lock.setToolTip(texts.LABELS["span_lock_tip"])
         self.span_lock.clicked.connect(lambda on: self._set_sweep(span_lock=bool(on), field=self.f_span))
         self.f_span.add_header_widget(self.span_lock)
         for w in (self.f_center, self.f_span, self.f_start, self.f_stop):
@@ -267,9 +258,9 @@ class MainWindow(QMainWindow):
         self.rbw_field = rbw_box
         top.addWidget(rbw_box)
         # REF レベル: 打てるドロップダウン（+20〜−120・10dB 刻み）と欄の上のホイール 1dB（J §4.1）
-        self.f_ref = RefLevelField("REF レベル", "dBm", self._set_ref, big=False)
+        self.f_ref = RefLevelField(texts.LABELS["ref_level"], "dBm", self._set_ref, big=False)
         # いまの波形の最大値が上から1目盛下に来るよう REF を合わせる（J §4.1）
-        self.btn_ref_auto = QPushButton("自動")
+        self.btn_ref_auto = QPushButton(texts.LABELS["ref_auto"])
         self.btn_ref_auto.setObjectName("small")
         self.btn_ref_auto.clicked.connect(lambda: self.actions["ref_auto"].trigger())
         self.f_ref.add_header_widget(self.btn_ref_auto)
@@ -284,9 +275,9 @@ class MainWindow(QMainWindow):
         div_box.edit.hide()
         top.addWidget(div_box)
         top.addStretch(1)
-        self.btn_cont = QPushButton("連続")
-        self.btn_single = QPushButton("単発")
-        self.btn_stop = QPushButton("停止")
+        self.btn_cont = QPushButton(texts.MENU_ITEMS["run_cont"])
+        self.btn_single = QPushButton(texts.MENU_ITEMS["run_single"])
+        self.btn_stop = QPushButton(texts.MENU_ITEMS["stop"])
         for b in (self.btn_cont, self.btn_single, self.btn_stop):
             b.setMinimumSize(78, 44)
             font = QFont(b.font())
@@ -329,10 +320,10 @@ class MainWindow(QMainWindow):
         self.display_tab = DisplayTab(self)
         self.source_tab = SourceTab(self)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.trace_tab, "トレース・掃引")
-        self.tabs.addTab(self.marker_tab, "マーカー")
-        self.tabs.addTab(self.display_tab, "表示")
-        self.tabs.addTab(self.source_tab, "信号源")
+        self.tabs.addTab(self.trace_tab, texts.LABELS["tab_trace"])
+        self.tabs.addTab(self.marker_tab, texts.LABELS["tab_marker"])
+        self.tabs.addTab(self.display_tab, texts.LABELS["tab_view"])
+        self.tabs.addTab(self.source_tab, texts.LABELS["tab_source"])
         self.tabs.tabBar().setExpanding(False)
         self.tabs.tabBar().setUsesScrollButtons(True)
         self.hsplit = QSplitter(Qt.Orientation.Horizontal)
@@ -389,9 +380,9 @@ class MainWindow(QMainWindow):
     def _wire_buttons(self) -> None:
         """ボタンのツールチップに、メニューと同じキーを出す（U-12）。"""
         a = self.actions
-        self.btn_cont.setToolTip(menus.tooltip_for(a["run_cont"], "連続で掃引する"))
-        self.btn_single.setToolTip(menus.tooltip_for(a["run_single"], "単発で掃引する"))
-        self.btn_stop.setToolTip(menus.tooltip_for(a["stop"], "いまの掃引の終わりで止める"))
+        self.btn_cont.setToolTip(menus.tooltip_for(a["run_cont"], texts.LABELS["run_cont_tip"]))
+        self.btn_single.setToolTip(menus.tooltip_for(a["run_single"], texts.LABELS["run_single_tip"]))
+        self.btn_stop.setToolTip(menus.tooltip_for(a["stop"], texts.LABELS["stop_tip"]))
         for code, _label, name, why in MODES:
             self.mode_buttons[code].setToolTip(
                 menus.tooltip_for(a[f"mode_{code}"], name) + (f" — {why}" if why else ""))
@@ -560,9 +551,9 @@ class MainWindow(QMainWindow):
         self.traces.set_unit(unit)
         self.trace_tab.update_file_checks()
         n = self.state.get("normalization") or {}
-        label = "レベル"
+        label = texts.LABELS["level"]
         if n.get("used") and not n.get("applied"):
-            label = "レベル（基準なし・受けた電力）"
+            label = texts.LABELS["level_no_ref"]
         self.plot.getPlotItem().setLabel("left", label, units=unit)
         # 比（dB）のときは 0dB の線を目盛線と別の色で描く（E §6.6）
         self.traces.set_zero_line(unit == "dB")
@@ -575,9 +566,9 @@ class MainWindow(QMainWindow):
     def _freq_ops_reason(self) -> Optional[str]:
         sw = self.state.get("sweep")
         if not sw:
-            return "掃引条件がまだありません"
+            return texts.REASON_TEXTS["no_sweep"]
         if sw["step_hz"] == 0:
-            return "ゼロスパンの横軸は周波数ではありません"
+            return texts.REASON_TEXTS["zero_span_axis"]
         return None
 
     def _on_range_selected(self, x0: float, x1: float) -> None:
@@ -667,7 +658,7 @@ class MainWindow(QMainWindow):
 
     def _marker_step(self, sign: int) -> None:
         if not self.selected_marker:
-            self.status_note("動かすマーカーを選んでください（表の行・ピークのボタン）")
+            self.status_note(texts.REASON_TEXTS["select_marker"])
             return
         shift = bool(QGuiApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
         self.call("marker_set", id=self.selected_marker, step=sign * (10 if shift else 1))
@@ -703,7 +694,7 @@ class MainWindow(QMainWindow):
 
     def _selected_to(self, target: str) -> None:
         if not self.selected_marker:
-            self.status_note("マーカーを選んでください")
+            self.status_note(texts.REASON_TEXTS["select_marker"])
             return
         self.marker_to(self.selected_marker, target)
 
@@ -713,13 +704,13 @@ class MainWindow(QMainWindow):
 
     def _marker_clear(self) -> None:
         n = len(self.marker_snap.get("markers", []))
-        if n and not self.confirm("マーカーを全部消す", f"マーカー {n} 本（オフセット・機能の設定を含む）を消します。"):
+        if n and not self.confirm(texts.MENU_ITEMS["marker_clear"], texts.w("marker_clear_confirm", n=n)):
             return
         self.call("marker_clear")
 
     def _marker_copy(self) -> None:
         text = self.marker_panel.copy_tsv()
-        self.status_note(f"マーカー表をコピーしました（{text.count(chr(10)) - 1} 行）")
+        self.status_note(texts.tpl("marker_copied", n=text.count(chr(10)) - 1))
 
     def _on_xy_moved(self, key: str, value: float) -> None:
         self.call("set_xy", **{key: int(round(value)) if key.endswith("_hz") else round(float(value), 2)})
@@ -737,7 +728,7 @@ class MainWindow(QMainWindow):
         self.marker_tab.apply(self._selected_row(), self.marker_snap)
         self.marker_layer.enabled = self._freq_ops_reason() is None
         self.marker_layer.update(self.marker_row_list, self.selected_marker, self.marker_snap["xy"])
-        why = None if self.selected_marker else "マーカーを選んでください"
+        why = None if self.selected_marker else texts.REASON_TEXTS["select_marker"]
         for code in ("marker_left", "marker_right", "marker_center", "marker_ref", "marker_remove"):
             menus.set_reason(self.actions[code], why)
         sel = self._selected_row()
@@ -830,7 +821,7 @@ class MainWindow(QMainWindow):
         row = self.trace_tab.rows.get(number) if isinstance(number, int) else None
         if row is not None:
             row.flash(text)
-        self.status_note(f"トレース {number}: {text}" if number else text)
+        self.status_note(texts.tpl("trace_note", n=number, text=text) if number else text)
 
     def _show_adjustments(self, adjustments: list[dict], alternative: Optional[dict] = None) -> None:
         fields = {"start_hz": self.f_start, "stop_hz": self.f_stop, "center_hz": self.f_center,
@@ -921,11 +912,11 @@ class MainWindow(QMainWindow):
         rec = st.get("recording") or {}
         has = bool(rec.get("active") or rec.get("stopped"))
         a = self.actions
-        menus.set_reason(a["record_start"], "もう記録しています" if has else None)
-        menus.set_reason(a["record_stop"], None if rec.get("active") else "記録していません")
-        menus.set_reason(a["record_finish"], None if has else "記録していません")
+        menus.set_reason(a["record_start"], texts.ERRORS["already_recording"] if has else None)
+        menus.set_reason(a["record_stop"], None if rec.get("active") else texts.ERRORS["not_recording"])
+        menus.set_reason(a["record_finish"], None if has else texts.ERRORS["not_recording"])
         has_data = any(s.get("has_values") for s in st.get("traces") or [])
-        menus.set_reason(a["save"], None if has_data else "保存する値がありません（掃引してください）")
+        menus.set_reason(a["save"], None if has_data else texts.REASON_TEXTS["no_data_to_save"])
 
     def _apply_status(self, st: dict) -> None:
         self.status.apply(st)
@@ -948,10 +939,10 @@ class MainWindow(QMainWindow):
             return
         if sw["step_hz"] == 0:
             # ゼロスパンの時間軸は設計N（⑥）。いまは点の番号で出す
-            self.plot.getPlotItem().setLabel("bottom", "点（ゼロスパン）", units="")
+            self.plot.getPlotItem().setLabel("bottom", texts.LABELS["axis_zero_span"], units="")
             self.plot.setXRange(0, max(1, sw["points"] - 1), padding=0)
         else:
-            self.plot.getPlotItem().setLabel("bottom", "周波数", units="Hz")
+            self.plot.getPlotItem().setLabel("bottom", texts.LABELS["freq"], units="Hz")
             self.plot.setXRange(sw["start_hz"], sw["stop_hz"], padding=0)
 
     # ------------------------------------------------------------------ 知らせ・ドラッグ＆ドロップ・閉じる
@@ -985,11 +976,12 @@ class MainWindow(QMainWindow):
         lost = []
         for t in self.state.get("tasks") or []:
             kind = t.get("kind")
-            lost.append(f"・{texts.TASK_NAMES.get(kind, kind)}: やめます（{texts.TASK_CANCELLED.get(kind, '')}）")
+            lost.append(texts.w("close_lost_task", task=texts.TASK_NAMES.get(kind, kind),
+                                what=texts.TASK_CANCELLED.get(kind, "")))
         rec = self.state.get("recording") or {}
         if rec.get("active") or rec.get("stopped"):
-            lost.append("・記録: 保存ファイルにまとめていません。作業ファイルは残り、次の起動でまとめるか聞きます")
-        if lost and not self.confirm("閉じる", "閉じると次のようになります。閉じますか？\n" + "\n".join(lost)):
+            lost.append(texts.LABELS["close_lost_record"])
+        if lost and not self.confirm(texts.LABELS["close_title"], texts.LABELS["close_confirm"] + "\n" + "\n".join(lost)):
             e.ignore()
             return
         self.listen.close()

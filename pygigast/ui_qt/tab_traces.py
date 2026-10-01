@@ -38,11 +38,14 @@ if TYPE_CHECKING:
 COUNTED = ("average", "max_hold", "min_hold")
 DEFAULT_AVERAGE_COUNT = 16
 TRACE_NOTE_MS = 6000
-REASON_COUNT = "回数は平均・最大保持・最小保持で使います"
-REASON_AVG_TYPE = "平均の種類は動作が「平均」のときに使います"
-REASON_AFTER = "N 回の後の動きは、回数を持つ平均・最大保持・最小保持で使います"
-REASON_VECTOR = "ベクトル平均は位相を測れる（複素数の値を持つ）機器だけで使えます"
-REASON_FREQ_OFFSET = "周波数オフセット（変換器の観測用）は次の回で実装します（設計O）"
+REASON_COUNT = texts.REASON_TEXTS["count_only"]
+REASON_AVG_TYPE = texts.REASON_TEXTS["average_type_only"]
+REASON_AFTER = texts.REASON_TEXTS["after_only"]
+# ベクトル平均は位相（複素数の値）を持つ機器だけ
+REASON_VECTOR = texts.REASON_TEXTS["vector_only"]
+# 周波数オフセットは設計O。まだ作っていない
+REASON_FREQ_OFFSET = texts.NOT_YET["freq_offset"]
+L = texts.LABELS
 
 
 def scroll(w: QWidget) -> QScrollArea:
@@ -77,7 +80,7 @@ class _TraceRow:
         win = tab.win
         self.swatch = QLabel(f"■ {number}")
         self.swatch.setStyleSheet(f"color: {trace_color(number)}; font-weight: bold;")
-        self.visible = QCheckBox("表示")
+        self.visible = QCheckBox(L["visible"])
         self.visible.toggled.connect(lambda on: win.call("set_trace", number=number, visible=bool(on)))
         self.action = QComboBox()
         for code, name in texts.TRACE_ACTIONS.items():
@@ -85,16 +88,16 @@ class _TraceRow:
         self.action.activated.connect(self._action_chosen)
         self.count = QSpinBox()
         self.count.setRange(0, 10000)
-        self.count.setSpecialValueText("回数なし")
+        self.count.setSpecialValueText(L["no_count"])
         self.count.setKeyboardTracking(False)
-        self.count.setSuffix(" 回")
+        self.count.setSuffix(L["times_suffix"])
         self.count.valueChanged.connect(self._count_changed)
-        self.clear = QPushButton("クリア")
+        self.clear = QPushButton(L["clear"])
         self.clear.setObjectName("small")
-        self.clear.setToolTip("このトレースの蓄積を捨てる")
+        self.clear.setToolTip(L["clear_tip"])
         self.clear.clicked.connect(lambda: win.call("clear_trace", number=number))
         self.avg = QComboBox()
-        self.avg.addItem("既定", None)
+        self.avg.addItem(L["default"], None)
         for code, name in texts.AVERAGE_TYPES.items():
             self.avg.addItem(name, code)
         # 選択肢の文字が切れないよう、欄の幅を中身に合わせる（C-01）
@@ -160,11 +163,11 @@ class _TraceRow:
         self.count.setMinimum(1 if a == "average" else 0)
         self.count.setValue(s.get("count") or 0)
         self.count.blockSignals(False)
-        set_enabled(self.count, None if a in COUNTED else REASON_COUNT, "回数 N")
+        set_enabled(self.count, None if a in COUNTED else REASON_COUNT, L["count_n"])
         self.avg.setCurrentIndex(max(0, self.avg.findData(s.get("average_type"))))
         eff = s.get("average_type_effective")
-        self.avg.setItemText(0, "既定" + (f"（{texts.AVERAGE_TYPES.get(eff, eff)}）" if eff else ""))
-        set_enabled(self.avg, None if a == "average" else REASON_AVG_TYPE, "平均の種類")
+        self.avg.setItemText(0, texts.w("default_with", type=texts.AVERAGE_TYPES.get(eff, eff)) if eff else L["default"])
+        set_enabled(self.avg, None if a == "average" else REASON_AVG_TYPE, L["average_type"])
         choices = texts.AVERAGE_AFTER if a == "average" else texts.HOLD_AFTER
         cur = s.get("average_after") if a == "average" else s.get("hold_after")
         if [self.after.itemData(i) for i in range(self.after.count())] != list(choices):
@@ -173,15 +176,15 @@ class _TraceRow:
                 self.after.addItem(name, code)
         self.after.setCurrentIndex(max(0, self.after.findData(cur)))
         counted = a in COUNTED and s.get("count")
-        set_enabled(self.after, None if counted else REASON_AFTER, "N 回に達した後")
+        set_enabled(self.after, None if counted else REASON_AFTER, L["after_n"])
         st = texts.TRACE_ACTIONS.get(a, a)
         if a in COUNTED:
             tgt = s.get("count_target")
             st += f" {s.get('current_count', 0)}" + (f"/{tgt}" if tgt else "")
         if not s.get("has_values"):
-            st += "（値なし）"
+            st += L["no_value_paren"]
         if s.get("axis_differs"):
-            st += "（いまの軸と違う）"
+            st += texts.TEMPLATES["axis_differs"]
         self.status.setText(st)
 
     def flash(self, text: str) -> None:
@@ -198,9 +201,9 @@ class TraceTab(QWidget):
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(4, 4, 4, 4)
 
-        g_sweep = QGroupBox("掃引")
+        g_sweep = QGroupBox(L["sweep"])
         form = QFormLayout(g_sweep)
-        self.points_auto = QCheckBox("自動")
+        self.points_auto = QCheckBox(texts.TEMPLATES["points_auto"])
         self.points_auto.setChecked(True)
         self.points_spin = QSpinBox()
         self.points_spin.setRange(2, 12000)
@@ -212,13 +215,13 @@ class TraceTab(QWidget):
         row = QHBoxLayout()
         row.addWidget(self.points_auto)
         row.addWidget(self.points_spin, 1)
-        form.addRow("点数", row)
+        form.addRow(L["points"], row)
         self.step_label = QLabel("")
         form.addRow("Step", self.step_label)
         self.est_label = QLabel("")
         self.est_label.setWordWrap(True)
-        form.addRow("掃引時間の見積もり", self.est_label)
-        self.image_cancel = QCheckBox("イメージキャンセル（2回で1画面）")
+        form.addRow(L["estimate"], self.est_label)
+        self.image_cancel = QCheckBox(L["image_cancel"])
         self.image_cancel.toggled.connect(lambda on: win.call("set_sweep", image_cancel=on))
         form.addRow(self.image_cancel)
         # この機器で使えない欄の理由（FFT の機器: 点数は RBW と Span で決まる・ゼロスパンを持たない: 設計Q §6.9）
@@ -227,28 +230,28 @@ class TraceTab(QWidget):
         self.sweep_note.setWordWrap(True)
         self.sweep_note.hide()
         form.addRow(self.sweep_note)
-        self.freq_offset = QCheckBox("周波数オフセット")
+        self.freq_offset = QCheckBox(L["freq_offset"])
         set_enabled(self.freq_offset, REASON_FREQ_OFFSET)
         form.addRow(self.freq_offset)
         lay.addWidget(g_sweep)
 
-        g_traces = QGroupBox("トレース")
+        g_traces = QGroupBox(L["traces"])
         grid = QGridLayout(g_traces)
         grid.setHorizontalSpacing(4)
         grid.setVerticalSpacing(2)
         self.rows = {n: _TraceRow(self, n, grid, (n - 1) * 3) for n in (1, 2, 3, 4)}
         lay.addWidget(g_traces)
 
-        g_files = QGroupBox("参照トレース（開いたファイル）")
+        g_files = QGroupBox(L["files"])
         self.files_lay = QVBoxLayout(g_files)
         self.files_lay.setSpacing(2)
-        self.files_empty = QLabel("開いたファイルはありません")
+        self.files_empty = QLabel(L["no_files_open"])
         self.files_empty.setObjectName("dim")
         self.files_lay.addWidget(self.files_empty)
         self._file_rows: dict[str, QWidget] = {}
         self._file_checks: dict[str, QCheckBox] = {}
         self._files_key: tuple = ()
-        open_btn = QPushButton("開く…")
+        open_btn = QPushButton(texts.MENU_ITEMS["open"])
         open_btn.setObjectName("small")
         open_btn.clicked.connect(win.actions["open"].trigger)
         self.files_lay.addWidget(open_btn, 0, Qt.AlignmentFlag.AlignLeft)
@@ -291,8 +294,8 @@ class TraceTab(QWidget):
         self.points_spin.blockSignals(True)
         self.points_spin.setValue(sw["points"])
         self.points_spin.blockSignals(False)
-        self.step_label.setText(format_freq(sw["step_hz"]) + ("（ゼロスパン）" if sw["step_hz"] == 0 else ""))
-        self.est_label.setText(f"{sw['estimated_sweep_s']:.2f} 秒（前置き {sw['preroll_points']} 点を含む）")
+        self.step_label.setText(format_freq(sw["step_hz"]) + (L["zero_span_mark"] if sw["step_hz"] == 0 else ""))
+        self.est_label.setText(texts.w("estimate_value", s=f"{sw['estimated_sweep_s']:.2f}", n=sw["preroll_points"]))
         self.image_cancel.blockSignals(True)
         self.image_cancel.setChecked(sw["image_cancel"])
         self.image_cancel.blockSignals(False)
@@ -322,14 +325,14 @@ class TraceTab(QWidget):
             name.setToolTip(f"{f['path']}\n{f.get('created_at') or ''}  {f.get('device_model') or ''} "
                             f"{f.get('device_serial') or ''}\n{f.get('note') or ''}")
             head.addWidget(name, 1)
-            close = QPushButton("外す")
+            close = QPushButton(L["close_file"])
             close.setObjectName("small")
-            close.setToolTip("このファイルの参照トレースをグラフから外す（ファイルは消さない）")
+            close.setToolTip(L["close_file_tip"])
             close.clicked.connect(lambda _=False, fid=f["file_id"]: self.win.call("close_file", file_id=fid))
             head.addWidget(close)
             v.addLayout(head)
             for t in f.get("traces") or []:
-                cb = QCheckBox(f"#{t['number']}  {t['unit']}  {t['points']} 点")
+                cb = QCheckBox(texts.w("file_trace_check", number=t["number"], unit=t["unit"], points=t["points"]))
                 cb.setChecked(bool((t.get("info") or {}).get("visible", True)))
                 cb.toggled.connect(lambda on, tid=t["id"]: layer.set_file_shown(tid, on))
                 v.addWidget(cb)
@@ -347,4 +350,4 @@ class TraceTab(QWidget):
             ok = e is None or layer.file_unit_ok(tid)
             unit = (e or {}).get("payload", {}) or {}
             set_enabled(cb, None if ok else
-                        f"単位が縦軸（{layer.unit}）と違う（{unit.get('unit', '')}）ので重ねません")
+                        texts.w("file_unit_differs", axis=layer.unit, unit=unit.get("unit", "")))

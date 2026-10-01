@@ -209,6 +209,20 @@ class TestListen(RtlUiBase):
         self.assertFalse(self.win.listen.start_btn.isEnabled())
         self.assertIn(texts.LISTEN_LABELS["not_iq"], self.win.listen.start_btn.toolTip())
 
+    def test_listen_section_shown_only_while_iq_device_connected(self):
+        # 「聞く」の欄は IQ を持つ機器（RTL-SDR）に繋いでいるときだけ出す（設計J §4.5。受信の欄と同じ決まり）
+        panel = self.win.listen.panel
+        self.assertTrue(panel.isHidden())  # 未接続
+        self.connect_and_sweep()
+        self.pump(0.2)
+        self.assertTrue(panel.isHidden())  # GigaSt（シミュレータ）
+        # メニューの項目は消さずに無効にして理由（U-08）
+        self.assertFalse(self.win.actions["marker_listen"].isEnabled())
+        self.connect_rtl(single=False)
+        self.wait(lambda: not panel.isHidden(), what="聞くの欄が出る")
+        self.cmd("disconnect")
+        self.wait(lambda: panel.isHidden(), what="聞くの欄が消える")
+
 
 class TestRtlTcpSettings(RtlUiBase):
     def test_settings_dialog_and_status_stop(self):

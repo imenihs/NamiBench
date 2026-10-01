@@ -57,13 +57,14 @@ TEMPLATES.update({
     "device_detail_usb": "USB ID {usb}",
     "device_detail_serial": "シリアル番号 {serial}",
     "device_detail_dll": "探したフォルダ: {folder}",
-    "device_detail_dll_default": "探したフォルダ: 既定（PATH とアプリの rtlsdr フォルダ）",
+    "device_detail_dll_default": "探したフォルダ: 自動で探す場所",
     "device_connecting": "繋いでいます…（{name}）",
     "device_connect_failed": "{name} に繋げませんでした: {reason}",
     "device_next": "{reason}。{next}",
     "auto_connected": "前回の {name} に繋ぎました",
     "status_conn_none": "● 未接続（機器 → 接続… で選べます）",
     "status_conn_who": " {name}（{port}）",
+    "status_conn_who_name": " {name}",
     # 上段の「直結を 0dB にする」（4-3b）
     "ref_direct_name": "直結 {time}",
     "ref_quick_now": "基準: {name}（{time}）",
@@ -77,9 +78,14 @@ REF_QUICK_LABELS = {
     "button": "直結を 0dB にする",
     "tip": "TG 出力と SP 入力をケーブルで直結してから押す。TG の範囲を 1MHz 刻みで1回測り、その値を 0dB の基準にして、すぐ1回測って見せます",
     "cancel": "やめる",
-    "s11_reason": "S11 の基準はオープン・ショートの2段で取ります（次の回で実装します）",
+    "s11_reason": "S11 の基準はオープン・ショートの2段で取ります（まだ使えません）",
     "taking_reason": "基準を取っています",
 }
+
+
+def port_shown(kind) -> bool:
+    """ポート（COM 番号）を画面に出す機種か。RTL-SDR（rtlsdr:0）とシミュレータのポートは内部の名前（J §4.9）。"""
+    return kind == "gigast"
 
 
 def device_name(d: dict) -> str:
@@ -100,7 +106,7 @@ def device_details(d: dict) -> str:
         folder = d.get("dll_folder")
         return _tpl("device_detail_dll", folder=folder) if folder else TEMPLATES["device_detail_dll_default"]
     parts = []
-    if d.get("port"):
+    if d.get("port") and port_shown(d.get("kind")):
         parts.append(_tpl("device_detail_port", port=d["port"]))
     if d.get("usb_id"):
         parts.append(_tpl("device_detail_usb", usb=d["usb_id"]))

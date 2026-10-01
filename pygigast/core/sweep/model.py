@@ -106,6 +106,8 @@ class SweepModel:
         self._kind = profile.get("sweep_kind", SWEEP_STEPPED)
         if self._kind not in (SWEEP_STEPPED, SWEEP_FFT):
             raise ValueError(f"知らない sweep_kind: {self._kind}")
+        # イメージキャンセルの既定（機種のプロファイル。GigaSt は ON: 設計F §4・T16）
+        self._profile_image_cancel_default = bool(profile.get("image_cancel_default", False))
         f = profile["freq"]
         self._unit = int(f["unit_hz"])
         self._min = int(f["min_hz"])
@@ -181,11 +183,13 @@ class SweepModel:
 
     def default(self) -> AdoptedSweep:
         """既定の条件: SA・機種の既定の範囲（無ければ周波数範囲いっぱい）・点数は自動・RBW は既定・
-        イメージキャンセル OFF。"""
+        イメージキャンセルは機種の既定（GigaSt は ON: 設計F §4。生の値に掃引ごとに位置の変わる山が出て、
+        2回の min でほぼ消えるため。T16）。"""
         adj = _Adj()
         return self._finish(
             start=self._default_start, stop=self._default_stop, points_setting=None,
-            rbw_pref=self._rbw_default, mode=Mode.SA, sg_hz=None, image_cancel=False,
+            rbw_pref=self._rbw_default, mode=Mode.SA, sg_hz=None,
+            image_cancel=bool(self._profile_image_cancel_default),
             prev_rbw=None, rbw_requested=False, adj=adj,
         )
 

@@ -15,13 +15,13 @@ from typing import Optional
 
 
 def _add_web_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--port", type=int, default=8080, help="Web の口のポート（既定 8080）")
+    p.add_argument("--port", type=int, default=8080, help="ブラウザから使うときのポート番号（既定 8080）")
     p.add_argument("--lan", action="store_true",
-                   help="LAN の他の機器からも繋げるようにする（認証番号か QR で入る: 設計A §4.3.2）")
+                   help="同じネットワークのスマホや PC からも使えるようにする（QR コードか認証番号で入る）")
 
 
 def serve_main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="pygigast serve", description="画面なしでコアと Web の口だけを開く")
+    p = argparse.ArgumentParser(prog="pygigast serve", description="画面を出さずに起動し、ブラウザから使う")
     _add_web_args(p)
     p.add_argument("--traffic-log", metavar="DIR", help="機器との送受信を記録するフォルダ（既定は記録しない）")
     p.add_argument("--simulator", action="store_true", help="起動したらシミュレータに繋ぐ（実機が無いときの確認用）")
@@ -55,7 +55,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return serve_main(argv[1:])
     p = argparse.ArgumentParser(prog="pygigast")
     p.add_argument("--traffic-log", metavar="DIR", help="機器との送受信を記録するフォルダ（既定は記録しない）")
-    p.add_argument("--web", action="store_true", help="Qt 画面と同時に Web の口も開く")
+    p.add_argument("--web", action="store_true", help="デスクトップの画面と一緒に、ブラウザからも使えるようにする")
     _add_web_args(p)
     args, rest = p.parse_known_args(argv)
     from .ui_qt.app import main as qt_main

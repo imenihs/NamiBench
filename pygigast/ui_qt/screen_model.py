@@ -38,6 +38,12 @@ def profile_of(st: dict) -> dict:
     return profs.get(model) or profs["gigast-v5"]
 
 
+def model_display_name(model) -> str:
+    """機種のプロファイルの名前（コード）を、画面に出す機種名にする。知らない名前は出さない（空）。"""
+    p = _profiles().get(model) or {}
+    return str(p.get("display_name") or "")
+
+
 def is_fft(st: dict) -> bool:
     return (st.get("connection") or {}).get("sweep_kind") == "fft"
 
@@ -147,14 +153,16 @@ def level_done_text(r: dict) -> str:
 def listen_view(st: dict) -> dict:
     """聞く欄の中身。選んでいるマーカーが要る理由は画面が足す（marker_reason）。"""
     lst = st.get("listen") or {}
-    if not is_fft(st) or not (st.get("rtlsdr") or {}).get("connected"):
+    # IQ を持つ機器（RTL-SDR）に繋いでいるときだけ欄を出す（設計J §4.5: 機器に固有の欄はその機器のときだけ）
+    iq = is_fft(st) and bool((st.get("rtlsdr") or {}).get("connected"))
+    if not iq:
         reason = texts.LISTEN_LABELS["not_iq"]
     elif (st.get("rtlsdr") or {}).get("fixed_center", None) and \
             (st["rtlsdr"]["fixed_center"] or {}).get("cause") == "rtltcp_clients" and not lst.get("active"):
         reason = texts.ERRORS["listen_rtltcp_active"]
     else:
         reason = None
-    return {"active": bool(lst.get("active")), "reason": reason, "marker_id": lst.get("marker_id"),
+    return {"shown": iq, "active": bool(lst.get("active")), "reason": reason, "marker_id": lst.get("marker_id"),
             "mode": lst.get("mode"), "now_text": listen_now_text(lst),
             "stop_reason": None if lst.get("active") else texts.REASON_TEXTS["not_listening"]}
 

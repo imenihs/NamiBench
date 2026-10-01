@@ -38,6 +38,7 @@
     "tg_range_hz": [1000000, 4000000000],
     "level_adjustable": false
   },
+  "image_cancel_default": true,
   "lo_leak_band_hz": [-5000000, 5000000],
   "lo_leak_basis": "measured_on_one_unit",
   "sweep_quirks": {

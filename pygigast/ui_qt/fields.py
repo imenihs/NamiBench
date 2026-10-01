@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import MINUS, ParseError, minus_sign, parse_db, parse_freq_hz
+from .texts_labels import LABELS
 
 NOTE_SHOW_MS = 4000
 # ボタンを添えた知らせは、読んで押すまでの時間を取る。マウスが知らせの上にある間は消さない
@@ -261,12 +262,12 @@ class SpanLockButton(QToolButton):
         self.blockSignals(False)
         self.setIcon(self._icons[on])
         if not on:
-            self.setText("Span 固定")
+            self.setText(LABELS["span_lock"])
         elif span_hz is not None and lock_hz != span_hz:
             # ボタンで反対の結果を選んだ後など、いまの Span と固定 Span が違うときは固定 Span も出す
-            self.setText(f"固定 {fmt(lock_hz)}")
+            self.setText(LABELS["span_locked_at"].replace("{span}", fmt(lock_hz)))
         else:
-            self.setText("固定")
+            self.setText(LABELS["span_locked"])
 
 
 class FreqField(ValueField):
@@ -305,7 +306,7 @@ class FreqField(ValueField):
         try:
             hz = parse_freq_hz(text)
         except ParseError:
-            self.flash_note("読めない値です（例: 1.2G・300k・1500）")
+            self.flash_note(LABELS["bad_freq"])
             self.edit.show_value(self._to_text(self._hz))
             return
         self._on_commit(hz)
@@ -347,7 +348,7 @@ class DbField(ValueField):
         try:
             v = parse_db(text.replace(self._unit, "") if self._unit else text)
         except ParseError:
-            self.flash_note("読めない値です")
+            self.flash_note(LABELS["bad_value"])
             self.set_value(self._value)
             return
         self._on_commit(v)

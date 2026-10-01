@@ -1,0 +1,181 @@
+"""画面の部品の語のうち、右のタブ・マーカー表・ファイルの窓・旧校正ファイル・閉じる確認などの語。
+
+もとは Qt の画面のコードに直に書いていた語を、ここの表に移した（J §5: Qt と Web は同じ語の表から作る。
+J §4.9: 画面の語は表だけに置き、使わない語が入っていないことを試験で確かめる）。
+LABELS（texts_labels.py）と REASON_TEXTS・TEMPLATES（texts_ui.py）へ足すので、Web へも同じ表で配る
+（GET /api/v1/texts）。`{名前}` は差し込み（texts.tpl・GSTexts.w と同じ置き換え）。Qt を import しない。
+"""
+from __future__ import annotations
+
+from .texts_labels import LABELS
+from .texts_ui import REASON_TEXTS
+
+# マーカー表の列（表・コピー・Web の表で同じ。PNG の表の列は画像の配置: core/report_layout.py）
+MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", "Δ周波数 (MHz)", "Δ値 (dB)", "注意")
+
+# マーカーの種類（P はピークに付いていく、M は手で置いた位置）
+MARKER_KINDS = {"P": "ピーク", "M": "手動"}
+
+# PNG の配色の選び方（J §4.4）
+PNG_PALETTES = {"light": "ライトの初期値", "dark": "ダークの初期値", "screen": "画面と同じ"}
+
+REASON_TEXTS.update({
+    "track_p_only": "ピーク追従は P（ピーク）のマーカーだけが持てます（M は周波数を固定）",
+    "needs_connection": "機器に繋ぐと使えます",
+    "taking_reference": "基準を取っている間は使えません",
+    "select_reference": "一覧から基準を選んでください",
+    "no_reference_selected": "選んでいる基準がありません",
+    "count_only": "回数は平均・最大保持・最小保持で使います",
+    "average_type_only": "平均の種類は動作が「平均」のときに使います",
+    "after_only": "N 回の後の動きは、回数を持つ平均・最大保持・最小保持で使います",
+    "vector_only": "ベクトル平均は位相を測れる機器だけで使えます",
+})
+
+LABELS.update({
+    # ---- グラフの軸（ツールチップは軸の上の操作: U-12）
+    "axis_x_tip": "ホイール: カーソルの位置を中心に拡大・縮小\nグラフの中を横にドラッグ: その範囲を Start/Stop に\n"
+                  "グラフの中をクリック: 近いトレースに M を置く\n右クリック: この位置への操作（Center に・マーカー・REF に）",
+    "axis_y_tip": "ホイール: REF レベルを1目盛ずつ\nCtrl+ホイール: dB/div を1段\nドラッグ: REF レベルを連続で動かす",
+    "level_no_ref": "レベル（基準なし・受けた電力）",
+    # ---- マーカー表（グラフの下）
+    "btn_peak_tip": "選んでいるマーカーを最大の点へ（無ければ M を置く）",
+    "btn_left": "◀ 次のピーク",
+    "btn_left_tip": "左の次のピークへ",
+    "btn_right": "次のピーク ▶",
+    "btn_right_tip": "右の次のピークへ",
+    "btn_lower": "次に高い",
+    "btn_lower_tip": "いまより低いピークのうち最も高いものへ",
+    "btn_add": "マーカー追加",
+    "btn_add_tip": "新しい M をピークに置く",
+    "btn_copy_tip": "表をタブ区切りでクリップボードへ",
+    "row_ops": "操作",
+    "ref_combo_tip": "デルタの基準（この行に Δ周波数・Δ値を出す相手）",
+    "row_center": "この周波数を Center に",
+    "row_ref": "この値を REF レベルに",
+    "row_remove": "{m} を消す",
+    "row_remove_cursor": "このカーソルを消す",
+    "row_unset": "{m} を外す",
+    "row_function_note": "マーカーの機能はマーカーのタブで変えます",
+    "row_track": "追従",
+    "band_center": "中心 {v}",
+    "band_width": "幅 {v}",
+    "row_bw": "{m} {n}dB 帯域幅",
+    "row_sf": "{m} シェープファクタ",
+    "row_th": "{m} しきい値 {level} {side}",
+    "marker_clear_confirm": "マーカー {n} 本（オフセット・機能の設定を含む）を消します。",
+    # ---- マーカーのタブ
+    "trace_n": "トレース {n}",
+    "delta_ref": "デルタの基準",
+    "peak_track_long": "ピーク追従（掃引ごとに近くのピークへ）",
+    "to_ref_level": "REF レベルに",
+    "erase": "消す",
+    "offsets_long": "オフセット（選んでいるマーカーについて動くカーソル）",
+    "offset_value_tip": "周波数は 10M・500k のように単位付き、レベルは dB の数",
+    "bad_offset_value": "オフセットの値が読めません（例: 10M・500k・3）",
+    "second_n": "2つ目の N（シェープファクタ）",
+    "threshold_cross": "しきい値との交点",
+    "xy_cursor_long": "XY カーソル（トレースに載らない線）",
+    "floor_prefix": "床から ",
+    "floor_tip": "ノイズの床よりこれだけ高いピークを並べる",
+    "find": "探す",
+    "col_freq_mhz": "周波数 (MHz)",
+    "col_height_db": "高さ (dB)",
+    "count_suffix": " 個",
+    "place_p_after": "に P を置く",
+    "no_marker_selected": "マーカーを選んでいません",
+    "selected_text": "{id}（{kind}・トレース {trace}）  {value}",
+    "marker_snapped": "{freq} の点に置きました（トレースの点に載る）",
+    "peaks_found": "{n} 個",
+    "peaks_found_floor": "{n} 個（床 {floor} {unit}）",
+    # ---- トレース・掃引のタブ
+    "no_count": "回数なし",
+    "times_suffix": " 回",
+    "clear_tip": "このトレースの蓄積を捨てる",
+    "default": "既定",
+    "default_with": "既定（{type}）",
+    "count_n": "回数 N",
+    "no_value_paren": "（値なし）",
+    "freq_offset": "周波数オフセット",
+    "no_files_open": "開いたファイルはありません",
+    "close_file_tip": "このファイルの参照トレースをグラフから外す（ファイルは消さない）",
+    "file_trace_check": "#{number}  {unit}  {points} 点",
+    "file_unit_differs": "単位が縦軸（{axis}）と違う（{unit}）ので重ねません",
+    # ---- 表示のタブ
+    "draw_style": "描き方",
+    "draw_line": "線",
+    "draw_fill": "塗りつぶし",
+    "unit_auto": "自動（電力は dBm・比は dB）",
+    "unit_tip": "縦軸の単位",
+    "ext_corr": "外部補正",
+    "png_group": "画像（PNG）",
+    "png_size": "大きさ",
+    "png_memo_placeholder": "画像の下端に焼き込む1行（空なら出さない）",
+    "change": "変える…",
+    "png_dir": "保存先",
+    "png_dir_title": "PNG の保存先",
+    "colors_bandplan": "配色・バンドプラン",
+    "reset_colors": "ライト・ダークの初期値に戻す…",
+    "show_bandplan": "バンドプランを表示",
+    # ---- 信号源のタブ
+    "sg_group": "SG（信号源）",
+    "step_sweep": "ステップ掃引…",
+    "references_long": "TG・S11 の基準（ノーマライズ）",
+    "take_name_placeholder": "空なら「TG 日時」",
+    "average": "平均",
+    "s11_open": "S11: オープンを測る",
+    "s11_short": "S11: ショートを測る",
+    "use": "使う",
+    "not_use": "使わない",
+    "rename_dots": "名前…",
+    "erase_dots": "消す…",
+    "sg_not_output": "出力していません（SG モードで出力します）",
+    "ref_selected": "選んでいる基準: {name}（{when}）",
+    "ref_none": "ノーマライズ: 未取得",
+    "new_name": "新しい名前",
+    "ref_delete_title": "基準を消す",
+    "ref_delete_confirm": "基準「{name}」を消します。取り直すまで戻せません。",
+    "ref_delete_in_use": "\nいま使っている基準なので、TG の表示は受けた電力（dBm）に戻ります。",
+    # ---- ファイル（Qt の窓。Web はダウンロード・アップロード）
+    "filter_h5": "pyGigaSt の保存ファイル (*.h5);;すべて (*)",
+    "filter_csv": "CSV (*.csv);;すべて (*)",
+    "filter_txt": "テキスト (*.txt);;すべて (*)",
+    "open_dialog": "開く",
+    "export_dialog": "書き出し（CSV）",
+    "png_save_failed": "PNG を保存できませんでした: {why}",
+    "png_copy_failed": "PNG をコピーできませんでした: {why}",
+    "record_started": "記録を始めました",
+    "record_stopped": "記録を止めました。「記録をまとめる…」で保存ファイルにします",
+    "discard_title": "記録を捨てる",
+    "discard_confirm": "作業ファイルを消します。{n} 回の掃引の記録が失われ、戻せません。",
+    "discarded": "まとめ終わっていない記録を捨てました",
+    "export_trace_item": "トレース {n}（{action}・{unit}）",
+    "export_file_item": "{name} #{number}（{unit}）",
+    "export_none": "書き出せるトレースがありません（掃引するか、ファイルを開いてください）",
+    "export_range": "周波数の範囲",
+    "export_view": "いまの表示（{start}〜{stop}）",
+    "export_custom": "数値で指定",
+    "export_all": "トレースの全部の点",
+    "export_ok": "書き出す…",
+    "unfinished_title": "まとめ終わっていない記録があります",
+    "unfinished_note": "前回、保存ファイルへまとめる前に終わった記録です。まとめるか、捨てるかを選んでください。",
+    "unfinished_row": "{started}  {n} 回の掃引",
+    "unfinished_minutes": "・{m} 分",
+    "unfinished_unreadable": "・読めない所あり（{why}）",
+    "unfinished_finish": "まとめる…",
+    "unfinished_discard": "捨てる…",
+    "unfinished_later": "あとで（次の起動でもう一度聞く）",
+    # ---- 旧校正ファイル（D §5.6）
+    "legacy_short": "旧校正ファイル",
+    "legacy_confirm": "このファイルを、接続中の機器（{serial}）の校正として取り込みますか？",
+    "legacy_sum_file": "元のファイル: {name}",
+    "legacy_sum_level": "全体のレベル: {db} dB",
+    "legacy_sum_rbw": "RBW ごと: {list}",
+    "legacy_sum_freq": "周波数特性（帯ごとの最小〜最大）:",
+    # ---- 閉じる（H §4.1・U-18: 何が失われるかを言って聞く）
+    "close_title": "閉じる",
+    "close_confirm": "閉じると次のようになります。閉じますか？",
+    "close_lost_task": "・{task}: やめます（{what}）",
+    "close_lost_record": "・記録: 保存ファイルにまとめていません。作業ファイルは残り、次の起動でまとめるか聞きます",
+    # ---- 状態バー
+    "open_folder": "フォルダを開く",
+})

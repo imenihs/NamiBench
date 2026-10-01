@@ -15,15 +15,15 @@ if TYPE_CHECKING:
 
 def show_key_table(win: "MainWindow") -> None:
     rows = menus.key_table(win.actions)
-    rows += [("↑ / ↓・ホイール（数値の欄）", "カーソルのある桁を増減"),
-             ("Enter / Tab / 欄を離れる", "確定"), ("Esc（数値の欄）", "打つ前の値に戻す")]
+    rows += list(texts.WEB_KEY_HELP)  # 数値の欄のキー（Web の一覧と同じ行: J §4.6）
     text = "\n".join(f"{k}\t{v}" for k, v in rows)
-    QMessageBox.information(win, "キー操作の一覧",
-                            text + "\n\n入力の欄にいる間は、文字・数字・矢印などのキーは欄に渡します。")
+    QMessageBox.information(win, texts.MENU_ITEMS["help_keys"], text + "\n\n" + texts.LABELS["keys_note"])
 
 
 def show_about(win: "MainWindow") -> None:
-    QMessageBox.about(win, "pyGigaSt について", "pyGigaSt — GigaSt v5 を PC から操作・表示するアプリ")
+    from .. import __version__
+
+    QMessageBox.about(win, texts.MENU_ITEMS["help_about"], texts.w("about", version=__version__))
 
 
 def open_list(win: "MainWindow") -> DeviceListWindow:
@@ -86,12 +86,12 @@ def import_legacy(win: "MainWindow") -> None:
     conn = win.state.get("connection", {})
     serial = (conn.get("identity") or {}).get("serial")
     if not serial:
-        QMessageBox.information(win, "旧校正ファイル", "校正を当てる機器を決めるため、先に機器に接続してください。")
+        QMessageBox.information(win, texts.LABELS["legacy_short"], texts.LABELS["legacy_need_device"])
         return
-    path, _ = QFileDialog.getOpenFileName(win, "旧校正ファイル（gigast.txt / ba205.txt）", "", "テキスト (*.txt);;すべて (*)")
+    path, _ = QFileDialog.getOpenFileName(win, texts.LABELS["legacy_title"], "", texts.LABELS["filter_txt"])
     if not path:
         return
-    if not win.confirm("旧校正ファイル", f"このファイルを、接続中の機器（{serial}）の校正として取り込みますか？"):
+    if not win.confirm(texts.LABELS["legacy_short"], texts.w("legacy_confirm", serial=serial)):
         return
     win.call("import_legacy_calibration", on_ok=lambda r: show_cal_summary(win, r), path=path, serial=serial)
 
@@ -100,11 +100,12 @@ def show_cal_summary(win: "MainWindow", result: dict) -> None:
     s = result["summary"]
     bands = s["freq_response_db"]["bands"]
     lines = [
-        f"元のファイル: {s['source'].get('file_name')}",
-        f"全体のレベル: {s['level_offset_db']:+.1f} dB",
-        "RBW ごと: " + "・".join(f"{format_freq(int(k))} {v:+.1f} dB" for k, v in s["rbw_offset_db"].items()),
-        "周波数特性（band ごとの最小〜最大）:",
+        texts.w("legacy_sum_file", name=s["source"].get("file_name")),
+        texts.w("legacy_sum_level", db=f"{s['level_offset_db']:+.1f}"),
+        texts.w("legacy_sum_rbw", list="・".join(f"{format_freq(int(k))} {v:+.1f} dB"
+                                                 for k, v in s["rbw_offset_db"].items())),
+        texts.LABELS["legacy_sum_freq"],
     ]
     for b in bands:
         lines.append(f"  {format_freq(b['start_hz'])}〜: {min(b['values']):+g} 〜 {max(b['values']):+g} dB")
-    QMessageBox.information(win, "旧校正ファイルを取り込みました", "\n".join(lines))
+    QMessageBox.information(win, texts.LABELS["legacy_done"], "\n".join(lines))

@@ -5,7 +5,7 @@
   Web の texts.js・app.js は文言を持たず、ここの表と TEMPLATES を組み合わせるだけ
 - TEMPLATES の差し込みは `{名前}` だけ（書式の指定を使わない）。Python と JavaScript の両方で
   同じ置き換えで作れるようにするため。数値の桁は差し込む前にそろえる
-- Qt を import しない（Web の口が画面なしで使う）
+- Qt を import しない（Web の画面のサーバーが Qt なしで使う）
 """
 from __future__ import annotations
 
@@ -18,14 +18,23 @@ from .texts_ui import DISPLAY_MARKS, TEMPLATES
 from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタンの語（LABELS）。Web へも同じ表で配る
 from .texts_labels import LABELS
 from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「直結を 0dB にする」の語（J §4.7・§4.2）
-from .texts_devices import device_name
-from .texts_web import *  # noqa: F401,F403 — Web の口を LAN に開くときの語（A §4.3.2）
+from .texts_devices import device_name, port_shown
+from .texts_web import *  # noqa: F401,F403 — ブラウザから使うときの語（A §4.3.2）
 from .texts_web import WEB_ERRORS
+from .texts_screens import *  # noqa: F401,F403 — 右のタブ・マーカー表・ファイルの窓などの語（LABELS・REASON_TEXTS へ足す）
 
 
 def tpl(key: str, **kw) -> str:
     """TEMPLATES の `{名前}` を差し込む（JavaScript の GSTexts.fmt と同じ動き）。"""
     text = TEMPLATES[key]
+    for k, v in kw.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
+
+def w(key: str, **kw) -> str:
+    """LABELS の `{名前}` を差し込む（JavaScript の GSTexts.w と同じ動き）。"""
+    text = LABELS[key]
     for k, v in kw.items():
         text = text.replace("{" + k + "}", str(v))
     return text
@@ -77,7 +86,7 @@ REASONS = {
     "rbw_fixed": "この条件では RBW 180kHz 固定",
     "keep_center": "Center を保つため、範囲に収まる最大の Span",
     "keep_span": "Span 固定のため、Span を保って Center を移動",
-    "zero_span_unsupported": "この機器はゼロスパンを持ちません（FFT で測るため）",
+    "zero_span_unsupported": "この機器はゼロスパンを持ちません",
     "points_by_rbw": "この機器の点数は RBW と Span で決まります",
     "rbw_points_max": "点数の上限を超えるため RBW を広げました",
     "mode_unsupported": "この機器はこのモードで測れません",
@@ -163,7 +172,7 @@ NOTICES = {
 }
 
 DISCARD_REASONS = {
-    "byte_count": "受け取ったバイト数が違う",
+    "byte_count": "応答の長さが違う",
     "first_byte_timeout": "応答が始まらない",
     "silence_timeout": "応答が途切れた",
     "total_timeout": "掃引が長すぎる",
@@ -183,13 +192,13 @@ ERRORS = {
     "not_integer": "数値が正しくありません",
     "unknown_backend": "その種類の機器は使えません",
     "unknown_mode": "そのモードはありません",
-    "bad_arguments": "命令の引数が正しくありません",
-    "server_unreachable": "サーバーに繋がりません",
+    "bad_arguments": "操作の値が正しくありません",
+    "server_unreachable": "pyGigaSt の PC に繋がりません",
     "rtlsdr_dll_not_found": "RTL-SDR の DLL（rtlsdr.dll）が見つかりません",
     "rtlsdr_not_connected": "RTL-SDR に繋がっていません",
     "rtlsdr_level_needs_manual_gain": "レベルの校正は利得を手動にしてから行います（AGC の間は利得が分からないため）",
     "rtlsdr_stitching_blocked": "チューナーの中心を動かせない間（聞いている・rtl_tcp の相手がつながっている）は、使える幅より広い Span にできません",
-    "listen_needs_iq_device": "聞く機能は IQ を持つ機器（RTL-SDR）だけで使えます",
+    "listen_needs_iq_device": "聞く機能は RTL-SDR に繋いでいるときだけ使えます",
     "listen_rtltcp_active": "rtl_tcp の相手がつながっている間は、マーカーの位置へチューナーを動かせません",
     "marker_no_value": "マーカーの点に値がありません",
     "marker_not_on_rtlsdr_trace": "RTL-SDR で測ったトレースに載ったマーカーを選んでください",
@@ -219,7 +228,12 @@ def notice_text(n: dict) -> str:
         r = d.get("reason", "")
         text += tpl("paren", text=DISCARD_REASONS.get(r, r))
     elif code == "device_profile_changed" and d.get("model"):
-        text += tpl("paren", text=str(d["model"]))
+        # 機種のプロファイルの名前（rtlsdr-r820t など）はコードなので、表示の名前で言う（J §4.9）
+        from .screen_model import model_display_name
+
+        name = model_display_name(d["model"])
+        if name:
+            text += tpl("paren", text=name)
     elif code in ("rtltcp_started", "rtltcp_stopped", "rtltcp_port_in_use") and d.get("port"):
         text += tpl("paren", text=tpl("port", port=d["port"]))
     elif code == "rtltcp_start_failed" and d.get("message"):
@@ -357,7 +371,7 @@ MARKER_STATUS = {
     "out_of_range": "範囲外",
     "no_value": "値なし",
     "no_trace": "トレースに値がない",
-    "parent_unavailable": "親が読めない",
+    "parent_unavailable": "元のマーカーが読めない",
     "no_ref": "基準がない",
     "ref_unavailable": "基準が読めない",
     "unit_mismatch": "dBm と dB の差は出さない",
@@ -365,7 +379,7 @@ MARKER_STATUS = {
 
 # 読み値に添える注意（G §3.3）。点の印と、掃引条件の信用できない条件
 MARKER_NOTES = {
-    "transient": "前置き不足",
+    "transient": "掃引の始めの不安定な点",
     "out_of_cal_range": "校正の範囲外",
     "no_reference": "基準の範囲外",
     "no_reference_band_edge": "基準の帯の境目",
@@ -658,9 +672,12 @@ def status_items(st: dict) -> list[dict]:
     """状態バーの項目（key・text・cls）。Qt と Web が同じ並び・同じ文字で出す。空の text は出さない。"""
     conn = st.get("connection") or {}
     ident = conn.get("identity") or {}
-    # 名前（利用者が付けた名前か、機種名＋シリアル番号の末尾4桁）とポート（J §4.7: いま使っている機器は状態バーで分かる）
-    who = tpl("status_conn_who", name=conn.get("name") or device_name({"kind": conn.get("backend")}),
-              port=ident.get("port", "")) if ident else ""
+    # 名前（利用者が付けた名前か、機種名＋シリアル番号の末尾4桁）とポート（J §4.7: いま使っている機器は状態バーで分かる）。
+    # ポートは COM 番号を持つ機器（GigaSt）だけ。RTL-SDR・シミュレータのポートは内部の名前なので出さない（J §4.9）
+    name = conn.get("name") or device_name({"kind": conn.get("backend")})
+    port = ident.get("port", "") if port_shown(conn.get("backend")) else ""
+    who = (tpl("status_conn_who", name=name, port=port) if port else tpl("status_conn_who_name", name=name)) \
+        if ident else ""
     run = st.get("run") or {}
     rs = RUN_STATES.get(run.get("state"), run.get("state"))
     if run.get("state") == "single" or (run.get("state") == "stopped" and run.get("last_stop_reason") == "single_done"):

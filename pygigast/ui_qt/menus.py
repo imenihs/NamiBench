@@ -14,13 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QMainWindow, QMenu, QWidget
 
-NOT_YET_FILE = "保存・読込・書き出しは次の回で実装します"
-NOT_YET_PNG = "PNG の出力は次の回で実装します"
-NOT_YET_MARKER = "マーカーの表と選択は次の回で実装します"
-NOT_YET_CAL = "校正の画面は次の回で実装します"
-NOT_YET_VIEW = "表示の切り替えは次の回で実装します"
-NOT_YET_SETTINGS = "設定の画面は次の回で実装します"
-NOT_YET_DIAG = "自己診断の結果を見る画面は次の回で実装します"
+from . import texts
 
 
 @dataclass
@@ -56,7 +50,7 @@ def build(win: QMainWindow, graph: QWidget, menus: list[tuple[str, list[Optional
                 act.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
             if it.handler is not None:
                 act.triggered.connect(lambda _=False, h=it.handler: h())
-            set_reason(act, it.disabled_reason if it.handler is not None else (it.disabled_reason or "次の回で実装します"))
+            set_reason(act, it.disabled_reason if it.handler is not None else (it.disabled_reason or texts.NOT_YET["generic"]))
             m.addAction(act)
             actions[it.code] = act
     return actions

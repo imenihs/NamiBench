@@ -537,13 +537,18 @@ class TestRbwAndMode(Base):
 
 class TestEstimate(Base):
     def test_estimate_and_doubling(self):
-        s = self.at(1000 * MHZ, 1100 * MHZ)
+        # GigaSt の既定はイメージキャンセル ON（設計F §4）なので、1回分の見積もりは OFF にして比べる
+        s = self.req(self.at(1000 * MHZ, 1100 * MHZ), image_cancel=False)
         first, pp = design_timing(s.axis.step_hz, s.rbw_hz)
         one = first + (s.axis.points + s.preroll_points) * pp
         self.assertAlmostEqual(s.estimated_sweep_s, one)
         self.assertEqual(s.preroll_points, math.ceil(0.030 / pp))
         self.assertAlmostEqual(self.req(s, image_cancel=True).estimated_sweep_s, 2 * one)
         self.assertAlmostEqual(self.req(s, mode=Mode.NF).estimated_sweep_s, 2 * one)
+
+    def test_image_cancel_default_on_for_gigast(self):
+        # SA でのイメージキャンセルの初期値は ON（設計F §4。2026-10-01 ユーザー決定・T16）
+        self.assertTrue(self.m.default().image_cancel)
 
 
 class TestInvariant(Base):

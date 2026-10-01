@@ -30,7 +30,7 @@ class _Row(QWidget):
         self.label = QLabel("")
         self.bar = QProgressBar()
         self.bar.setMaximumWidth(260)
-        self.cancel = QPushButton("やめる")
+        self.cancel = QPushButton(texts.LABELS["cancel"])
         self.cancel.setObjectName("small")
         self.cancel.clicked.connect(lambda: panel.win.call("cancel_task", task_id=task_id, quiet_codes=("unknown_task",)))
         lay.addWidget(self.label, 1)

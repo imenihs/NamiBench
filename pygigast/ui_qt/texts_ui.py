@@ -12,9 +12,9 @@ from __future__ import annotations
 MODES = (
     ("sa", "SA", "スペクトラムアナライザ", None),
     ("tg", "TG", "伝送特性（TG 出力を被測定物へ）", None),
-    ("s11", "S11", "反射", "反射（方向性結合器）は次の回で実装します"),
+    ("s11", "S11", "反射", "反射（方向性結合器）の測定はまだ使えません"),
     ("sg", "SG", "信号源", None),
-    ("nf", "NF", "NF 測定", "NF 測定は次の回で実装します"),
+    ("nf", "NF", "NF 測定", "NF 測定はまだ使えません"),
 )
 MODE_NAMES = {code: name for code, _l, name, _w in MODES}
 MODE_LABELS = {code: label for code, label, _n, _w in MODES}
@@ -24,16 +24,23 @@ MODE_UNSUPPORTED = "この機器はこのモードで測れません（受信だ
 # ---------------------------------------------------------------- まだ作っていない機能の理由（U-08）
 
 NOT_YET = {
-    "file": "保存・読込・書き出しは次の回で実装します",
-    "cal": "校正の画面は次の回で実装します",
-    "view": "表示の切り替えは次の回で実装します",
-    "settings": "設定の画面は次の回で実装します",
-    "settings_keys": "キー操作の割り当ての画面は次の回で実装します（設計J §4.6）",
-    "diag": "自己診断の結果を見る画面は次の回で実装します",
-    "colors": "配色の編集は次の回で実装します（設計J §4.4）",
-    "waterfall": "ウォーターフォールは次の回で実装します（設計P §3）",
-    "density": "密度表示は次の回で実装します（設計P §4）",
-    "generic": "次の回で実装します",
+    "file": "保存・読込・書き出しはまだ使えません",
+    "cal": "校正の画面はまだ使えません",
+    "view": "表示の切り替えはまだ使えません",
+    "settings": "設定の画面はまだ使えません",
+    "settings_keys": "キー操作の割り当ての画面はまだ使えません",
+    "diag": "自己診断の結果を見る画面はまだ使えません",
+    "colors": "配色の編集はまだ使えません",
+    "waterfall": "ウォーターフォールはまだ使えません",
+    "density": "密度表示はまだ使えません",
+    "unit": "dBμV・dBmV への切り替えはまだ使えません",
+    "ext": "外部補正（アッテネータ・アンプ）はまだ使えません",
+    "bandplan": "バンドプラン・ブックマークはまだ使えません",
+    "s11": "S11（反射）モードはまだ使えません",
+    "step": "ステップ掃引はまだ使えません",
+    "nf": "NF 測定はまだ使えません",
+    "freq_offset": "周波数オフセット（変換器の観測用）はまだ使えません",
+    "generic": "まだ使えません",
 }
 
 # ---------------------------------------------------------------- メニュー（J §4.3.1。Qt のメニューバーと Web の「≡」は同じ並び・同じ語）
@@ -94,7 +101,7 @@ MENU_ITEMS = {
     "view_density": "密度表示",
     "settings": "アプリ設定…",
     "settings_keys": "キー操作…",
-    "web_connect": "Web の口: 接続のしかたを表示…",
+    "web_connect": "ブラウザから使う: 接続のしかたを表示…",
     "help_keys": "キー操作の一覧",
     "help_about": "pyGigaSt について",
 }
@@ -128,8 +135,8 @@ REASON_TEXTS = {
     "select_marker": "マーカーを選んでください（表の行・グラフの印・ピークのボタン）",
     "delta_ref": "デルタの基準を選ぶと使えます",
     "no_wave": "波形がまだありません（掃引すると使えます）",
-    "no_auto_points": "合わせる点がありません（局発の漏れ・TG の範囲外・前置き不足・値の無い点は使いません）",
-    "no_state": "状態がまだありません",
+    "no_auto_points": "合わせる点がありません（局発の漏れ・TG の範囲外・掃引の始めの不安定な点・値の無い点は使いません）",
+    "no_state": "まだ準備ができていません",
     "no_undo": "戻す変更がありません",
     "no_redo": "やり直す変更がありません",
     "no_sweep": "掃引条件がまだありません",
@@ -202,11 +209,11 @@ TEMPLATES = {
     "status_rec_active": "● 記録中 {clock}・{sweeps} 回",
     "status_rec_stopped": "記録を止めました（まとめていません）",
     "status_rtltcp": "rtl_tcp 送出中 :{port}・接続 {clients}",
-    "status_rtltcp_lan": "（LAN に開いています）",
+    "status_rtltcp_lan": "（同じネットワークのほかの PC からも受けます）",
     "status_rtltcp_error": "rtl_tcp: ポート {port} を開けません（{reason}）",
     "status_listen": "聞いている: {freq}・{mode}",
     "status_tasks": "処理中 {n} 件",
-    "status_ws_down": "サーバーと切れています（繋ぎ直しています）",
+    "status_ws_down": "pyGigaSt の PC と切れています（繋ぎ直しています）",
     "source_sg": "SG 出力中 {freq}",
     "source_tg": "TG 出力中",
     "waiting_sweep_end": "いまの掃引の終わりを待っています（残り約 {s} 秒）",
@@ -218,7 +225,7 @@ TEMPLATES = {
     "rtl_unit": "いまの単位: {unit}",
     "rtl_shared": "同じシリアル番号の機器が {n} 本つながっています（校正は共有）",
     "rtl_dll": "DLL のフォルダ: {folder}",
-    "rtl_dll_default": "DLL のフォルダ: 既定（PATH とアプリの rtlsdr フォルダ）",
+    "rtl_dll_default": "DLL のフォルダ: 自動で探す",
     "rtl_fit_done": "利得を {gain} dB に合わせました（前は {before}）",
     "rtl_fit_overload": "。いちばん小さい段でも振り切れています。入力を弱めてください",
     "rtl_fit_reset": "。トレース {traces} の蓄積を捨てました",
@@ -241,7 +248,7 @@ TEMPLATES = {
     "cancelled_generic": "やめました",
     "task_failed": "{failed}: {error}",
     "work_file_kept": "。記録の作業ファイルは残っていて、あとでまとめられます",
-    "norm_changed": "ノーマライズの状態が変わりました",
+    "norm_changed": "ノーマライズが変わりました",
     "file_trace_label": "{name} #{number}",
     "marker_copied": "マーカー表をコピーしました（{n} 行）",
 }
@@ -277,8 +284,8 @@ RTL_LABELS = {
     "not_rtlsdr": "RTL-SDR に繋ぐと使えます",
     "no_marker": "マーカーを置いてから使えます",
     "needs_manual_gain": "AGC の間は利得が分からないので、レベルの校正は利得を手動にしてから行います",
-    "points_fft": "この機器（FFT で測る）の点数は RBW と Span で決まります",
-    "zero_span_fft": "この機器はゼロスパンを持ちません（FFT で測るため）",
+    "points_fft": "この機器の点数は RBW と Span で決まります",
+    "zero_span_fft": "この機器はゼロスパンを持ちません",
     "image_cancel_fft": "この機器はイメージキャンセルを持ちません",
 }
 
@@ -299,12 +306,12 @@ LISTEN_LABELS = {
     "start": "この位置を聞く",
     "stop": "やめる",
     "volume": "音量",
-    "not_iq": "聞く機能は IQ を持つ機器（RTL-SDR）だけで使えます",
+    "not_iq": "聞く機能は RTL-SDR に繋いでいるときだけ使えます",
 }
 
 # ---------------------------------------------------------------- 設定の画面（設計O §1.3）
 
-RTLTCP_BINDS = {"local": "この PC からだけ", "lan": "LAN の他の機器からも"}
+RTLTCP_BINDS = {"local": "この PC からだけ", "lan": "同じネットワークのほかの PC からも"}
 SETTINGS_LABELS = {
     "title": "アプリ設定",
     "note": "変えるとすぐ効きます（「適用」はありません）",
@@ -313,14 +320,15 @@ SETTINGS_LABELS = {
     "rtltcp_port": "ポート番号",
     "rtltcp_bind": "受ける接続",
     "rtltcp_default": "初期値に戻す",
-    "rtltcp_note": "つながる機器すべてで送れます。GigaSt は振幅だけ（Q が 0）を送ります。出している間は状態バーに「rtl_tcp 送出中」を出し、そこから止められます",
+    "rtltcp_note": "つながる機器すべてで送れます。GigaSt は信号の強さだけを送ります（音は AM だけ聞けます）。出している間は画面の下端に「rtl_tcp 送出中」を出し、そこから止められます",
     "rtltcp_stop": "止める",
     "rtlsdr_group": "RTL-SDR の DLL",
     "rtlsdr_found": "DLL を読めます",
     "rtlsdr_missing": "DLL が見つかりません",
     "rtlsdr_choose": "フォルダを選ぶ…",
-    "rtlsdr_default": "既定に戻す",
+    "rtlsdr_choose_note": "rtlsdr.dll（64 ビット版）が入っているフォルダを選んでください",
+    "rtlsdr_default": "自動で探すに戻す",
     "other_group": "そのほかの設定",
-    "other_note": "接続・表示・キー操作・保存の設定は次の回で実装します（設計O §1.3）",
+    "other_note": "接続・表示・キー操作・保存の設定はまだ使えません",
     "close": "閉じる",
 }

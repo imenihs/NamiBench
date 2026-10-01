@@ -119,7 +119,8 @@ class ListenControl:
         grid.addWidget(self.note, 3, 0, 1, 4)
         grid.setColumnStretch(1, 1)
         self.panel = g
-        self._view: dict = {"active": False, "reason": texts.LISTEN_LABELS["not_iq"]}
+        self._view: dict = {"shown": False, "active": False, "reason": texts.LISTEN_LABELS["not_iq"]}
+        g.setVisible(False)
 
     # ---- 使えるか
     def start_reason(self) -> Optional[str]:
@@ -128,6 +129,8 @@ class ListenControl:
     def apply(self, st: dict) -> None:
         self._view = screen_model.listen_view(st)
         v = self._view
+        # IQ を持つ機器に繋いでいるときだけ出す（設計J §4.5。受信の欄と同じ決まり）
+        self.panel.setVisible(bool(v.get("shown")))
         if v["active"] and v.get("mode"):
             self.mode.setCurrentIndex(max(0, self.mode.findData(v["mode"])))
         self.refresh()

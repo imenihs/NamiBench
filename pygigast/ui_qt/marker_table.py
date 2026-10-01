@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import marker_rows, menus
+from . import marker_rows, menus, texts
 from .theme import number_font
 
 if TYPE_CHECKING:
@@ -51,13 +51,14 @@ class MarkerPanel(QWidget):
         bar.setContentsMargins(0, 0, 0, 0)
         bar.setSpacing(4)
         a = win.actions
-        self.btn_peak = self._button("ピーク", a["marker_peak"], "選んでいるマーカーを最大の点へ（無ければ M を置く）")
-        self.btn_left = self._button("◀ 次のピーク", a["marker_peak_left"], "左の次のピークへ")
-        self.btn_right = self._button("次のピーク ▶", a["marker_peak_right"], "右の次のピークへ")
-        self.btn_lower = self._button("次に高い", a["marker_peak_lower"], "いまより低いピークのうち最も高いものへ")
-        self.btn_add = self._button("マーカー追加", a["marker_add"], "新しい M をピークに置く")
-        self.btn_clear = self._button("全消去", a["marker_clear"], "マーカーを全部消す")
-        self.btn_copy = self._button("コピー", a["marker_copy"], "表をタブ区切りでクリップボードへ")
+        L = texts.LABELS
+        self.btn_peak = self._button(texts.DIRECTIONS["highest"], a["marker_peak"], L["btn_peak_tip"])
+        self.btn_left = self._button(L["btn_left"], a["marker_peak_left"], L["btn_left_tip"])
+        self.btn_right = self._button(L["btn_right"], a["marker_peak_right"], L["btn_right_tip"])
+        self.btn_lower = self._button(L["btn_lower"], a["marker_peak_lower"], L["btn_lower_tip"])
+        self.btn_add = self._button(L["btn_add"], a["marker_add"], L["btn_add_tip"])
+        self.btn_clear = self._button(L["clear_all"], a["marker_clear"], texts.MENU_ITEMS["marker_clear"])
+        self.btn_copy = self._button(L["copy_table"], a["marker_copy"], L["btn_copy_tip"])
         for b in (self.btn_peak, self.btn_left, self.btn_right, self.btn_lower, self.btn_add):
             bar.addWidget(b)
         bar.addStretch(1)
@@ -66,7 +67,7 @@ class MarkerPanel(QWidget):
 
         self.tree = QTreeWidget()
         self.tree.setColumnCount(len(marker_rows.COLUMNS) + 1)
-        self.tree.setHeaderLabels(list(marker_rows.COLUMNS) + ["操作"])
+        self.tree.setHeaderLabels(list(marker_rows.COLUMNS) + [texts.LABELS["row_ops"]])
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(True)
@@ -126,12 +127,12 @@ class MarkerPanel(QWidget):
             if want != have:
                 cb.clear()
                 for i in want:
-                    cb.addItem("なし" if i is None else i, i)
+                    cb.addItem(texts.LABELS["none"] if i is None else i, i)
             cb.setCurrentIndex(max(0, cb.findData(row.get("ref"))) if row.get("ref") else 0)
             cb.blockSignals(False)
         # 表の外に隠れた行も含めて、注意の列の幅を一番長い文字に合わせる（表は横にスクロールする）
         fm = self.tree.fontMetrics()
-        widest = max([fm.horizontalAdvance(c[COL_NOTE]) for c in texts_] + [fm.horizontalAdvance("注意")])
+        widest = max([fm.horizontalAdvance(c[COL_NOTE]) for c in texts_] + [fm.horizontalAdvance(marker_rows.COLUMNS[COL_NOTE])])
         # 字形の置き換え（和文の書体）で測った幅より広く描かれることがあるので、1割の余白を足す
         self.tree.header().resizeSection(COL_NOTE, int(widest * 1.1) + 24)
         self.select(selected)
@@ -156,13 +157,13 @@ class MarkerPanel(QWidget):
             it = self._items[r["id"]]
             if r.get("kind") == "marker":
                 cb = QComboBox()
-                cb.setToolTip("デルタの基準（この行に Δ周波数・Δ値を出す相手）")
+                cb.setToolTip(texts.LABELS["ref_combo_tip"])
                 cb.activated.connect(lambda _i, mid=r["id"], c=cb: self._set_ref(mid, c.currentData()))
                 self.tree.setItemWidget(it, COL_REF, cb)
                 self._ref_combos[r["id"]] = cb
             ops = QToolButton()
             ops.setObjectName("small")
-            ops.setText("操作")
+            ops.setText(texts.LABELS["row_ops"])
             ops.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             ops.setMenu(self._row_menu(r))
             self.tree.setItemWidget(it, COL_OPS, ops)
@@ -202,28 +203,28 @@ class MarkerPanel(QWidget):
         m = QMenu(self)
         rid = r["id"]
         if r.get("kind") == "marker":
-            for text, target, name in (("この周波数を Center に", "center", "row_center"),
-                                       ("この値を REF レベルに", "ref", "row_ref"),
-                                       ("デルタの2点を Start・Stop に", "span", "row_span")):
+            for text, target, name in ((texts.LABELS["row_center"], "center", "row_center"),
+                                       (texts.LABELS["row_ref"], "ref", "row_ref"),
+                                       (texts.MENU_ITEMS["marker_span"], "span", "row_span")):
                 act = m.addAction(text)
                 act.setObjectName(name)
                 act.triggered.connect(lambda _=False, t=target: self.win.marker_to(rid, t))
             m.addSeparator()
-            act = m.addAction(f"{rid} を消す")
+            act = m.addAction(texts.w("row_remove", m=rid))
             act.setObjectName("row_remove")
             act.triggered.connect(lambda: self.win.call("marker_remove", id=rid))
         elif r.get("offset"):
             typ, idx = r["offset"]
-            act = m.addAction("このカーソルを消す")
+            act = m.addAction(texts.LABELS["row_remove_cursor"])
             act.setObjectName("row_remove")
             act.triggered.connect(lambda: self.win.call("marker_offset_remove", id=r["parent"], type=typ, index=idx))
         elif rid in ("X1", "X2", "Y1", "Y2"):
             key = {"X1": "x1_hz", "X2": "x2_hz", "Y1": "y1", "Y2": "y2"}[rid]
-            act = m.addAction(f"{rid} を外す")
+            act = m.addAction(texts.w("row_unset", m=rid))
             act.setObjectName("row_remove")
             act.triggered.connect(lambda: self.win.call("set_xy", **{key: None}))
         else:
-            act = m.addAction("マーカーの機能はマーカーのタブで変えます")
+            act = m.addAction(texts.LABELS["row_function_note"])
             act.setEnabled(False)
         return m
 

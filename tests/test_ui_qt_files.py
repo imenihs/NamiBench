@@ -8,7 +8,7 @@ from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
-from pygigast.ui_qt import png_export
+from pygigast.ui_qt import png_export, texts
 from pygigast.ui_qt.files import ExportDialog
 from pygigast.ui_qt.main_window import MainWindow
 from pygigast.ui_qt.prefs import UiPrefs
@@ -139,7 +139,7 @@ class PngTest(UiBase):
         self.assertEqual(len(list((self.root / "png").glob("gigast_*.png"))), 2)
         self.win.actions["png_copy"].trigger()
         self.assertFalse(QGuiApplication.clipboard().image().isNull())
-        self.assertIn("コピーしました", self.win.st_note.text())
+        self.assertIn(texts.LABELS["png_copied"], self.win.st_note.text())
 
     def test_palette_choice_default_light(self):
         self.assertEqual(self.win.display_tab.png_palette_choice(), "light")
