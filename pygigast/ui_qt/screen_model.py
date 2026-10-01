@@ -118,6 +118,9 @@ def rtl_view(st: dict) -> dict:
         "dll_found": bool(rtl.get("dll_found")),
         "ppm_reason": reason,
         "level_reason": reason or (RTL_LABELS["needs_manual_gain"] if rtl.get("agc") else None),
+        # 「利得を合わせる」（設計Q §6.5）: AGC の間と、合わせている最中は押せない
+        "fit_reason": reason or (RTL_LABELS["fit_needs_manual"] if rtl.get("agc") else None)
+        or (RTL_LABELS["fit_running"] if rtl.get("fitting") else None),
     }
 
 

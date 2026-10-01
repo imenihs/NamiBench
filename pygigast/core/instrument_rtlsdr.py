@@ -18,12 +18,15 @@ Instrument（instrument.py）に混ぜて使う。`_` で始まるメソッド�
 """
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 import datetime
 import json
 import math
 import os
 import re
+import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -34,9 +37,10 @@ from .devices.rtlsdr import driver as rtl_driver
 from .devices.rtlsdr import levels as rtl_levels
 from .devices.rtlsdr.dll import READ_BLOCK, find_dll
 from .instrument_common import CommandError
+from .storage import Cancelled
 from .rtltcp import TUNER_R820T
 from .trace import ConditionChange
-from .types import AdoptedSweep, Frame, Quantity, RawSweep, SweepRequest, ValueKind
+from .types import AdoptedSweep, Frame, Quantity, RawSweep, SweepDiscarded, SweepRequest, ValueKind
 
 RTLSDR_ENCODING = rtl_levels.ENCODING
 
@@ -269,6 +273,17 @@ class RtlSdrInstrumentDevice(Device):
         self.current_fixed = fc
         return self.inner.measure(sweep, cancel)
 
+    def fit_gain(self, sweep: AdoptedSweep, cancel=None, progress=None) -> dict:
+        """利得を合わせる（設計Q §6.5）。中心を動かせないときは測るときと同じ中心で試す。"""
+        want = self.fixed_center_fn()
+        fc = None
+        if want is not None:
+            f = self.inner.profile()["freq"]
+            fc = align_to_axis(int(want), sweep, int(f["min_hz"]), int(f["max_hz"]))
+        self.inner.fixed_center_hz = fc
+        self.current_fixed = fc
+        return self.inner.fit_gain(sweep, cancel, progress)
+
     def close(self) -> None:
         self.tap.sink = None
         self.inner.close()
@@ -366,6 +381,8 @@ class RtlSdrMixin:
             "level_unit": self._rtlsdr_unit,
             "shared_serial": self._rtlsdr_shared if dev is not None else 0,
             "overload": self._rtlsdr_overload_last,
+            # 「利得を合わせる」の最中か（ボタンを無効にする: 設計Q §6.5）
+            "fitting": any(t.kind == "rtlsdr_fit_gain" for t in getattr(self, "_tasks", {}).values()),
             "fixed_center": None if tgt is None else {"cause": tgt[0], "tuner_center_hz": tgt[1]},
         }
 
@@ -536,6 +553,55 @@ class RtlSdrMixin:
             after = (min(steps, key=lambda g: (abs(g - want), g)), False)
         if after != before:
             self._rtlsdr_changed_meaning("gain")
+
+    def _cmd_rtlsdr_fit_gain(self) -> dict:
+        """「利得を合わせる」（設計Q §6.5）: いまの条件で振り切れないいちばん大きい段を選んで入れる（長い処理）。
+
+        段を上から短く測って試すので、位置の多い広い Span では時間がかかる（H §4.1: 進み具合とやめるを出す）。
+        終わったら設定に残し、値の意味が変わるので蓄積を捨てる（設計F §5.3）。知らせは task_done の1件だけで、
+        選んだ段と捨てたトレースを入れる（trace_reset を別に出さない）。AGC の間は受け付けない（段を選ぶ意味が無い）。
+        """
+        dev = self._rtlsdr_device()
+        if self._rtlsdr_cfg["agc"]:
+            raise CommandError("rtlsdr_fit_needs_manual_gain")
+        if any(t.kind == "rtlsdr_fit_gain" for t in self._tasks.values()):
+            raise CommandError("rtlsdr_fit_running")
+        sweep = self._adopted
+        previous = dev.gain_db
+
+        def submit(progress, cancel):
+            fut: concurrent.futures.Future = concurrent.futures.Future()
+
+            def run() -> None:
+                t0 = time.monotonic()
+                try:
+                    fut.set_result(dev.fit_gain(sweep, cancel,
+                                                lambda d, t: progress(d, t, time.monotonic() - t0)))
+                except SweepDiscarded as e:
+                    # やめた（試す前の段に戻してある）は task_cancelled、それ以外は task_failed
+                    fut.set_exception(Cancelled() if e.reason == "cancelled" else e)
+                except BaseException as e:  # noqa: BLE001 — 終わりの知らせ（task_failed）にする
+                    fut.set_exception(e)
+
+            threading.Thread(target=run, name="pygigast-rtl-fit", daemon=True).start()
+            return fut
+
+        def then(res: dict) -> dict:
+            self._rtlsdr_cfg["gain_db"] = float(res["gain_db"])
+            self._rtlsdr_cfg["agc"] = False
+            self._rtlsdr_save_settings()
+            dev.set_gain(float(res["gain_db"]))
+            resets = self._traces.on_condition_change(ConditionChange.CALIBRATION)
+            self._diff_refresh()
+            self._rtlsdr_overload_key = None
+            # 前の段の掃引の「振り切れ」は古い。合わせた段で試した結果に置き換える（次の掃引で測り直す）
+            self._rtlsdr_overload_last = bool(res.get("overload"))
+            self._push_job()
+            return {**res, "previous_gain_db": previous,
+                    "traces_reset": sorted(resets), "codes": {str(k): v for k, v in resets.items()}}
+
+        return self._start_task("rtlsdr_fit_gain", submit, then, total=len(dev.gain_steps_db),
+                                detail={"gain_before_db": previous})
 
     def _rtlsdr_set_ppm(self, ppm: int, source: dict) -> None:
         dev = self._rtlsdr_device()

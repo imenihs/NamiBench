@@ -57,6 +57,7 @@ def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
         "marker_copy": win._marker_copy,
         "cal_legacy": win._import_legacy,
         "settings": win._settings_dialog,
+        "web_connect": lambda: win.web.show_connect(),
         "help_keys": win._show_key_table,
         "help_about": win._show_about,
     }

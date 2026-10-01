@@ -192,3 +192,25 @@ input.mid { width: 11em; }
 .dev-act { grid-column: 4; grid-row: 1 / span 2; min-width: 6em; }
 .dev-details { grid-column: 1 / -1; grid-row: 3; font-size: 12px; color: var(--text-dim); user-select: text; }
 .dev-status { margin-top: 8px; }
+
+/* ---- 見るだけの接続（A §4.3.2 の 4）: 欄をまとめて無効にする包み。並びには影響させない */
+fieldset.ro { display: contents; border: 0; margin: 0; padding: 0; min-width: 0; }
+
+/* ---- 接続のしかた（A §4.3.2 の 2） */
+.modal.connect { width: min(760px, 96vw); }
+.qr-grid { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
+.qr-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1 1 280px; min-width: 0; }
+.qr-col .row { display: flex; gap: 4px; width: 100%; }
+.qr-title { font-size: 16px; font-weight: 600; }
+.qr-img svg { display: block; width: 210px; height: 210px; }
+.code-big { text-align: center; font-size: 40px; font-weight: 700; letter-spacing: 6px; font-variant-numeric: tabular-nums; }
+.code-big.expired { color: var(--axis); text-decoration: line-through; }
+.code-left { text-align: center; }
+
+/* ---- 認証の画面（鍵の無い LAN の接続に出す唯一の画面） */
+.auth-body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
+form.auth { display: flex; flex-direction: column; gap: 10px; width: min(420px, 100%); }
+form.auth h1 { margin: 0 0 6px; font-size: 22px; }
+form.auth label { font-size: 15px; }
+form.auth input { font-size: 32px; letter-spacing: 8px; text-align: center; padding: 6px; }
+form.auth button { font-size: 18px; padding: 8px; }

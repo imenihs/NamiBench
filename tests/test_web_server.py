@@ -293,13 +293,6 @@ class EncodeTest(unittest.TestCase):
     def test_jsonable(self):
         self.assertEqual(web.to_jsonable({"a": float("nan"), "b": np.int64(3), "c": (1, 2)}), {"a": None, "b": 3, "c": [1, 2]})
 
-    def test_check_host(self):
-        web.check_host("127.0.0.1", False)
-        web.check_host("localhost", False)
-        with self.assertRaises(ValueError):
-            web.check_host("0.0.0.0", False)  # LAN へ開くのは --lan を付けたときだけ
-        web.check_host("0.0.0.0", True)
-
 
 @unittest.skipUnless(shutil.which("node"), "Node が無い")
 class UnitsJsTest(unittest.TestCase):

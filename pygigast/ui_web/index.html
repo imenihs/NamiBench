@@ -22,6 +22,7 @@
 <script src="app_menu.js"></script>
 <script src="app_rtl.js"></script>
 <script src="app_devices.js"></script>
+<script src="app_files.js"></script>
 <script src="app.js"></script>
 </head>
 <body>
@@ -49,6 +50,8 @@
           </div>
         </div>
       </div>
+      <!-- 見るだけの接続では値の欄とボタンを無効にして理由を出す（A §4.3.2 の 4）。メニューと PNG は使える -->
+      <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
       <div class="modes">
         <button v-for="m in modes" :key="m[0]" class="mode-btn" :class="{on: sw && sw.mode === m[0]}"
                 :disabled="!!modeReason(m[0])" :title="m[2] + keyHint('mode_' + m[0]) + (modeReason(m[0]) ? ' — ' + modeReason(m[0]) : '')"
@@ -72,8 +75,10 @@
                  @commit="commitFreq('start', 'start_hz', $event)" @step="(e, d) => stepFreq('start', 'start_hz', e, d)"></num-field>
       <num-field label="Stop" big :text="freqText.stop" :note="notes.stop" @clear-note="clearNote('stop')"
                  @commit="commitFreq('stop', 'stop_hz', $event)" @step="(e, d) => stepFreq('stop', 'stop_hz', e, d)"></num-field>
+      </fieldset>
     </div>
     <div class="topgroup">
+      <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
       <div class="field">
         <div class="field-head"><span class="field-name">RBW</span></div>
         <!-- 選択肢は機器ごと。FFT の機器は窓ごとにまとめる（設計Q §6.4） -->
@@ -119,8 +124,9 @@
         </template>
         <span class="refquick-state dim" :title="[refQuick.taking ? refQuick.progress_text : refQuick.text, refQuick.tip].filter((t) => t).join('\n')">{{ refQuick.taking ? refQuick.progress_text : refQuick.text }}</span>
       </div>
+      </fieldset>
       <div class="filebtns">
-        <button class="top-btn" :title="W('save') + keyHint('save')" @click="trigger('save')">{{ W('save') }}</button>
+        <button class="top-btn" :disabled="readOnly" :title="(readOnlyReason || W('save')) + keyHint('save')" @click="trigger('save')">{{ W('save') }}</button>
         <button class="top-btn" :title="T('MENU_ITEMS', 'png_save') + keyHint('png_save')" @click="trigger('png_save')">PNG</button>
       </div>
     </div>
@@ -147,17 +153,20 @@
 
       <div class="marker-box" v-show="show('markers')">
         <div class="marker-tools">
+          <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
           <button @click="trigger('marker_peak')" :title="T('DIRECTIONS', 'highest') + keyHint('marker_peak')">{{ T('DIRECTIONS', 'highest') }}</button>
           <button @click="trigger('marker_peak_left')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'left') + keyHint('marker_peak_left')">◀ {{ W('next_peak') }}</button>
           <button @click="trigger('marker_peak_right')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'right') + keyHint('marker_peak_right')">{{ W('next_peak') }} ▶</button>
           <button @click="markerPeak('lower')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'lower')">{{ T('DIRECTIONS', 'lower') }}</button>
           <button @click="trigger('marker_clear')" :disabled="!markers.markers.length">{{ W('clear_all') }}</button>
+          </fieldset>
           <button @click="copyMarkerTable" :disabled="!markerRows.length" :title="T('MENU_ITEMS', 'marker_copy')">{{ W('copy_table') }}</button>
           <span class="grow"></span>
           <button class="small" v-if="!part" @click="detach('markers')" :title="W('detach_item', {part: W('part_markers')})">{{ W('detach') }}</button>
         </div>
         <div class="table-scroll">
           <!-- 列・行・文字は Qt のマーカー表と同じ（サーバーが marker_rows で作る） -->
+          <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
           <table class="mtable">
             <thead><tr><th v-for="(c, i) in markerColumns" :key="i" :class="{r: (markers.right || [])[i]}">{{ c }}</th><th></th></tr></thead>
             <tbody>
@@ -184,6 +193,7 @@
               </tr>
             </tbody>
           </table>
+          </fieldset>
         </div>
       </div>
       <div class="detached-bar" v-if="!part && detached.markers">{{ W('detached_now', {part: W('part_markers')}) }} <button class="small" @click="reattach('markers')">{{ W('reattach') }}</button></div>
@@ -197,6 +207,7 @@
         <button class="small" @click="detach('tab-' + tab)" :title="W('detach_tab_tip')">{{ W('detach') }}</button>
       </nav>
       <div class="detached-bar" v-if="!part && detached['tab-' + tab]">{{ W('detached_tab') }} <button class="small" @click="reattach('tab-' + tab)">{{ W('reattach') }}</button></div>
+      <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
 
       <!-- ---- トレース・掃引（J §4.5） ---- -->
       <div class="tab-body" v-show="showTab('trace')">
@@ -242,6 +253,8 @@
           <select :value="rtlGainValue" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'gain_tip')" @change="setGain($event.target.value)">
             <option v-for="g in rtlView.gains" :key="String(g.value)" :value="g.value == null ? 'agc' : String(g.value)">{{ g.text }}</option>
           </select>
+          <label></label>
+          <button class="small" :disabled="!!rtlView.fit_reason || readOnly" :title="T('RTL_LABELS', 'fit_gain_tip') + (rtlView.fit_reason ? ' — ' + rtlView.fit_reason : '')" @click="cmd('rtlsdr_fit_gain', {}, {field: 'rtl'})">{{ T('RTL_LABELS', 'fit_gain') }}</button>
           <label>{{ T('RTL_LABELS', 'ppm') }}</label>
           <input class="num" :value="rtlView.ppm" :disabled="!!rtlView.reason" :title="T('RTL_LABELS', 'ppm_tip')" @change="setPpm($event.target.value)">
         </div>
@@ -430,6 +443,7 @@
         <h3>NF</h3>
         <div class="dim">{{ modeReason('nf') }}</div>
       </div>
+      </fieldset>
     </aside>
   </main>
 
@@ -480,6 +494,31 @@
     </div>
   </div>
 
+  <!-- 接続のしかた（QR 2つ・URL と［コピー］・6桁の認証番号: A §4.3.2 の 2）。QR の SVG はサーバーが作る -->
+  <div class="modal-back" v-if="connectInfo" @click="closeConnect">
+    <div class="modal connect" @click.stop>
+      <h3>{{ WL('connect_title') }}</h3>
+      <p v-if="!connectInfo.address" class="warn">{{ WL('no_address') }}</p>
+      <template v-else>
+        <div class="qr-grid">
+          <div class="qr-col" v-for="k in ['operate', 'view']" :key="k">
+            <div class="qr-title">{{ WL('connect_' + k) }}</div>
+            <div class="qr-img" v-html="connectInfo.qr_svg[k]"></div>
+            <div class="row"><input class="mid grow" readonly :value="connectInfo.urls[k]" @focus="$event.target.select()">
+              <button class="small" :disabled="!canCopyText" :title="canCopyText ? '' : W('no_clipboard_text')" @click="copyUrl(k)">{{ WL('copy') }}</button></div>
+            <div class="dim" v-if="copiedKind === k">{{ WL('copied') }}</div>
+          </div>
+        </div>
+        <p class="dim">{{ WL('connect_qr_note') }}</p>
+        <p>{{ WL('code_label', {plain: connectInfo.plain}) }}</p>
+        <div class="code-big" :class="{expired: !connectLeft}">{{ (connectInfo.code || '').slice(0, 3) }} {{ (connectInfo.code || '').slice(3) }}</div>
+        <div class="code-left" :class="connectLeft ? 'dim' : 'warn'">{{ connectLeft ? WL('code_valid', {s: connectLeft}) : WL('code_expired') }}</div>
+      </template>
+      <p class="dim">{{ WL('note') }}</p>
+      <div class="modal-btns"><button @click="closeConnect">{{ WL('close') }}</button></div>
+    </div>
+  </div>
+
   <!-- 入力の窓（保存先・開くファイル・アプリ設定など） -->
   <div class="modal-back" v-if="modal" @click="modal = null">
     <div class="modal" @click.stop>
@@ -506,9 +545,7 @@
         <h3>{{ T('SETTINGS_LABELS', 'rtlsdr_group') }}</h3>
         <div :class="rtlView.dll_found ? '' : 'warn'">{{ rtlView.dll_found ? T('SETTINGS_LABELS', 'rtlsdr_found') : T('SETTINGS_LABELS', 'rtlsdr_missing') }}</div>
         <div class="dim">{{ rtlView.dll_text }}</div>
-        <div class="row"><input class="mid" :placeholder="W('dll_folder_placeholder')" @change="setDllFolder($event.target.value)">
-          <button class="small" @click="setDllFolder('')">{{ T('SETTINGS_LABELS', 'rtlsdr_default') }}</button></div>
-        <div class="fnote" v-if="notes.dll">{{ notes.dll.text }}</div>
+        <p class="dim">{{ W('dll_folder_web') }}</p>
         <h3>{{ T('SETTINGS_LABELS', 'other_group') }}</h3>
         <p class="dim">{{ T('SETTINGS_LABELS', 'other_note') }}</p>
       </template>

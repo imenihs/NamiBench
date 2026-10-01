@@ -72,6 +72,7 @@
           marker_copy: () => this.copyMarkerTable(),
           cal_legacy: () => this.legacyDialog(),
           settings: () => this.settingsDialog(),
+          web_connect: () => this.showConnect(),
           help_keys: () => { this.modal = { title: X.get("MENU_ITEMS", "help_keys"), keys: true, fields: [] }; },
           help_about: () => { this.modal = { title: X.get("MENU_ITEMS", "help_about"), note: W("about", { version: this.info.version || "" }), fields: [] }; },
         };
@@ -83,8 +84,11 @@
         const rec = st.recording || {};
         const noMarker = this.selectedMarker ? null : R("select_marker");
         const sel = this.selMarker;
-        if (code.startsWith("mode_")) return this.modeReason(code.slice(5));
+        if (code.startsWith("mode_")) return this.readOnlyReason || this.modeReason(code.slice(5));
+        // 見るだけの接続で使えるのは、表示・PNG・キーの一覧・別ウィンドウだけ（A §4.3.2 の 4）
+        if (this.readOnly && !["png_save", "png_copy", "marker_copy", "help_keys", "help_about"].includes(code)) return this.readOnlyReason;
         switch (code) {
+          case "web_connect": return this.connectReason();
           case "png_save": return this.st ? null : R("no_state");
           case "png_copy": return this.clipboardReason;
           case "save": return (st.traces || []).some((t) => t.has_values) ? null : R("no_data_to_save");

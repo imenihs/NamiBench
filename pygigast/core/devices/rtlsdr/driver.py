@@ -430,6 +430,90 @@ class RtlSdrDevice(Device):
             duration_s=duration, transient_head_points=0, extra=extra,
         )
 
+    # ---- 利得を合わせる（設計Q §6.5 の「利得を合わせる」）----
+    def fit_gain(self, sweep: AdoptedSweep, cancel: Optional[threading.Event] = None,
+                 progress: Optional[Callable[[int, int], None]] = None) -> dict:
+        """いまの条件の全部の位置で振り切れない、いちばん大きい利得の段を選んで入れる。
+
+        段を上から試し、どれかの位置で振り切れ（spectrum.OVERLOAD_RATIO を超える: 設計Q §6.4）たら1段下げる。
+        1つの位置の読みは短い（バッファを初期化して最初の 16384 バイトを捨て、次の 16384 バイトだけを見る）。
+        振り切れた位置を次の段で最初に見る（振り切れる段では早く次へ進める。選ぶ段は順番に依らない）。
+        いちばん下の段でも振り切れるときは、いちばん下の段にして overload=True を返す。
+        測っている間は機器の口を握るので、掃引はその間待つ。
+        """
+        if Mode(sweep.mode) != Mode.SA:
+            raise InvalidSweep(f"RTL-SDR はスペアナだけ（{sweep.mode}）")
+        with self._lock:
+            if self._h is None:
+                raise DeviceDisconnected("開いていない")
+            self._apply_pending()
+            try:
+                return self._fit_gain_locked(sweep, cancel, progress)
+            except DeviceDisconnected:
+                self._drop()
+                raise
+
+    def _fit_gain_locked(self, sweep: AdoptedSweep, cancel, progress) -> dict:
+        _, pl = make_plan(self._profile, sweep.axis, sweep.rbw_hz, self.fixed_center_hz)
+        centers = list(pl.centers)
+        steps = sorted(self._gains, reverse=True)
+        if not steps:
+            raise DeviceError("利得の段を読めていない")
+        before = self._gain_tenth
+        hot = 0
+        chosen: Optional[int] = None
+        ratio_at_chosen = 0.0
+        tried = 0
+        try:
+            for k, g in enumerate(steps):
+                if _cancelled(cancel):
+                    raise SweepDiscarded("cancelled", {"steps_done": k})
+                self._h.set_manual_gain(g)
+                self._gain_tenth = g
+                tried = k + 1
+                worst = 0.0
+                over_at: Optional[int] = None
+                for j in range(len(centers)):
+                    i = (hot + j) % len(centers)
+                    c = centers[i]
+                    if c != self._tuned_hz:
+                        self._h.set_center_freq(c)
+                        self._tuned_hz = c
+                    # 利得を変えた後・中心を変えた後の古いデータを使わない
+                    self._h.reset_buffer()
+                    buf = self._h.read(2 * READ_BLOCK)[READ_BLOCK:]
+                    r = spectrum.overload_ratio(buf)
+                    worst = max(worst, r)
+                    if r > spectrum.OVERLOAD_RATIO:
+                        over_at = i
+                        break
+                if progress is not None:
+                    progress(k + 1, len(steps))
+                if over_at is None:
+                    chosen = g
+                    ratio_at_chosen = worst
+                    break
+                hot = over_at
+                ratio_at_chosen = worst
+        except BaseException:
+            # やめた・失敗したときは試す前の利得へ戻す（黙って変えたままにしない）
+            if self._h is not None:
+                try:
+                    self._apply_gain(None if before is None else before / 10.0)
+                except Exception:  # noqa: BLE001
+                    pass
+            self._tuned_hz = None
+            raise
+        overload = chosen is None
+        if chosen is None:
+            chosen = steps[-1]
+            self._h.set_manual_gain(chosen)
+            self._gain_tenth = chosen
+        # 次の測定は中心を合わせ直してから読む（試した段の残りのデータを使わない）
+        self._tuned_hz = None
+        return {"gain_db": chosen / 10.0, "overload": overload, "overload_ratio": ratio_at_chosen,
+                "steps_tried": tried, "positions": len(centers)}
+
     def close(self) -> None:
         with self._lock:
             self._drop()

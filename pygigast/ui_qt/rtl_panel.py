@@ -1,6 +1,7 @@
 """右のタブ「トレース・掃引」の受信の欄（RTL-SDR: 設計Q §6.5・§6.6）。
 
 - 受信の利得: 機器から読んだ段（29 段）と AGC。REF レベルとは連動しない（Q §6.5）
+- 「利得を合わせる」: 振り切れないいちばん大きい段をコアが選ぶ（Q §6.5）。AGC の間は理由を出して無効
 - 周波数の補正（ppm）: 数で入れる。個体の校正としてシリアル番号ごとに保存（コアが行う）
 - 個体の校正: マーカーを既知の信号に置き、本当の周波数・レベルを入れて「ppm をこの信号で合わせる」
   「レベルをこの信号で合わせる」（Q §6.6。計算と保存はコア）
@@ -32,6 +33,11 @@ class RtlPanel(QGroupBox):
         self.gain.setToolTip(L["gain_tip"])
         self.gain.activated.connect(self._gain_chosen)
         form.addRow(L["gain"], self.gain)
+        # 「利得を合わせる」（1回押し: 設計Q §6.5）。利得の欄のすぐ下に置く
+        self.fit_btn = QPushButton(L["fit_gain"])
+        self.fit_btn.setObjectName("small")
+        self.fit_btn.clicked.connect(lambda: win.call("rtlsdr_fit_gain"))
+        form.addRow(self.fit_btn)
         self.ppm = QSpinBox()
         self.ppm.setRange(-PPM_LIMIT, PPM_LIMIT)
         self.ppm.setKeyboardTracking(False)
@@ -99,6 +105,7 @@ class RtlPanel(QGroupBox):
         self.ppm.blockSignals(False)
         set_enabled(self.gain, v["reason"], texts.RTL_LABELS["gain_tip"])
         set_enabled(self.ppm, v["reason"], texts.RTL_LABELS["ppm_tip"])
+        set_enabled(self.fit_btn, v["fit_reason"], texts.RTL_LABELS["fit_gain_tip"])
         self.cal_text.setText(v["cal_text"] if v["connected"] else v["reason"])
         self.unit_text.setText(v["unit_text"])
         self.unit_text.setVisible(bool(v["unit_text"]))

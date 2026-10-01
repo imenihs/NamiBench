@@ -23,11 +23,6 @@
     const p = (n) => String(n).padStart(2, "0");
     return `gigast_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
-  function joinPath(dir, name) {
-    if (!dir) return name;
-    const sep = dir.includes("\\") ? "\\" : "/";
-    return dir.replace(/[\\/]+$/, "") + sep + name;
-  }
   function fmtLevel(v, unit) { return v == null ? "" : `${v.toFixed(2)} ${unit || ""}`.trim(); }
 
   const base = {
@@ -134,6 +129,7 @@
       statusItems() {
         const items = this.ui.status ? [...this.ui.status] : [];
         if (!this.wsOpen && this.textsReady) items.push({ key: "ws", text: X.fmt("status_ws_down"), cls: "warn" });
+        if (this.readOnly) items.unshift({ key: "ro", text: this.readOnlyReason, cls: "warn" });
         return items;
       },
       tasks() {
@@ -167,6 +163,7 @@
     },
     async mounted() {
       try {
+        await this.authFromHash();
         X.load(await GSApi.getJson("/api/v1/texts"));
         this.info = await GSApi.getJson("/api/v1/info");
         this.colors = this.info.palettes;
@@ -187,6 +184,7 @@
     methods: {
       // ------------------------------------------------------------ 命令
       async cmd(name, args = {}, opts = {}) {
+        if (this.readOnlyBlocks(name)) return null;
         try {
           const r = await call(name, args);
           if (r && r.texts && r.texts.adjustments) this.showAdjustments(r.texts, r.alternative);
@@ -342,6 +340,7 @@
         } else if (kind === "devices") {
           this.onDevices(p);
         } else if (kind === "notice") {
+          this.onNoticeFiles(p);
           const v = p.view || { text: p.code, traces: {} };
           for (const [n, text] of Object.entries(v.traces || {})) this.traceNote(Number(n), text);
           this.note(null, v.text);
@@ -634,7 +633,7 @@
         this.openModal(W("rename_ref_title"), [{ key: "name", label: W("name"), value: r.name }], (v) => this.refAction("reference_rename", { id: r.id, name: v.name }));
       },
 
-      // ------------------------------------------------------------ ファイル（パスはサーバーの PC の上）
+      // ------------------------------------------------------------ 入力の窓（ファイルの窓は app_files.js）
       openModal(title, fields, ok, note) {
         this.modal = { title, note, fields: fields.map((f) => ({ ...f })), ok };
       },
@@ -644,45 +643,6 @@
         for (const f of m.fields) v[f.key] = f.type === "check" ? !!f.value : f.value;
         this.modal = null;
         m.ok(v, m);
-      },
-      saveDialog() {
-        this.openModal(W("save_title"), [
-          { key: "path", label: W("save_path"), value: joinPath(this.info.default_dir, nowName() + ".h5") },
-          { key: "note", label: W("memo"), value: "" },
-        ], (v) => this.cmd("save", { path: v.path, note: v.note }));
-      },
-      openDialog() {
-        this.openModal(W("open_title"), [
-          { key: "paths", label: W("open_paths"), value: "", multiline: true },
-        ], (v) => this.cmd("open", { paths: v.paths.split(/\r?\n/).map((s) => s.trim()).filter((s) => s) }));
-      },
-      exportDialog() {
-        const s = this.sw || {};
-        this.openModal(W("export_title"), [
-          { key: "path", label: W("export_path"), value: joinPath(this.info.default_dir, nowName() + ".csv") },
-          { key: "start", label: W("export_start"), value: s.start_hz != null ? U.freqFieldText(s.start_hz) : "" },
-          { key: "stop", label: W("export_stop"), value: s.stop_hz != null ? U.freqFieldText(s.stop_hz) : "" },
-        ], (v) => {
-          const args = { path: v.path };
-          try {
-            if (v.start.trim()) args.start_hz = U.parseFreqHz(v.start);
-            if (v.stop.trim()) args.stop_hz = U.parseFreqHz(v.stop);
-          } catch (e) { this.note(null, W("bad_freq")); return; }
-          this.cmd("export_csv", args);
-        }, W("export_note"));
-      },
-      legacyDialog() {
-        const serial = (this.conn.identity || {}).serial;
-        if (!serial) { this.note(null, W("legacy_need_device")); return; }
-        this.openModal(W("legacy_title"), [
-          { key: "path", label: W("legacy_path"), value: "" },
-        ], (v) => this.cmd("import_legacy_calibration", { path: v.path, serial }, { ok: () => this.note(null, W("legacy_done")) }),
-        W("legacy_note", { serial }));
-      },
-      recordFinishDialog() {
-        this.openModal(W("record_finish_title"), [
-          { key: "path", label: W("save_path"), value: joinPath(this.info.default_dir, nowName() + ".h5") },
-        ], (v) => this.cmd("record_finish", { path: v.path }));
       },
       // ------------------------------------------------------------ PNG（設計I。配置はサーバーの report_layout、描くのは canvas）
       pngBlob(note) {
@@ -796,6 +756,7 @@
     Object.assign(target.methods, part.methods || {});
   }
   merge(base, GSAppMenu);
+  merge(base, GSAppFiles);
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
 

@@ -27,6 +27,11 @@ class LocalApi:
     def get_state(self) -> concurrent.futures.Future:
         return self.call("get_state")
 
+    @property
+    def data_root(self):
+        """アプリのデータのフォルダ（Web の口が作るファイルの置き場 web_files の親: 設計A §4.3.2 の 3）。"""
+        return self._inst._root
+
     def subscribe(self, cb: Callable[[str, dict], None]) -> Callable[[], None]:
         return self._inst.subscribe(cb)
 

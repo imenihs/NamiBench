@@ -113,7 +113,6 @@
         if (!Number.isInteger(v)) { this.note("rtltcp", X.get("ERRORS", "not_integer")); return; }
         this.setRtltcp({ port: v });
       },
-      setDllFolder(text) { this.cmd("rtlsdr_set", { dll_folder: String(text).trim() || null }, { field: "dll" }); },
     },
   };
 })(window);

@@ -94,6 +94,7 @@ MENU_ITEMS = {
     "view_density": "密度表示",
     "settings": "アプリ設定…",
     "settings_keys": "キー操作…",
+    "web_connect": "Web の口: 接続のしかたを表示…",
     "help_keys": "キー操作の一覧",
     "help_about": "pyGigaSt について",
 }
@@ -112,7 +113,7 @@ MENU_LAYOUT = (
                 None, "marker_listen", "listen_stop", None, "marker_remove", "marker_clear", "marker_copy")),
     ("calibration", ("cal_freq", "cal_rbw", "cal_nf", None, "cal_legacy")),
     ("view", ("view_colors", "view_waterfall", "view_density")),
-    ("settings", ("settings", "settings_keys")),
+    ("settings", ("settings", "settings_keys", None, "web_connect")),
     ("help", ("help_keys", "help_about")),
 )
 
@@ -218,6 +219,9 @@ TEMPLATES = {
     "rtl_shared": "同じシリアル番号の機器が {n} 本つながっています（校正は共有）",
     "rtl_dll": "DLL のフォルダ: {folder}",
     "rtl_dll_default": "DLL のフォルダ: 既定（PATH とアプリの rtlsdr フォルダ）",
+    "rtl_fit_done": "利得を {gain} dB に合わせました（前は {before}）",
+    "rtl_fit_overload": "。いちばん小さい段でも振り切れています。入力を弱めてください",
+    "rtl_fit_reset": "。トレース {traces} の蓄積を捨てました",
     "listen_note": "チューナーの中心をマーカーから 300kHz ずらして聞きます。聞いている間は掃引が止まり、表示はチューナーの使える幅の中になります",
     "listen_now": "聞いている: {marker}（{freq}）・{mode}",
     "audio_none": "音を出す機器が見つかりません（音は流れていますが鳴らせません）",
@@ -265,6 +269,10 @@ RTL_LABELS = {
     "cal_true_dbm": "本当のレベル（dBm）",
     "cal_level_button": "レベルをこの信号で合わせる",
     "cal_level_tip": "マーカーを既知のレベルの信号（GigaSt の SG など）に置き、本当のレベルを入れて押します。いまの利得の段の補正として保存し、以後その段は dBm で出ます",
+    "fit_gain": "利得を合わせる",
+    "fit_gain_tip": "いまの条件で、見えている信号が振り切れないいちばん大きい利得の段を選びます（段を上から短く測って試します）。選んだらトレースの蓄積を捨てます",
+    "fit_needs_manual": "AGC の間は使えません（利得を手動の段にしてから押します）",
+    "fit_running": "利得を合わせています",
     "dll_button": "DLL のフォルダ…",
     "not_rtlsdr": "RTL-SDR に繋ぐと使えます",
     "no_marker": "マーカーを置いてから使えます",
@@ -313,6 +321,6 @@ SETTINGS_LABELS = {
     "rtlsdr_choose": "フォルダを選ぶ…",
     "rtlsdr_default": "既定に戻す",
     "other_group": "そのほかの設定",
-    "other_note": "接続・表示・キー操作・保存・Web の口の設定は次の回で実装します（設計O §1.3）",
+    "other_note": "接続・表示・キー操作・保存の設定は次の回で実装します（設計O §1.3）",
     "close": "閉じる",
 }

@@ -47,6 +47,7 @@ from .prefs import UiPrefs
 from .rtl_panel import RtlPanel
 from .settings_dialog import SettingsDialog
 from .statusbar import StatusBar
+from .web_access import WebControl
 from .tab_display import DisplayTab
 from .tab_markers import MarkerTab
 from .tab_source import SourceTab
@@ -82,7 +83,8 @@ class _Bridge(QObject):
 class MainWindow(QMainWindow):
     MODE_NAMES = MODE_NAMES
 
-    def __init__(self, api: LocalApi, prefs: Optional[UiPrefs] = None, check_unfinished: bool = True) -> None:
+    def __init__(self, api: LocalApi, prefs: Optional[UiPrefs] = None, check_unfinished: bool = True,
+                 web: Optional[dict] = None) -> None:
         super().__init__()
         self.api = api
         self.prefs = prefs or UiPrefs()
@@ -109,6 +111,8 @@ class MainWindow(QMainWindow):
         self._build_body()
         self._wire_buttons()
         self._build_status()
+        # Web の口（設計A §4.3.2）。web は起動の引数（--web・--lan）。無ければ設定で覚えた開くか・ポート
+        self.web = WebControl(self, web)
         self.setStyleSheet(stylesheet(self.pal))
         self._style_axes()
         self.setAcceptDrops(True)
@@ -989,6 +993,7 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.listen.close()
+        self.web.shutdown()
         self.prefs.set("vsplit", self.vsplit.sizes())
         self.prefs.set("hsplit", self.hsplit.sizes())
         self._unsub()

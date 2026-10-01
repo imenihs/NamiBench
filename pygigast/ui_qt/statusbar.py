@@ -38,6 +38,9 @@ class StatusBar:
                 self.rtltcp_stop = self._small(texts.SETTINGS_LABELS["rtltcp_stop"],
                                                lambda: win.call("rtltcp_set", enabled=False))
                 sb.addWidget(self.rtltcp_stop)
+        # Web の口を LAN に開いている間の接続の数。押すと相手の一覧（設計A §4.3.2 の 5）
+        self.web = self._small("", lambda: win.web.show_clients())
+        sb.addWidget(self.web)
         self.note = QLabel()
         # 一度きりの知らせは幅が足りないとき先に縮める（状態の項目を切らない。全文はツールチップ）
         self.note.setMinimumWidth(1)

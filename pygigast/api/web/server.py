@@ -9,6 +9,9 @@
 - 聞く機能の音（イベント audio）もバイナリ（見出し JSON の kind が "audio"、float32 の標本）。遅い画面には
   新しい方を残して古い音を捨てる（遅れをためない）
 - 画面の文言は view.py が足す（状態の ui・知らせの view・失敗の text・戻り値の texts。Qt と同じ関数で作る: J §5）
+- 入口の確かめ（Host・Origin・送る形・認証・見るだけ）は guard.py、パスを受け取らない形は webfiles.py、
+  鍵・認証番号・接続の一覧は access.py、認証・ダウンロード・アップロードの受け口は routes_access.py
+  （設計A §4.3.2）。開く・閉じる・LAN の切り替えは service.py
 """
 from __future__ import annotations
 
@@ -18,11 +21,9 @@ import concurrent.futures
 import dataclasses
 import datetime
 import enum
-import ipaddress
 import json
 import math
 import struct
-import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -35,6 +36,9 @@ from ... import __version__
 from ..local import CommandError, LocalApi
 from ...core import report_layout as rl
 from . import view
+from .access import KIND_OPERATE, Access
+from .guard import Guard
+from .webfiles import WebArgError, WebFiles, translate
 
 UI_WEB_DIR = Path(__file__).resolve().parents[2] / "ui_web"
 
@@ -46,7 +50,9 @@ MAX_PENDING_NOTICES = 500
 MAX_PENDING_AUDIO = 64
 
 # 失敗のコードと HTTP の状態（設計に無い判断: 命令が無いは 404、それ以外の命令の失敗は 400）
-_STATUS_OF = {"unknown_command": 404}
+STATUS_OF = {"unknown_command": 404, "unknown_file": 404, "file_not_ready": 409, "upload_too_large": 413,
+             "wrong_code": 401, "bad_key": 401, "blocked": 429, "read_only": 403, "lan_off": 409}
+_TASK_END = ("task_done", "task_failed", "task_cancelled")
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +233,9 @@ class _Client:
 class _Hub:
     """制御スレッドのイベントを受け、asyncio のループで全部の画面へ配る。"""
 
-    def __init__(self, api: LocalApi, trace_rate_hz: float) -> None:
+    def __init__(self, api: LocalApi, trace_rate_hz: float, files: Optional[WebFiles] = None) -> None:
         self.api = api
+        self.files = files
         self.clients: set[_Client] = set()
         self._interval = 1.0 / trace_rate_hz if trace_rate_hz > 0 else 0.0
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -276,6 +283,12 @@ class _Hub:
         elif kind == "markers":
             payload = view.markers_view(payload, view.default_unit(self.last_state))
         elif kind == "notice":
+            if self.files is not None and payload.get("code") in _TASK_END:
+                # Web の口で名前を付けて作らせたファイル: 終わったらダウンロードの番号を知らせに足す（A §4.3.2 の 3）
+                d = payload.get("detail") or {}
+                fid = self.files.task_ended(str(d.get("task_id")), payload.get("code") == "task_done")
+                if fid is not None:
+                    payload = {**payload, "detail": {**d, "file_id": fid}}
             payload = view.notice_view(payload, self.last_state)
         elif kind == "progress":
             payload = view.progress_view(payload)
@@ -331,9 +344,19 @@ async def _await(fut: concurrent.futures.Future) -> Any:
 
 
 def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool = False,
-               static_dir: Path = UI_WEB_DIR) -> FastAPI:
-    """LocalApi に繋いだ FastAPI のアプリを作る。lan は画面に知らせるだけ（PNG のコピーの可否の説明など）。"""
-    hub = _Hub(api, trace_rate_hz)
+               static_dir: Path = UI_WEB_DIR, access: Optional[Access] = None,
+               files: Optional[WebFiles] = None) -> Guard:
+    """LocalApi に繋いだ Web の口を作る（入口の確かめ Guard で包んだ ASGI のアプリ）。
+
+    access・files は起動の間ずっと同じものを渡す（LAN の切り替えでサーバーを開き直しても札とファイルを保つ）。
+    省くとここで作る（files はアプリのデータのフォルダの web_files を空にして使う）。
+    """
+    if access is None:
+        access = Access(lan=lan)
+    if files is None:
+        files = WebFiles(Path(api.data_root) / "web_files")
+        files.reset()
+    hub = _Hub(api, trace_rate_hz, files)
 
     from contextlib import asynccontextmanager
 
@@ -345,8 +368,17 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         finally:
             hub.stop()
 
-    app = FastAPI(title="pyGigaSt", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title="pyGigaSt", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None,
+                  openapi_url=None)
     app.state.hub = hub
+
+    def gs(owner) -> dict:
+        # Guard が確かめた接続の種類（Guard を通らない呼び方は自分の PC と同じ扱い）
+        return owner.scope.get("state", {}).get("gs") or {"kind": KIND_OPERATE, "local": True, "ip": ""}
+
+    def fail(code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> JSONResponse:
+        body = view.error_view({"error": {"code": code, "field": field, "detail": detail or {}}})
+        return JSONResponse(to_jsonable(body), status_code=STATUS_OF.get(code, 400))
 
     @app.get("/api/v1/state")
     async def get_state() -> JSONResponse:
@@ -361,12 +393,13 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         return JSONResponse(texts_json())
 
     @app.get("/api/v1/info")
-    async def get_info() -> JSONResponse:
-        # 保存先の欄の初期値（サーバーの PC の上のパス。設計に無い判断: 利用者のホーム）
+    async def get_info(request: Request) -> JSONResponse:
+        who = gs(request)
         # 配色の初期値（J §4.4。Qt と同じ値を1か所から: U-09）も渡す
-        return JSONResponse({"app": "pyGigaSt", "version": __version__, "lan": lan,
-                             "default_dir": str(Path.home()), "trace_rate_hz": trace_rate_hz,
-                             "palettes": {"dark": rl.DARK_DEFAULT, "light": rl.LIGHT_DEFAULT}})
+        return JSONResponse({"app": "pyGigaSt", "version": __version__, "lan": access.lan,
+                             "trace_rate_hz": trace_rate_hz,
+                             "palettes": {"dark": rl.DARK_DEFAULT, "light": rl.LIGHT_DEFAULT},
+                             "access": {"kind": who["kind"], "local": who["local"]}})
 
     @app.post("/api/v1/png_layout")
     async def png_layout(request: Request) -> JSONResponse:
@@ -381,6 +414,10 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
             return JSONResponse(view.error_view({"error": {"code": "bad_value", "field": None,
                                                            "detail": {"message": str(e)}}}), status_code=400)
 
+    from .routes_access import add_access_routes
+
+    add_access_routes(app, access, files, gs, fail)
+
     @app.post("/api/v1/{command}")
     async def post_command(command: str, request: Request) -> JSONResponse:
         raw = await request.body()
@@ -391,12 +428,19 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         if not isinstance(args, dict):
             return JSONResponse({"error": {"code": "bad_json", "field": None, "detail": {}}}, status_code=400)
         try:
+            # Web の口はパスを受け取らない。名前・アップロードの番号・記録の番号をコアの形へ写す（A §4.3.2 の 3）
+            tr = translate(files, command, args)
+        except WebArgError as e:
+            return fail(e.code, e.field, e.detail)
+        try:
             # 命令の名前は位置で渡す（引数に name を持つ命令とぶつけないため）
-            fut = api.call(command, **args)
-            result = await _await(fut)
+            fut = api.call(command, **tr.args)
+            result = tr.after(await _await(fut))
         except CommandError as e:
-            return JSONResponse(to_jsonable(view.error_view(e.to_dict())), status_code=_STATUS_OF.get(e.code, 400))
+            tr.on_error()
+            return JSONResponse(to_jsonable(view.error_view(e.to_dict())), status_code=STATUS_OF.get(e.code, 400))
         except Exception as e:  # noqa: BLE001
+            tr.on_error()
             return JSONResponse(error_body(e), status_code=500)
         return JSONResponse(to_jsonable(view.result_view(command, args, {} if result is None else result)))
 
@@ -404,6 +448,23 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
     async def events(ws: WebSocket) -> None:
         await ws.accept()
         client = _Client(ws)
+        who = gs(ws)
+        loop = asyncio.get_running_loop()
+
+        def close_ws() -> None:
+            # 一覧の［切断］・認証を作り直す・LAN を OFF（ほかのスレッドから呼ばれる）
+            async def _close() -> None:
+                try:
+                    await ws.close(code=4401)
+                except Exception:  # noqa: BLE001 — もう閉じている
+                    pass
+
+            try:
+                loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_close()))
+            except RuntimeError:
+                pass
+
+        cid = access.add_conn(who["kind"], who["ip"], who.get("session"), who["local"], close_ws)
         # 先に配る先に入れてから今の状態を取る（取る間に起きた変化を落とさない。古い版は _Client が捨てる）
         hub.clients.add(client)
         sender = asyncio.create_task(client.run())
@@ -430,47 +491,12 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         finally:
             hub.clients.discard(client)
             sender.cancel()
+            access.remove_conn(cid)
 
     if static_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="ui_web")
-    return app
-
-
-# ---------------------------------------------------------------------------
-# 起動
-# ---------------------------------------------------------------------------
-
-
-def check_host(host: str, lan: bool) -> None:
-    """既定は自分の PC だけ。LAN へ開くのは --lan を付けたときだけ（Web の口に認証が無いため: A §4.3 の未決）。"""
-    try:
-        loopback = ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        loopback = host == "localhost"
-    if not loopback and not lan:
-        raise ValueError(f"{host} は自分の PC の外から繋がります。LAN へ開くときは --lan を付けてください")
-
-
-def _config(api: LocalApi, host: str, port: int, lan: bool):
-    import uvicorn
-
-    check_host(host, lan)
-    app = create_app(api, lan=lan)
-    return uvicorn.Config(app, host=host, port=port, log_level="warning", lifespan="on", ws="auto")
-
-
-def serve(api: LocalApi, host: str = "127.0.0.1", port: int = 8080, lan: bool = False) -> None:
-    """画面なしで Web の口だけを開き、止められるまで待つ（`pygigast serve`）。"""
-    import uvicorn
-
-    uvicorn.Server(_config(api, host, port, lan)).run()
-
-
-def run_in_thread(api: LocalApi, host: str = "127.0.0.1", port: int = 8080, lan: bool = False):
-    """Qt と同時に Web の口を開く（`pygigast --web`）。止めるときは戻り値の server.should_exit = True。"""
-    import uvicorn
-
-    server = uvicorn.Server(_config(api, host, port, lan))
-    th = threading.Thread(target=server.run, name="pygigast-web", daemon=True)
-    th.start()
-    return server, th
+    guard = Guard(app, access)
+    guard.hub = hub
+    guard.fastapi = app
+    guard.files = files
+    return guard

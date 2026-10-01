@@ -19,6 +19,8 @@ from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタン�
 from .texts_labels import LABELS
 from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「直結を 0dB にする」の語（J §4.7・§4.2）
 from .texts_devices import device_name
+from .texts_web import *  # noqa: F401,F403 — Web の口を LAN に開くときの語（A §4.3.2）
+from .texts_web import WEB_ERRORS
 
 
 def tpl(key: str, **kw) -> str:
@@ -468,6 +470,7 @@ TASK_NAMES = {
     "export_csv": "書き出しています",
     "record_finish": "記録をまとめています",
     "finish_unfinished": "記録をまとめています",
+    "rtlsdr_fit_gain": "利得を合わせています",
     "reference_take": "基準を取っています",
 }
 
@@ -477,6 +480,7 @@ TASK_DONE = {
     "export_csv": "書き出しました",
     "record_finish": "記録をまとめました",
     "finish_unfinished": "記録をまとめました",
+    "rtlsdr_fit_gain": "利得を合わせました",
     "reference_take": "基準を取りました",
 }
 
@@ -486,6 +490,7 @@ TASK_FAILED = {
     "export_csv": "書き出せませんでした",
     "record_finish": "記録をまとめられませんでした",
     "finish_unfinished": "記録をまとめられませんでした",
+    "rtlsdr_fit_gain": "利得を合わせられませんでした",
     "reference_take": "基準を取れませんでした",
 }
 
@@ -496,6 +501,7 @@ TASK_CANCELLED = {
     "export_csv": "書き出しをやめました（書きかけのファイルは消しました）",
     "record_finish": "まとめるのをやめました。記録の作業ファイルは残っていて、あとでまとめられます",
     "finish_unfinished": "まとめるのをやめました。作業ファイルは残っています",
+    "rtlsdr_fit_gain": "利得を合わせるのをやめました（利得は押す前の段に戻しました）",
     "reference_take": "基準を取るのをやめました（基準は変わりません）",
 }
 
@@ -557,6 +563,9 @@ ERRORS.update({
     "bad_name": "名前を入れてください",
     "not_a_work_file": "記録の作業ファイルではありません",
     "unknown_task": "その処理はもう終わっています",
+    "rtlsdr_fit_needs_manual_gain": "AGC の間は利得を合わせられません（利得を手動の段にしてから押します）",
+    "rtlsdr_fit_running": "いま利得を合わせています",
+    **WEB_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
 })
 
@@ -701,6 +710,8 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
             warns = [EXPORT_WARNINGS.get(w, w) for w in res.get("warnings") or []]
             if warns:
                 text += "・" + "・".join(warns)
+        elif kind == "rtlsdr_fit_gain":
+            text = fit_gain_text(res)
         elif kind == "reference_take":
             text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
                                                                                          name=res.get("name", ""))
@@ -720,6 +731,18 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
     return text, None
 
 
+def fit_gain_text(res: dict) -> str:
+    """「利得を合わせる」の終わりの1件（設計Q §6.5: 選んだ段と、蓄積を捨てたこと）。"""
+    before = res.get("previous_gain_db")
+    text = tpl("rtl_fit_done", gain=f"{float(res.get('gain_db', 0.0)):g}",
+               before=TEMPLATES["gain_agc"] if before is None else f"{float(before):g} dB")
+    if res.get("overload"):
+        text += TEMPLATES["rtl_fit_overload"]
+    if res.get("traces_reset"):
+        text += tpl("rtl_fit_reset", traces="・".join(str(x) for x in res["traces_reset"]))
+    return text
+
+
 def notice_view(n: dict, state: Optional[dict] = None) -> dict:
     """知らせ1件の出し方: {"text": 状態バーの文, "traces": {番号: トレースの欄の文}, "path": 保存先 or None}。"""
     code = n.get("code", "")
@@ -728,6 +751,11 @@ def notice_view(n: dict, state: Optional[dict] = None) -> dict:
     path = None
     if code in ("task_done", "task_failed", "task_cancelled"):
         text, path = task_end_text(code, d)
+        res = d.get("result") or {}
+        if code == "task_done" and d.get("task") == "rtlsdr_fit_gain" and res.get("traces_reset"):
+            # 利得を合わせて捨てたトレースは、トレースの欄にも出す（知らせは1件のまま: 設計Q §6.5）
+            t = trace_reset_text({"cause": "gain"})
+            traces = {num: t for num in res["traces_reset"]}
     elif code == "trace":
         t = "・".join(TRACE_NOTICES.get(c, c) for c in d.get("codes") or [])
         traces[d.get("trace")] = t

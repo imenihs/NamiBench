@@ -1,6 +1,7 @@
 """アプリ設定の画面（設計O §1.3。メニュー「設定 → アプリ設定…」から開く別の画面: M-10）。
 
-いまあるのは rtl_tcp の送出（設計Q §4.3・§6.7）と RTL-SDR の DLL のフォルダ（設計Q §6.2）。
+いまあるのは Web の口（開くか・LAN に開くか・ポート: 設計A §4.3.2）・rtl_tcp の送出（設計Q §4.3・§6.7）と
+RTL-SDR の DLL のフォルダ（設計Q §6.2）。
 変えたらすぐ効く（「適用」を置かない）。状態はコアが正本で、開いている間は state を映し続ける。
 """
 from __future__ import annotations
@@ -40,6 +41,41 @@ class SettingsDialog(QDialog):
         note = QLabel(S["note"])
         note.setObjectName("dim")
         lay.addWidget(note)
+
+        # ---- Web の口（A §4.3.2。暗号化していないことを書く: 7）
+        W = texts.WEB_LABELS
+        g = QGroupBox(W["group"])
+        form = QFormLayout(g)
+        self.web_enable = QCheckBox(W["enable"])
+        self.web_enable.toggled.connect(lambda on: win.web.set_enabled(bool(on)))
+        form.addRow(self.web_enable)
+        self.web_lan = QCheckBox(W["lan"])
+        self.web_lan.toggled.connect(lambda on: win.web.set_lan(bool(on)))
+        form.addRow(self.web_lan)
+        self.web_port = QSpinBox()
+        self.web_port.setRange(1, 65535)
+        self.web_port.setKeyboardTracking(False)
+        self.web_port.valueChanged.connect(lambda v: win.web.set_port(int(v)))
+        form.addRow(W["port"], self.web_port)
+        self.web_state = QLabel("")
+        self.web_state.setWordWrap(True)
+        form.addRow(self.web_state)
+        row = QHBoxLayout()
+        self.web_show = QPushButton(W["show_connect"])
+        self.web_show.setObjectName("small")
+        self.web_show.clicked.connect(win.web.show_connect)
+        self.web_regen = QPushButton(W["regenerate"])
+        self.web_regen.setObjectName("small")
+        self.web_regen.clicked.connect(win.web.regenerate)
+        row.addWidget(self.web_show)
+        row.addWidget(self.web_regen)
+        row.addStretch(1)
+        form.addRow(row)
+        web_note = QLabel(W["note"])
+        web_note.setWordWrap(True)
+        web_note.setObjectName("dim")
+        form.addRow(web_note)
+        lay.addWidget(g)
 
         # ---- rtl_tcp
         g = QGroupBox(S["rtltcp_group"])
@@ -110,8 +146,28 @@ class SettingsDialog(QDialog):
         btns.button(QDialogButtonBox.StandardButton.Close).setText(S["close"])
         btns.rejected.connect(self.close)
         lay.addWidget(btns)
-        self.resize(560, 520)
+        self.resize(640, 700)
         self.apply(win.state)
+        self.apply_web()
+
+    def apply_web(self) -> None:
+        """Web の口の欄（状態はコアではなく画面の側の WebControl が持つ）。"""
+        from .tab_traces import set_enabled
+
+        v = self.win.web.view()
+        for w, fn in ((self.web_enable, lambda: self.web_enable.setChecked(v["enabled"])),
+                      (self.web_lan, lambda: self.web_lan.setChecked(v["lan"])),
+                      (self.web_port, lambda: self.web_port.setValue(int(v["port"])))):
+            w.blockSignals(True)
+            fn()
+            w.blockSignals(False)
+        set_enabled(self.web_lan, v["lan_reason"])
+        set_enabled(self.web_show, v["connect_reason"])
+        set_enabled(self.web_regen, v["connect_reason"], texts.WEB_LABELS["regenerate_tip"])
+        self.web_state.setText(v["text"])
+        self.web_state.setObjectName("warn" if v["warn"] else "")
+        self.web_state.style().unpolish(self.web_state)
+        self.web_state.style().polish(self.web_state)
 
     def apply(self, st: dict) -> None:
         if not st:
