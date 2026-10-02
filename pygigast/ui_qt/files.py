@@ -172,7 +172,8 @@ class FileActions:
         return True
 
     def discard_unfinished(self, row: dict) -> bool:
-        if not self.win.confirm(texts.LABELS["discard_title"], texts.w("discard_confirm", n=row.get("n_sweeps", 0))):
+        if not self.win.confirm(texts.LABELS["discard_title"], texts.w("discard_confirm", n=row.get("n_sweeps", 0)),
+                                texts.LABELS["do_discard"]):
             return False
         self.win.call("discard_unfinished", path=row["path"],
                       on_ok=lambda r: self.win.status_note(texts.LABELS["discarded"]))

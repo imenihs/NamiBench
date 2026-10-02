@@ -90,6 +90,12 @@ class Settings:
     def last_serial(self) -> Optional[str]:
         return self.data["known_devices"].get("last")
 
+    def device_kind(self, serial: str) -> Optional[str]:
+        """覚えた機器の種類（gigast・rtlsdr など。前の版で覚えた機器は分からないので None）。"""
+        kinds = self.data["known_devices"].get("kinds")
+        v = kinds.get(serial) if isinstance(kinds, dict) else None
+        return v if isinstance(v, str) and v else None
+
     def last_backend(self) -> Optional[str]:
         return self.data["known_devices"].get("last_backend")
 
@@ -100,12 +106,18 @@ class Settings:
         kd["last"] = serial
         if backend:
             kd["last_backend"] = backend
+            # 機器の種類も覚える（覚えた機器の一覧で、機器の一覧と同じ名前を出すため: 設計J §4.7）
+            kinds = kd.get("kinds") if isinstance(kd.get("kinds"), dict) else {}
+            kinds[serial] = backend
+            kd["kinds"] = kinds
         self.save()
 
     def forget_device(self, serial: str) -> None:
         """覚えた機器から外す（設定の画面の「接続」）。前回の機器だったら前回も外す。"""
         kd = self.data["known_devices"]
         kd["serials"] = [s for s in kd.get("serials", []) if s != serial]
+        if isinstance(kd.get("kinds"), dict):
+            kd["kinds"].pop(serial, None)
         if kd.get("last") == serial:
             kd["last"] = None
             kd.pop("last_backend", None)

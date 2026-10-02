@@ -117,8 +117,9 @@
     methods: {
       S, P, V,
       // ------------------------------------------------------------ 確かめる窓（何が失われるかを言ってから聞く: U-18）
-      askConfirm(title, text) {
-        return new Promise((resolve) => { this.confirmBox = { title, text, resolve }; });
+      // ok は押したら何が起きるかの語（省くと「続ける」。「OK」にしない）
+      askConfirm(title, text, ok) {
+        return new Promise((resolve) => { this.confirmBox = { title, text, ok, resolve }; });
       },
       // 知らせるだけの窓（［閉じる］と「次から出さない」）。閉じたら { checked } で返す
       showInfo(title, text, check, key) {
@@ -169,7 +170,7 @@
       // ---- 接続（覚えた機器・手動の COM 番号）
       knownName(r) { return r.name ? r.name + X.fmt("paren", { text: r.serial }) : r.serial; },
       async forgetDevice(r) {
-        if (!(await this.askConfirm(S("forget_title"), S("forget_confirm", { name: r.name || r.serial })))) return;
+        if (!(await this.askConfirm(S("forget_title"), S("forget_confirm", { name: r.name || r.serial }), X.w("do_forget")))) return;
         this.cmd("forget_device", { serial: r.serial }, { field: "settings_conn" });
       },
       setManualPort(v) { this.manualPort = String(v).trim(); writeStore(MANUAL_STORE, this.manualPort); },
@@ -198,7 +199,7 @@
       async resetPalette(base) {
         const n = this.paletteView.changed_n || 0;
         if (n > 0) {
-          const ok = await this.askConfirm(S("palette_reset_title"), S("palette_reset_confirm", { n, base: X.get("PALETTE_BASES", base) }));
+          const ok = await this.askConfirm(S("palette_reset_title"), S("palette_reset_confirm", { n, base: X.get("PALETTE_BASES", base) }), X.w("do_restore"));
           if (!ok) return;
         }
         this.cmd("palette_reset", { base });
@@ -240,7 +241,7 @@
         const other = GSKeys.conflict(this.keymap, code, key);
         if (other) {
           const q = S("keys_conflict", { key: GSKeys.keyLabel(key), other: GSKeys.commandName(other), command: GSKeys.commandName(code) });
-          if (!(await this.askConfirm(S("keys_conflict_title"), q))) { this.keyMsg = null; return false; }
+          if (!(await this.askConfirm(S("keys_conflict_title"), q, X.w("do_reassign")))) { this.keyMsg = null; return false; }
         }
         this.setKeyOverrides(GSKeys.assign(this.keyOverrides, code, key, other));
         this.keyMsg = { text: S("keys_assigned", { command: GSKeys.commandName(code), key: GSKeys.keyLabel(key) }), warn: false };
@@ -257,7 +258,7 @@
         if (other) {
           // 初期値のキーをほかの命令に付け替えていたら、聞いてからそちらを外す（黙って2つに付けない）
           const q = S("keys_conflict", { key: GSKeys.keyLabel(def), other: GSKeys.commandName(other), command: GSKeys.commandName(code) });
-          if (!(await this.askConfirm(S("keys_conflict_title"), q))) return;
+          if (!(await this.askConfirm(S("keys_conflict_title"), q, X.w("do_reassign")))) return;
           ov = GSKeys.assign(ov, other, "");
         }
         this.setKeyOverrides(ov);
@@ -265,7 +266,7 @@
       async resetAllKeys() {
         const n = GSKeys.changedCount(this.keyOverrides);
         if (!n) return;
-        if (!(await this.askConfirm(S("keys_reset_all_title"), S("keys_reset_all_confirm", { n })))) return;
+        if (!(await this.askConfirm(S("keys_reset_all_title"), S("keys_reset_all_confirm", { n }), X.w("do_reset_all")))) return;
         this.setKeyOverrides({});
       },
 
@@ -353,12 +354,12 @@
       },
       async presetDelete() {
         const p = this.presetSel();
-        if (!p || !(await this.askConfirm(P("title"), P("delete_confirm", { name: p.name })))) return;
+        if (!p || !(await this.askConfirm(P("title"), P("delete_confirm", { name: p.name }), X.w("do_delete")))) return;
         if (await this.cmd("preset_delete", { id: p.id }, { field: "presets" })) this.reloadPresets();
       },
       async presetOverwrite() {
         const p = this.presetSel();
-        if (!p || !(await this.askConfirm(P("title"), P("overwrite_confirm", { name: p.name })))) return;
+        if (!p || !(await this.askConfirm(P("title"), P("overwrite_confirm", { name: p.name }), X.w("do_overwrite")))) return;
         const r = await this.cmd("preset_save", { name: p.name, overwrite_id: p.id }, { field: "presets" });
         if (r) { this.note(null, P("saved", { name: p.name })); this.reloadPresets(); }
       },

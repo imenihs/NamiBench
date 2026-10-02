@@ -91,7 +91,7 @@ def import_legacy(win: "MainWindow") -> None:
     path, _ = QFileDialog.getOpenFileName(win, texts.LABELS["legacy_title"], "", texts.LABELS["filter_txt"])
     if not path:
         return
-    if not win.confirm(texts.LABELS["legacy_short"], texts.w("legacy_confirm", serial=serial)):
+    if not win.confirm(texts.LABELS["legacy_short"], texts.w("legacy_confirm", serial=serial), texts.LABELS["do_import"]):
         return
     win.call("import_legacy_calibration", on_ok=lambda r: show_cal_summary(win, r), path=path, serial=serial)
 

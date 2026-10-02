@@ -160,8 +160,15 @@ class MainWindow(QMainWindow):
 
     # ---- 利用者に聞く（試験では差し替える）
 
-    def confirm(self, title: str, text: str) -> bool:
-        return QMessageBox.question(self, title, text) == QMessageBox.StandardButton.Yes
+    def confirm(self, title: str, text: str, ok: Optional[str] = None) -> bool:
+        """確かめる窓。ボタンは押したら何が起きるかの語（ok。省くと「続ける」）と「やめる」（「Yes・No」にしない）。"""
+        box = QMessageBox(QMessageBox.Icon.Question, title, text, QMessageBox.StandardButton.NoButton, self)
+        yes = box.addButton(ok or texts.LABELS["confirm_ok"], QMessageBox.ButtonRole.AcceptRole)
+        no = box.addButton(texts.LABELS["cancel"], QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(yes)
+        box.setEscapeButton(no)
+        box.exec()
+        return box.clickedButton() is yes
 
     def ask_text(self, title: str, label: str, text: str = "") -> Optional[str]:
         value, ok = QInputDialog.getText(self, title, label, text=text)
@@ -746,7 +753,8 @@ class MainWindow(QMainWindow):
 
     def _marker_clear(self) -> None:
         n = len(self.marker_snap.get("markers", []))
-        if n and not self.confirm(texts.MENU_ITEMS["marker_clear"], texts.w("marker_clear_confirm", n=n)):
+        if n and not self.confirm(texts.MENU_ITEMS["marker_clear"], texts.w("marker_clear_confirm", n=n),
+                                texts.LABELS["do_clear_all"]):
             return
         self.call("marker_clear")
 
@@ -1044,7 +1052,8 @@ class MainWindow(QMainWindow):
         rec = self.state.get("recording") or {}
         if rec.get("active") or rec.get("stopped"):
             lost.append(texts.LABELS["close_lost_record"])
-        if lost and not self.confirm(texts.LABELS["close_title"], texts.LABELS["close_confirm"] + "\n" + "\n".join(lost)):
+        if lost and not self.confirm(texts.LABELS["close_title"], texts.LABELS["close_confirm"] + "\n" + "\n".join(lost),
+                                    texts.LABELS["do_close"]):
             e.ignore()
             return
         self.listen.close()

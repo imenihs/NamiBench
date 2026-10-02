@@ -14,7 +14,8 @@ from .texts_ui import MENU_ITEMS, NOT_YET, REASON_TEXTS, TEMPLATES
 
 SETTINGS_PAGES = {
     "connection": "接続",
-    "display": "表示（配色・知らせ）",
+    "display": "配色",
+    "notify": "通知",
     "keys": "キー操作",
     "save": "保存",
     "web": "ブラウザから使う",
@@ -31,7 +32,7 @@ SETTINGS_TEXTS = {
     "known_last": "前回の機器",
     "forget": "忘れる",
     "forget_title": "機器を忘れる",
-    "forget_confirm": "「{name}」を覚えた機器から外します。次の起動で自動では繋ぎません（繋いでいる間は切りません）。",
+    "forget_confirm": "「{name}」を覚えた機器から外します。次に起動したとき、自動では繋ぎません。いま繋いでいる機器は、このまま使えます。",
     "manual_group": "見つからないときの手動の COM 番号（GigaSt）",
     "manual_note": "機器の一覧に出ない GigaSt だけに使います。GigaSt かどうか確かめてから繋ぎます",
     "manual_port": "COM 番号",
@@ -116,7 +117,7 @@ VIEW_TEXTS = {
     "level_unit": "単位",
     "level_unit_tip": "電力の読み値の単位（50Ω で換算）。グラフ・マーカー・CSV・PNG・REF レベルが同じ単位になります",
     # 単位の欄は実際に使っている単位を出す（TG・S11 で基準との比を出している間は比の dB）
-    "level_unit_ratio_item": "dB（基準との比）",
+    "level_unit_ratio_item": "dB（TG・S11 のノーマライズ中のみ）",
     "level_unit_ratio_item_tip": "TG・S11 で基準を使っている間だけ、この単位で出します",
     "level_unit_ratio_reason": "基準との比を出している間は電力の単位を使いません。SA・SG に戻すか基準を外すと {unit} で出します",
     "level_unit_changed": "単位を {unit} にしました",
@@ -125,9 +126,9 @@ VIEW_TEXTS = {
     "ratio_text": "基準「{name}」との比（dB）で表示します。電力（{unit}）で見るときは基準を外してください（信号源タブ）。"
                   "SA・SG に戻すと {unit} で表示します",
     "ratio_status": "基準「{name}」との比（dB）で表示します",
-    "dont_show_again": "次から出さない",
+    "dont_show_again": "次から出さない（設定 → 通知 で戻せます）",
     # 設定の画面の「表示」: 窓で知らせるか（この画面だけの覚え書き）
-    "notify_group": "知らせ（この画面だけ）",
+    "notify_group": "窓で知らせるもの（この画面だけの設定）",
     "notify_ratio": "比の表示に切り替わったら知らせる",
     "notify_ratio_tip": "TG・S11 で基準を使い始めて、電力（dBm など）から基準との比（dB）の表示に変わったときに窓で知らせます",
     "ext_db": "外部補正",

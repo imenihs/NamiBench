@@ -47,7 +47,7 @@ def apply_palette(win: "MainWindow", colors: dict) -> None:
 def reset_palette(win: "MainWindow", base: str) -> None:
     """ライト・ダークのボタン: 変えた色があるときだけ、何個失われるかを言ってから聞く（J §4.4・U-18）。"""
     q = screen_model.palette_reset_question(win.state, base)
-    if q is not None and not win.confirm(texts.SETTINGS_TEXTS["palette_reset_title"], q):
+    if q is not None and not win.confirm(texts.SETTINGS_TEXTS["palette_reset_title"], q, texts.LABELS["do_restore"]):
         return
     win.call("palette_reset", base=base)
 

@@ -257,7 +257,7 @@ class UnfinishedTest(UiBase):
         self.api.close()
         self.api = make_api(self.root)
         self.win = MainWindow(self.api, prefs=UiPrefs(), check_unfinished=True)
-        self.win.confirm = lambda title, text: (self.confirm_asked.append(text), self.confirm_answer)[1]
+        self.win.confirm = lambda title, text, ok=None: (self.confirm_asked.append(text), self.confirm_answer)[1]
         self.win.show()
         self.wait(lambda: self.win.files.unfinished_dialog is not None, what="救出の問い")
         dlg = self.win.files.unfinished_dialog

@@ -145,12 +145,14 @@ class PresetsDialog(QDialog):
 
     def delete(self) -> None:
         p = self.current()
-        if p is None or not self.win.confirm(P["title"], P["delete_confirm"].replace("{name}", p["name"])):
+        if p is None or not self.win.confirm(P["title"], P["delete_confirm"].replace("{name}", p["name"]),
+                                             texts.LABELS["do_delete"]):
             return
         self.win.call("preset_delete", on_ok=lambda _r: self.reload(), id=p["id"])
 
     def overwrite(self) -> None:
         p = self.current()
-        if p is None or not self.win.confirm(P["title"], P["overwrite_confirm"].replace("{name}", p["name"])):
+        if p is None or not self.win.confirm(P["title"], P["overwrite_confirm"].replace("{name}", p["name"]),
+                                             texts.LABELS["do_overwrite"]):
             return
         self.win.call("preset_save", on_ok=lambda _r: self.reload(), name=p["name"], overwrite_id=p["id"])

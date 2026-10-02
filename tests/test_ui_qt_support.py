@@ -59,7 +59,7 @@ class UiBase(unittest.TestCase):
         self.confirm_asked: list[str] = []
         self.save_path = None
         self.open_paths: list[str] = []
-        win.confirm = lambda title, text: (self.confirm_asked.append(text), self.confirm_answer)[1]
+        win.confirm = lambda title, text, ok=None: (self.confirm_asked.append(text), self.confirm_answer)[1]
         win.ask_save_path = lambda title, default, filt: self.save_path
         win.ask_open_paths = lambda title, folder, filt: self.open_paths
         win.ask_text = lambda title, label, text="": self.text_answer

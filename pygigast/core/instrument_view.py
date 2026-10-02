@@ -265,6 +265,10 @@ class ViewMixin:
             name = None
             for kind in ("gigast", "rtlsdr"):
                 name = name or self._settings.device_name(f"{kind}:{s}")
+            kind = self._settings.device_kind(s)
+            if name is None and kind:
+                # 名前を付けていなければ、機器の一覧と同じ既定の名前（機種名とシリアル番号の末尾）
+                name = self._default_name(kind, s, None, 1)
             out.append({"serial": s, "name": name, "last": s == last})
         return out
 

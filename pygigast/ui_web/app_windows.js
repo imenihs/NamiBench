@@ -7,7 +7,7 @@
 
   const parent = { computed: { a() { return this.$root; } } };
 
-  // ---- 設定の画面。ページは SETTINGS_PAGES の順（接続・表示（配色・知らせ）・キー操作・保存・ブラウザから使う・rtl_tcp・RTL-SDR）
+  // ---- 設定の画面。ページは SETTINGS_PAGES の順（接続・配色・通知・キー操作・保存・ブラウザから使う・rtl_tcp・RTL-SDR）
   const SETTINGS = `
 <div class="modal-back settings-back" @click="a.closeSettings()">
 <div class="modal setwin" @click.stop>
@@ -58,6 +58,9 @@
       <div class="fnote" v-if="a.notes.settings_palette">{{ a.notes.settings_palette.text }}</div>
       <div class="warn" v-if="pv.warnings.length"><div v-for="w in pv.warnings" :key="w">{{ w }}</div></div>
       <div class="dim" v-else>{{ pv.ok_text }}</div>
+    </template>
+
+    <template v-else-if="page === 'notify'">
       <h4>{{ a.V('notify_group') }}</h4>
       <label class="inline" :title="a.V('notify_ratio_tip')"><input type="checkbox" :checked="a.notifyRatio" @change="a.setNotify('ratio_display', $event.target.checked)"> {{ a.V('notify_ratio') }}</label>
     </template>
@@ -172,7 +175,7 @@
     <button class="primary" @click="a.answerConfirm(false)">{{ a.T('SETTINGS_LABELS', 'close') }}</button>
   </div>
   <div class="modal-btns" v-else>
-    <button class="primary" @click="a.answerConfirm(true)">OK</button>
+    <button class="primary" @click="a.answerConfirm(true)">{{ b.ok || a.W('confirm_ok') }}</button>
     <button @click="a.answerConfirm(false)">{{ a.W('cancel') }}</button>
   </div>
 </div>

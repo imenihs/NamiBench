@@ -147,6 +147,18 @@ LABELS = {
     "rename_ref_title": "基準の名前を変える",
     # ---- 長い処理・窓
     "cancel": "やめる",
+    # 確かめる窓のボタン（押したら何が起きるかの語。「はい・いいえ」「OK」にしない）
+    "confirm_ok": "続ける",
+    "do_import": "取り込む",
+    "do_discard": "捨てる",
+    "do_restore": "戻す",
+    "do_clear_all": "全部消す",
+    "do_close": "閉じる",
+    "do_delete": "消す",
+    "do_overwrite": "上書きする",
+    "do_forget": "忘れる",
+    "do_reassign": "付け替える",
+    "do_reset_all": "初期値に戻す",
     "bad_freq": "読めない値です（例: 1.2G・300k・1500）",
     "bad_value": "読めない値です",
     "connecting": "接続しています…",

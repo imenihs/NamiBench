@@ -242,5 +242,5 @@ class SourceTab(QWidget):
         if ref is None:
             return
         extra = L["ref_delete_in_use"] if ref.get("selected") else ""
-        if self.win.confirm(L["ref_delete_title"], texts.w("ref_delete_confirm", name=ref["name"]) + extra):
+        if self.win.confirm(L["ref_delete_title"], texts.w("ref_delete_confirm", name=ref["name"]) + extra, L["do_delete"]):
             self.win.call("reference_delete", id=rid, on_ok=lambda r: self.refresh())

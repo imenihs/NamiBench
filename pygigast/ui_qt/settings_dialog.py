@@ -85,6 +85,7 @@ class SettingsDialog(QDialog):
         self._add_page("connection", P["connection"], self._build_connection())
         self.palette_page = PalettePage(win)
         self._add_page("display", P["display"], self._build_display())
+        self._add_page("notify", P["notify"], self._build_notify())
         self.keys_page = KeysPage(win)
         self._add_page("keys", P["keys"], self.keys_page)
         self._add_page("save", P["save"], self._build_save())
@@ -110,18 +111,20 @@ class SettingsDialog(QDialog):
         if key in self._page_index:
             self.pages.setCurrentIndex(self._page_index[key])
 
-    # ---------------------------------------------------------------- 表示（配色・窓で知らせるか）
+    # ---------------------------------------------------------------- 配色・通知（用事が違うので別のページ: U-10）
 
     def _build_display(self) -> QWidget:
-        """配色の編集（settings_colors.py）と、比の表示に変わったときの窓を出すか（J §4.10 の 3。「次から出さない」
-        を戻す所。この画面だけの覚え書き: 設計O §1.1）。"""
+        """配色の編集（settings_colors.py）。"""
+        return self.palette_page
+
+    def _build_notify(self) -> QWidget:
+        """窓で知らせるもの（J §4.10 の 3: 比の表示に変わったときの窓。「次から出さない」を戻す所。
+        この画面だけの覚え書き: 設計O §1.1）。窓で知らせるものが増えたらここに並べる。"""
         from .tab_display import PREF_NOTIFY_RATIO
 
         V = texts.VIEW_TEXTS
         page = QWidget()
         v = QVBoxLayout(page)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.addWidget(self.palette_page, 1)
         g = QGroupBox(V["notify_group"])
         gv = QVBoxLayout(g)
         self.notify_ratio = QCheckBox(V["notify_ratio"])
@@ -129,6 +132,7 @@ class SettingsDialog(QDialog):
         self.notify_ratio.toggled.connect(lambda on: self.win.prefs.set(PREF_NOTIFY_RATIO, bool(on)))
         gv.addWidget(self.notify_ratio)
         v.addWidget(g)
+        v.addStretch(1)
         return page
 
     def apply_notify(self) -> None:
@@ -195,7 +199,7 @@ class SettingsDialog(QDialog):
         self.known_none.setVisible(not rows)
 
     def _forget(self, serial: str, name: str) -> None:
-        if self.win.confirm(T["forget_title"], T["forget_confirm"].replace("{name}", name)):
+        if self.win.confirm(T["forget_title"], T["forget_confirm"].replace("{name}", name), texts.LABELS["do_forget"]):
             self.win.call("forget_device", serial=serial)
 
     def _connect_manual(self) -> None:

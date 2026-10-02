@@ -161,7 +161,7 @@ class KeysPage(QWidget):
         if other is not None:
             q = S["keys_conflict"].replace("{key}", key).replace("{other}", keymap.command_name(other)) \
                 .replace("{command}", keymap.command_name(code))
-            if not self.win.confirm(S["keys_conflict_title"], q):
+            if not self.win.confirm(S["keys_conflict_title"], q, texts.LABELS["do_reassign"]):
                 return False
         self._save(keymap.assign(ov, code, key, take_from=other))
         self._say(S["keys_assigned"].replace("{command}", keymap.command_name(code)).replace("{key}", key))
@@ -183,7 +183,7 @@ class KeysPage(QWidget):
                 # 初期値のキーをほかの命令に付け替えていたら、そちらから外す（黙って2つに付けない）
                 q = S["keys_conflict"].replace("{key}", default).replace("{other}", keymap.command_name(other)) \
                     .replace("{command}", keymap.command_name(code))
-                if not self.win.confirm(S["keys_conflict_title"], q):
+                if not self.win.confirm(S["keys_conflict_title"], q, texts.LABELS["do_reassign"]):
                     return
                 ov = keymap.assign(ov, other, "")
             self._save(ov)
@@ -192,7 +192,8 @@ class KeysPage(QWidget):
         n = len(keymap.changed(self.overrides()))
         if n == 0:
             return
-        if not self.win.confirm(S["keys_reset_all_title"], S["keys_reset_all_confirm"].replace("{n}", str(n))):
+        if not self.win.confirm(S["keys_reset_all_title"], S["keys_reset_all_confirm"].replace("{n}", str(n)),
+                                texts.LABELS["do_reset_all"]):
             return
         self._save({})
 

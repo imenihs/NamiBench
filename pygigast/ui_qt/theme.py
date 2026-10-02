@@ -77,6 +77,7 @@ def stylesheet(c: dict[str, str] = DARK) -> str:
         QMenu::item {{ padding: 4px 28px 4px 20px; background: transparent; }}
         QMenu::item:selected {{ background: {c['accent']}; color: {c['graph_bg']}; }}
         QMenu::item:disabled {{ color: {c['axis_text']}; }}
+        QComboBox QAbstractItemView::item:disabled {{ color: {c['axis_text']}; }}
         QMenu::separator {{ height: 1px; background: {c['axis']}; margin: 4px 8px; }}
         QMenu::indicator {{ width: 14px; height: 14px; left: 4px; }}
     """
