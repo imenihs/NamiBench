@@ -3,11 +3,13 @@
 import csv
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication, QImage
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
+from pygigast.core.report_layout import DARK_DEFAULT, LIGHT_DEFAULT
 from pygigast.ui_qt import png_export, texts
 from pygigast.ui_qt.files import ExportDialog
 from pygigast.ui_qt.main_window import MainWindow
@@ -141,9 +143,79 @@ class PngTest(UiBase):
         self.assertFalse(QGuiApplication.clipboard().image().isNull())
         self.assertIn(texts.LABELS["png_copied"], self.win.st_note.text())
 
-    def test_palette_choice_default_light(self):
-        self.assertEqual(self.win.display_tab.png_palette_choice(), "light")
+    def test_palette_choice_default_user(self):
+        # 既定は「ユーザー指定」（画面と同じ色: 設計I §3.6）
+        self.assertEqual(self.win.display_tab.png_palette_choice(), "screen")
         self.assertEqual(self.win.display_tab.png_size_choice(), (1600, 1000))
+        # 読めない覚え書きは既定に戻す（別の配色で黙って描かない）
+        self.win.prefs.set("png_palette", "sepia")
+        self.assertEqual(self.win.display_tab.png_palette_choice(), "screen")
+
+    # ---- 配色（I §3.6）。背景（左上の余白）と帯（左下）の画素、render_png に渡した配色で確かめる
+
+    USER_COLORS = {"graph_bg": "#203040", "panel_bg": "#302010", "trace1": "#ff00ff", "text": "#f0f0a0"}
+
+    def _set_user_colors(self):
+        self.cmd("palette_set", colors=self.USER_COLORS)
+        self.wait(lambda: self.win.pal["graph_bg"] == self.USER_COLORS["graph_bg"], what="画面の配色が変わる")
+
+    def _render(self):
+        """PNG を作り、(画像, render_png に渡した配色を全部の名前に広げたもの, 渡した中身) を返す。"""
+        with mock.patch.object(png_export, "render_png", wraps=png_export.render_png) as spy:
+            png = self.win.files._png_bytes()
+        kw = spy.call_args.kwargs
+        img = QImage.fromData(png, "PNG")
+        self.assertFalse(img.isNull())
+        return img, png_export.resolve_palette(kw["palette"]), spy.call_args.args[0]
+
+    def _corners(self, img):
+        return img.pixelColor(2, 2).name(), img.pixelColor(2, img.height() - 2).name()
+
+    def test_png_uses_user_colors_without_choosing(self):
+        """2026-10-02 の不具合の再現: 配色を変えて何も選ばずに保存すると、PNG がライトの初期値で描かれていた。"""
+        self.connect_and_sweep()
+        self._set_user_colors()
+        self.win.actions["png_save"].trigger()
+        files = list((self.root / "png").glob("gigast_*.png"))
+        self.assertEqual(len(files), 1)
+        img = QImage.fromData(files[0].read_bytes(), "PNG")
+        self.assertEqual(self._corners(img), (self.USER_COLORS["graph_bg"], self.USER_COLORS["panel_bg"]))
+        _img, pal, _data = self._render()
+        self.assertEqual(pal, dict(self.win.pal))  # 変えていない色も含めて画面と同じ組
+        for k, v in self.USER_COLORS.items():
+            self.assertEqual(pal[k], v, k)
+
+    def test_png_light_and_dark_ignore_user_colors(self):
+        self.connect_and_sweep()
+        self._set_user_colors()
+        for code, d in (("light", LIGHT_DEFAULT), ("dark", DARK_DEFAULT)):
+            self.win.prefs.set("png_palette", code)
+            img, pal, _data = self._render()
+            self.assertEqual(pal, d, code)
+            self.assertEqual(self._corners(img), (d["graph_bg"], d["panel_bg"]), code)
+        # 画面の配色は変わらない
+        self.assertEqual(self.win.pal["graph_bg"], self.USER_COLORS["graph_bg"])
+
+    def test_png_file_trace_follows_chosen_colors(self):
+        """重ねたファイルのトレースも選んだ配色で描く（色の名前で渡す。画面の色の値を焼き込まない）。"""
+        self.connect_and_sweep()
+        p = self.root / "ref.h5"
+        self.cmd("save", path=str(p))
+        self.wait(lambda: p.exists(), what="保存")
+        self.win.files.open_files([str(p)])
+        self.wait(lambda: self.win.traces.files and self.win.trace_tab._file_checks, what="開く")
+        self.pump(0.2)
+        self._set_user_colors()
+        tid = next(iter(self.win.traces.files))
+        key = self.win.traces.files[tid]["color_key"]
+        self.assertEqual(self.win.traces.files[tid]["color"], self.win.pal[key])  # 画面の線の色
+        for code, d in (("screen", dict(self.win.pal)), ("light", LIGHT_DEFAULT), ("dark", DARK_DEFAULT)):
+            self.win.prefs.set("png_palette", code)
+            _img, pal, data = self._render()
+            files = [t for t in data["traces"] if t["number"] == ""]
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["color"], key)
+            self.assertEqual(pal[files[0]["color"]], d[key], code)
 
 
 class RecordingTest(UiBase):

@@ -260,3 +260,112 @@ class MarkerTabTest(MarkerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarkerRowDeleteTest(MarkerBase):
+    def select_row(self, name):
+        t = self.win.marker_panel.tree
+        for i in range(t.topLevelItemCount()):
+            it = t.topLevelItem(i)
+            for k in range(it.childCount()):
+                if it.child(k).text(0) == name:
+                    t.setFocus()
+                    self.pump(0.05)
+                    t.setCurrentItem(it.child(k))
+                    self.pump(0.05)
+                    return
+        self.fail(f"行が無い: {name} / {self.table_rows()}")
+
+    def delete(self):
+        QTest.keyClick(self.win.marker_panel.tree, Qt.Key.Key_Delete)
+        self.pump(0.3)
+
+    def test_delete_child_rows_one_by_one(self):
+        """子の行を選んで Delete を押すと、その行だけが消え、親のマーカーは残る。"""
+        self.win.marker_panel.btn_peak.click()
+        self.wait(lambda: self.win.selected_marker == "M1", what="M1")
+        self.cmd("marker_function", id="M1", bandwidth_db=[3.0, 20.0], threshold={"level": -60.0, "side": "above"})
+        self.cmd("marker_offset_add", id="M1", type="level", sign="-", delta=3.0)
+        self.wait(lambda: any("シェープファクタ" in r for r in self.table_rows()), what="機能の行")
+        # シェープファクタ → 2つ目の N だけ止まる
+        self.select_row(next(r.strip() for r in self.table_rows() if "シェープファクタ" in r))
+        self.delete()
+        m = self.marker("M1")
+        self.assertEqual([b["n_db"] for b in m["bandwidth"]], [3.0])
+        self.assertIsNotNone(m.get("threshold"))
+        # しきい値 → 交点だけ止まる
+        self.select_row(next(r.strip() for r in self.table_rows() if "しきい値" in r))
+        self.delete()
+        self.assertIsNone(self.marker("M1").get("threshold"))
+        # オフセットのカーソル → そのカーソルだけ
+        self.select_row(next(r.strip() for r in self.table_rows() if r.strip().startswith("M1 −3")))
+        self.delete()
+        self.assertFalse(any(r.strip().startswith("M1 −3") for r in self.table_rows()))
+        # 帯域幅 → その N だけ。M1 は最後まで残る
+        self.select_row(next(r.strip() for r in self.table_rows() if "帯域幅" in r))
+        self.delete()
+        self.assertEqual(self.marker("M1")["bandwidth"] or [], [])
+        self.assertEqual([m["id"] for m in self.markers()], ["M1"])
+        # 親の行を選んで Delete ならマーカーを消す
+        t = self.win.marker_panel.tree
+        t.setFocus(); t.setCurrentItem(t.topLevelItem(0)); self.pump(0.05)
+        self.delete()
+        self.assertEqual(self.markers(), [])
+
+
+class MarkerCellEditTest(MarkerBase):
+    def item_of(self, name):
+        t = self.win.marker_panel.tree
+        for i in range(t.topLevelItemCount()):
+            it = t.topLevelItem(i)
+            if it.text(0) == name:
+                return it
+            for k in range(it.childCount()):
+                if it.child(k).text(0).strip() == name:
+                    return it.child(k)
+        self.fail(f"行が無い: {name}")
+
+    def edit_cell(self, name, col, text, key=Qt.Key.Key_Return):
+        it = self.item_of(name)
+        self.win.marker_panel.tree.itemDoubleClicked.emit(it, col)
+        self.pump(0.05)
+        e = self.win.marker_panel.editing
+        self.assertIsNotNone(e)
+        e.selectAll()
+        e.insert(text)
+        QTest.keyClick(e, key)
+        self.pump(0.4)
+
+    def test_edit_frequency_and_offsets(self):
+        from pygigast.ui_qt.marker_table import COL_DFREQ, COL_DVALUE, COL_FREQ
+        self.win.marker_panel.btn_peak.click()
+        self.wait(lambda: self.win.selected_marker == "M1", what="M1")
+        # マーカーの周波数（MHz で打つ）
+        self.edit_cell("M1", COL_FREQ, "700")
+        self.wait(lambda: abs(self.marker("M1")["freq_hz"] - 700e6) < 5e6, what="周波数を直す")
+        # レベルのオフセットの Δ値
+        self.cmd("marker_offset_add", id="M1", type="level", sign="-", delta=3.0)
+        self.wait(lambda: any(r.strip().startswith("M1 −3") for r in self.table_rows()), what="−3dB の行")
+        self.edit_cell(next(r.strip() for r in self.table_rows() if r.strip().startswith("M1 −3")), COL_DVALUE, "-6")
+        self.wait(lambda: self.marker("M1")["level_offsets"][0]["delta_db"] == -6.0
+                  if "delta_db" in self.marker("M1")["level_offsets"][0] else
+                  any(r.strip().startswith("M1 −6") for r in self.table_rows()), what="−6dB に")
+        # 周波数のオフセットの Δ周波数
+        self.cmd("marker_offset_add", id="M1", type="freq", sign="+", delta=10_000_000)
+        self.wait(lambda: any("+10" in r for r in self.table_rows()), what="+10MHz の行")
+        self.edit_cell(next(r.strip() for r in self.table_rows() if "+10" in r), COL_DFREQ, "20")
+        self.wait(lambda: any("+20" in r for r in self.table_rows()), what="+20MHz に")
+        # Esc ではやめる・読めない値は直さない
+        before = self.marker("M1")["freq_hz"]
+        self.edit_cell("M1", COL_FREQ, "800", key=Qt.Key.Key_Escape)
+        self.edit_cell("M1", COL_FREQ, "abc")
+        self.assertEqual(self.marker("M1")["freq_hz"], before)
+
+    def test_value_cell_of_marker_is_not_editable(self):
+        from pygigast.ui_qt.marker_table import COL_VALUE
+        self.win.marker_panel.btn_peak.click()
+        self.wait(lambda: self.win.selected_marker == "M1", what="M1")
+        self.win.marker_panel.editing = None
+        self.win.marker_panel.tree.itemDoubleClicked.emit(self.item_of("M1"), COL_VALUE)
+        self.pump(0.05)
+        self.assertIsNone(self.win.marker_panel.editing)

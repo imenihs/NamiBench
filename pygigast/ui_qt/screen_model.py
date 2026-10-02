@@ -55,19 +55,37 @@ def is_fft(st: dict) -> bool:
 def rbw_groups(st: dict) -> list[dict]:
     """RBW の選択肢。FFT の機器は窓ごとにまとめる（Hann・Flat top: 設計Q §6.4）。
 
-    形: [{"window": "hann" | None, "label": "Hann", "note": "...", "choices": [{"hz": 1500, "text": "1.5kHz"}]}]
+    形: [{"window": "hann" | None, "label": "Hann", "note": "...",
+          "choices": [{"hz": 1500, "text": "1.5kHz", "reason": None | "選べない理由"}]}]
+    いまの条件で使えない RBW は理由を持つ（画面は一覧に残して無効にする: 設計C §5.14・U-08）。
     """
     rbw = profile_of(st).get("rbw") or {}
+    why = rbw_limit_text(st)
+    usable = set((st.get("sweep") or {}).get("rbw_usable_hz") or [])
+
+    def choice(hz: int) -> dict:
+        return {"hz": hz, "text": format_freq(hz), "reason": why if why and usable and hz not in usable else None}
+
     if "choices" in rbw:
         groups: list[dict] = []
         for w in texts.RBW_WINDOWS:
             ch = sorted(c["rbw_hz"] for c in rbw["choices"] if c.get("window") == w)
             if ch:
                 groups.append({"window": w, "label": texts.RBW_WINDOWS[w], "note": texts.RBW_WINDOW_NOTES.get(w, ""),
-                               "choices": [{"hz": hz, "text": format_freq(hz)} for hz in ch]})
+                               "choices": [choice(hz) for hz in ch]})
         return groups
-    return [{"window": None, "label": "", "note": "",
-             "choices": [{"hz": hz, "text": format_freq(hz)} for hz in rbw.get("choices_hz") or []]}]
+    return [{"window": None, "label": "", "note": "", "choices": [choice(hz) for hz in rbw.get("choices_hz") or []]}]
+
+
+def rbw_limit_text(st: dict) -> Optional[str]:
+    """いまの条件で選べない RBW があるときの理由（無ければ None）。"""
+    sw = st.get("sweep") or {}
+    code = sw.get("rbw_limit")
+    if not code:
+        return None
+    usable = sw.get("rbw_usable_hz") or []
+    only = format_freq(usable[0]) if len(usable) == 1 else ""
+    return texts.RBW_LIMITS.get(code, code).replace("{rbw}", only)
 
 
 def rbw_window_of(st: dict, hz: Optional[int]) -> Optional[str]:

@@ -21,6 +21,9 @@ BASES = {"dark": DARK_DEFAULT, "light": LIGHT_DEFAULT}
 DEFAULT_BASE = "dark"  # 画面はいままでダークの初期値で描いていた（設計J §4.4）
 NAMES = tuple(DARK_DEFAULT)
 TRACE_NAMES = ("trace1", "trace2", "trace3", "trace4")
+# 重ねたファイル（参照トレース）の色の順。いまのトレース1と同じ色にしないよう 2 から始め、点線で描く
+# （Qt と Web で同じ。Web は ui_web/app.js の FILE_COLORS: 試験で一致を確かめる）
+FILE_TRACE_ORDER = ("trace2", "trace3", "trace4", "trace1")
 
 # 文字と背景のコントラスト比の下限（U-16）
 MIN_CONTRAST = 7.0

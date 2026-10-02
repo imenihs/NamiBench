@@ -16,8 +16,8 @@ MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", 
 # マーカーの種類（P はピークに付いていく、M は手で置いた位置）
 MARKER_KINDS = {"P": "ピーク", "M": "手動"}
 
-# PNG の配色の選び方（J §4.4）
-PNG_PALETTES = {"light": "ライトの初期値", "dark": "ダークの初期値", "screen": "画面と同じ"}
+# PNG の配色の選び方（I §3.6）。並びは選ぶ欄の並び（Qt・Web）。"screen" は画面で使っている配色（変えた色を含む）
+PNG_PALETTES = {"screen": "ユーザー指定（画面と同じ色）", "light": "ライト", "dark": "ダーク"}
 
 REASON_TEXTS.update({
     "track_p_only": "ピーク追従は P（ピーク）のマーカーだけが持てます（M は周波数を固定）",
@@ -54,8 +54,9 @@ LABELS.update({
     "row_ref": "この値を REF レベルに",
     "row_remove": "{m} を消す",
     "row_remove_cursor": "このカーソルを消す",
+    "row_remove_function": "この機能を止める",
+    "cell_edit_tip": "ダブルクリックで直せます（Enter で決定・Esc でやめる）",
     "row_unset": "{m} を外す",
-    "row_function_note": "マーカーの機能はマーカーのタブで変えます",
     "row_track": "追従",
     "band_center": "中心 {v}",
     "band_width": "幅 {v}",
@@ -74,8 +75,13 @@ LABELS.update({
     "bad_offset_value": "オフセットの値が読めません（例: 10M・500k・3）",
     "second_n": "2つ目の N（シェープファクタ）",
     "threshold_cross": "しきい値との交点",
+    # マーカーの機能の結果をグラフに出す薄い線（G §3.6）
+    "function_lines": "交点の線をグラフに出す",
+    "function_lines_tip": "N dB 帯域幅・しきい値との交点のレベル（横線）と交点の周波数（縦線）を、マーカーの色の薄い点線で出す。"
+                          "掃引ごとに動く（つまんで動かす XY カーソルとは別）",
+    # dB の打てるドロップダウンで範囲の外の値を打ったとき（G §3.6）
+    "db_range_note": "{lo}〜{hi} {unit} の値を入れてください",
     "xy_cursor_long": "XY カーソル（トレースに載らない線）",
-    "floor_prefix": "床から ",
     "floor_tip": "ノイズの床よりこれだけ高いピークを並べる",
     "find": "探す",
     "col_freq_mhz": "周波数 (MHz)",

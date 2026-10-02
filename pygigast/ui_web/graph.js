@@ -11,6 +11,9 @@
   const DIVISIONS = 10;
   // 塗りつぶしの濃さ（Qt の plot_layers._apply_fill のアルファ 70/255 と同じ）
   const FILL_ALPHA = 70 / 255;
+  // マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Qt の plot_layers.FUNCTION_LINE_ALPHA と同じ）
+  const FUNCTION_LINE_ALPHA = 89 / 255;
+  const FUNCTION_LINE_DASH = [2, 3];
 
   function xUnit(span) {
     const a = Math.abs(span);
@@ -37,6 +40,7 @@
       this.bands = [];
       this.markers = [];
       this.selectedMarker = null;
+      this.functionRows = []; // マーカーの機能の線（マーカー表の機能の行の line: G §3.6）
       this.xy = null;
       this.zeroLine = false;
       this.mouse = null; // グラフの上のマウスの位置（M キー用）
@@ -165,6 +169,8 @@
     setBands(list) { this.bands = list || []; this.u.redraw(false); }
     setMarkers(rows, selected) { this.markers = rows || []; this.selectedMarker = selected; this.u.redraw(false); }
     setXY(xy) { this.xy = xy; this.u.redraw(false); }
+    // マーカーの機能の線（G §3.6）: マーカー表の行のうち line を持つもの。出さないときは空を渡す
+    setFunctionLines(rows) { this.functionRows = (rows || []).filter((r) => r.line); this.u.redraw(false); }
 
     // ---- 描く
 
@@ -179,6 +185,7 @@
       if (!this.zeroSpan) this._drawBands(u, dpr || 1);
       if (this.zeroLine) this._hline(u, 0, this.colors.zero_db, [], 1.5);
       for (const t of this.traces) this._drawTrace(u, t);
+      if (!this.zeroSpan) this._drawFunctionLines(u);
       this._drawCursors(u);
       this._drawMarkers(u, dpr || 1);
       ctx.restore();
@@ -319,6 +326,20 @@
         ctx.stroke();
         ctx.setLineDash([]);
       }
+    }
+
+    // マーカーの機能の結果の線（G §3.6。Qt の plot_layers.MarkerLayer と同じ）: 横線 = レベル、縦線 = 交点の周波数
+    // （交点が無い側は行に無い）。マーカーの色（選んでいるマーカーは強調の色）を薄くした点線。つまめない・読み値に出ない
+    _drawFunctionLines(u) {
+      const c = this.colors;
+      const ctx = u.ctx;
+      ctx.globalAlpha = FUNCTION_LINE_ALPHA;
+      for (const r of this.functionRows) {
+        const color = r.parent != null && r.parent === this.selectedMarker ? c.accent : c.marker;
+        this._hline(u, r.line.level, color, FUNCTION_LINE_DASH, 1);
+        for (const f of r.line.freqs_hz || []) this._vline(u, f, color, FUNCTION_LINE_DASH);
+      }
+      ctx.globalAlpha = 1;
     }
 
     _drawCursors(u) {

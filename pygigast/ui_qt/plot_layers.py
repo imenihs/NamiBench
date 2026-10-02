@@ -17,11 +17,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 from . import texts
+from ..core.palette import FILE_TRACE_ORDER
 from ..core.report_layout import legend_text
 from .screen_model import nearest_point, trace_x
 from .theme import trace_color
 
 LIVE_TRACES = (1, 2, 3, 4)
+# マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Web の graph.js と同じ）
+FUNCTION_LINE_ALPHA = 89
 
 
 def x_of(payload: dict) -> np.ndarray:
@@ -160,10 +163,12 @@ class TraceLayer:
         e = self.files.get(tid)
         if e is None:
             idx = len(self.files)
-            col = trace_color(idx + 1, self.pal)
+            # 色は名前（trace1〜4）も持つ。PNG は名前で渡し、選んだ配色で描く（ライト・ダークでも同じ名前の色: I §3.6）
+            key = FILE_TRACE_ORDER[idx % len(FILE_TRACE_ORDER)]
+            col = self.pal[key]
             curve = self.pi.plot(pen=pg.mkPen(col, width=1, style=Qt.PenStyle.DashLine), connect="finite")
             curve.setZValue(5)
-            e = {"curve": curve, "payload": None, "color": col, "shown": True, "init": False}
+            e = {"curve": curve, "payload": None, "color": col, "color_key": key, "shown": True, "init": False}
             self.files[tid] = e
         e["payload"] = t
         self._init_shown(tid)
@@ -271,7 +276,8 @@ class TraceLayer:
             e["mark"].setPen(pg.mkPen(self.pal["text_dim"], width=1))
             self._apply_fill(e["curve"], n)
         for i, e in enumerate(self.files.values()):
-            e["color"] = trace_color(i + 1, self.pal)
+            e["color_key"] = FILE_TRACE_ORDER[i % len(FILE_TRACE_ORDER)]
+            e["color"] = self.pal[e["color_key"]]
             e["curve"].setPen(pg.mkPen(e["color"], width=1, style=Qt.PenStyle.DashLine))
         self.zero_line.setPen(pg.mkPen(self.pal["zero_db"], width=1.5))
         self.legend.setBrush(pg.mkBrush(_alpha(self.pal["graph_bg"], 200)))
@@ -344,11 +350,31 @@ class MarkerLayer:
             self.pi.addItem(line, ignoreBounds=True)
             self.xy[name] = line
         self.enabled = True
+        # マーカーの機能の線を出すか（G §3.6。コアの表示の設定 view.function_lines を look.apply_view が入れる）
+        self.function_lines = True
+        self.function_items: list[pg.InfiniteLine] = []
 
     def _clear(self) -> None:
-        for it in self._items:
+        for it in self._items + self.function_items:
             self.pi.removeItem(it)
         self._items = []
+        self.function_items = []
+
+    def _function_lines(self, r: dict, col: str) -> None:
+        """マーカーの機能の結果の線（G §3.6）: 横線 = レベル、縦線 = 交点の周波数（交点が無い側は出さない）。
+
+        マーカーの色を薄く（不透明度 約 35%）した点線。つまんで動かせず（movable=False）、読み値の表にも出さない
+        （XY カーソルとは別物）。マーカーとオフセットのカーソルより下に置く。
+        """
+        line = r.get("line")
+        if not line:
+            return
+        pen = pg.mkPen(_alpha(col, FUNCTION_LINE_ALPHA), width=1, style=Qt.PenStyle.DotLine)
+        for pos, angle in [(float(line["level"]), 0)] + [(float(f), 90) for f in line.get("freqs_hz") or []]:
+            ln = pg.InfiniteLine(pos=pos, angle=angle, movable=False, pen=pen)
+            ln.setZValue(25)
+            self.pi.addItem(ln, ignoreBounds=True)
+            self.function_items.append(ln)
 
     def restyle(self) -> None:
         """配色を変えたとき。印と名前は次の update で新しい色になる（画面が続けて呼ぶ）。"""
@@ -397,6 +423,8 @@ class MarkerLayer:
                     ln.setZValue(30)
                     self.pi.addItem(ln, ignoreBounds=True)
                     self._items.append(ln)
+                elif kind == "function" and self.function_lines:
+                    self._function_lines(r, col)
         self.scatter.setData(spots)
         for k, line in self.xy.items():
             v = xy.get(k)

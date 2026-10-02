@@ -15,7 +15,6 @@ from typing import Optional
 import numpy as np
 
 from . import display_marks as dm
-from .devices.gigast import image_cancel as gigast_ic
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
@@ -269,10 +268,7 @@ class DisplayMixin:
             display_stop_hz=a.stop_hz,
             adopted=a,
             raw=raw,
-            # ic_noise_floor: イメージキャンセル（4回）で採った値が雑音の床の近くの点。雑音の床は2回の min より
-            # 約 2dB 低く見えるので、マーカーの読み値に注意を添える（設計F §6 の 2・設計G §3.3）
-            flags={"transient": transient, "out_of_cal_range": np.asarray(levels.out_of_cal_range, dtype=bool),
-                   **gigast_ic.note_flags(raw, self._profile)},
+            flags={"transient": transient, "out_of_cal_range": np.asarray(levels.out_of_cal_range, dtype=bool)},
             profile=copy.deepcopy(self._profile),
         )
 
@@ -741,6 +737,20 @@ class DisplayMixin:
             else:
                 raise self._error("bad_offset_type", "type", {"type": type})
         except (ValueError, TypeError) as e:
+            raise self._error("bad_offset", None, {"message": str(e)}) from e
+        self._markers_changed()
+        return {"id": m.id}
+
+    def _cmd_marker_offset_set(self, id, type: str, index: int, delta) -> dict:  # noqa: A002
+        """オフセットのカーソルのずれを変える。delta は向き付き（Hz の整数か dB）。±Δ は大きさだけ変える。"""
+        m = self._marker(id)
+        if type not in ("freq", "level"):
+            raise self._error("bad_offset_type", "type", {"type": type})
+        try:
+            self._markers.set_offset(m.id, type, index, delta)
+        except (IndexError, TypeError):
+            raise self._error("bad_offset_index", "index", {"index": index}) from None
+        except ValueError as e:
             raise self._error("bad_offset", None, {"message": str(e)}) from e
         self._markers_changed()
         return {"id": m.id}

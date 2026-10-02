@@ -420,10 +420,13 @@ class MainWindow(QMainWindow):
             self.actions["run_cont"].trigger()
 
     def _apply_rbw(self, st: dict) -> None:
-        """RBW の選択肢は機器ごと（設計Q §6.4: FFT の機器は窓ごとにまとめる）。好みの RBW を選んで見せる。"""
+        """RBW の選択肢は機器ごと（設計Q §6.4: FFT の機器は窓ごとにまとめる）。
+
+        欄には実際に使う RBW を出し、いまの条件で使えない RBW は一覧に残して無効にし理由を出す（設計C §5.14・U-08）。
+        """
         groups = screen_model.rbw_groups(st)
-        key = tuple((g["window"], tuple(c["hz"] for c in g["choices"])) for g in groups)
-        pref = st["sweep"]["rbw_preference_hz"]
+        key = tuple((g["window"], tuple((c["hz"], c["reason"]) for c in g["choices"])) for g in groups)
+        pref = st["sweep"]["rbw_hz"]
         combo = self.rbw_combo
 
         def show() -> None:
@@ -439,7 +442,9 @@ class MainWindow(QMainWindow):
                         disable_item(combo, combo.count() - 1, g["note"])
                     for c in g["choices"]:
                         combo.addItem(("  " if g["label"] else "") + c["text"], c["hz"])
-                        if g["note"]:
+                        if c["reason"]:
+                            disable_item(combo, combo.count() - 1, c["reason"])
+                        elif g["note"]:
                             combo.setItemData(combo.count() - 1, g["note"], Qt.ItemDataRole.ToolTipRole)
                 combo.blockSignals(was)
                 self.topbar.relayout()  # 選択肢の幅が変わると上段の幅が変わる（J §4.3.3）
@@ -449,7 +454,8 @@ class MainWindow(QMainWindow):
 
         widget_sync.when_idle(combo, "rbw", show)
         w = screen_model.rbw_window_of(st, pref)
-        combo.setToolTip(next((g["note"] for g in groups if g["window"] == w), ""))
+        notes = [screen_model.rbw_limit_text(st) or "", next((g["note"] for g in groups if g["window"] == w), "")]
+        combo.setToolTip("\n".join(n for n in notes if n))
 
     def _rbw_chosen(self, i: int) -> None:
         hz = self.rbw_combo.itemData(i)
@@ -731,7 +737,11 @@ class MainWindow(QMainWindow):
         self.marker_to(self.selected_marker, target)
 
     def _marker_remove(self) -> None:
-        if self.selected_marker:
+        # マーカー表で子の行（機能・オフセットのカーソル・XY）を選んでいたら、その行だけを消す
+        row = self.marker_panel.current_row()
+        if row is not None:
+            self.marker_panel.remove_row(row)
+        elif self.selected_marker:
             self.call("marker_remove", id=self.selected_marker)
 
     def _marker_clear(self) -> None:

@@ -151,7 +151,7 @@
     },
     template: `
       <div class="field" :class="{big}" :title="title">
-        <div class="field-head"><span class="field-name">{{ label }}</span><slot name="head"></slot></div>
+        <div class="field-head" v-if="label || $slots.head"><span class="field-name">{{ label }}</span><slot name="head"></slot></div>
         <div class="field-line">
           <input ref="input" class="field-input" v-steady="editing ? draft : text" :disabled="disabled" spellcheck="false"
                  @input="onInput" @keydown="onKey" @blur="commit" @wheel="onWheel">
@@ -275,5 +275,89 @@
       </span>`,
   };
 
-  root.GSFields = { NumField, CountField, Steady, COUNT_CHOICES, COUNT_MAX, countText, parseCount, stepCount };
+  // ---- dB の打てるドロップダウン（G §3.6。REF レベルの欄（J §4.1）と同じ動き。Qt の ui_qt/fields.py の
+  // DbChoiceField と同じ決まり）: 一覧から選ぶ・数を打つ・欄の上のホイールで 1dB・↑↓ はカーソルの桁。
+  // 範囲の外の値は欄の下に範囲を知らせて元の値に戻す（↑↓・ホイールは端で止める）。値は小数 decimals 桁に丸める
+  const BANDWIDTH_CHOICES = [3, 6, 10, 20, 30, 40, 60];
+  const FLOOR_CHOICES = [3, 6, 10, 15, 20, 30];
+  const REF_CHOICES = [];
+  for (let v = 20; v >= -120; v -= 10) REF_CHOICES.push(v);
+  // 打てる範囲（N dB 帯域幅・2つ目の N／しきい値／ピークの一覧の「床から」。Qt の fields.py の *_RANGE と同じ）
+  const DB_RANGES = { bw: [0.1, 200], th: [-300, 300], floor: [0, 100] };
+  // 小数 decimals 桁へ四捨五入（ちょうど半分は大きい方へ。Qt の fields.round_to と同じ）。null は丸めない
+  function roundTo(v, decimals) {
+    if (decimals == null) return v;
+    const k = 10 ** decimals;
+    return Math.floor(v * k + 0.5) / k;
+  }
+  function dbText(v, unit) { return `${GSUnits.levelText(v)}${unit ? " " + unit : ""}`; }
+  // 一覧の行の文字（「+20 dBm」「−40 dBm」「3 dB」）。signed はレベル（REF・しきい値）で、正の数にも + を付ける
+  function dbChoiceText(v, unit, signed) {
+    return GSUnits.minusSign(signed && v > 0 ? `+${v}` : `${v}`) + (unit ? ` ${unit}` : "");
+  }
+  // 範囲の外の値を打ったときの知らせ（Qt の fields.range_note と同じ文）
+  function rangeNote(lo, hi, unit) {
+    const X = root.GSTexts;
+    const t = X ? X.w("db_range_note", { lo: GSUnits.minusSign(String(lo)), hi: GSUnits.minusSign(String(hi)), unit: unit || "" }) : "";
+    return t.split(/\s+/).filter((s) => s).join(" ");
+  }
+  // 打った文字を値にする。{ value } か、受け付けないとき { note }（欄の下に出す文）
+  function parseDbIn(text, spec) {
+    let v;
+    try {
+      v = GSUnits.parseDb(spec.unit ? String(text).split(spec.unit).join("") : String(text));
+    } catch (e) { v = NaN; }
+    if (!Number.isFinite(v)) return { note: root.GSTexts ? root.GSTexts.w("bad_value") : "" };
+    v = roundTo(v, spec.decimals);
+    if ((spec.lo != null && v < spec.lo) || (spec.hi != null && v > spec.hi)) return { note: rangeNote(spec.lo, spec.hi, spec.unit) };
+    return { value: v };
+  }
+  // ↑↓・ホイールで送った値（端で止める）
+  function stepDb(value, exp, dir, spec) {
+    let v = roundTo(value + dir * 10 ** exp, spec.decimals);
+    if (spec.lo != null) v = Math.max(v, spec.lo);
+    if (spec.hi != null) v = Math.min(v, spec.hi);
+    return v;
+  }
+
+  const DbField = {
+    name: "db-field",
+    components: { NumField },
+    props: {
+      value: { type: Number, default: 0 },
+      unit: { type: String, default: "dB" },
+      choices: { type: Array, default: () => [] }, // 数の並び
+      signed: { type: Boolean, default: false },
+      lo: { type: Number, default: null },
+      hi: { type: Number, default: null },
+      decimals: { type: Number, default: 1 },
+      label: { type: String, default: "" },
+      disabled: { type: Boolean, default: false },
+      title: String,
+    },
+    emits: ["commit"],
+    data() { return { note: null }; },
+    computed: {
+      spec() { return { unit: this.unit, lo: this.lo, hi: this.hi, decimals: this.decimals }; },
+      text() { return dbText(this.value, this.unit); },
+      items() { return this.choices.map((v) => ({ value: v, text: dbChoiceText(v, this.unit, this.signed) })); },
+    },
+    methods: {
+      onCommit(t) {
+        const r = parseDbIn(t, this.spec);
+        if (r.note !== undefined) { this.note = { text: r.note }; return; }  // 欄は元の値に戻る（NumField の確定と同じ）
+        this.$emit("commit", r.value);
+      },
+      onStep(exp, dir) { this.$emit("commit", stepDb(this.value, exp, dir, this.spec)); },
+    },
+    template: `
+      <num-field class="field-sm" :label="label" :text="text" :note="note" :choices="items" :wheel-exp="0"
+                 :disabled="disabled" :title="title" @commit="onCommit" @step="onStep" @clear-note="note = null"></num-field>`,
+  };
+
+  root.GSFields = {
+    NumField, CountField, DbField, Steady, COUNT_CHOICES, COUNT_MAX, countText, parseCount, stepCount,
+    BANDWIDTH_CHOICES, FLOOR_CHOICES, REF_CHOICES, DB_RANGES, roundTo, dbText, dbChoiceText, rangeNote, parseDbIn,
+    stepDb,
+  };
 })(window);

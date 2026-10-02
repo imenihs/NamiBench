@@ -90,7 +90,8 @@ REASONS = {
     "points_max": "点数の上限",
     "points_min": "点数の下限",
     "sg_range": "SG の範囲",
-    "rbw_fixed": "この条件では RBW 180kHz 固定",
+    "rbw_fixed": "TG・S11・NF と Span 50MHz 超では RBW は 180kHz だけ",
+    "rbw_restored": "条件から出たので、選んでいた RBW に戻しました",
     "keep_center": "Center を保つため、範囲に収まる最大の Span",
     "keep_span": "Span 固定のため、Span を保って Center を移動",
     "span_lock": "Span 固定のため",
@@ -141,20 +142,24 @@ def freq_offset_of(st: Optional[dict]) -> int:
     return int(((st or {}).get("view") or {}).get("freq_offset_hz") or 0)
 
 
+# いまの条件で選べない RBW の理由（設計C §5.14。RBW の一覧で無効にした行と欄のツールチップに出す）。{rbw} は選べる1つの RBW
+RBW_LIMITS = {
+    "mode_fixed": "TG・S11・NF では RBW は {rbw} だけです",
+    "span_wide": "Span が 50MHz を超えると RBW は {rbw} だけです（Span を 50MHz 以下にすると選べます）",
+    "points_max": "この Span では点数が上限を超えるので選べません（Span を狭くすると選べます）",
+}
+
+
 def condition_lines(st: dict) -> list[str]:
     """上段の下に出し続ける条件の注意（U-02・U-08）。PNG の帯の注意と同じ文（I §3.2 の 6）。"""
     sw = st.get("sweep") or {}
     if not sw:
         return []
-    fft = (st.get("connection") or {}).get("sweep_kind") == "fft"
     out = []
     off = freq_offset_of(st)
     if off:
         # 周波数オフセットで換算中であることを出し続ける（設計O: 換算中であることを示す）
         out.append(VIEW_TEXTS["freq_offset_on"].replace("{off}", offset_text(off)))
-    if sw.get("rbw_hz") != sw.get("rbw_preference_hz"):
-        out.append(tpl("cond_rbw_widened" if fft else "cond_rbw_fixed", rbw=format_freq(sw["rbw_hz"]),
-                       pref=format_freq(sw["rbw_preference_hz"])))
     out += [WARNINGS.get(w, w) for w in sw.get("warnings", [])]
     if sw.get("tail_gap"):
         out.append(TEMPLATES["cond_tail_gap"])
@@ -410,7 +415,7 @@ MARKER_NOTES = {
     "out_of_cal_range": "校正の範囲外",
     "no_reference": "基準の範囲外",
     "no_reference_band_edge": "基準の帯の境目",
-    "ref_coarse": "基準が粗い",
+    "ref_coarse": "基準が粗い（±0.5dB 程度）",
     "ref_power_cycled": "電源の入れ直し前の基準",
     "reference_coarse": "基準が粗い（±0.5dB 程度）",
     "reference_power_cycled": "電源の入れ直し前の基準",
@@ -421,13 +426,13 @@ MARKER_NOTES = {
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
     "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
     # イメージキャンセル ON の4回の合わせ方は雑音の床の近くを低く読む（設計F §6）
-    "ic_noise_floor": "雑音の床の近く（イメージキャンセル ON では約 2dB 低く読める）",
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
     **DISPLAY_MARKS,
 }
 
 # 印のうち読み値の注意にしないもの（細かい基準は正常）
-MARKER_NOTES_SILENT = {"ref_fine"}
+# ic_noise_floor は前の版の印（雑音の床が低く読めるという注意。実測で真ん中はほぼ動かず誤りだった: T18）
+MARKER_NOTES_SILENT = {"ref_fine", "ic_noise_floor"}
 
 BAND_STATUS = {
     "ok": "",

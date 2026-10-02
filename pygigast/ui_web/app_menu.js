@@ -48,7 +48,7 @@
           marker_ref: () => this.cmd("marker_to", { id: this.selectedMarker, target: "ref" }),
           marker_span: () => this.cmd("marker_to", { id: this.selectedMarker, target: "span" }),
           marker_listen: () => this.listenStart(), listen_stop: () => this.listenStop(),
-          marker_remove: () => this.cmd("marker_remove", { id: this.selectedMarker }),
+          marker_remove: () => { if (!this.removeSelectedRow()) this.cmd("marker_remove", { id: this.selectedMarker }); },
           marker_clear: () => this.cmd("marker_clear"),
           marker_copy: () => this.copyMarkerTable(),
           cal_legacy: () => this.legacyDialog(),

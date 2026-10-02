@@ -1,7 +1,8 @@
 """計測器の本体のうち、表示の設定・配色・プリセット・覚えた機器（設計O・J §4.4）。Instrument に混ぜる。
 
 - 表示の設定（view）: 単位 dBm／dBμV／dBmV・外部補正 dB・周波数オフセット・描き方（線・塗りつぶし）・
-  表示の組み合わせ。換算そのものは core/view_units.py。測った値と機器へ送るものは変えない
+  表示の組み合わせ・マーカーの機能の線を出すか（G §3.6）。換算そのものは core/view_units.py。測った値と機器へ
+  送るものは変えない
   - 単位・外部補正を変えたら、REF レベル・XY カーソルの Y・しきい値も同じだけずらす（画面の絵は変わらず、
     数字だけ新しい単位になる。実機の計測器と同じ）。いまの縦軸が比（ノーマライズ中の dB）のときはずらさない
 - 配色（palette）: ユーザー設定の1つ。ライト・ダークは初期値に戻す命令（確認は画面: 変えた色の数は状態にある）
@@ -101,10 +102,11 @@ class ViewMixin:
                     pass
 
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
-                      layout=_UNSET) -> dict:
+                      layout=_UNSET, function_lines=_UNSET) -> dict:
         kw = {k: v for k, v in (("level_unit", level_unit), ("ext_db", ext_db), ("freq_offset_hz", freq_offset_hz),
-                                ("draw_style", draw_style), ("layout", layout)) if v is not _UNSET}
-        for k in ("ext_db", "freq_offset_hz", "level_unit", "draw_style", "layout"):
+                                ("draw_style", draw_style), ("layout", layout), ("function_lines", function_lines))
+              if v is not _UNSET}
+        for k in view_units.DEFAULTS:
             if k in kw and kw[k] is None:
                 kw[k] = view_units.DEFAULTS[k]  # null は初期値に戻す（設定の画面の「初期値に戻す」）
         bad = view_units.check_options(**kw)

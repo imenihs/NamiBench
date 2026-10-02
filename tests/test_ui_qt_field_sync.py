@@ -108,14 +108,15 @@ class FieldSyncTest(UiBase):
         self.assertTrue(e.text().startswith("600.0"), e.text())
 
     def test_open_popup_is_not_rewritten(self):
-        self.connect_and_sweep(single=False)
+        # RBW を選べる条件（SA・Span 50MHz 以下）で確かめる。広い Span では 180kHz だけ（設計C §5.14）
+        self.connect_and_sweep(start=495_000_000, stop=505_000_000, single=False)
         combo = self.win.rbw_combo
         before = combo.currentIndex()
         combo.showPopup()
         self.pump(0.1)
         self.assertTrue(combo.view().isVisible())
         other = next(combo.itemData(i) for i in range(combo.count())
-                     if combo.itemData(i) is not None and i != before)
+                     if combo.itemData(i) is not None and i != before and combo.model().item(i).isEnabled())
         self.cmd("set_sweep", rbw_hz=other)
         self.sweeps()
         self.assertEqual(combo.currentIndex(), before)

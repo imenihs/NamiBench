@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core import report_layout
 from ..core.units import format_freq
 from . import png_export, texts
 from .fields import FreqField
@@ -106,8 +107,8 @@ class FileActions:
     # ---------------------------------------------------------------- PNG（設計I）
 
     def _png_bytes(self) -> bytes:
-        choice = self.win.display_tab.png_palette_choice()
-        palette = dict(self.win.pal) if choice == "screen" else choice
+        # 配色は設定の画面の「保存」で選んだもの: ユーザー指定（画面の配色 win.pal そのもの）／ライト／ダーク（I §3.6）
+        palette = report_layout.png_palette(self.win.display_tab.png_palette_choice(), self.win.pal)
         return png_export.render_png(self.win.png_data(), size=self.win.display_tab.png_size_choice(),
                                      palette=palette, note=self.win.display_tab.png_note.text())
 

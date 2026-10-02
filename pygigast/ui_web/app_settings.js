@@ -18,7 +18,10 @@
   const LAYOUT_STORE = "pygigast.layout";
   // PNG の大きさの選択肢と初期値（Qt の settings_dialog.PNG_SIZES と同じ）
   const PNG_SIZES = [[1600, 1000], [1920, 1080], [1280, 800], [2560, 1600]];
-  const PNG_DEFAULTS = { size: "1600x1000", palette: "light" };
+  // PNG の配色: ユーザー指定（screen。画面の配色そのもの）／ライト／ダーク。既定はユーザー指定（Qt の
+  // core/report_layout.PNG_PALETTE_CHOICES・PNG_PALETTE_DEFAULT と同じ: I §3.6）
+  const PNG_PALETTE_CHOICES = ["screen", "light", "dark"];
+  const PNG_DEFAULTS = { size: "1600x1000", palette: "screen" };
   // 並びの初期値（分割比 % と右のパネルの幅。Qt の docks.py の既定に合わせた値）
   const LAYOUT_DEFAULTS = { splitPct: 70, sidePx: 340 };
   // 配色の名前 → 画面の CSS の変数
@@ -76,6 +79,8 @@
       paletteView() { return this.ui.palette || { rows: [], warnings: [], changed_n: 0 }; },
       knownDevices() { return (this.st && this.st.known_devices) || []; },
       pngSizes() { return PNG_SIZES.map(([w, h]) => ({ value: `${w}x${h}`, text: `${w}×${h}` })); },
+      // 選んでいる PNG の配色。読めない覚え書きは既定（ユーザー指定）
+      pngPalette() { return PNG_PALETTE_CHOICES.includes(this.pngPrefs.palette) ? this.pngPrefs.palette : PNG_DEFAULTS.palette; },
       settingsPages() { return Object.entries(X.dict("SETTINGS_PAGES")); },
       // キー操作のページの行（命令・いまのキー・初期値）。Qt の settings_keys.KeysPage.refresh と同じ中身
       keyRows() {
@@ -218,18 +223,19 @@
       // ---- 保存（PNG の大きさと配色。ブラウザごと）
       setPng(k, v) {
         this.pngPrefs = { ...this.pngPrefs, [k]: v };
-        writeStore(PNG_STORE, this.pngPrefs);
+        // 選んだ項目だけを覚える（選んでいない項目は初期値に従う。Qt の画面の覚え書きと同じ）
+        writeStore(PNG_STORE, { ...readJson(PNG_STORE, {}), [k]: v });
       },
       resetPng(k) { this.setPng(k, PNG_DEFAULTS[k]); },
       pngSizeWH() {
         const m = /^(\d+)x(\d+)$/.exec(this.pngPrefs.size || "");
         return m ? [Number(m[1]), Number(m[2])] : PNG_SIZES[0];
       },
-      // PNG の配色（I §3.1・J §4.4）: ライトの初期値（既定）／ダークの初期値／画面と同じ
+      // PNG の配色（I §3.6）: ユーザー指定（既定。画面の配色そのもの・変えた色を含む）／ライト／ダークの初期値
       pngColors() {
-        const p = this.pngPrefs.palette;
+        const p = this.pngPalette;
         if (p === "screen") return this.palette;
-        return (this.colors && this.colors[p === "dark" ? "dark" : "light"]) || this.palette;
+        return (this.colors && this.colors[p]) || this.palette;
       },
 
       // ------------------------------------------------------------ 表示の設定（設計O）

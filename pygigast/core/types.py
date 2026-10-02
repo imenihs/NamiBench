@@ -138,6 +138,9 @@ class AdoptedSweep:
     span_lock_hz: Optional[int] = None
     # この適用で規則により値を動かしたときの反対の結果（無ければ None）
     alternative: Optional[Alternative] = None
+    # いまの条件で選べる RBW と、選べないものがあるときの理由のコード（設計C §5.14。画面は使えない RBW を無効にする）
+    rbw_usable_hz: tuple[int, ...] = ()
+    rbw_limit: Optional[str] = None
 
     @property
     def center_hz(self) -> int:

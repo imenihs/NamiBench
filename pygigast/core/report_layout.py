@@ -106,6 +106,22 @@ X_AXIS_TITLE_OFFSET = "周波数 (MHz)・換算後（測った周波数に {off}
 
 # ---------------------------------------------------------------- 配色
 
+# PNG の配色の選び方（I §3.6）: "screen" = ユーザー指定（画面で使っている配色そのもの。利用者が変えた色を含む）、
+# "light" / "dark" = その初期値。既定はユーザー指定: 画面で見ている色のまま残す（違う色で残すのは選んだときだけ）。
+# Web（ui_web/app_settings.js の PNG_DEFAULTS・pngColors）も同じ選び方と既定を持つ
+PNG_PALETTE_CHOICES = ("screen", "light", "dark")
+PNG_PALETTE_DEFAULT = "screen"
+
+
+def png_palette(choice: Optional[str], user_colors: Optional[dict]) -> dict[str, str]:
+    """PNG の配色の選び方（PNG_PALETTE_CHOICES）から、描く配色を返す。読めない選び方は既定（ユーザー指定）。"""
+    if choice not in PNG_PALETTE_CHOICES:
+        choice = PNG_PALETTE_DEFAULT
+    if choice == "screen":
+        return resolve_palette(dict(user_colors or {}))
+    return resolve_palette(choice)
+
+
 def resolve_palette(palette: Union[str, dict, None]) -> dict[str, str]:
     """"light" / "dark" / 色の組（ユーザー設定）から、全部の名前が揃った配色を返す。
 

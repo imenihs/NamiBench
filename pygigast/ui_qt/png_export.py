@@ -406,6 +406,22 @@ class _Painter:
         self.p.setFont(self.small)
         mcol = self.c("marker")
         size = max(8.0, self.px * 0.8)
+        # マーカーの機能の線（G §3.6。画面と同じ薄い点線。マーカーの印より先に描いて下に置く）
+        line_col = QColor(mcol)
+        line_col.setAlpha(89)
+        self.p.setPen(QPen(line_col, 1, Qt.PenStyle.DotLine))
+        for m in self.data.get("markers") or []:
+            ln = m.get("line") if m.get("kind") == "function" else None
+            if not ln or ln.get("level") is None:
+                continue
+            lv = ln["level"]
+            if bottom <= lv <= top:
+                y = fy(lv)
+                self.p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            for f in ln.get("freqs_hz") or []:
+                if start <= f <= stop:
+                    x = fx(f)
+                    self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
         for m in self.data.get("markers") or []:
             kind = m.get("kind", "marker")
             f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
@@ -462,7 +478,8 @@ def render_png(data: dict, size: tuple[int, int] = (1600, 1000),
                palette: Union[str, dict, None] = "light", note: str = "") -> bytes:
     """data（冒頭の形）から PNG のバイト列を作る。画面は撮らない（I §3.1）。
 
-    palette: "light"（既定。資料に貼る・印刷する用事: J §4.4）／"dark"／ユーザー設定の色の組。
+    palette: "light"／"dark"／色の組（ユーザー指定 = 画面の配色）。画面から作るときの選び方と既定（ユーザー指定）は
+    report_layout.png_palette（I §3.6）。ここの既定 "light" は画面を持たない呼び出し（試験の見本）のためのもの。
     note: 利用者のメモ（1行）。空なら帯に出さない（U-15）。
     """
     _ensure_app()

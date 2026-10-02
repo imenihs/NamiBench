@@ -48,6 +48,8 @@
         modal: null,
         tab: "trace",
         selectedMarker: null,
+        selectedRow: null,  // マーカー表で選んだ行（子の行を含む。Delete はこの行だけを消す: G §3.7）
+        editCell: null,  // ダブルクリックで直しているセル {id, col, text}
         traceNotes: {},
         icNote: false,  // イメージキャンセルを入れたときだけ一度出す注意（ずっとは出さない）
         fileHidden: {},
@@ -56,10 +58,15 @@
         detached: {},
         peakList: null,
         peakTrace: 1,
-        peakMargin: "10",
+        peakMargin: 10,
         topN: "3",
         off: { type: "freq", sign: "±", delta: "" },
-        fn: { bw1: "3", bw2: "", thr: "", side: "below" },
+        // マーカーの機能を切っている間の値（Qt の tab_markers と同じ初期値。入れている間はマーカーの値を出す: fnView）
+        fn: { bw1: 3, bw2: 60, thr: -20, side: "below" },
+        fnSent: null,  // 送って戻りを待っている機能（fnView・fnSend）
+        // dB の打てるドロップダウンの一覧と打てる範囲（G §3.6。fields.js に Qt の fields.py と同じ値で置く）
+        dbLists: { bw: GSFields.BANDWIDTH_CHOICES, floor: GSFields.FLOOR_CHOICES, ref: GSFields.REF_CHOICES },
+        dbRanges: GSFields.DB_RANGES,
         refs: [],
         refName: "",
         hover: null,
@@ -78,8 +85,10 @@
       rbwNote() {
         const s = this.sw;
         if (!s) return "";
-        const g = this.rbwGroups.find((x) => x.choices.some((c) => c.hz === s.rbw_preference_hz));
-        return g ? g.note : "";
+        const g = this.rbwGroups.find((x) => x.choices.some((c) => c.hz === s.rbw_hz));
+        // 使えない RBW があるときはその理由を先に（設計C §5.14）
+        const limit = this.rbwGroups.flatMap((x) => x.choices).map((c) => c.reason).find((r) => r) || "";
+        return [limit, g ? g.note : ""].filter((t) => t).join("\n");
       },
       sweepReasons() { return this.ui.sweep_reasons || {}; },
       divChoices() { return DB_PER_DIV_CHOICES; },
@@ -155,6 +164,10 @@
       // 画面の配色はコアの配色（ユーザー設定の1つ。Qt と共有: J §4.4）。状態が届くまではダークの初期値
       palette() { return (this.st && this.st.palette && this.st.palette.colors) || (this.colors && this.colors.dark) || {}; },
       markerRows() { return this.markers.rows || []; },
+      selectedRowId() {
+        const rows = this.markerRows;
+        return this.selectedRow && rows.some((r) => r.id === this.selectedRow) ? this.selectedRow : this.selectedMarker;
+      },
       markerColumns() { return this.markers.columns || X.list("MARKER_TABLE_COLUMNS"); },
       selMarker() { return (this.markers.markers || []).find((m) => m.id === this.selectedMarker) || null; },
       files() { return (this.st && this.st.files) || []; },
@@ -490,6 +503,8 @@
         if (!this.$graph) return;
         this.$graph.setMarkers(this.markers.markers || [], this.selectedMarker);
         this.$graph.setXY(this.markers.xy);
+        // マーカーの機能の線（G §3.6）。出すかはコアの表示の設定 view.function_lines（Qt と共有。無ければ出す）
+        this.$graph.setFunctionLines(this.viewOpts.function_lines === false ? [] : this.markerRows);
       },
       onRangeSelected(a, b) {
         // ドラッグは Start と Stop を同時に触ったものとして扱う（C §5.1）。Span 固定の規則はコアが当てる（C §5.12）
@@ -576,6 +591,42 @@
         const r = await this.cmd("marker_peak", args);
         if (r && r.id) this.selectedMarker = r.id;
       },
+      // ------------------------------------------------------------ マーカー表の行（G §3.7: 決まりはサーバーの marker_rows）
+      rowClick(r) {
+        this.selectedRow = r.id;
+        if (!r.child && r.kind === "marker") this.selectedMarker = r.id;
+        else if (r.parent) this.selectedMarker = r.parent;  // 子の行を選んだら親のマーカーを選ぶ（←→ は親を動かす）
+      },
+      removeSelectedRow() {
+        // 子の行（機能・オフセットのカーソル）や XY の行を選んでいたら、その行だけを消す。マーカーの行なら false
+        const r = this.markerRows.find((x) => x.id === this.selectedRow);
+        if (!r || !r.remove || (!r.child && r.kind === "marker")) return false;
+        this.cmd(r.remove.cmd, r.remove.args);
+        this.selectedRow = null;
+        return true;
+      },
+      startEdit(r, i) {
+        if (!r.edits || !r.edits[String(i)] || this.readOnly) return;
+        this.editCell = { id: r.id, col: i, text: String(r.cells[i] || "").trim() };
+        this.$nextTick(() => {
+          const el = document.querySelector("input.cell-edit");
+          if (el) { el.focus(); el.select(); }
+        });
+      },
+      finishEdit(text) {
+        const ec = this.editCell;
+        this.editCell = null;
+        if (!ec || text == null || !String(text).trim()) return;
+        const r = this.markerRows.find((x) => x.id === ec.id);
+        const spec = r && r.edits && r.edits[String(ec.col)];
+        if (!spec) return;
+        let v;
+        try { v = spec.parse === "freq" ? U.parseFreqHz(text) : U.parseDb(text); } catch (e) { this.note(null, W("bad_value")); return; }
+        // marker_rows.edit_command と同じ計算（表の周波数は周波数オフセット込みなので差し引く）
+        if (spec.parse === "freq") v = Math.round(spec.base + v - (spec.minus_offset ? (this.freqOff || 0) : 0));
+        else v = spec.base + v;
+        this.cmd(spec.cmd, { ...spec.args, [spec.arg]: v });
+      },
       markerStep(n) { if (this.selectedMarker) this.cmd("marker_set", { id: this.selectedMarker, step: n }); },
       markerHere() {
         const m = this.$graph && this.$graph.mouse;
@@ -609,20 +660,55 @@
         const r = await this.cmd("marker_offset_add", { id: m.id, type: this.off.type, sign: this.off.sign, delta }, { field: "offset" });
         if (r) this.off.delta = "";
       },
-      setFunction() {
+      // マーカーの機能（G §3.5・§3.6。Qt の tab_markers と同じ: チェックで入れる・切る、dB の欄で N・しきい値を変える）。
+      // 入れている機能は選んだマーカーの値を出し、切っている間は欄に残した値（fn）を出す
+      // 送って戻りを待つ間は、送った値（fnSent）を出す。続けて回したホイールが、前の値の戻りから数え直さないように
+      // （REF レベルの ampLocal と同じ考え。最後の命令の戻りから 1 秒でコアの値に戻す）
+      fnView() {
         const m = this.selMarker;
-        if (!m) return;
-        const bws = [this.fn.bw1, this.fn.bw2].filter((v) => String(v).trim() !== "").map(Number);
-        if (bws.some((v) => !Number.isFinite(v))) { this.note("function", X.get("ERRORS", "bad_marker_function")); return; }
-        this.cmd("marker_function", { id: m.id, bandwidth_db: bws }, { field: "function" });
+        const bws = (m && m.bandwidth) || [];
+        const th = (m && m.threshold) || null;
+        const v = {
+          on1: bws.length > 0, n1: bws.length > 0 ? bws[0].n_db : this.fn.bw1,
+          on2: bws.length > 1, n2: bws.length > 1 ? bws[1].n_db : this.fn.bw2,
+          thOn: !!th, thr: th ? th.level : this.fn.thr, side: th ? th.side : this.fn.side,
+        };
+        const s = this.fnSent;
+        if (m && s && s.id === m.id) {
+          if (s.bws) [[v.on1, v.n1], [v.on2, v.n2]] = s.bws;
+          if (s.th) [v.thOn, v.thr, v.side] = [s.th.on, s.th.level, s.th.side];
+        }
+        return v;
       },
-      setThreshold(on) {
+      async fnSend(m, part, args) {
+        const s = this.fnSent && this.fnSent.id === m.id ? this.fnSent : { id: m.id };
+        this.fnSent = { ...s, ...part };
+        clearTimeout(this.fnTimer);
+        this.fnBusy = (this.fnBusy || 0) + 1;
+        await this.cmd("marker_function", { id: m.id, ...args }, { field: "function" });
+        this.fnBusy -= 1;
+        if (!this.fnBusy) this.fnTimer = setTimeout(() => { this.fnSent = null; }, 1000);
+      },
+      // i: 0 = N dB 帯域幅、1 = 2つ目の N。on・n は変えるものだけ（null は今のまま）
+      setBandwidth(i, on, n) {
+        const v = this.fnView();
+        const rows = [[v.on1, v.n1], [v.on2, v.n2]];
+        if (on !== null) rows[i][0] = on;
+        if (n !== null) rows[i][1] = n;
+        this.fn[i ? "bw2" : "bw1"] = rows[i][1];  // 切っても欄の値は残す（Qt と同じ）
         const m = this.selMarker;
         if (!m) return;
-        if (!on) { this.cmd("marker_function", { id: m.id, threshold: null }, { field: "function" }); return; }
-        let level;
-        try { level = U.parseDb(this.fn.thr); } catch (e) { this.note("function", W("bad_value")); return; }
-        this.cmd("marker_function", { id: m.id, threshold: { level, side: this.fn.side } }, { field: "function" });
+        this.fnSend(m, { bws: rows }, { bandwidth_db: rows.filter((r) => r[0]).map((r) => r[1]) });
+      },
+      // patch: { on, level, side } のうち変えるもの
+      setThreshold(patch) {
+        const v = this.fnView();
+        const s = { on: v.thOn, level: v.thr, side: v.side, ...patch };
+        this.fn.thr = s.level;
+        this.fn.side = s.side;
+        const m = this.selMarker;
+        if (!m) return;
+        this.fnSend(m, { th: s }, { threshold: s.on ? { level: s.level, side: s.side } : null });
       },
       commitXY(key, text) {
         if (String(text).trim() === "") { this.cmd("set_xy", { [key]: null }); return; }
@@ -637,7 +723,7 @@
         return key.endsWith("_hz") ? U.freqFieldText(this.shownHz(v)) : `${v.toFixed(2)}`;
       },
       async getPeakList() {
-        const r = await this.cmd("peak_list", { trace: Number(this.peakTrace), floor_margin_db: Number(this.peakMargin) || 10 }, { field: "peaks" });
+        const r = await this.cmd("peak_list", { trace: Number(this.peakTrace), floor_margin_db: this.peakMargin }, { field: "peaks" });
         if (r) this.peakList = r;
       },
       async topPeaks() {
@@ -710,7 +796,7 @@
         m.ok(v, m);
       },
       // ------------------------------------------------------------ PNG（設計I。配置はサーバーの report_layout、描くのは canvas）
-      // 配色と大きさは設定の画面の「保存」で選んだもの（ブラウザごと。既定はライトの初期値・1600×1000: I §3.1）
+      // 配色と大きさは設定の画面の「保存」で選んだもの（ブラウザごと。既定はユーザー指定の配色・1600×1000: I §3.1・§3.6）
       pngBlob(note) {
         const colors = this.pngColors();
         return GSPng.render({
@@ -838,6 +924,7 @@
   const app = createApp(base);
   app.component("num-field", GSFields.NumField);
   app.component("count-field", GSFields.CountField);
+  app.component("db-field", GSFields.DbField);
   // 状態を映す入力は、触っている間は書き直さない（fields.js の Steady）
   app.directive("steady", GSFields.Steady);
   // 設定の画面・プリセットの窓・確かめる窓（app_windows.js）

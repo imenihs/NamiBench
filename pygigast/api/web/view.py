@@ -41,13 +41,21 @@ def state_view(st: dict) -> dict:
 
 
 def markers_view(snap: dict, unit: str = "dBm", freq_offset_hz: int = 0) -> dict:
-    """マーカー表に `rows`（表の行。Qt の表・コピー・PNG と同じ行）と `cells`（表の文字）を足す。"""
+    """マーカー表に `rows`（表の行。Qt の表・コピー・PNG と同じ行）と `cells`（表の文字）を足す。
+
+    機能の行の `line` は、グラフに出す機能の線（G §3.6: 横線のレベルと縦線の周波数。Qt のグラフと同じ行から作る）。
+    """
     rows = marker_rows.rows_from_snapshot(snap)
     cells = marker_rows.format_rows(rows, unit, freq_offset_hz)
     out = []
+    cols = (marker_rows.COL_FREQ, marker_rows.COL_VALUE, marker_rows.COL_DFREQ, marker_rows.COL_DVALUE)
     for r, c in zip(rows, cells):
+        rm = marker_rows.remove_command(r, snap)
+        edits = {str(i): e for i in cols if (e := marker_rows.edit_spec(r, i, rows, snap)) is not None}
+        # 行だけを消す命令と、ダブルクリックで直せるセルの決まり（G §3.7。Qt と同じ marker_rows の決まり）
         out.append({"id": r["id"], "parent": r.get("parent"), "kind": r.get("kind"), "child": bool(r.get("child")),
-                    "ref": r.get("ref") if not r.get("child") else None, "cells": c})
+                    "ref": r.get("ref") if not r.get("child") else None, "cells": c, "line": r.get("line"),
+                    "remove": {"cmd": rm[0], "args": rm[1]} if rm else None, "edits": edits})
     return {**snap, "rows": out, "columns": list(marker_rows.COLUMNS), "right": list(marker_rows.RIGHT)}
 
 
@@ -125,7 +133,8 @@ def png_layout(st: dict, req: dict) -> dict:
               for t in st.get("traces") or [] if t.get("visible") and t.get("has_values")]
     traces += [{"number": "", "action": "", "count": None, "label": str(f.get("label", "")),
                 "color": f.get("color") or "trace1", "visible": True} for f in req.get("files") or []]
-    rows = marker_rows.png_rows(marker_rows.rows_from_snapshot(st.get("markers") or {}))
+    rows = marker_rows.png_rows(marker_rows.rows_from_snapshot(st.get("markers") or {}),
+                                lines=marker_rows.function_lines_on(st))
     data = rl.build_data(st, ref_level=float(req.get("ref_level", 0.0)), db_per_div=float(req.get("db_per_div", 10.0)),
                          unit=str(req.get("unit") or "dBm"),
                          mode_name=texts.MODE_NAMES.get(sw.get("mode"), sw.get("mode")), traces=traces,

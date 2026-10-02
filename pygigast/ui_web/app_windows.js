@@ -92,10 +92,11 @@
             <option v-for="o in a.pngSizes" :key="o.value" :value="o.value">{{ o.text }}</option></select>
           <button class="small" :title="a.S('reset_tip')" @click="a.resetPng('size')">{{ a.S('reset') }}</button></div>
         <label>{{ a.S('png_palette') }}</label>
-        <div class="row"><select :value="a.pngPrefs.palette" @change="a.setPng('palette', $event.target.value)">
+        <div class="row"><select :value="a.pngPalette" @change="a.setPng('palette', $event.target.value)">
             <option v-for="(l, c) in a.Td('PNG_PALETTES')" :key="c" :value="c">{{ l }}</option></select>
           <button class="small" :title="a.S('reset_tip')" @click="a.resetPng('palette')">{{ a.S('reset') }}</button></div>
       </div>
+      <p class="dim">{{ a.S('png_palette_note') }}</p>
       <p class="dim">{{ a.S('save_web_note') }}</p>
     </template>
 

@@ -30,8 +30,9 @@ def build(win: "MainWindow") -> dict:
                 "values_db": np.asarray(p["values"], dtype=np.float64), "visible": True,
                 "flags": None}
         if p.get("source") == "file":
+            # 色は名前で渡す（画面の色の値を焼き込むと、ライト・ダークを選んでもこの線だけ画面の色になる: I §3.6）
             item.update({"number": "", "action": "", "label": label,
-                         "color": win.traces.files[str(p["trace"])]["color"], "count": None})
+                         "color": win.traces.files[str(p["trace"])]["color_key"], "count": None})
         else:
             item.update({**texts.legend_parts(p), "color": f"trace{p['trace']}"})
             item["flags"] = marked_points(p, ax["points"]).tolist()
@@ -40,5 +41,5 @@ def build(win: "MainWindow") -> dict:
     return rl.build_data(
         st, ref_level=win.ref_level(), db_per_div=win.db_div(), unit=win.display_unit(),
         mode_name=texts.MODE_NAMES.get(sw.get("mode"), sw.get("mode")), traces=traces,
-        markers=marker_rows.png_rows(win.marker_row_list), warnings=screen_model.png_warnings(st),
+        markers=marker_rows.png_rows(win.marker_row_list, lines=marker_rows.function_lines_on(st)), warnings=screen_model.png_warnings(st),
         app_version=APP_VERSION, norm_reasons=texts.NORM_REASONS)

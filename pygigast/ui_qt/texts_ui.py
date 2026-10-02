@@ -187,8 +187,6 @@ TEMPLATES = {
     "task_progress": "  {done}/{total}",
     "task_elapsed": "  経過 {s} 秒",
     "task_cancelling": "（やめています）",
-    "cond_rbw_fixed": "RBW は {rbw} で測っています（TG・NF・S11、または Span 50MHz 超では 180kHz 固定。条件から出ると {pref} に戻ります）",
-    "cond_rbw_widened": "RBW は {rbw} で測っています（点数の上限を超えるため広げました。Span を狭めると {pref} に戻ります）",
     "cond_tail_gap": "Stop の手前 1 Step 未満はデータがありません（機器の上限）",
     "cond_fixed_center": "{cause}間はチューナーの中心を {center} に止めています。中心の DC の点は使えません（値なし）",
     "span_limited": "{cause}間は表示の範囲を {start}〜{stop} に限りました（やめると戻します）",

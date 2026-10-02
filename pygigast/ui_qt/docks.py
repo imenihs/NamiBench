@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Optional
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QEvent, Qt
 from PySide6.QtWidgets import (
     QDockWidget,
     QHBoxLayout,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QTabWidget,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -52,6 +53,17 @@ class PartDock(QDockWidget):
         self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
                          | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
         self.setToolTip(texts.LAYOUT_TEXTS["float_tip"])
+
+    def event(self, e) -> bool:
+        # 「つまんで動かす」の説明は掴む帯の上だけで出す。中の欄の上で出すと欄にかぶさる
+        # （中の部品に説明が無いと、説明を求める合図がこの部品まで上がってくる）
+        if e.type() == QEvent.Type.ToolTip:
+            body = self.widget()
+            if body is not None and e.pos().y() >= body.geometry().top():
+                QToolTip.hideText()
+                e.ignore()
+                return True
+        return super().event(e)
 
     def closeEvent(self, e) -> None:
         if self.isFloating():

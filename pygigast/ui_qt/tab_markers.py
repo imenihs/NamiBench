@@ -2,7 +2,8 @@
 
 - 選んでいるマーカー: 周波数の数値入力・載るトレース・デルタの基準・ピーク追従（P だけ）・条件へ（G §3.4）
 - オフセット: 周波数／レベル、+・−・±（親について動くカーソル）
-- マーカーの機能: N dB 帯域幅（N を2つでシェープファクタ）・しきい値との交点
+- マーカーの機能: N dB 帯域幅（N を2つでシェープファクタ）・しきい値との交点。dB の欄は打てるドロップダウン（G §3.6）。
+  結果の線をグラフに出すかの切り替え（コアの表示の設定 view.function_lines）
 - XY カーソル: X1・X2（周波数）・Y1・Y2（レベル）。トレースに載らない
 - ピークの一覧と「P に登録」・「上位 N 個に P を置く」
 """
@@ -15,7 +16,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -33,7 +33,9 @@ from PySide6.QtWidgets import (
 
 from ..core.units import ParseError, format_freq, parse_db, parse_freq_hz
 from . import texts, widget_sync
-from .fields import DbField, FreqField
+from .fields import (BANDWIDTH_CHOICES, BANDWIDTH_RANGE, FLOOR_CHOICES, FLOOR_RANGE, REF_CHOICES, THRESHOLD_RANGE,
+                     DbField, FreqField, LocalDbChoiceField)
+from .marker_rows import function_lines_on
 from .tab_traces import scroll, set_enabled
 from .theme import number_font
 
@@ -46,11 +48,24 @@ L = texts.LABELS
 SIGNS = (("+", "+Δ"), ("-", "−Δ"), ("±", "±Δ"))
 
 
+class _FailedNote:
+    """win.call の失敗の知らせを受ける（欄の代わりに渡す）。戻りの待ちを1つ減らし、知らせは欄の下に出す。"""
+
+    def __init__(self, tab: "MarkerTab", field: DbField) -> None:
+        self.tab, self.field = tab, field
+
+    def flash_note(self, text: str) -> None:
+        self.field.flash_note(text)
+        self.tab._function_done()
+
+
 class MarkerTab(QWidget):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__()
         self.win = win
         self._marker: Optional[dict] = None
+        self._snap: dict = {}
+        self._fn_pending = 0  # 送って戻りを待っているマーカーの機能の数（_send_function）
         inner = QWidget()
         lay = QVBoxLayout(inner)
         self.body = lay  # 他の欄（聞く: listen.py）を差し込む
@@ -116,24 +131,24 @@ class MarkerTab(QWidget):
         self.g_offset = g
         lay.addWidget(g)
 
-        # ---- マーカーの機能
+        # ---- マーカーの機能（dB の欄は REF レベルと同じ打てるドロップダウン: G §3.6）
         g = QGroupBox(L["functions"])
-        grid = QGridLayout(g)
+        gl = QVBoxLayout(g)
+        self.func_body = QWidget()  # 選んでいるマーカーの機能（マーカーを選んでいないときは使えない）
+        grid = QGridLayout(self.func_body)
+        grid.setContentsMargins(0, 0, 0, 0)
         self.bw1 = QCheckBox(L["n_db_bw"])
-        self.bw1_n = self._db_spin(3.0, 0.1, 200.0)
+        self.bw1_n = self._db_field(3.0, BANDWIDTH_CHOICES, False, BANDWIDTH_RANGE, self._send_bandwidth)
         self.bw2 = QCheckBox(L["second_n"])
-        self.bw2_n = self._db_spin(60.0, 0.1, 200.0)
+        self.bw2_n = self._db_field(60.0, BANDWIDTH_CHOICES, False, BANDWIDTH_RANGE, self._send_bandwidth)
         self.th = QCheckBox(L["threshold_cross"])
-        self.th_level = self._db_spin(-20.0, -300.0, 300.0)
+        self.th_level = self._db_field(-20.0, REF_CHOICES, True, THRESHOLD_RANGE, self._send_threshold)
         self.th_side = QComboBox()
         for code, name in texts.THRESHOLD_SIDES.items():
             self.th_side.addItem(name, code)
         for w in (self.bw1, self.bw2):
             w.toggled.connect(self._send_bandwidth)
-        for w in (self.bw1_n, self.bw2_n):
-            w.editingFinished.connect(self._send_bandwidth)
         self.th.toggled.connect(self._send_threshold)
-        self.th_level.editingFinished.connect(self._send_threshold)
         self.th_side.activated.connect(lambda _i: self._send_threshold())
         grid.addWidget(self.bw1, 0, 0)
         grid.addWidget(self.bw1_n, 0, 1)
@@ -142,6 +157,13 @@ class MarkerTab(QWidget):
         grid.addWidget(self.th, 2, 0)
         grid.addWidget(self.th_level, 2, 1)
         grid.addWidget(self.th_side, 2, 2)
+        gl.addWidget(self.func_body)
+        # 結果の線を出すかは表示の設定（全部のマーカーに効く。マーカーを選んでいなくても切り替えられる）
+        self.function_lines = QCheckBox(L["function_lines"])
+        self.function_lines.setToolTip(L["function_lines_tip"])
+        self.function_lines.setChecked(True)
+        self.function_lines.toggled.connect(lambda on: win.call("set_view", function_lines=bool(on)))
+        gl.addWidget(self.function_lines)
         self.g_func = g
         lay.addWidget(g)
 
@@ -175,13 +197,16 @@ class MarkerTab(QWidget):
         self.pk_trace = QComboBox()
         for n in (1, 2, 3, 4):
             self.pk_trace.addItem(texts.w("trace_n", n=n), n)
-        self.pk_margin = self._db_spin(10.0, 0.0, 100.0)
-        self.pk_margin.setPrefix(L["floor_prefix"])
+        # 確定した値は欄が持ち、「探す」で使う
+        self.pk_margin = self._db_field(10.0, FLOOR_CHOICES, False, FLOOR_RANGE, lambda: None)
         self.pk_margin.setToolTip(L["floor_tip"])
         self.pk_find = QPushButton(L["find"])
         self.pk_find.setObjectName("small")
         self.pk_find.clicked.connect(self._find_peaks)
         row.addWidget(self.pk_trace)
+        floor_label = QLabel(L["from_floor"])
+        floor_label.setToolTip(L["floor_tip"])
+        row.addWidget(floor_label)
         row.addWidget(self.pk_margin, 1)
         row.addWidget(self.pk_find)
         # ピークの一覧だけを別の窓に出す（J §4.3.2。押したときの動きは main_window が docks につなぐ）
@@ -227,25 +252,27 @@ class MarkerTab(QWidget):
         self.apply(None, {})
 
     @staticmethod
-    def _db_spin(value: float, lo: float, hi: float) -> QDoubleSpinBox:
-        s = QDoubleSpinBox()
-        s.setRange(lo, hi)
-        s.setDecimals(1)
-        s.setValue(value)
-        s.setSuffix(" dB")
-        s.setKeyboardTracking(False)
-        return s
+    def _db_field(value: float, choices: tuple, signed: bool, rng: tuple[float, float], on_commit) -> LocalDbChoiceField:
+        """dB の打てるドロップダウン（G §3.6）。範囲と小数1桁は前の欄（数の上下の欄）と同じ。名前は横の文字で出す。"""
+        f = LocalDbChoiceField("", "dB", lambda v: on_commit(), choices, signed=signed, lo=rng[0], hi=rng[1],
+                               decimals=1, big=False)
+        f.name_label.hide()
+        f.set_value(value)
+        return f
 
     # ---------------------------------------------------------------- 状態を映す
 
     def apply(self, marker: Optional[dict], snap: dict) -> None:
         """選んでいるマーカー（コアのマーカー表の1行）とマーカー表全体を映す。"""
         self._marker = marker
+        self._snap = snap
         reason = None if marker else REASON_NO_MARKER
         for w in (self.freq, self.trace, self.ref, self.to_center, self.to_ref, self.to_span, self.remove,
-                  self.g_offset, self.g_func):
+                  self.g_offset, self.func_body):
             set_enabled(w, reason)
         unit = self.win.display_unit()
+        # しきい値の一覧は REF と同じく、いまの縦軸の単位で出す（G §3.6）
+        self.th_level.set_unit(unit)
         off = texts.freq_offset_of(self.win.state)  # 周波数の欄は換算後の周波数（設計O）
         self.freq.set_offset(off)
         for k in ("x1_hz", "x2_hz"):
@@ -268,16 +295,8 @@ class MarkerTab(QWidget):
             set_enabled(self.to_span, None if marker.get("ref") else texts.REASON_TEXTS["delta_ref"])
             set_enabled(self.track, None if marker["kind"] == "P" else REASON_TRACK_M)
             widget_sync.set_checked(self.track, bool(marker.get("peak_track")))
-            bws = marker.get("bandwidth") or []
-            for cb, spin, i in ((self.bw1, self.bw1_n, 0), (self.bw2, self.bw2_n, 1)):
-                widget_sync.set_checked(cb, len(bws) > i)
-                if len(bws) > i:
-                    widget_sync.set_value(spin, float(bws[i]["n_db"]))
-            th = marker.get("threshold")
-            widget_sync.set_checked(self.th, th is not None)
-            if th is not None:
-                widget_sync.set_value(self.th_level, float(th["level"]))
-                widget_sync.set_data(self.th_side, th["side"])
+            if self._fn_pending == 0:  # 送った機能の戻りを待つ間は書き直さない（_send_function）
+                self._apply_functions(marker)
         xy = snap.get("xy") or {}
         for key, cb in self.xy_checks.items():
             v = xy.get(key)
@@ -290,6 +309,22 @@ class MarkerTab(QWidget):
                 f.set_hz(int(v)) if isinstance(f, FreqField) else f.set_value(float(v))
         self.dx.setText(f"ΔX = {format_freq(int(xy['dx_hz']))}" if xy.get("dx_hz") is not None else "")
         self.dy.setText(f"ΔY = {xy['dy']:+.2f} dB" if xy.get("dy") is not None else "")
+
+    def _apply_functions(self, marker: dict) -> None:
+        bws = marker.get("bandwidth") or []
+        for cb, field, i in ((self.bw1, self.bw1_n, 0), (self.bw2, self.bw2_n, 1)):
+            widget_sync.set_checked(cb, len(bws) > i)
+            if len(bws) > i:
+                field.set_value(float(bws[i]["n_db"]))  # 打っている間は書かない（欄の決まり）
+        th = marker.get("threshold")
+        widget_sync.set_checked(self.th, th is not None)
+        if th is not None:
+            self.th_level.set_value(float(th["level"]))
+            widget_sync.set_data(self.th_side, th["side"])
+
+    def apply_view(self, st: dict) -> None:
+        """表示の設定のうち、このタブにある「交点の線をグラフに出す」（G §3.6。コアの view.function_lines）。"""
+        widget_sync.set_checked(self.function_lines, function_lines_on(st))
 
     # ---------------------------------------------------------------- 操作
 
@@ -335,13 +370,26 @@ class MarkerTab(QWidget):
             ns.append(self.bw1_n.value())
         if self.bw2.isChecked():
             ns.append(self.bw2_n.value())
-        if self._marker:
-            self.win.call("marker_function", id=self._marker["id"], bandwidth_db=ns)
+        self._send_function(self.bw1_n, bandwidth_db=ns)
 
     def _send_threshold(self) -> None:
         th = {"level": self.th_level.value(), "side": self.th_side.currentData()} if self.th.isChecked() else None
-        if self._marker:
-            self.win.call("marker_function", id=self._marker["id"], threshold=th)
+        self._send_function(self.th_level, threshold=th)
+
+    def _send_function(self, field: DbField, **kw) -> None:
+        """マーカーの機能を送る。戻りを待つ間は機能の欄をコアの値で書き直さない（続けて回したホイールの値が、前に
+        送った値の戻りで1つ前へ書き戻されないように。REF レベルの欄の送り方と同じ考え）。失敗は欄の下に出す。"""
+        if not self._marker:
+            return
+        self._fn_pending += 1
+        self.win.call("marker_function", on_ok=lambda _r: self._function_done(), field=_FailedNote(self, field),
+                      id=self._marker["id"], **kw)
+
+    def _function_done(self) -> None:
+        self._fn_pending = max(0, self._fn_pending - 1)
+        if self._fn_pending == 0:
+            # 送った分の戻りは届いている（コアのイベントは命令の戻りより先に届く）。最新のマーカーの値を映す
+            self.apply(self._marker, self._snap)
 
     def _xy_toggled(self, key: str, on: bool) -> None:
         if not on:

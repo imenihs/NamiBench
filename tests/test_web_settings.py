@@ -271,5 +271,91 @@ class LevelTextTest(unittest.TestCase):
         self.assertIn("U.levelText(this.amp.ref)", (UI_WEB / "app.js").read_text(encoding="utf-8"))
 
 
+@unittest.skipUnless(shutil.which("node"), "Node が無い")
+class PngPaletteTest(unittest.TestCase):
+    """Web の PNG の配色（app_settings.js の pngColors）: ユーザー指定（既定）・ライト・ダークが Qt と同じ（I §3.6）。
+
+    Web の PNG はブラウザの canvas が pngColors() の色だけで描く（png.js は ctx.colors 以外の色を持たない）。
+    """
+
+    SCRIPT = r"""
+globalThis.window = globalThis; const store = {};
+globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); },
+                            removeItem: (k) => { delete store[k]; } };
+const fs = require("fs");
+require(process.argv[1]);
+GSTexts.load(JSON.parse(fs.readFileSync(process.argv[2], "utf-8")));
+require(process.argv[3]);
+const A = GSAppSettings;
+const P = JSON.parse(process.argv[4]);
+function vm(palette) {
+  const o = { ...A.data.call({}), colors: { light: P.light, dark: P.dark }, palette: P.user };
+  if (palette !== undefined) o.pngPrefs = { ...o.pngPrefs, palette };
+  Object.defineProperty(o, "pngPalette", { get() { return A.computed.pngPalette.call(o); } });
+  for (const [k, f] of Object.entries(A.methods)) o[k] = f;
+  return o;
+}
+const out = { colors: {} };
+for (const c of [undefined, "screen", "light", "dark", "sepia"]) {
+  const o = vm(c);
+  out.colors[String(c)] = { code: o.pngPalette, colors: o.pngColors() };
+}
+// 覚えるのは選んだ項目だけ（大きさを変えても配色を覚えない = 配色は初期値のユーザー指定に従う）
+const o = vm();
+o.setPng("size", "1920x1080");
+out.afterSize = JSON.parse(store["pygigast.png"]);
+out.freshDefault = vm().pngPalette;
+o.setPng("palette", "dark");
+out.afterDark = JSON.parse(store["pygigast.png"]);
+out.freshDark = vm().pngPalette;
+o.resetPng("palette");
+out.afterReset = JSON.parse(store["pygigast.png"]);
+console.log(JSON.stringify(out));
+"""
+
+    def test_three_choices_like_qt(self):
+        from pygigast.core import report_layout as rl
+
+        user = {**rl.DARK_DEFAULT, "graph_bg": "#203040", "panel_bg": "#302010", "trace1": "#ff00ff"}
+        with tempfile.TemporaryDirectory() as d:
+            tj = Path(d) / "texts.json"
+            tj.write_text(json.dumps(web.texts_json(), ensure_ascii=False), encoding="utf-8")
+            arg = json.dumps({"user": user, "light": rl.LIGHT_DEFAULT, "dark": rl.DARK_DEFAULT})
+            out = subprocess.run(["node", "-e", self.SCRIPT, str(UI_WEB / "texts.js"), str(tj),
+                                  str(UI_WEB / "app_settings.js"), arg],
+                                 capture_output=True, text=True, timeout=30, check=True, encoding="utf-8").stdout
+        got = json.loads(out)
+        expect = {"undefined": ("screen", user), "screen": ("screen", user), "light": ("light", rl.LIGHT_DEFAULT),
+                  "dark": ("dark", rl.DARK_DEFAULT), "sepia": ("screen", user)}
+        for k, (code, colors) in expect.items():
+            self.assertEqual(got["colors"][k]["code"], code, k)
+            self.assertEqual(got["colors"][k]["colors"], colors, k)
+            # Qt と同じ規則（core/report_layout.png_palette）
+            self.assertEqual(colors, rl.png_palette(None if k == "undefined" else k, user), k)
+        self.assertEqual(rl.PNG_PALETTE_DEFAULT, "screen")
+        self.assertEqual(got["afterSize"], {"size": "1920x1080"})
+        self.assertEqual(got["freshDefault"], "screen")
+        self.assertEqual(got["afterDark"], {"size": "1920x1080", "palette": "dark"})
+        self.assertEqual(got["freshDark"], "dark")
+        self.assertEqual(got["afterReset"]["palette"], "screen")
+
+    def test_choices_table_and_wiring(self):
+        from pygigast.core import report_layout as rl
+
+        # 選ぶ欄の並びと語は表から（Qt と Web が同じ表: J §5）
+        table = web.texts_json()["PNG_PALETTES"]
+        self.assertEqual(list(table), list(rl.PNG_PALETTE_CHOICES))
+        self.assertEqual(list(table.values()), ["ユーザー指定（画面と同じ色）", "ライト", "ダーク"])
+        # PNG を描くときに pngColors() の色を使い、設定の画面の欄は検めた選び方（pngPalette）を映す
+        app = (UI_WEB / "app.js").read_text(encoding="utf-8")
+        self.assertRegex(app, r"pngBlob\(note\) \{\s*const colors = this\.pngColors\(\);")
+        windows = (UI_WEB / "app_windows.js").read_text(encoding="utf-8")
+        self.assertIn(":value=\"a.pngPalette\"", windows)
+        self.assertIn("a.S('png_palette_note')", windows)
+        # png.js は渡された配色（ctx.colors）だけで描く: 色の値を直に書いていない
+        png = (UI_WEB / "png.js").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"#[0-9a-fA-F]{3,6}\b", png))
+
+
 if __name__ == "__main__":
     unittest.main()

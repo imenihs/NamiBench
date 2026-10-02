@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from typing import Callable, Optional
 
@@ -404,15 +405,40 @@ class DbField(ValueField):
         self._on_commit(self._value + direction * (10.0 ** exp))
 
 
-# REF レベルの一覧（J §4.1: +20〜−120 を 10dB 刻み）
+# REF レベルの一覧（J §4.1: +20〜−120 を 10dB 刻み）。しきい値との交点の一覧も同じ（G §3.6）
 REF_CHOICES = tuple(range(20, -121, -10))
+# ピークの一覧の「床から」と、N dB 帯域幅・2つ目の N の一覧（G §3.6）
+FLOOR_CHOICES = (3, 6, 10, 15, 20, 30)
+BANDWIDTH_CHOICES = (3, 6, 10, 20, 30, 40, 60)
+# 打てる範囲（前の数の上下の欄と同じ。小数は1桁: G §3.6）。Web の fields.js の DB_RANGES と同じ値
+BANDWIDTH_RANGE = (0.1, 200.0)
+THRESHOLD_RANGE = (-300.0, 300.0)
+FLOOR_RANGE = (0.0, 100.0)
 
 
-def ref_choice_text(v: int, unit: str) -> str:
-    return minus_sign(f"{v:+d}" if v else "0") + (f" {unit}" if unit else "")
+def db_choice_text(v: float, unit: str, signed: bool = True) -> str:
+    """一覧の行の文字（「+20 dBm」「−40 dBm」「3 dB」）。signed はレベル（REF・しきい値）で、正の数にも + を付ける。"""
+    s = f"{v:+g}" if signed and v else f"{v:g}"
+    return minus_sign(s) + (f" {unit}" if unit else "")
 
 
-class _RefCombo(QComboBox):
+def round_to(v: float, decimals: Optional[int]) -> float:
+    """小数 decimals 桁へ四捨五入する（ちょうど半分は大きい方へ。Web の fields.js の roundTo と同じ）。None は丸めない。"""
+    if decimals is None:
+        return v
+    k = 10 ** decimals
+    return math.floor(v * k + 0.5) / k
+
+
+def range_note(lo: float, hi: float, unit: str) -> str:
+    """範囲の外の値を打ったときの知らせ（G §3.6。Web の fields.js の rangeNote と同じ文）。"""
+    text = LABELS["db_range_note"]
+    for k, v in (("lo", minus_sign(f"{lo:g}")), ("hi", minus_sign(f"{hi:g}")), ("unit", unit)):
+        text = text.replace("{" + k + "}", v)
+    return " ".join(text.split())  # 単位の無い欄で空白が2つ続かない
+
+
+class _DbCombo(QComboBox):
     """一覧の矢印の上のホイールも、欄の上と同じく 1dB ずつにする（一覧の行を送らない）。"""
 
     def __init__(self, edit: "_Edit") -> None:
@@ -427,16 +453,25 @@ class _RefCombo(QComboBox):
         e.accept()
 
 
-class RefLevelField(DbField):
-    """REF レベルの欄（J §4.1）: 打てるドロップダウン（+20〜−120 を 10dB 刻み）と、欄の上のホイールで 1dB。
+class DbChoiceField(DbField):
+    """dB の打てるドロップダウン（REF レベル: J §4.1。マーカーの機能・ピークの一覧の dB: G §3.6）。
 
-    ホイールはカーソルの桁によらず1目盛で 1dB（J §3 の桁の増減の例外）。↑↓ と直接入力（例 −37.5）は
-    ほかの数値の欄と同じ。負の数は「−」の字形で出し、打つときは「-」でも「−」でもよい。
+    - 一覧から選ぶ・数を打つ（例 −37.5）。確定は Enter・Tab・欄を離れる・一覧から選ぶ。Esc は打つ前の値に戻す
+    - 欄の上（と一覧の矢印の上）のホイールはカーソルの桁によらず1目盛で 1dB（J §3 の桁の増減の例外）。↑↓ はカーソルの桁
+    - 打っている間は状態の値で書き直さない（_Edit の決まり）
+    - lo・hi を渡すと、その外の値は欄の下に範囲を知らせて元の値に戻す。↑↓・ホイールは端で止める
+    - decimals を渡すと、打った値・送った値をその桁に丸める
+    - 負の数は「−」の字形で出し、打つときは「-」でも「−」でもよい
     """
 
-    def __init__(self, name: str, unit: str, on_commit: Callable[[float], None], big: bool = True) -> None:
+    def __init__(self, name: str, unit: str, on_commit: Callable[[float], None], choices: tuple,
+                 signed: bool = True, lo: Optional[float] = None, hi: Optional[float] = None,
+                 decimals: Optional[int] = None, big: bool = True) -> None:
         super().__init__(name, unit, on_commit, big)
-        self.combo = _RefCombo(self.edit)
+        self._choices = tuple(choices)
+        self._signed = signed
+        self.lo, self.hi, self.decimals = lo, hi, decimals
+        self.combo = _DbCombo(self.edit)
         self.combo.setEditable(True)
         self.combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.layout().replaceWidget(self.edit, self.combo)
@@ -451,17 +486,48 @@ class RefLevelField(DbField):
     def _fill_choices(self) -> None:
         self.combo.blockSignals(True)
         self.combo.clear()
-        for v in REF_CHOICES:
-            self.combo.addItem(ref_choice_text(v, self._unit), float(v))
+        for v in self._choices:
+            self.combo.addItem(db_choice_text(v, self._unit, self._signed), float(v))
         self.combo.setCurrentIndex(-1)
         self.combo.blockSignals(False)
         self.edit.show_value(self.edit._shown)
+
+    def choices(self) -> list[str]:
+        return [self.combo.itemText(i) for i in range(self.combo.count())]
 
     def _chosen(self, i: int) -> None:
         v = self.combo.itemData(i)
         if v is not None:
             self.edit._echo = True  # 選んだ値の戻りはフォーカスがあっても映す
-            self._on_commit(float(v))
+            self._accept(float(v))
+
+    def _accept(self, v: float) -> None:
+        self._on_commit(v)
+
+    def _commit_text(self, text: str) -> None:
+        try:
+            v = parse_db(text.replace(self._unit, "") if self._unit else text)
+        except ParseError:
+            v = math.nan
+        if not math.isfinite(v):
+            self.flash_note(LABELS["bad_value"])
+            self.set_value(self._value)
+            return
+        v = round_to(v, self.decimals)
+        if (self.lo is not None and v < self.lo) or (self.hi is not None and v > self.hi):
+            self.flash_note(range_note(self.lo if self.lo is not None else -math.inf,
+                                       self.hi if self.hi is not None else math.inf, self._unit))
+            self.set_value(self._value)
+            return
+        self._accept(v)
+
+    def _stepped(self, exp: int, direction: int) -> None:
+        v = round_to(self._value + direction * (10.0 ** exp), self.decimals)
+        if self.lo is not None:
+            v = max(v, self.lo)
+        if self.hi is not None:
+            v = min(v, self.hi)
+        self._accept(v)
 
     def set_value(self, v: float) -> None:
         self._value = v
@@ -475,8 +541,30 @@ class RefLevelField(DbField):
 
     def _fit_width(self) -> None:
         # 値と単位が全部見え、一覧の矢印の分も取る（J §4.3: 欄を切らない）
-        widest = self.edit.fontMetrics().horizontalAdvance(f"{MINUS}120.0 {self._unit}")
+        fm = self.edit.fontMetrics()
+        ends = [x for x in (self.lo, self.hi) if x is not None] or [-120.0]
+        widest = max(fm.horizontalAdvance(f"{level_text(x)} {self._unit}") for x in ends)
         self.combo.setMinimumWidth(max(self.edit.minimumWidth(), widest + 16) + 24)
+
+
+class LocalDbChoiceField(DbChoiceField):
+    """値を欄が持つ dB の打てるドロップダウン（G §3.6: マーカーの機能の N・しきい値、ピークの一覧の「床から」）。
+
+    確定した値をまず欄に入れてから on_commit を呼ぶ（REF のように状態から戻ってくるのを待たない。機能を切っている
+    間の値は欄にだけある）。
+    """
+
+    def _accept(self, v: float) -> None:
+        self.edit._echo = True
+        self.set_value(v)
+        self._on_commit(v)
+
+
+class RefLevelField(DbChoiceField):
+    """REF レベルの欄（J §4.1）: 一覧は +20〜−120 を 10dB 刻み。範囲は持たず、丸めない（打った値のまま）。"""
+
+    def __init__(self, name: str, unit: str, on_commit: Callable[[float], None], big: bool = True) -> None:
+        super().__init__(name, unit, on_commit, REF_CHOICES, signed=True, big=big)
 
 
 # トレースの回数の一覧（設計F §2。打てば 1〜COUNT_MAX のどれでも）

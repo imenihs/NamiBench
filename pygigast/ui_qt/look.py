@@ -5,13 +5,14 @@ main_window.py から呼ぶ（1ファイル 1000 行の決まりで分けた）�
   win.pal は部品（トレース・帯・マーカー）が同じ辞書を見ているので、中身を入れ替える
 - キー: 画面の覚え書きの "keys" を重ねた割り当てを、メニューの項目（QAction）へ付け直す。項目の横と
   ツールチップの表示も同じに変わる（U-12）
-- 表示の設定: 周波数オフセット（横軸の目盛と名前・欄）・描き方（線・塗りつぶし）・表示のタブ
+- 表示の設定: 周波数オフセット（横軸の目盛と名前・欄）・描き方（線・塗りつぶし）・表示のタブ・
+  マーカーの機能の線を出すか（G §3.6）
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from . import keymap, menus, screen_model, texts
+from . import keymap, marker_rows, menus, screen_model, texts
 from .theme import stylesheet
 
 if TYPE_CHECKING:
@@ -74,6 +75,12 @@ def apply_view(win: "MainWindow", st: dict) -> None:
     fill = (st.get("view") or {}).get("draw_style") == "fill"
     if fill != win.traces.fill:
         win.redraw_style()
+    # マーカーの機能の線（G §3.6）。切り替えはマーカーのタブにあり、掃引していなくてもその場で描き直す
+    win.marker_tab.apply_view(st)
+    lines = marker_rows.function_lines_on(st)
+    if lines != win.marker_layer.function_lines:
+        win.marker_layer.function_lines = lines
+        win._show_markers()
 
 
 def freq_axis_label(st: dict) -> str:

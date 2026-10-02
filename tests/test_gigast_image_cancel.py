@@ -107,18 +107,6 @@ class TestNote(unittest.TestCase):
         v = np.asarray(values, dtype=np.uint16)
         return RawSweep(a, v, "gigast_ad_u16", 0.0, 0.1, raw_passes=np.stack([v] * 4) if passes else None)
 
-    def test_near_floor_flag(self):
-        near = int(FLOOR_30K + 2.9 * CPD)
-        far = int(FLOOR_30K + 3.2 * CPD) + 1
-        flags = ic.note_flags(self.raw([int(FLOOR_30K) - 40, near, far, 2000]), P)
-        np.testing.assert_array_equal(flags[ic.NOTE_IC_NOISE_FLOOR], [True, True, False, False])
-
-    def test_no_flag_without_four_passes(self):
-        self.assertEqual(ic.note_flags(self.raw([50, 60], passes=False), P), {})
-
-    def test_no_flag_for_profile_without_floor(self):
-        self.assertEqual(ic.note_flags(self.raw([50, 60]), {"raw": P["raw"]}), {})
-
 
 if __name__ == "__main__":
     unittest.main()

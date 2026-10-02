@@ -45,6 +45,16 @@ class ViewUnitsTest(unittest.TestCase):
         r = view_units.restore({"level_unit": "dBW", "ext_db": 3, "freq_offset_hz": "x", "draw_style": "fill"})
         self.assertEqual(r, {**view_units.DEFAULTS, "ext_db": 3.0, "draw_style": "fill"})
 
+    def test_function_lines_option(self):
+        """マーカーの機能の線を出すか（G §3.6）: 初期値は出す。真偽だけ受ける。前の版の保存（無い）は初期値。"""
+        self.assertIs(view_units.DEFAULTS["function_lines"], True)
+        self.assertIsNone(view_units.check_options(function_lines=False))
+        for bad in (1, "no", 0.0):
+            self.assertEqual(view_units.check_options(function_lines=bad), "function_lines")
+        self.assertIs(view_units.restore({"function_lines": False})["function_lines"], False)
+        self.assertIs(view_units.restore({"function_lines": "x"})["function_lines"], True)
+        self.assertIs(view_units.restore({"level_unit": "dBm"})["function_lines"], True)
+
 
 class PaletteTest(unittest.TestCase):
     def test_contrast_and_delta_e(self):
@@ -183,7 +193,8 @@ class InstrumentViewTest(InstrumentCase):
     def test_bad_values(self):
         from pygigast.core.instrument import CommandError
 
-        for kw in ({"level_unit": "dBW"}, {"ext_db": "x"}, {"freq_offset_hz": 1.5}, {"draw_style": "dots"}):
+        for kw in ({"level_unit": "dBW"}, {"ext_db": "x"}, {"freq_offset_hz": 1.5}, {"draw_style": "dots"},
+                   {"function_lines": 1}):
             with self.assertRaises(CommandError):
                 self.call("set_view", **kw)
         with self.assertRaises(CommandError) as cm:
@@ -238,15 +249,31 @@ class InstrumentViewTest(InstrumentCase):
         self.call("preset_delete", id=saved["id"])
         self.assertEqual(self.call("preset_list")["presets"], [])
 
+    def test_function_lines_in_preset_and_undo(self):
+        """マーカーの機能の線を出すか（G §3.6）は表示の設定: プリセットに入り、元に戻せる。null は初期値（出す）。"""
+        self.call("set_view", function_lines=False)
+        self.assertIs(self.call("get_state")["view"]["function_lines"], False)
+        saved = self.call("preset_save", name="線なし")
+        content = json.loads((self.root / "data" / "presets" / f"{saved['id']}.json").read_text("utf-8"))["content"]
+        self.assertIs(content["view"]["function_lines"], False)
+        self.call("set_view", function_lines=None)
+        self.assertIs(self.call("get_state")["view"]["function_lines"], True)
+        self.call("undo")
+        self.assertIs(self.call("get_state")["view"]["function_lines"], False)
+        self.call("set_view", function_lines=True)
+        self.call("preset_load", id=saved["id"])
+        self.assertIs(self.call("get_state")["view"]["function_lines"], False)
+
     def test_restored_at_startup(self):
-        self.call("set_view", level_unit="dBmV", ext_db=-3.5, freq_offset_hz=123_000_000, draw_style="fill")
+        self.call("set_view", level_unit="dBmV", ext_db=-3.5, freq_offset_hz=123_000_000, draw_style="fill",
+                  function_lines=False)
         self.call("palette_set", colors={"accent": "#0055aa"})
         self.inst.shutdown()
         self.inst = self.make_instrument()
         st = self.call("get_state")
         self.assertEqual({k: st["view"][k] for k in view_units.DEFAULTS},
                          {"level_unit": "dBmV", "ext_db": -3.5, "freq_offset_hz": 123_000_000, "draw_style": "fill",
-                          "layout": "spectrum"})
+                          "layout": "spectrum", "function_lines": False})
         self.assertEqual(st["palette"]["colors"]["accent"], "#0055aa")
         self.assertEqual(st["palette"]["changed"], ["accent"])
 

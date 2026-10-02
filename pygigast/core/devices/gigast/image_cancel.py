@@ -27,12 +27,6 @@ PASS_NAMES = ("b3_0a", "b3_1a", "b3_0b", "b3_1b")
 NEAR_FLOOR_DB = 3.0  # 低い方が床からこの幅の中
 BURST_EXCESS_DB = 6.0  # 高い方が低い方よりこの幅を超えて高い
 
-# マーカーの読み値の注意（設計G §3.3 の点の印）。イメージキャンセル ON（4回）で、採った値が雑音の床の近く。
-# 4回の合わせ方では雑音の床が2回の min より約 2dB 低く見えるので、雑音のレベルを読むときは
-# イメージキャンセルを OFF にするか平均を使うよう知らせる（設計F §6 の 2 の最後）
-NOTE_IC_NOISE_FLOOR = "ic_noise_floor"
-NOTE_MARGIN_DB = 3.0  # 床からこの幅の中なら注意を付ける（低い方を採る条件と同じ幅）
-
 _AD_MAX = 0xFFFF
 
 
@@ -84,21 +78,3 @@ def combine(passes: list[np.ndarray] | np.ndarray, floor_ad: Optional[float], cp
     return np.clip(np.rint(out), 0, _AD_MAX).astype(np.uint16)
 
 
-def near_floor(values_ad: np.ndarray, floor_ad: Optional[float], cpd: float) -> Optional[np.ndarray]:
-    """採った値が雑音の床の近く（床 + NOTE_MARGIN_DB 以下）の点。床が分からなければ None。"""
-    if floor_ad is None:
-        return None
-    return np.asarray(values_ad, dtype=np.float64) <= floor_ad + NOTE_MARGIN_DB * cpd
-
-
-def note_flags(raw, profile: dict) -> dict[str, np.ndarray]:
-    """Frame の点の印に足すもの（読み値の注意: 設計G §3.3）。4回のイメージキャンセルの GigaSt の値だけ。
-
-    raw は RawSweep。raw_passes（4回の生の値）が無い掃引（OFF・NF・前の2回の形のファイル）は何も付けない。
-    """
-    if getattr(raw, "raw_passes", None) is None:
-        return {}
-    floor = noise_floor_ad(profile, raw.adopted.rbw_hz)
-    if floor is None:
-        return {}
-    return {NOTE_IC_NOISE_FLOOR: near_floor(raw.raw, floor, counts_per_db(profile))}

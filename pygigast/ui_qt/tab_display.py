@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from . import texts, widget_sync
 from .fields import DbField
 from .tab_traces import scroll, set_enabled
@@ -154,7 +155,9 @@ class DisplayTab(QWidget):
 
     # PNG の配色・大きさは設定の画面の「保存」で選ぶ（画面ごとの覚え書き）
     def png_palette_choice(self) -> str:
-        return str(self.win.prefs.get("png_palette", "light"))
+        """ユーザー指定（"screen"）／ライト／ダーク（I §3.6）。選んでいない・読めない覚え書きは既定のユーザー指定。"""
+        code = self.win.prefs.get("png_palette", PNG_PALETTE_DEFAULT)
+        return code if code in PNG_PALETTE_CHOICES else PNG_PALETTE_DEFAULT
 
     def png_size_choice(self) -> tuple[int, int]:
         text = str(self.win.prefs.get("png_size", "1600×1000"))

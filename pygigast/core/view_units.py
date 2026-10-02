@@ -32,7 +32,9 @@ FREQ_OFFSET_LIMIT_HZ = 1_000_000_000_000  # 1THz
 DRAW_STYLES = ("line", "fill")
 LAYOUTS = ("spectrum",)  # ウォーターフォール・密度は設計P（まだ無い）
 
-DEFAULTS = {"level_unit": "dBm", "ext_db": 0.0, "freq_offset_hz": 0, "draw_style": "line", "layout": "spectrum"}
+# function_lines: マーカーの機能（N dB 帯域幅・しきい値との交点）の結果をグラフに薄い線で出すか（G §3.6）
+DEFAULTS = {"level_unit": "dBm", "ext_db": 0.0, "freq_offset_hz": 0, "draw_style": "line", "layout": "spectrum",
+            "function_lines": True}
 
 
 def level_shift(base_unit: Optional[str], opts: dict) -> tuple[float, Optional[str]]:
@@ -57,8 +59,11 @@ def shift_values(values_db: np.ndarray, shift: float) -> np.ndarray:
     return (np.asarray(values_db, dtype=np.float64) + shift).astype(np.asarray(values_db).dtype)
 
 
-def check_options(level_unit=None, ext_db=None, freq_offset_hz=None, draw_style=None, layout=None) -> Optional[str]:
+def check_options(level_unit=None, ext_db=None, freq_offset_hz=None, draw_style=None, layout=None,
+                  function_lines=None) -> Optional[str]:
     """命令の値を確かめる。だめなら欄の名前を返す（None は全部よい）。"""
+    if function_lines is not None and not isinstance(function_lines, bool):
+        return "function_lines"
     if level_unit is not None and level_unit not in LEVEL_UNITS:
         return "level_unit"
     if ext_db is not None and (isinstance(ext_db, bool) or not isinstance(ext_db, (int, float))

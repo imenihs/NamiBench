@@ -61,6 +61,24 @@ def _band_note(b: dict) -> str:
     return text
 
 
+def function_lines_on(st: Optional[dict]) -> bool:
+    """マーカーの機能の線をグラフに出すか（G §3.6。コアの表示の設定 view.function_lines。無ければ出す）。"""
+    return ((st or {}).get("view") or {}).get("function_lines", True) is not False
+
+
+def function_line(level: Optional[float], b: dict) -> Optional[dict]:
+    """マーカーの機能の結果をグラフに出す線（G §3.6）: 横線のレベルと、交点が見つかった側の縦線の周波数。
+
+    level が None（マーカーに値が無く機能が結果を出していない）なら線は無い。表示範囲の端まで交点が無い側・値なしの
+    区間に当たった側は縦線を出さない。Qt のグラフ・Web のグラフ・PNG が同じ線を描く（同じ行から作る: U-09）。
+    """
+    if level is None:
+        return None
+    freqs = [int(b[side + "_hz"]) for side in ("left", "right")
+             if b.get(side + "_status") == "ok" and b.get(side + "_hz") is not None]
+    return {"level": float(level), "freqs_hz": freqs}
+
+
 def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
     """マーカー表の行（親の下に子の行: オフセットのカーソル・機能の結果）と XY カーソル。"""
     rows: list[dict] = []
@@ -98,12 +116,15 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
                 "delta_value": d if o.get("level") is not None else None, "child": True,
                 "note": texts.MARKER_STATUS.get(st, st), "status": st, "offset": ("level", i),
             })
+        # 機能の線（G §3.6）はマーカーが値を持つ間だけ。N dB 帯域幅の横線は マーカーの値 − N
+        level = m.get("level") if status == "ok" else None
         for b in m.get("bandwidth") or []:
             rows.append({
                 "id": f"{mid}.bw{b['n_db']:g}", "parent": mid, "name": texts.w("row_bw", m=mid, n=f"{b['n_db']:g}"),
                 "kind": "function", "trace": m.get("trace"), "freq_hz": None, "value": None,
                 "unit": m.get("unit"), "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": _band_note(b), "status": b.get("status"),
+                "line": function_line(None if level is None else level - float(b["n_db"]), b),
             })
         if m.get("shape_factor") is not None:
             rows.append({
@@ -120,6 +141,7 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
                 "kind": "function", "trace": m.get("trace"), "freq_hz": None, "value": None,
                 "unit": m.get("unit"), "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": _band_note(th), "status": th.get("status"),
+                "line": function_line(None if level is None else th["level"], th),
             })
     rows += xy_rows((snap or {}).get("xy") or {})
     return rows
@@ -182,6 +204,95 @@ def to_tsv(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int = 0)
     return "\n".join(lines) + "\n"
 
 
-def png_rows(rows: list[dict]) -> list[dict]:
+def png_rows(rows: list[dict], lines: bool = True) -> list[dict]:
+    """PNG に渡す行。lines は機能の線（G §3.6）を描くか（画面で出していないなら PNG にも描かない）。"""
     keys = ("name", "kind", "trace", "freq_hz", "value", "unit", "ref", "delta_freq_hz", "delta_value", "child", "note")
-    return [{k: r.get(k) for k in keys} for r in rows]
+    return [{k: r.get(k) for k in keys} | {"line": r.get("line") if lines else None} for r in rows]
+
+
+# ------------------------------------------------------------------ 行を消す・セルを直す（G §3.7。Qt と Web で同じ決まり）
+
+XY_KEYS = {"X1": "x1_hz", "X2": "x2_hz", "Y1": "y1", "Y2": "y2"}
+# 直せる列（COLUMNS の並び）
+COL_FREQ, COL_VALUE, COL_DFREQ, COL_DVALUE = 2, 3, 5, 6
+
+
+def remove_command(r: dict, snap: Optional[dict]) -> Optional[tuple[str, dict]]:
+    """その行だけを消す命令（子の行を消しても親のマーカーは消さない）。消せない行は None。
+
+    マーカー → マーカー／オフセットのカーソル → そのカーソル／帯域幅 → その N だけ止める／シェープファクタ → 2つ目の
+    N を止める（2つの N があるときだけ出る行のため）／しきい値 → 交点を止める／X1〜Y2 → そのカーソルを外す
+    """
+    rid, kind = r["id"], r.get("kind")
+    if kind == "marker" and not r.get("parent"):
+        return "marker_remove", {"id": rid}
+    if r.get("offset"):
+        typ, idx = r["offset"]
+        return "marker_offset_remove", {"id": r["parent"], "type": typ, "index": idx}
+    if rid in XY_KEYS:
+        return "set_xy", {XY_KEYS[rid]: None}
+    if kind == "function":
+        mid = r["parent"]
+        m = next((x for x in (snap or {}).get("markers", []) if x["id"] == mid), None)
+        if m is None:
+            return None
+        ns = [b["n_db"] for b in m.get("bandwidth") or []]
+        tail = rid[len(mid) + 1:]
+        if tail == "th":
+            return "marker_function", {"id": mid, "threshold": None}
+        if tail == "sf" and len(ns) > 1:
+            return "marker_function", {"id": mid, "bandwidth_db": ns[:-1]}
+        if tail.startswith("bw"):
+            return "marker_function", {"id": mid, "bandwidth_db": [n for n in ns if f"bw{n:g}" != tail]}
+    return None
+
+
+def edit_spec(r: dict, col: int, rows: list[dict], snap: Optional[dict]) -> Optional[dict]:
+    """そのセルを打って直すときの命令の形。直せないセルは None。
+
+    形: {"cmd", "args", "arg"（打った値を入れる引数）, "parse"（"freq" | "db"）, "base"（足す値）,
+         "minus_offset"（表の周波数は周波数オフセット込みなので差し引く）}
+    マーカー: 周波数・（デルタの相手があれば）Δ周波数（相手 + Δ）／周波数のカーソル: Δ周波数／レベルのカーソル: Δ値
+    （向き付き）／X1・X2: 周波数、X2 の Δ周波数（X1 + Δ）／Y1・Y2: 値、Y2 の Δ値（Y1 + Δ）。マーカーの値は直せない
+    """
+    rid, kind = r["id"], r.get("kind")
+
+    def spec(cmd, args, arg, parse, base=0, minus_offset=False):
+        return {"cmd": cmd, "args": args, "arg": arg, "parse": parse, "base": base, "minus_offset": minus_offset}
+
+    if kind == "marker" and not r.get("parent"):
+        if col == COL_FREQ:
+            return spec("marker_set", {"id": rid}, "freq_hz", "freq", minus_offset=True)
+        if col == COL_DFREQ and r.get("ref"):
+            ref = next((x for x in rows if x["id"] == r["ref"]), None)
+            if ref is not None and ref.get("freq_hz") is not None:
+                return spec("marker_set", {"id": rid}, "freq_hz", "freq", base=int(ref["freq_hz"]))
+        return None
+    if r.get("offset"):
+        typ, idx = r["offset"]
+        if (typ, col) in (("freq", COL_DFREQ), ("level", COL_DVALUE)):
+            return spec("marker_offset_set", {"id": r["parent"], "type": typ, "index": idx}, "delta",
+                        "freq" if typ == "freq" else "db")
+        return None
+    xy = (snap or {}).get("xy") or {}
+    if rid in ("X1", "X2") and col == COL_FREQ:
+        return spec("set_xy", {}, XY_KEYS[rid], "freq", minus_offset=True)
+    if rid == "X2" and col == COL_DFREQ and xy.get("x1_hz") is not None:
+        return spec("set_xy", {}, "x2_hz", "freq", base=int(xy["x1_hz"]))
+    if rid in ("Y1", "Y2") and col == COL_VALUE:
+        return spec("set_xy", {}, XY_KEYS[rid], "db")
+    if rid == "Y2" and col == COL_DVALUE and xy.get("y1") is not None:
+        return spec("set_xy", {}, "y2", "db", base=float(xy["y1"]))
+    return None
+
+
+def edit_command(spec: dict, text: str, freq_offset_hz: int = 0) -> tuple[str, dict]:
+    """打った文字を命令にする（読めない文字は ParseError）。Web の app.js も同じ計算をする。"""
+    from ..core.units import parse_db, parse_freq_hz
+
+    if spec["parse"] == "freq":
+        v = parse_freq_hz(text) - (freq_offset_hz if spec["minus_offset"] else 0)
+        value = int(spec["base"]) + v
+    else:
+        value = float(spec["base"]) + parse_db(text)
+    return spec["cmd"], {**spec["args"], spec["arg"]: value}

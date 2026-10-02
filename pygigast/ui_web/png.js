@@ -197,6 +197,8 @@
       g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit);
       g.setTraces(ctx.traces(c));
       g.setMarkers((ctx.markers || {}).markers || [], null);
+      // マーカーの機能の線（G §3.6）: 画面で出しているときだけ PNG にも描く
+      if ((((ctx.st || {}).view) || {}).function_lines !== false) g.setFunctionLines((ctx.markers || {}).rows || []);
       g.setXY((ctx.markers || {}).xy);
       g.u.redraw(false, false);
       // uPlot は描き直しをまとめて microtask で行うので、描き終わるのを待ってから写す

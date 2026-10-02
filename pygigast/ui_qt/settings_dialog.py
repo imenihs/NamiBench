@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from . import screen_model, texts, widget_sync
 from .settings_colors import PalettePage
 from .settings_keys import KeysPage
@@ -204,13 +205,15 @@ class SettingsDialog(QDialog):
         row.addWidget(_reset_button(lambda: self._set_pref("png_size", PNG_SIZE_DEFAULT)))
         form.addRow(T["png_size"], row)
         row = QHBoxLayout()
+        # ユーザー指定（画面と同じ色）／ライト／ダーク。既定はユーザー指定（I §3.6）
         self.png_palette = QComboBox()
-        for code, name in texts.PNG_PALETTES.items():
-            self.png_palette.addItem(name, code)
+        for code in PNG_PALETTE_CHOICES:
+            self.png_palette.addItem(texts.PNG_PALETTES[code], code)
         self.png_palette.activated.connect(lambda _i: self._set_pref("png_palette", self.png_palette.currentData()))
         row.addWidget(self.png_palette, 1)
-        row.addWidget(_reset_button(lambda: self._set_pref("png_palette", "light")))
+        row.addWidget(_reset_button(lambda: self._set_pref("png_palette", PNG_PALETTE_DEFAULT)))
         form.addRow(T["png_palette"], row)
+        form.addRow(_dim(T["png_palette_note"]))
         v.addWidget(g)
         v.addStretch(1)
         return page
@@ -240,7 +243,7 @@ class SettingsDialog(QDialog):
         self.save_dir.setText(str(f.last_dir()))
         self.png_dir.setText(str(f.png_dir()))
         self.png_size.setCurrentIndex(max(0, self.png_size.findText(str(self.win.prefs.get("png_size", PNG_SIZE_DEFAULT)))))
-        self.png_palette.setCurrentIndex(max(0, self.png_palette.findData(str(self.win.prefs.get("png_palette", "light")))))
+        self.png_palette.setCurrentIndex(max(0, self.png_palette.findData(self.win.display_tab.png_palette_choice())))
 
     # ---------------------------------------------------------------- ブラウザから使う（A §4.3.2。暗号化していないことを書く: 7）
 

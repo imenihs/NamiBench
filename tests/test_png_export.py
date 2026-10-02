@@ -187,3 +187,32 @@ class SaveTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FunctionLinesPngTest(unittest.TestCase):
+    """マーカーの機能の線（G §3.6）は、画面で出しているときだけ PNG にも描く。"""
+
+    def _png(self, line):
+        from PySide6.QtGui import QImage
+        data = sample_data()
+        data["markers"] = list(data["markers"]) + [
+            {"name": "P1 3dB 帯域幅", "kind": "function", "trace": 1, "freq_hz": None, "value": None,
+             "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True, "note": "", "line": line}]
+        img = QImage()
+        img.loadFromData(pe.render_png(data, size=(1280, 720)))
+        return img
+
+    def test_lines_drawn_only_when_given(self):
+        line = {"level": -40.0, "freqs_hz": [1_480_000_000, 1_530_000_000]}
+        with_line, without = self._png(line), self._png(None)
+        diff = sum(1 for x in range(0, 1280, 2) for y in range(0, 720, 2)
+                   if with_line.pixel(x, y) != without.pixel(x, y))
+        self.assertGreater(diff, 200)  # 横線1本と縦線2本ぶん
+
+    def test_png_rows_drop_lines_when_off(self):
+        from pygigast.ui_qt import marker_rows
+        rows = [{"name": "M1 3dB 帯域幅", "kind": "function", "line": {"level": -3.0, "freqs_hz": [1]}}]
+        self.assertIsNotNone(marker_rows.png_rows(rows)[0]["line"])
+        self.assertIsNone(marker_rows.png_rows(rows, lines=False)[0]["line"])
+        self.assertFalse(marker_rows.function_lines_on({"view": {"function_lines": False}}))
+        self.assertTrue(marker_rows.function_lines_on({}))

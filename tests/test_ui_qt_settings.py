@@ -1,7 +1,7 @@
 """Qt の設定の画面・配色・キーの割り当て・プリセット・表示の単位と周波数オフセット・切り離し（設計O・J §4.3.2・§4.4・§4.6）。"""
 import unittest
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from pygigast.core import report_layout as rl
 from pygigast.core.palette import BASES
@@ -148,6 +148,19 @@ class SettingsDialogTest(UiBase):
         self.assertEqual(self.win.display_tab.png_size_choice(), (1920, 1080))
         dlg._set_pref("png_size", "1600×1000")
         self.assertEqual(self.win.display_tab.png_size_choice(), (1600, 1000))
+        # PNG の配色は ユーザー指定・ライト・ダーク の3つ。既定はユーザー指定（I §3.6）
+        items = [(dlg.png_palette.itemData(i), dlg.png_palette.itemText(i)) for i in range(dlg.png_palette.count())]
+        self.assertEqual(items, [("screen", "ユーザー指定（画面と同じ色）"), ("light", "ライト"), ("dark", "ダーク")])
+        self.assertEqual(dlg.png_palette.currentData(), "screen")
+        dlg.png_palette.setCurrentIndex(dlg.png_palette.findData("dark"))
+        dlg.png_palette.activated.emit(dlg.png_palette.currentIndex())
+        self.assertEqual(self.win.display_tab.png_palette_choice(), "dark")
+        # 「初期値に戻す」（保存のページで最後に作るもの = PNG の配色の行）
+        resets = [b for b in dlg.png_palette.parentWidget().findChildren(QPushButton)
+                  if b.text() == texts.SETTINGS_TEXTS["reset"]]
+        resets[-1].click()
+        self.assertEqual(self.win.display_tab.png_palette_choice(), "screen")
+        self.assertEqual(dlg.png_palette.currentData(), "screen")
 
     def test_known_device_forget_and_manual_port(self):
         self.cmd("connect", backend="simulator", serial="SIM00001")

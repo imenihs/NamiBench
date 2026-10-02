@@ -85,12 +85,13 @@
       <div class="field">
         <div class="field-head"><span class="field-name">RBW</span></div>
         <!-- 選択肢は機器ごと。FFT の機器は窓ごとにまとめる（設計Q §6.4） -->
-        <select class="field-select" :value="sw ? sw.rbw_preference_hz : ''" :title="rbwNote" @change="setRbw($event.target.value)">
+        <!-- 欄には実際に使う RBW。いまの条件で使えない RBW は残して無効にし、理由をツールチップに（設計C §5.14） -->
+        <select class="field-select" :value="sw ? sw.rbw_hz : ''" :title="rbwNote" @change="setRbw($event.target.value)">
           <template v-for="g in rbwGroups" :key="g.window || 'rbw'">
             <optgroup v-if="g.label" :label="g.label" :title="g.note">
-              <option v-for="c in g.choices" :key="c.hz" :value="c.hz">{{ c.text }}</option>
+              <option v-for="c in g.choices" :key="c.hz" :value="c.hz" :disabled="!!c.reason" :title="c.reason || ''">{{ c.text }}</option>
             </optgroup>
-            <template v-else><option v-for="c in g.choices" :key="c.hz" :value="c.hz">{{ c.text }}</option></template>
+            <template v-else><option v-for="c in g.choices" :key="c.hz" :value="c.hz" :disabled="!!c.reason" :title="c.reason || ''">{{ c.text }}</option></template>
           </template>
         </select>
         <div v-if="notes.rbw" class="note-pop"><span>{{ notes.rbw.text }}</span></div>
@@ -174,8 +175,8 @@
             <thead><tr><th v-for="(c, i) in markerColumns" :key="i" :class="{r: (markers.right || [])[i]}">{{ c }}</th><th></th></tr></thead>
             <tbody>
               <tr v-if="!markerRows.length"><td :colspan="markerColumns.length + 1" class="dim">{{ W('no_markers') }}</td></tr>
-              <tr v-for="r in markerRows" :key="r.id" :class="{child: r.child, sel: r.id === selectedMarker}"
-                  @click="!r.child && r.kind === 'marker' && (selectedMarker = r.id)">
+              <tr v-for="r in markerRows" :key="r.id" :class="{child: r.child, sel: r.id === selectedRowId}"
+                  @click="rowClick(r)">
                 <template v-for="(cell, i) in r.cells" :key="i">
                   <td v-if="i === 4 && !r.child && r.kind === 'marker'">
                     <select :value="r.ref || ''" @click.stop @change="cmd('marker_set', {id: r.id, ref: $event.target.value || null})">
@@ -183,7 +184,14 @@
                       <option v-for="o in markers.markers" :key="o.id" v-show="o.id !== r.id" :value="o.id">{{ o.id }}</option>
                     </select>
                   </td>
-                  <td v-else :class="{r: (markers.right || [])[i], 'note-cell': i === r.cells.length - 1}">{{ cell }}</td>
+                  <!-- 周波数・Δ周波数・Δ値などはダブルクリックで直せる（G §3.7） -->
+                  <td v-else :class="{r: (markers.right || [])[i], 'note-cell': i === r.cells.length - 1, editable: !!(r.edits || {})[i]}"
+                      :title="(r.edits || {})[i] ? W('cell_edit_tip') : undefined" @dblclick="startEdit(r, i)">
+                    <input v-if="editCell && editCell.id === r.id && editCell.col === i" class="cell-edit" v-steady="editCell.text"
+                           @click.stop @keydown.enter.prevent="finishEdit($event.target.value)" @keydown.esc.prevent="finishEdit(null)"
+                           @blur="finishEdit($event.target.value)">
+                    <template v-else>{{ cell }}</template>
+                  </td>
                 </template>
                 <td class="ops">
                   <template v-if="!r.child && r.kind === 'marker'">
@@ -192,6 +200,7 @@
                     <button class="small" v-if="r.ref" @click.stop="cmd('marker_to', {id: r.id, target: 'span'})" :title="T('MENU_ITEMS', 'marker_span')">{{ W('to_span') }}</button>
                     <button class="small" @click.stop="cmd('marker_remove', {id: r.id})">{{ W('remove') }}</button>
                   </template>
+                  <button v-else-if="r.remove" class="small" @click.stop="cmd(r.remove.cmd, r.remove.args)">{{ W('remove') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -368,18 +377,20 @@
         </div>
 
         <h3>{{ W('functions') }}</h3>
-        <div class="row">
-          <span>{{ W('n_db_bw') }}</span>
-          <input class="num" v-model="fn.bw1" :disabled="!selMarker"> <input class="num" v-model="fn.bw2" :disabled="!selMarker" :placeholder="W('second')">
-          <button :disabled="!selMarker" @click="setFunction">{{ W('set') }}</button>
+        <!-- Qt の tab_markers と同じ並び。dB の欄は REF レベルと同じ打てるドロップダウン（G §3.6: fields.js の db-field） -->
+        <div class="fn-grid" :class="{disabled: !selMarker}" :title="selMarker ? '' : T('REASON_TEXTS', 'select_marker')">
+          <label class="inline"><input type="checkbox" :checked="fnView().on1" :disabled="!selMarker" @change="setBandwidth(0, $event.target.checked, null)"> {{ W('n_db_bw') }}</label>
+          <db-field :value="fnView().n1" :choices="dbLists.bw" :lo="dbRanges.bw[0]" :hi="dbRanges.bw[1]" :disabled="!selMarker" @commit="setBandwidth(0, null, $event)"></db-field>
+          <span></span>
+          <label class="inline"><input type="checkbox" :checked="fnView().on2" :disabled="!selMarker" @change="setBandwidth(1, $event.target.checked, null)"> {{ W('second_n') }}</label>
+          <db-field :value="fnView().n2" :choices="dbLists.bw" :lo="dbRanges.bw[0]" :hi="dbRanges.bw[1]" :disabled="!selMarker" @commit="setBandwidth(1, null, $event)"></db-field>
+          <span></span>
+          <label class="inline"><input type="checkbox" :checked="fnView().thOn" :disabled="!selMarker" @change="setThreshold({on: $event.target.checked})"> {{ W('threshold_cross') }}</label>
+          <db-field :value="fnView().thr" :unit="axisUnit" signed :choices="dbLists.ref" :lo="dbRanges.th[0]" :hi="dbRanges.th[1]" :disabled="!selMarker" @commit="setThreshold({level: $event})"></db-field>
+          <select :value="fnView().side" :disabled="!selMarker" @change="setThreshold({side: $event.target.value})"><option v-for="(l, c) in Td('THRESHOLD_SIDES')" :key="c" :value="c">{{ l }}</option></select>
         </div>
-        <div class="row">
-          <span>{{ W('threshold') }}</span>
-          <input class="num" v-model="fn.thr" :disabled="!selMarker" :placeholder="axisUnit">
-          <select v-model="fn.side" :disabled="!selMarker"><option v-for="(l, c) in Td('THRESHOLD_SIDES')" :key="c" :value="c">{{ l }}</option></select>
-          <button :disabled="!selMarker" @click="setThreshold(true)">{{ W('set') }}</button>
-          <button :disabled="!selMarker || !selMarker.threshold" @click="setThreshold(false)">{{ W('unset') }}</button>
-        </div>
+        <!-- 結果の線を出すかは表示の設定（全部のマーカーに効く。マーカーを選んでいなくても切り替えられる） -->
+        <label class="inline" :title="W('function_lines_tip')"><input type="checkbox" :checked="viewOpts.function_lines !== false" @change="setView({function_lines: $event.target.checked}, 'function')"> {{ W('function_lines') }}</label>
         <div class="fnote" v-if="notes.function">{{ notes.function.text }}</div>
 
         <h3>{{ W('xy_cursor') }}</h3>
@@ -400,7 +411,7 @@
           <button class="small" v-if="!part" @click="detach('peaks')" :title="W('detach_item', {part: W('part_peaks')})">{{ W('detach') }}</button></div>
         <div class="row">
           <span>{{ W('trace') }}</span><select v-model="peakTrace"><option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">{{ n }}</option></select>
-          <span>{{ W('from_floor') }}</span><input class="num" v-model="peakMargin"><span>dB</span>
+          <span :title="W('floor_tip')">{{ W('from_floor') }}</span><db-field :value="peakMargin" :choices="dbLists.floor" :lo="dbRanges.floor[0]" :hi="dbRanges.floor[1]" :title="W('floor_tip')" @commit="peakMargin = $event"></db-field>
           <button @click="getPeakList">{{ W('list_peaks') }}</button>
         </div>
         <div class="row">

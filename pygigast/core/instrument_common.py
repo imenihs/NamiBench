@@ -35,6 +35,8 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
         "points_setting": a.points_setting,
         "rbw_hz": a.rbw_hz,
         "rbw_preference_hz": a.rbw_preference_hz,
+        "rbw_usable_hz": list(a.rbw_usable_hz),
+        "rbw_limit": a.rbw_limit,
         "mode": a.mode.value,
         "sg_hz": a.sg_hz,
         "image_cancel": a.image_cancel,

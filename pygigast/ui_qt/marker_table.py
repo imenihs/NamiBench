@@ -8,15 +8,16 @@
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
+    QLineEdit,
     QMenu,
     QPushButton,
     QToolButton,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.units import ParseError
 from . import marker_rows, menus, texts, widget_sync
 from .theme import number_font
 
@@ -36,6 +38,32 @@ COL_REF = 4
 COL_OPS = len(marker_rows.COLUMNS)
 COL_NOTE = COL_OPS - 1
 ID_ROLE = Qt.ItemDataRole.UserRole
+
+
+XY_KEYS = marker_rows.XY_KEYS
+COL_FREQ, COL_VALUE, COL_DFREQ, COL_DVALUE = (marker_rows.COL_FREQ, marker_rows.COL_VALUE, marker_rows.COL_DFREQ,
+                                             marker_rows.COL_DVALUE)
+
+
+class _CellEdit(QLineEdit):
+    """表のセルの上に重ねて打つ欄。Enter・Tab・欄を離れるで確定、Esc で取り消す（数値の欄と同じ: J §4.6）。"""
+
+    def __init__(self, text: str, on_done: Callable[[Optional[str]], None]) -> None:
+        super().__init__(text)
+        self._on_done = on_done
+        self._done = False
+        self.editingFinished.connect(lambda: self._finish(self.text()))
+
+    def keyPressEvent(self, e) -> None:
+        if e.key() == Qt.Key.Key_Escape:
+            self._finish(None)
+            return
+        super().keyPressEvent(e)
+
+    def _finish(self, text: Optional[str]) -> None:
+        if not self._done:
+            self._done = True
+            self._on_done(text)
 
 
 class MarkerPanel(QWidget):
@@ -75,6 +103,8 @@ class MarkerPanel(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context)
         self.tree.currentItemChanged.connect(self._current_changed)
+        self.tree.itemDoubleClicked.connect(self._double_clicked)
+        self.editing: Optional[_CellEdit] = None
         hdr = self.tree.header()
         hdr.setStretchLastSection(False)
         for i, right in enumerate(marker_rows.RIGHT):
@@ -119,6 +149,8 @@ class MarkerPanel(QWidget):
                 it.setText(i, c.strip() if i == 0 else c)
                 if i == len(cells) - 1:
                     it.setToolTip(i, c)
+                elif self.cell_setter(r, i) is not None:
+                    it.setToolTip(i, texts.LABELS["cell_edit_tip"])
         for mid, cb in self._ref_combos.items():
             row = next(r for r in rows if r["id"] == mid)
             want = [None] + [i for i in ids if i != mid]
@@ -169,6 +201,8 @@ class MarkerPanel(QWidget):
         cur = self.tree.currentItem()
         if it is cur:
             return
+        if it is not None and cur is not None and cur.parent() is it:
+            return  # そのマーカーの子の行を選んでいる: 選んだ行のまま（Delete でその行だけを消すため）
         self.tree.blockSignals(True)
         if it is None:
             self.tree.setCurrentItem(None)
@@ -208,20 +242,66 @@ class MarkerPanel(QWidget):
             act = m.addAction(texts.w("row_remove", m=rid))
             act.setObjectName("row_remove")
             act.triggered.connect(lambda: self.win.call("marker_remove", id=rid))
-        elif r.get("offset"):
-            typ, idx = r["offset"]
-            act = m.addAction(texts.LABELS["row_remove_cursor"])
-            act.setObjectName("row_remove")
-            act.triggered.connect(lambda: self.win.call("marker_offset_remove", id=r["parent"], type=typ, index=idx))
-        elif rid in ("X1", "X2", "Y1", "Y2"):
-            key = {"X1": "x1_hz", "X2": "x2_hz", "Y1": "y1", "Y2": "y2"}[rid]
-            act = m.addAction(texts.w("row_unset", m=rid))
-            act.setObjectName("row_remove")
-            act.triggered.connect(lambda: self.win.call("set_xy", **{key: None}))
         else:
-            act = m.addAction(texts.LABELS["row_function_note"])
-            act.setEnabled(False)
+            text = (texts.LABELS["row_remove_cursor"] if r.get("offset")
+                    else texts.w("row_unset", m=rid) if rid in XY_KEYS else texts.LABELS["row_remove_function"])
+            act = m.addAction(text)
+            act.setObjectName("row_remove")
+            act.triggered.connect(lambda: self.remove_row(r))
         return m
+
+    def remove_row(self, r: dict) -> None:
+        """その行だけを消す（決まりは marker_rows.remove_command: Web と同じ）。"""
+        c = marker_rows.remove_command(r, self.win.marker_snap)
+        if c is not None:
+            self.win.call(c[0], **c[1])
+
+    # ---------------------------------------------------------------- セルを直す（G §3.6）
+
+    def cell_setter(self, r: dict, col: int) -> Optional[Callable[[str], None]]:
+        """そのセルを打って直せるなら、打った文字を命令にして送る関数（決まりは marker_rows.edit_spec: Web と同じ）。"""
+        spec = marker_rows.edit_spec(r, col, self.rows, self.win.marker_snap)
+        if spec is None:
+            return None
+
+        def send(text: str) -> None:
+            cmd, args = marker_rows.edit_command(spec, text, texts.freq_offset_of(self.win.state))
+            self.win.call(cmd, **args)
+        return send
+
+    def _double_clicked(self, it: QTreeWidgetItem, col: int) -> None:
+        rid = it.data(0, ID_ROLE)
+        row = next((r for r in self.rows if r["id"] == rid), None)
+        setter = self.cell_setter(row, col) if row is not None else None
+        if setter is None:
+            return
+
+        def done(text: Optional[str]) -> None:
+            # 打つ欄はこの関数の中で外す（確定の合図の途中で消さない）
+            QTimer.singleShot(0, lambda: self.tree.removeItemWidget(it, col))
+            if text is None or not text.strip():
+                return
+            try:
+                setter(text)
+            except ParseError:
+                self.win.status_note(texts.LABELS["bad_value"])
+
+        edit = _CellEdit(it.text(col).strip(), done)
+        edit.setFont(it.font(col))
+        self.tree.setItemWidget(it, col, edit)
+        edit.setFocus()
+        edit.selectAll()
+        self.editing = edit
+
+    def current_row(self) -> Optional[dict]:
+        """表で選んでいる行（表にフォーカスがあるときだけ。無ければ None）。"""
+        if not self.tree.hasFocus():
+            return None
+        it = self.tree.currentItem()
+        if it is None:
+            return None
+        rid = it.data(0, ID_ROLE)
+        return next((r for r in self.rows if r["id"] == rid), None)
 
     def _context(self, pos) -> None:
         it = self.tree.itemAt(pos)

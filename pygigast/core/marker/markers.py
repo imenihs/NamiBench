@@ -429,6 +429,21 @@ class MarkerTable:
             raise ValueError("delta_db は正の値（向きは sign で決める）")
         self._markers[marker_id].level_offsets.append(LevelOffset(Sign(sign), float(delta_db)))
 
+    def set_offset(self, marker_id: str, kind: str, index: int, delta) -> None:
+        """オフセットのずれを変える（マーカー表のセルで直す: G §3.6）。delta は向き付き（−3 は −Δ の 3）。
+
+        ±Δ のカーソルは ± のまま大きさだけを変える（± は2行に出るので、どちらの行から直しても同じ大きさ）。
+        """
+        offs = self._markers[marker_id].freq_offsets if kind == "freq" else self._markers[marker_id].level_offsets
+        old = offs[index]
+        if kind == "freq":
+            _check_hz("delta_hz", delta)
+        mag = abs(delta) if kind == "freq" else abs(float(delta))
+        if not mag > 0:
+            raise ValueError("ずれは 0 以外")
+        sign = old.sign if old.sign == Sign.BOTH else (Sign.MINUS if delta < 0 else Sign.PLUS)
+        offs[index] = (FreqOffset(sign, int(mag)) if kind == "freq" else LevelOffset(sign, float(mag)))
+
     def remove_freq_offset(self, marker_id: str, index: int) -> None:
         del self._markers[marker_id].freq_offsets[index]
 

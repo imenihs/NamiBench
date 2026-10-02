@@ -611,6 +611,14 @@ class SweepModel:
             return pref
         return self._rbw_fixed
 
+    def _rbw_usable(self, mode: Mode, span: int) -> tuple[tuple[int, ...], Optional[str]]:
+        """いまの条件で選べる RBW と、選べないものがあるときの理由（設計C §5.14）。"""
+        if mode not in self._rbw_modes:
+            return (self._rbw_fixed,), "mode_fixed"
+        if span > self._rbw_span_max:
+            return (self._rbw_fixed,), "span_wide"
+        return self._rbw_choices, None
+
     def _warnings(self, rbw: int, span: int, step: int) -> tuple[str, ...]:
         """実際に使う RBW と Span・Step から、信用できない条件のコードを並べる（止めない）。"""
         w = []
@@ -658,6 +666,9 @@ class SweepModel:
         if rbw != rbw_pref and (rbw_requested or prev_rbw != rbw):
             # 好みが使えない条件に入ったとき・使えない条件で好みを選んだときに知らせる（好みは消さない）
             adj.add("rbw_hz", rbw_pref, rbw, "rbw_fixed")
+        elif rbw == rbw_pref and prev_rbw is not None and prev_rbw != rbw and not rbw_requested:
+            # 条件から出て好みに戻ったことを一度だけ知らせる（欄の値が黙って変わらないように: 設計C §5.14）
+            adj.add("rbw_hz", prev_rbw, rbw, "rbw_restored")
 
         first_s, per_point_s = self._timing(step, rbw, mode)
         preroll, head = self._preroll(start, step, points, per_point_s)
@@ -678,6 +689,7 @@ class SweepModel:
             points_setting=points_setting, tail_gap=tail_gap,
             warnings=self._warnings(rbw, span, step),
             span_lock_hz=span_lock_hz, alternative=alternative,
+            **dict(zip(("rbw_usable_hz", "rbw_limit"), self._rbw_usable(mode, span))),
         )
 
     def _check_device(self, axis: FreqAxis, preroll: int) -> None:
@@ -713,6 +725,8 @@ class SweepModel:
             raise AssertionError(f"いちばん広い RBW でも点数が上限を超える: {points}")
         if rbw != rbw_pref and (rbw_requested or prev_rbw != rbw):
             adj.add("rbw_hz", rbw_pref, rbw, "rbw_points_max")
+        elif rbw == rbw_pref and prev_rbw is not None and prev_rbw != rbw and not rbw_requested:
+            adj.add("rbw_hz", prev_rbw, rbw, "rbw_restored")
 
         tail_gap = False
         if points > 1 and start + step * (points - 1) > self._max:
@@ -723,10 +737,13 @@ class SweepModel:
         if not (self._min <= axis.start_hz and axis.last_hz <= self._max):
             raise AssertionError(f"測る範囲が外れた: {axis.start_hz}〜{axis.last_hz}")
         est = float(self._timing(axis, rbw))
+        # 点数が上限に収まる RBW だけが選べる（設計C §5.14）
+        usable = tuple(r for r in self._rbw_choices if self._fft_points(span, r)[1] <= self._points_max)
         return AdoptedSweep(
             start_hz=start, stop_hz=stop, axis=axis, rbw_hz=rbw, rbw_preference_hz=rbw_pref,
             mode=mode, sg_hz=sg_hz, image_cancel=False, preroll_points=0,
             transient_head_points=0, estimated_sweep_s=est, adjustments=adj.items(),
             points_setting=None, tail_gap=tail_gap, warnings=(),
             span_lock_hz=span_lock_hz, alternative=alternative,
+            rbw_usable_hz=usable, rbw_limit=None if len(usable) == len(self._rbw_choices) else "points_max",
         )
