@@ -304,8 +304,10 @@ def error_text(e) -> str:
     code = getattr(e, "code", None)
     if code is None:
         return str(e)
-    text = ERRORS.get(code) or STORAGE_ERRORS.get(code) or code
     detail = getattr(e, "detail", {}) or {}
+    if code == "no_peak" and detail.get("polarity") == "dip":
+        code = "no_dip"
+    text = ERRORS.get(code) or STORAGE_ERRORS.get(code) or code
     if code == "legacy_unreadable" and "line" in detail:
         text += tpl("legacy_line", line=detail["line"], field=detail["field"])
     elif code == "rtlsdr_stitching_blocked" and detail.get("max_span_hz"):
@@ -481,8 +483,6 @@ BAND_STATUS = {
 
 THRESHOLD_SIDES = {"above": "以上", "below": "以下"}
 
-DIRECTIONS = {"highest": "ピーク", "left": "次のピーク（左）", "right": "次のピーク（右）", "lower": "次に高いピーク"}
-
 # ---------------------------------------------------------------- ノーマライズ（設計E）
 
 NORM_REASONS = {
@@ -625,6 +625,10 @@ ERRORS.update({
     "no_trace_data": "そのトレースにまだ値がありません",
     "table_full": "マーカーはそれぞれ 8 本までです",
     "no_peak": "ピークが見つかりません",
+    # 谷を探したとき（G §3.8）。コアは no_peak に探した向きを添えて返す（error_text が言い換える）
+    "no_dip": "谷が見つかりません",
+    "bad_polarity": "探すもの（山・谷）の指定が正しくありません",
+    "dips_on_power": "電力のスペクトルでは谷を探しません",
     "same_frequency": "デルタの2点が同じ周波数です",
     "unknown_marker": "そのマーカーはもうありません",
     "bad_marker_setting": "そのマーカーでは使えない設定です",

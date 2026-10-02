@@ -21,6 +21,7 @@
 <script src="audio.js"></script>
 <script src="app_keys.js"></script>
 <script src="app_menu.js"></script>
+<script src="app_markers.js"></script>
 <script src="app_settings.js"></script>
 <script src="app_windows.js"></script>
 <script src="app_rtl.js"></script>
@@ -158,26 +159,34 @@
       <div class="hsplit" v-if="!part && show('graph') && show('markers')" @mousedown="startSplit($event, 'v')" :title="W('split_tip')"></div>
 
       <div class="marker-box" v-show="show('markers')">
+        <!-- 題の行（Qt のドックの題「マーカー表」と、別ウィンドウにするボタン: J §4.3.2） -->
+        <div class="part-bar" v-if="!part">
+          <span class="part-title">{{ W('part_markers') }}</span>
+          <button class="part-detach" @click="detach('markers')" :title="W('detach_item', {part: W('part_markers')})">{{ W('detach') }}</button>
+        </div>
+        <!-- Qt の marker_table と同じ並び・同じ語: 頭に探すもの「山／谷」の切り替え（G §3.8。ピークの一覧と同じ選択）・
+             ピーク・◀ 次のピーク・次のピーク ▶・次に高い・マーカー追加、右端に全部消す・表をコピー。谷のときはボタンの場所を
+             変えず名前が変わる（app_markers.js） -->
         <div class="marker-tools">
           <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
-          <button @click="trigger('marker_peak')" :title="T('DIRECTIONS', 'highest') + keyHint('marker_peak')">{{ T('DIRECTIONS', 'highest') }}</button>
-          <button @click="trigger('marker_peak_left')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'left') + keyHint('marker_peak_left')">◀ {{ W('next_peak') }}</button>
-          <button @click="trigger('marker_peak_right')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'right') + keyHint('marker_peak_right')">{{ W('next_peak') }} ▶</button>
-          <button @click="markerPeak('lower')" :disabled="!selectedMarker" :title="T('DIRECTIONS', 'lower')">{{ T('DIRECTIONS', 'lower') }}</button>
-          <button @click="trigger('marker_clear')" :disabled="!markers.markers.length">{{ W('clear_all') }}</button>
+          <button v-for="p in polarities" :key="p" class="pol-btn" :class="{on: polarity === p}" :data-polarity="p"
+                  :title="polarityTip(p)" @click="setPolarity(p)">{{ T('POLARITIES', p) }}</button>
+          <button v-for="c in searchCodes" :key="c" :data-code="c" :title="searchTip(c)" @click="trigger(c)">{{ searchLabel(c) }}</button>
           </fieldset>
-          <button @click="copyMarkerTable" :disabled="!markerRows.length" :title="T('MENU_ITEMS', 'marker_copy')">{{ W('copy_table') }}</button>
           <span class="grow"></span>
-          <button v-if="!part" @click="detach('markers')" :title="W('detach_item', {part: W('part_markers')})">{{ W('detach') }}</button>
+          <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
+          <button @click="trigger('marker_clear')" :title="T('MENU_ITEMS', 'marker_clear') + keyHint('marker_clear')">{{ W('clear_all') }}</button>
+          </fieldset>
+          <button @click="copyMarkerTable" :title="W('btn_copy_tip') + keyHint('marker_copy')">{{ W('copy_table') }}</button>
         </div>
         <div class="table-scroll">
           <!-- 列・行・文字は Qt のマーカー表と同じ（サーバーが marker_rows で作る）。マーカーが無いときは表の上のボタンが置き方を示す -->
           <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
           <table class="mtable">
-            <thead><tr><th v-for="(c, i) in markerColumns" :key="i" :class="{r: (markers.right || [])[i]}">{{ c }}</th><th></th></tr></thead>
+            <thead><tr><th v-for="(c, i) in markerColumns" :key="i" :class="{r: (markers.right || [])[i]}">{{ c }}</th><th>{{ W('row_ops') }}</th></tr></thead>
             <tbody>
               <tr v-for="r in markerRows" :key="r.id" :class="{child: r.child, sel: r.id === selectedRowId}"
-                  @click="rowClick(r)">
+                  @click="rowClick(r)" @contextmenu.prevent="openRowOps(r, $event)">
                 <template v-for="(cell, i) in r.cells" :key="i">
                   <td v-if="i === 4 && !r.child && r.kind === 'marker'">
                     <select :value="r.ref || ''" @click.stop @change="cmd('marker_set', {id: r.id, ref: $event.target.value || null})">
@@ -194,14 +203,9 @@
                     <template v-else>{{ cell }}</template>
                   </td>
                 </template>
+                <!-- 行の「操作」（Qt の行のドロップダウンと同じ項目: サーバーの marker_rows.row_ops）。右クリックでも同じ -->
                 <td class="ops">
-                  <div class="cell-row" v-if="!r.child && r.kind === 'marker'">
-                    <button @click.stop="cmd('marker_to', {id: r.id, target: 'center'})" :title="T('MENU_ITEMS', 'marker_center')">{{ W('to_center') }}</button>
-                    <button @click.stop="cmd('marker_to', {id: r.id, target: 'ref'})" :title="T('MENU_ITEMS', 'marker_ref')">{{ W('to_ref') }}</button>
-                    <button v-if="r.ref" @click.stop="cmd('marker_to', {id: r.id, target: 'span'})" :title="T('MENU_ITEMS', 'marker_span')">{{ W('to_span') }}</button>
-                    <button @click.stop="cmd('marker_remove', {id: r.id})">{{ W('remove') }}</button>
-                  </div>
-                  <div class="cell-row" v-else-if="r.remove"><button @click.stop="cmd(r.remove.cmd, r.remove.args)">{{ W('remove') }}</button></div>
+                  <button v-if="r.ops && r.ops.length" class="row-ops" @click.stop="openRowOps(r, $event)">{{ W('row_ops') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -438,26 +442,31 @@
         <section class="sec peaks-part" v-show="part ? part === 'peaks' || part === 'tab-marker' : !detached.peaks">
           <div class="part-head"><h3>{{ W('peak_list') }}</h3>
             <button class="tab-detach" v-if="!part" @click="detach('peaks')" :title="W('detach_item', {part: W('part_peaks')})">{{ W('detach') }}</button></div>
-          <div class="row">
-            <span>{{ W('trace') }}</span><select v-model="peakTrace"><option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">{{ n }}</option></select>
-            <span :title="W('floor_tip')">{{ W('from_floor') }}</span><db-field :value="peakMargin" :choices="dbLists.floor" :lo="dbRanges.floor[0]" :hi="dbRanges.floor[1]" :title="W('floor_tip')" @commit="peakMargin = $event"></db-field>
-            <button @click="getPeakList">{{ W('list_peaks') }}</button>
+          <!-- Qt の tab_markers と同じ並び・同じ語: トレース・基準からの N dB（名前は基準で変わる: ノイズフロアから／最大から。
+               P §9.7）・探す・一覧（周波数・レベル・差）・見つけた数の行・上位 N 個に P を置く。山／谷はマーカー表の上の
+               切り替えと同じ選択。電力の谷は探せないので、探すボタンを理由付きで無効にする（U-08） -->
+          <div class="form">
+            <label>{{ W('trace') }}</label>
+            <select v-model="peakTrace"><option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">{{ W('trace_n', {n}) }}</option></select>
+            <label :title="pkView.tip" data-field="peak_margin">{{ pkView.label }}</label>
+            <db-field :value="peakMargin" :choices="dbLists.floor" :lo="dbRanges.floor[0]" :hi="dbRanges.floor[1]" :title="pkView.tip" @commit="peakMargin = $event"></db-field>
           </div>
-          <div class="row">
-            <span>{{ W('top') }}</span><input class="w-int" v-model="topN"><span>{{ W('place_p') }}</span><button @click="topPeaks">{{ W('place') }}</button>
-          </div>
+          <div class="row"><button data-field="peak_find" :disabled="!!pkView.reason" :title="pkView.reason || ''" @click="getPeakList">{{ W('find') }}</button></div>
           <div class="fnote" v-if="notes.peaks">{{ notes.peaks.text }}</div>
-          <table class="mtable" v-if="peakList">
-            <thead><tr><th class="r">{{ W('freq') }}</th><th class="r">{{ W('value') }}</th><th class="r">{{ W('height') }}</th><th></th></tr></thead>
+          <table class="mtable peaks">
+            <thead><tr><th class="r">{{ W('col_freq_mhz') }}</th><th class="r">{{ W('level') }}</th><th class="r">{{ peakText().diff_header }}</th><th></th></tr></thead>
             <tbody>
-              <tr v-if="!peakList.peaks.length"><td colspan="4" class="dim">{{ T('ERRORS', 'no_peak') }}</td></tr>
-              <tr v-for="p in peakList.peaks" :key="p.freq_hz">
-                <td class="r">{{ fmtFreq(shownHz(p.freq_hz)) }}</td><td class="r">{{ fmtLevel(p.level, peakList.unit) }}</td>
-                <td class="r">{{ p.height_db != null ? p.height_db.toFixed(1) + ' dB' : '' }}</td>
-                <td class="ops"><div class="cell-row"><button @click="cmd('marker_register_peak', {trace: peakList.trace, freq_hz: p.freq_hz})">{{ W('register_p') }}</button></div></td>
+              <tr v-for="p in peakText().rows" :key="p.freq_hz">
+                <td class="r">{{ p.freq }}</td><td class="r">{{ p.level }}</td><td class="r">{{ p.diff }}</td>
+                <td class="ops"><button @click="registerPeak(p)">{{ W('register_p') }}</button></td>
               </tr>
             </tbody>
           </table>
+          <div class="dim" v-if="peakText().found">{{ peakText().found }}</div>
+          <div class="row">
+            <span>{{ W('top') }}</span><input class="w-int" v-model="topN"><span>{{ W('count_suffix').trim() }}</span>
+            <button data-field="peak_top" :disabled="!!pkView.reason" :title="pkView.reason || ''" @click="topPeaks">{{ W('place_p_after') }}</button>
+          </div>
         </section>
       </div>
 
@@ -572,8 +581,14 @@
   <div class="hover-tip" v-if="hover && hoverLines" :style="hoverStyle()"><div v-for="(l, i) in hoverLines" :key="i">{{ l }}</div></div>
 
   <!-- 右クリックのメニュー（名前の付いた操作: J §3・U-12） -->
-  <div class="ctxmenu" v-if="ctx" :style="{left: ctx.x + 'px', top: ctx.y + 'px'}" @click.stop>
-    <button v-for="(it, i) in ctx.items" :key="i" :disabled="!!it.why" :title="it.why || ''" @click="ctx = null; it.run()">{{ it.label }}</button>
+  <!-- マーカー表の行の「操作」もここに開く（区切り線 sep を持つ）。項目は一番長い項目の幅にそろえる（data-same-width） -->
+  <div class="ctxmenu" v-if="ctx" :style="{left: ctx.x + 'px', top: ctx.y + 'px'}" data-same-width @click.stop>
+    <template v-for="(it, i) in ctx.items" :key="i">
+      <hr v-if="it.sep">
+      <!-- 使えない項目も押せば理由を状態バーに出す（メニューバーと同じ。触れる画面でもツールチップに頼らない: U-08） -->
+      <button v-else :class="{dis: !!it.why}" :aria-disabled="!!it.why" :title="it.why || ''"
+              @click="ctx = null; it.why ? note(null, it.why) : it.run()">{{ it.label }}</button>
+    </template>
   </div>
 
   <!-- 機器の一覧（J §4.7。Qt の device_list.py と同じ）。名前を変える窓はこの上に重ねる -->

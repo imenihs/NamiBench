@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from ... import __version__
 from ...core import report_layout as rl
-from ...ui_qt import marker_rows, screen_model, texts
+from ...ui_qt import marker_rows, peak_view, screen_model, texts
 
 
 def default_unit(st: Optional[dict]) -> str:
@@ -37,6 +37,8 @@ def state_view(st: dict) -> dict:
     ui["file_legend"] = {str(tr.get("id")): texts.file_trace_label(f, str(tr.get("id")))
                          for f in st.get("files") or [] for tr in f.get("traces") or []}
     ui["unit"] = default_unit(st)
+    # ピークの一覧の欄（P §9.7）。山／谷の選択はブラウザが持つので両方（Qt と同じ peak_view.list_view）
+    ui["peaks"] = peak_view.list_views(st)
     out = {**st, "ui": ui}
     if isinstance(st.get("markers"), dict):
         out["markers"] = markers_view(st["markers"], ui["unit"], texts.freq_offset_of(st))
@@ -56,9 +58,11 @@ def markers_view(snap: dict, unit: str = "dBm", freq_offset_hz: int = 0) -> dict
         rm = marker_rows.remove_command(r, snap)
         edits = {str(i): e for i in cols if (e := marker_rows.edit_spec(r, i, rows, snap)) is not None}
         # 行だけを消す命令と、ダブルクリックで直せるセルの決まり（G §3.7。Qt と同じ marker_rows の決まり）
+        # 行の「操作」の項目（Qt の行のドロップダウンと同じ marker_rows.row_ops。None は区切り線）
         out.append({"id": r["id"], "parent": r.get("parent"), "kind": r.get("kind"), "child": bool(r.get("child")),
                     "ref": r.get("ref") if not r.get("child") else None, "cells": c, "line": r.get("line"),
-                    "remove": {"cmd": rm[0], "args": rm[1]} if rm else None, "edits": edits})
+                    "remove": {"cmd": rm[0], "args": rm[1]} if rm else None, "edits": edits,
+                    "ops": marker_rows.row_ops(r, snap)})
     return {**snap, "rows": out, "columns": list(marker_rows.COLUMNS), "right": list(marker_rows.RIGHT)}
 
 
@@ -117,6 +121,9 @@ def result_view(command: str, args: dict, result: Any, freq_offset_hz: int = 0) 
         t["alternative_done"] = texts.alternative_done_text(a["center_hz"], a["span_hz"])
     if command == "list_devices" and "devices" in result:
         return devices_view(result)
+    if command == "peak_list" and "peaks" in result:
+        # 見つけた数の行・差の列の名前・行の文字（Qt のピークの一覧と同じ peak_view.result_view: P §9.7）
+        t["peak_list"] = peak_view.result_view(result, freq_offset_hz)
     if command == "rtlsdr_calibrate_ppm" and "ppm" in result:
         t["done"] = screen_model.ppm_done_text(result)
     elif command == "rtlsdr_calibrate_level" and "level_offset_db" in result:

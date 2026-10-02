@@ -161,6 +161,20 @@ def same_width_buttons(buttons, font_px: int) -> None:
 _filter = None
 
 
+def fit_button(b) -> None:
+    """ボタンの最小幅を、いまの文字の幅と BTN_MIN_W（連続・単発・停止は RUN_MIN_W）の大きい方にする（S-03）。
+
+    見た目の決まりの min-width で決めると、Qt はそれを「縮めてよい下限」に使い、並びが狭いとボタンが文字より細く
+    縮んだ（2026-10-03 確認）。見た目の決まり・字が当たったときは install の決まりが呼ぶ。文字を後から変えるボタン
+    （山／谷で名前が変わる探すボタン: G §3.8）は、変えた後で呼ぶ（前の文字の幅のまま伸びて残らないように）。
+    """
+    if b.property("same_width"):
+        return  # 並びで1つの幅にそろえたボタン（same_width_buttons が決める）
+    b.setMinimumWidth(0)
+    floor = RUN_MIN_W if b.property("run") else BTN_MIN_W
+    b.setMinimumWidth(max(floor, b.sizeHint().width()))
+
+
 def install(app) -> None:
     """アプリの全部の部品に、置き場所によらない決まりを当てる（1つの定義元: U-09）。
 
@@ -196,14 +210,7 @@ def install(app) -> None:
                 _button_min(obj)
             return False
 
-    def _button_min(b) -> None:
-        # 最小幅は文字の幅と BTN_MIN_W（連続・単発・停止は RUN_MIN_W）の大きい方。見た目の決まりの min-width で
-        # 決めると、Qt はそれを「縮めてよい下限」に使い、並びが狭いとボタンが文字より細く縮んだ（2026-10-03 確認）
-        if b.property("same_width"):
-            return  # 並びで1つの幅にそろえたボタン（same_width_buttons が決める）
-        b.setMinimumWidth(0)
-        floor = RUN_MIN_W if b.property("run") else BTN_MIN_W
-        b.setMinimumWidth(max(floor, b.sizeHint().width()))
+    _button_min = fit_button
 
     def _fix_width(w) -> None:
         sp = w.sizePolicy()

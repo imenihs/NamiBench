@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -31,6 +32,12 @@ UNIT_DB = "dB"
 
 # 次のピークの既定の盛り上がり（設計G §3.2: 周りより 3dB 以上。値は設定で変えられる）
 DEFAULT_EXCURSION_DB = 3.0
+
+# 探すもの（設計G §3.8）: 山（周りより盛り上がった点・＋ピーク）と谷（周りよりへこんだ点・−ピーク）。
+# 谷は山と同じ判定を値の上下を返して当てる（BEF のノッチ・S11 の共振を探す）
+PEAK = "peak"
+DIP = "dip"
+POLARITIES = (PEAK, DIP)
 
 # 探索の結果のコード（画面の文言は画面側が決める: U-22）
 OK = "ok"
@@ -190,6 +197,44 @@ def highest_index(view: TraceView) -> Optional[int]:
     return view.lo + int(np.argmax(seg))
 
 
+def check_polarity(polarity: str) -> str:
+    if polarity not in POLARITIES:
+        raise ValueError(f"polarity が不明: {polarity}")
+    return polarity
+
+
+def oriented(view: TraceView, polarity: str) -> TraceView:
+    """谷を探すときは値の上下を返したトレース（谷が山になる）。周波数・印・表示範囲はそのまま（設計G §3.8）。
+
+    返したトレースで山を探すと、谷の判定（周りより excursion_db 以上へこんだ点）・一番深い点・
+    次に深い谷が、山と同じ関数で求まる。値なしの点（NaN）は返しても値なしのまま。
+    """
+    if check_polarity(polarity) == PEAK:
+        return view
+    return dataclasses.replace(view, level_db=-view.level_db)
+
+
+def _oriented_threshold(threshold: Optional[float], polarity: str) -> Optional[float]:
+    """しきい値も向きを合わせる（谷では「これより高い谷は無視」になる）。"""
+    if threshold is None or polarity == PEAK:
+        return threshold
+    return -threshold
+
+
+def extreme_index(view: TraceView, polarity: str = PEAK) -> Optional[int]:
+    """「ピーク」（山: 最大の点）・「谷」（一番深い点＝−ピーク）。探す点の決まりは highest_index と同じ。"""
+    return highest_index(oriented(view, polarity))
+
+
+def find_extrema(view: TraceView, excursion_db: float = DEFAULT_EXCURSION_DB, threshold: Optional[float] = None,
+                 polarity: str = PEAK) -> np.ndarray:
+    """山（find_peaks）か谷（周りより excursion_db 以上へこんだ点）の番号を周波数の順で返す。
+
+    谷の threshold は「これより高い谷は除く」（山の「これより低いピークは除く」の向きを逆にしたもの）。
+    """
+    return find_peaks(oriented(view, polarity), excursion_db, _oriented_threshold(threshold, polarity))
+
+
 def find_peaks(
     view: TraceView,
     excursion_db: float = DEFAULT_EXCURSION_DB,
@@ -276,8 +321,14 @@ def next_peak_index(
     direction: str,
     excursion_db: float = DEFAULT_EXCURSION_DB,
     threshold: Optional[float] = None,
+    polarity: str = PEAK,
 ) -> Optional[int]:
-    """次のピーク（右・左・次に高い: 設計G §3.2）。無ければ None。"""
+    """次のピーク（右・左・次に高い: 設計G §3.2）。無ければ None。
+
+    谷（設計G §3.8）では次の谷（右・左）と「次に深い」（いまより浅い谷のうち最も深いもの）。
+    """
+    view = oriented(view, polarity)
+    threshold = _oriented_threshold(threshold, polarity)
     peaks = find_peaks(view, excursion_db, threshold)
     if direction == RIGHT:
         cand = peaks[peaks > from_idx]
@@ -297,13 +348,35 @@ def next_peak_index(
     raise ValueError(f"direction が不明: {direction}")
 
 
+# ピークの一覧の基準（設計P §9.7）: 電力はノイズフロア、基準との比は表示範囲の最大
+BASE_NOISE_FLOOR = "noise_floor"
+BASE_MAX = "max"
+
+
 @dataclass(frozen=True)
 class ListedPeak:
-    """ピークの一覧の1行（設計P §9.6: 周波数・レベル・フロアからの高さ）。"""
+    """ピークの一覧の1行（設計P §9.7: 周波数・レベル・基準からの差）。
+
+    diff_db は level − 基準。電力ではノイズフロアからの高さ（正）、比では最大からの差（0 以下）。
+    """
 
     freq_hz: int
     level: float
-    height_db: float
+    diff_db: float
+
+
+@dataclass(frozen=True)
+class PeakList:
+    """ピークの一覧（設計P §9.7）。base は BASE_NOISE_FLOOR か BASE_MAX、base_level はその値（無ければ None）。"""
+
+    base: str
+    base_level: Optional[float]
+    polarity: str
+    rows: list[ListedPeak]
+
+
+class DipsOnPower(ValueError):
+    """電力のスペクトルでは谷の一覧を作らない（ノイズフロアの下を探す意味が無い: 設計P §9.7）。"""
 
 
 def noise_floor(view: TraceView) -> Optional[float]:
@@ -315,25 +388,45 @@ def noise_floor(view: TraceView) -> Optional[float]:
     return float(np.median(seg))
 
 
+def list_base(view: TraceView) -> tuple[str, Optional[float]]:
+    """ピークの一覧の基準（設計P §9.7）。
+
+    電力（SA）はノイズフロア（中央値）。基準との比（TG・S11）はノイズフロアが無く、中央値は画面のうち通過域と
+    阻止域の占める割合で動くので、表示範囲の最大（「ピーク」と同じ点: 印の付いた点・局発の漏れの帯を除く）。
+    """
+    if view.quantity == Quantity.POWER:
+        return BASE_NOISE_FLOOR, noise_floor(view)
+    idx = highest_index(view)
+    return BASE_MAX, None if idx is None else view.level_at(idx)
+
+
 def peak_list(
     view: TraceView,
-    floor_margin_db: float,
+    margin_db: float,
     excursion_db: float = DEFAULT_EXCURSION_DB,
-) -> tuple[Optional[float], list[ListedPeak]]:
-    """ピークの一覧（設計P §9.6）: 盛り上がりの判定を満たし、フロア + floor_margin_db より高いもの。
+    polarity: str = PEAK,
+) -> PeakList:
+    """ピークの一覧（設計P §9.6・§9.7）。盛り上がり（谷はへこみ）の判定を満たすもののうち:
 
-    高い順に並べる（同じ高さは低い周波数から）。フロアの上の高さの既定値は未決（設計P §7）なので
-    呼ぶ側が必ず渡す。戻り値は (フロア, 一覧)。
+    - 電力: 山 = ノイズフロア + margin_db 以上。谷は探さない（DipsOnPower）
+    - 比: 山 = 最大 − margin_db 以上（通過域の山）、谷 = 最大 − margin_db 以下（ノッチ・共振）
+
+    山は高い順、谷は深い順（同じ値は低い周波数から）。margin_db の既定は呼ぶ側が渡す（設計P §9.1: 10dB）。
     """
-    floor = noise_floor(view)
-    if floor is None:
-        return None, []
+    check_polarity(polarity)
+    base, level = list_base(view)
+    if base == BASE_NOISE_FLOOR and polarity == DIP:
+        raise DipsOnPower()
+    if level is None:
+        return PeakList(base, None, polarity, [])
+    limit = level + margin_db if base == BASE_NOISE_FLOOR else level - margin_db
     rows = [
-        ListedPeak(view.freq_at(int(p)), float(view.level_db[p]), float(view.level_db[p]) - floor)
-        for p in find_peaks(view, excursion_db, floor + floor_margin_db)
+        ListedPeak(view.freq_at(int(p)), float(view.level_db[p]), float(view.level_db[p]) - level)
+        for p in find_extrema(view, excursion_db, limit, polarity)
     ]
-    rows.sort(key=lambda r: (-r.level, r.freq_hz))
-    return floor, rows
+    sign = -1.0 if polarity == PEAK else 1.0
+    rows.sort(key=lambda r: (sign * r.level, r.freq_hz))
+    return PeakList(base, level, polarity, rows)
 
 
 def top_peaks(
@@ -341,10 +434,15 @@ def top_peaks(
     n: int,
     excursion_db: float = DEFAULT_EXCURSION_DB,
     threshold: Optional[float] = None,
+    polarity: str = PEAK,
 ) -> list[int]:
-    """高い順に最大 n 個のピークの番号（設計G §3.5「上位 N 個」）。同じ高さは低い周波数から。"""
-    peaks = [int(p) for p in find_peaks(view, excursion_db, threshold)]
-    peaks.sort(key=lambda p: (-view.level_db[p], p))
+    """高い順に最大 n 個のピークの番号（設計G §3.5「上位 N 個」）。同じ高さは低い周波数から。
+
+    谷（設計P §9.7）は深い順に最大 n 個。
+    """
+    v = oriented(view, polarity)
+    peaks = [int(p) for p in find_peaks(v, excursion_db, _oriented_threshold(threshold, polarity))]
+    peaks.sort(key=lambda p: (-v.level_db[p], p))
     return peaks[:max(0, n)]
 
 
@@ -418,13 +516,16 @@ def _band(view: TraceView, idx: int, inside: Callable[[float], bool], target: fl
     return Band(OK, left, right, width, center, q)
 
 
-def n_db_bandwidth(view: TraceView, idx: int, n_db: float) -> Band:
+def n_db_bandwidth(view: TraceView, idx: int, n_db: float, polarity: str = PEAK) -> Band:
     """N dB 帯域幅（設計G §3.5）: idx の値から n_db 下がる点を左右に探す。
 
     境目は「起点の値 − n_db 以下になった最初の点」とその手前の点の間を補間した周波数。
+    谷に置いたマーカー（設計G §3.8）では、谷から n_db 上がる点を左右に探す（ノッチの幅）。
+    値の上下を返したトレースで同じ探し方をする（交点の周波数は返しても同じ）。
     """
     if n_db <= 0:
         raise ValueError("n_db は正の値")
+    view = oriented(view, polarity)
     base = view.level_at(idx)
     if base is None:
         return Band(NO_MARKER_VALUE, Edge(NO_MARKER_VALUE), Edge(NO_MARKER_VALUE))

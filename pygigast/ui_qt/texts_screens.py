@@ -16,6 +16,30 @@ MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", 
 # マーカーの種類（P はピークに付いていく、M は手で置いた位置）
 MARKER_KINDS = {"P": "ピーク", "M": "手動"}
 
+# 探すもの（G §3.8）。マーカー表の上のボタンの並びの頭の切り替え。ピークの一覧とマーカーのピーク探しが同じ選択を使う
+POLARITIES = {"peak": "山", "dip": "谷"}
+POLARITY_TIPS = {"peak": "ピーク（周りより盛り上がった点）を探す", "dip": "谷（周りよりへこんだ点）を探す"}
+# 探すボタンの語（場所は変えず、選んだほうで名前が変わる: G §3.8）。キーはメニューの項目のコード
+SEARCH_BUTTONS = {
+    "peak": {"marker_peak": "ピーク", "marker_peak_left": "◀ 次のピーク", "marker_peak_right": "次のピーク ▶",
+             "marker_peak_lower": "次に高い", "marker_add": "マーカー追加"},
+    "dip": {"marker_peak": "谷", "marker_peak_left": "◀ 次の谷", "marker_peak_right": "次の谷 ▶",
+            "marker_peak_lower": "次に深い", "marker_add": "マーカー追加"},
+}
+SEARCH_TIPS = {
+    "peak": {"marker_peak": "選んでいるマーカーを最大の点へ（無ければ M を置く）", "marker_peak_left": "左の次のピークへ",
+             "marker_peak_right": "右の次のピークへ", "marker_peak_lower": "いまより低いピークのうち最も高いものへ",
+             "marker_add": "新しい M をピークに置く"},
+    "dip": {"marker_peak": "選んでいるマーカーを一番深い点へ（無ければ M を置く）", "marker_peak_left": "左の次の谷へ",
+            "marker_peak_right": "右の次の谷へ", "marker_peak_lower": "いまより浅い谷のうち最も深いものへ",
+            "marker_add": "新しい M を谷に置く"},
+}
+# 谷のときのメニューの項目の名前（山のときは MENU_ITEMS のまま: G §3.8）
+DIP_MENU_ITEMS = {
+    "marker_peak": "選んでいるマーカーを谷へ", "marker_peak_left": "次の谷（左）", "marker_peak_right": "次の谷（右）",
+    "marker_peak_lower": "次に深い谷", "marker_add": "マーカーを追加（谷に M）",
+}
+
 # PNG の配色の選び方（I §3.6）。並びは選ぶ欄の並び（Qt・Web）。"screen" は画面で使っている配色（変えた色を含む）
 PNG_PALETTES = {"screen": "ユーザー指定", "light": "ライト", "dark": "ダーク"}
 # 選択肢の意味（ツールチップ。名前に説明を付けない: U-24）
@@ -32,6 +56,8 @@ REASON_TEXTS.update({
     "average_type_only": "平均の種類は動作が「平均」のときに使います",
     "after_only": "N 回の後の動きは、回数を持つ平均・最大保持・最小保持で使います",
     "vector_only": "ベクトル平均は位相を測れる機器だけで使えます",
+    # ピークの一覧・上位 N 個は、電力のスペクトルでは谷を探さない（P §9.7。マーカーの谷は探せる）
+    "dips_on_power": "電力のスペクトルでは谷を探しません",
 })
 
 LABELS.update({
@@ -40,17 +66,10 @@ LABELS.update({
                   "グラフの中をクリック: 近いトレースに M を置く\n右クリック: この位置への操作（Center に・マーカー・REF に）",
     "axis_y_tip": "ホイール: REF レベルを1目盛ずつ\nCtrl+ホイール: dB/div を1段\nドラッグ: REF レベルを連続で動かす",
     "level_no_ref": "レベル（基準なし・受けた電力）",
-    # ---- マーカー表（グラフの下）
-    "btn_peak_tip": "選んでいるマーカーを最大の点へ（無ければ M を置く）",
-    "btn_left": "◀ 次のピーク",
-    "btn_left_tip": "左の次のピークへ",
-    "btn_right": "次のピーク ▶",
-    "btn_right_tip": "右の次のピークへ",
-    "btn_lower": "次に高い",
-    "btn_lower_tip": "いまより低いピークのうち最も高いものへ",
-    "btn_add": "マーカー追加",
-    "btn_add_tip": "新しい M をピークに置く",
+    # ---- マーカー表（グラフの下）。ピーク・谷を探すボタンの語は SEARCH_BUTTONS（山／谷の選択で変わる）
     "btn_copy_tip": "表をタブ区切りでクリップボードへ",
+    # 谷に置いたマーカーの注意の列（N dB 帯域幅は谷から上がる点を探す・追従は谷を追う: G §3.8）
+    "row_dip": "谷",
     "row_ops": "操作",
     "ref_combo_tip": "デルタの基準（この行に Δ周波数・Δ値を出す相手）",
     "row_center": "この周波数を Center に",
@@ -82,17 +101,22 @@ LABELS.update({
                           "掃引ごとに動く（つまんで動かす XY カーソルとは別）",
     # dB の打てるドロップダウンで範囲の外の値を打ったとき（G §3.6）
     "db_range_note": "{lo}〜{hi} {unit} の値を入れてください",
-    "floor_tip": "ノイズの床よりこれだけ高いピークを並べる",
+    # ピークの一覧の基準（P §9.7）: 電力はノイズフロアから、基準との比（TG・S11）は最大から。欄の名前とツールチップ
+    "floor_tip": "ノイズフロアよりこれだけ高い山を並べる",
+    "max_tip_peak": "最大からこれだけ下までの山を並べる",
+    "max_tip_dip": "最大よりこれだけ低い谷を並べる",
     "find": "探す",
     "col_freq_mhz": "周波数 (MHz)",
     "col_height_db": "高さ (dB)",
+    "col_below_max_db": "最大からの差 (dB)",
     "count_suffix": " 個",
     "place_p_after": "に P を置く",
     "no_marker_selected": "マーカーを選んでいません",
     "selected_text": "{id}（{kind}・トレース {trace}）  {value}",
     "marker_snapped": "{freq} の点に置きました（トレースの点に載る）",
     "peaks_found": "{n} 個",
-    "peaks_found_floor": "{n} 個（床 {floor} {unit}）",
+    "peaks_found_floor": "{n} 個・ノイズフロア {level} {unit}",
+    "peaks_found_max": "{n} 個・最大 {level} {unit}",
     # ---- トレース・掃引のタブ
     "no_count": "回数なし",
     "bad_count": "回数は 1〜10000 の整数で入れてください（回数なしは一覧から選ぶか、欄を空にする）",

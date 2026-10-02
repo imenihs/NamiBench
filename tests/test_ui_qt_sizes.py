@@ -94,6 +94,11 @@ class LayoutTest(UiBase):
         for key in ("tab-trace", "tab-marker", "tab-view", "tab-source"):
             self.win.show_part(key)
             found += self.check(self.win, f"主画面 {key}")
+        # 探すもの「谷」（G §3.8）: マーカー表の上のボタンの名前が変わる（場所は同じ）。ピークの一覧は探せない理由付き
+        self.win.marker_panel.set_polarity("dip")
+        self.win.show_part("tab-marker")
+        found += self.check(self.win, "主画面 tab-marker（谷）")
+        self.win.marker_panel.set_polarity("peak")
         self.win._settings_dialog()
         dlg = self.win._settings
         for key in list(dlg._page_index):

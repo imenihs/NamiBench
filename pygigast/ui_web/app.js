@@ -1,7 +1,8 @@
 // Web のメイン画面（設計J §4.3 の案B。Qt の ui_qt/main_window.py と同じ構成・同じ語・同じ操作: J §5）。
 // コアへは Web の口（api.js）だけを使う。状態の正本はコアの1つで、変更は全部の画面に state で届く（A §4.4）。
 // 文言はここに書かない: 表は /api/v1/texts、状態から作る文はサーバーが Qt と同じ関数で作って送る（view.py）。
-// 受信（RTL-SDR）・聞く・rtl_tcp の設定は app_rtl.js、メニューとキーは app_menu.js に分けて、ここで合わせる。
+// 受信（RTL-SDR）・聞く・rtl_tcp の設定は app_rtl.js、メニューとキーは app_menu.js、マーカー表の上のボタン・行の「操作」・
+// ピークの一覧は app_markers.js に分けて、ここで合わせる。
 (function () {
   "use strict";
 
@@ -61,10 +62,6 @@
         progress: {},
         waiting: "",
         detached: {},
-        peakList: null,
-        peakTrace: 1,
-        peakMargin: 10,
-        topN: "3",
         off: { type: "freq", sign: "±", delta: "" },
         // マーカーの機能を切っている間の値（Qt の tab_markers と同じ初期値。入れている間はマーカーの値を出す: fnView）
         fn: { bw1: 3, bw2: 60, thr: -20, side: "below" },
@@ -208,6 +205,7 @@
       } catch (e) { this.note(null, String(e)); }
       if (this.part) document.title = `pyGigaSt — ${this.partTitle}`;
       this.watchKeyStore();
+      this.watchPolarityStore();
       this.textsReady = true;
       this.$nextTick(() => this.makeGraph());
       this.fitColumns();
@@ -605,7 +603,8 @@
         if (this.freqOpsReason) return;
         const trace = this.nearestTrace(x, y);
         if (trace === null) { this.note(null, X.get("ERRORS", "no_trace_data")); return; }
-        const r = await this.cmd("marker_add", { kind: "M", trace, freq_hz: Math.round(x) });
+        // 向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き。Qt と同じ）
+        const r = await this.cmd("marker_add", { kind: "M", trace, freq_hz: Math.round(x), polarity: this.polarity });
         if (r && r.id) this.selectedMarker = r.id;
       },
       onGraphClick(x, y) { this.markerAdd(x, y); },
@@ -630,17 +629,27 @@
             { label: W("ctx_m_listen", { m: sel, start: X.get("LISTEN_LABELS", "start") }), why: this.listenStartReason, run: () => this.listenStart() },
           );
         }
-        setTimeout(() => { this.ctx = { x: cx, y: cy, items }; }, 0);
+        this.showCtx({ x: cx, y: cy, above: cy, items });
+      },
+      // 右クリックのメニュー・行の「操作」の一覧を開く。画面の下に入らなければ上へ（above の位置から上に）、右に入らなければ
+      // 左へずらして、画面の中に収める（Qt のメニューと同じ: 項目が画面の外に切れない）
+      showCtx(ctx) {
+        const seq = (this.ctxSeq = (this.ctxSeq || 0) + 1);
+        setTimeout(() => {
+          this.ctx = { ...ctx, seq };
+          this.$nextTick(() => {
+            const c = this.ctx;
+            const el = document.querySelector(".ctxmenu");
+            if (!el || !c || c.seq !== seq) return;  // 間に別の一覧を開いた・閉じた
+            const r = el.getBoundingClientRect();
+            if (r.bottom > window.innerHeight) c.y = Math.max(0, c.above - r.height);
+            if (r.right > window.innerWidth) c.x = Math.max(0, window.innerWidth - r.width);
+          });
+        }, 0);
       },
 
-      // ------------------------------------------------------------ マーカー
-      async markerPeak(direction) {
-        const args = { direction, trace: 1 };
-        if (this.selectedMarker) args.id = this.selectedMarker;
-        const r = await this.cmd("marker_peak", args);
-        if (r && r.id) this.selectedMarker = r.id;
-      },
-      // ------------------------------------------------------------ マーカー表の行（G §3.7: 決まりはサーバーの marker_rows）
+      // ------------------------------------------------------------ マーカー表の行（G §3.7: 決まりはサーバーの marker_rows。
+      // 探すボタン・行の「操作」・ピークの一覧は app_markers.js）
       rowClick(r) {
         this.selectedRow = r.id;
         if (!r.child && r.kind === "marker") this.selectedMarker = r.id;
@@ -771,16 +780,6 @@
         if (v == null) return "";
         return key.endsWith("_hz") ? U.freqFieldText(this.shownHz(v)) : `${v.toFixed(2)}`;
       },
-      async getPeakList() {
-        const r = await this.cmd("peak_list", { trace: Number(this.peakTrace), floor_margin_db: this.peakMargin }, { field: "peaks" });
-        if (r) this.peakList = r;
-      },
-      async topPeaks() {
-        const n = parseInt(this.topN, 10);
-        if (!(n > 0)) { this.note("peaks", X.get("ERRORS", "not_integer")); return; }
-        await this.cmd("marker_top_peaks", { trace: Number(this.peakTrace), n }, { field: "peaks" });
-      },
-
       // ------------------------------------------------------------ トレース
       setTrace(n, key, value) {
         const args = { number: n, [key]: value };
@@ -994,6 +993,7 @@
     Object.assign(target.methods, part.methods || {});
   }
   merge(base, GSAppMenu);
+  merge(base, GSAppMarkers);
   merge(base, GSAppFiles);
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);

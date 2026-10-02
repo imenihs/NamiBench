@@ -140,6 +140,14 @@ class BannedWordsTest(unittest.TestCase):
         self.assertEqual([(ln, s) for ln, s in _literals(PKG / "core/report_layout.py") if old in s], [])
         self.assertTrue([p for p, s in table_strings() if "イメージ除去" in s])
 
+    def test_noise_floor_word(self):
+        # 「床」は一般の語ではないので「ノイズフロア」にそろえる（設計P §9.7・J §4.9）。ピークの一覧の欄の名前は
+        # 基準で変わる（電力はノイズフロアから、基準との比は最大から）
+        self.assertEqual([(p, s) for p, s in table_strings() if "床" in s], [])
+        self.assertEqual((texts.LABELS["from_floor"], texts.LABELS["from_max"]), ("ノイズフロアから", "最大から"))
+        self.assertIn("ノイズフロア", texts.LABELS["peaks_found_floor"])
+        self.assertIn("ノイズフロア", texts.LABELS["floor_tip"])
+
 
 class HardCodedTextTest(unittest.TestCase):
     def test_qt_code_has_no_japanese_literals(self):

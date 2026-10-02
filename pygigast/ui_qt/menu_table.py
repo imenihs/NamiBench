@@ -32,6 +32,7 @@ def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
         "stop": lambda: win.call("stop"),
         "pause": win._toggle_run,
         "ref_auto": win._ref_auto,
+        "marker_polarity": lambda: win.marker_panel.toggle_polarity(),
         "marker_peak": lambda: win._peak("highest"),
         "marker_peak_left": lambda: win._peak("left"),
         "marker_peak_right": lambda: win._peak("right"),

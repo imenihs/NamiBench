@@ -695,9 +695,13 @@ class DisplayMixin:
         return {"code": r.code, "id": r.marker_id, "requested_hz": r.requested_hz, "freq_hz": r.freq_hz,
                 "snapped": r.snapped}
 
-    def _op_result(self, r) -> dict:
+    def _op_result(self, r, polarity: Optional[str] = None) -> dict:
+        """polarity は探した向き（谷が見つからないとき「谷が見つかりません」と言うため: 設計G §3.8）。"""
         if not r.ok:
-            raise self._error(r.code, None, {"id": r.marker_id, "requested_hz": r.requested_hz})
+            detail = {"id": r.marker_id, "requested_hz": r.requested_hz}
+            if polarity is not None:
+                detail["polarity"] = polarity
+            raise self._error(r.code, None, detail)
         self._markers_changed()
         return self._op_dict(r)
 
@@ -710,22 +714,36 @@ class DisplayMixin:
         if isinstance(v, bool) or not isinstance(v, int):
             raise CommandError("not_integer", name)
 
-    def _cmd_marker_add(self, kind: str = "M", trace: int = 1, freq_hz: Optional[int] = None) -> dict:
+    def _polarity(self, polarity) -> str:
+        """探すもの（山 peak・谷 dip: 設計G §3.8）。画面の山／谷の選択をそのまま受ける。"""
+        if polarity not in an.POLARITIES:
+            raise self._error("bad_polarity", "polarity", {"polarity": polarity})
+        return polarity
+
+    def _no_dips_on_power(self, v, polarity: str) -> None:
+        """ピークの一覧・上位 N 個は、電力のスペクトルでは谷を探さない（設計P §9.7。マーカーの谷は探せる）。"""
+        if polarity == an.DIP and v.quantity == Quantity.POWER:
+            raise self._error("dips_on_power", "polarity")
+
+    def _cmd_marker_add(self, kind: str = "M", trace: int = 1, freq_hz: Optional[int] = None,
+                        polarity: str = an.PEAK) -> dict:
+        """polarity は置いたときの向き（設計G §3.8）。周波数を省いたら、山は最大の点・谷は一番深い点に置く。"""
         try:
             k = Kind(kind)
         except ValueError:
             raise self._error("bad_marker_kind", "kind", {"kind": kind}) from None
+        polarity = self._polarity(polarity)
         self._trace_of(trace)
         v = self._views.get(trace)
         if freq_hz is None:
             # 周波数を省いたらピーク（設計A §4.3.1）
             v = self._view(trace)
-            idx = an.highest_index(v)
+            idx = an.extreme_index(v, polarity)
             if idx is None:
-                raise self._error("no_peak", "trace")
+                raise self._error("no_peak", "trace", {"polarity": polarity})
             freq_hz = v.freq_at(idx)
         self._check_hz("freq_hz", freq_hz)
-        return self._op_result(self._markers.add(k, trace, freq_hz, v))
+        return self._op_result(self._markers.add(k, trace, freq_hz, v, polarity))
 
     def _cmd_marker_remove(self, id) -> dict:  # noqa: A002
         self._markers.remove(self._marker(id).id)
@@ -769,33 +787,43 @@ class DisplayMixin:
         self._markers_changed()
         return result
 
-    def _cmd_marker_peak(self, id=None, direction: str = "highest", trace: int = 1) -> dict:  # noqa: A002
+    def _cmd_marker_peak(self, id=None, direction: str = "highest", trace: int = 1,  # noqa: A002
+                         polarity: str = an.PEAK) -> dict:
+        """ピーク・次のピーク（左・右・次に高い）。polarity が谷なら谷・次の谷・次に深い（設計G §3.8）。"""
         if direction not in ("highest", an.LEFT, an.RIGHT, an.LOWER):
             raise self._error("bad_direction", "direction", {"direction": direction})
+        polarity = self._polarity(polarity)
+        created = False
         if id is None:
             # 何も選んでいなければ M を作ってから動かす（設計G §3.5）
-            r = self._markers.peak_search(None, self._view(trace))
+            r = self._markers.peak_search(None, self._view(trace), polarity)
             if not r.ok or direction == "highest":
-                return self._op_result(r)
+                return self._op_result(r, polarity)
             id = r.marker_id  # noqa: A001
+            created = True
         m = self._marker(id)
         v = self._view(m.trace)
         if direction == "highest":
-            r = self._markers.peak_search(m.id, v)
+            r = self._markers.peak_search(m.id, v, polarity)
         else:
-            r = self._markers.next_peak(m.id, direction, v)
-        return self._op_result(r)
+            r = self._markers.next_peak(m.id, direction, v, polarity)
+        if not r.ok and created:
+            self._markers_changed()  # 作った M は残る（次のピークが無いだけ）。画面にも出す
+        return self._op_result(r, polarity)
 
-    def _cmd_marker_top_peaks(self, trace: int = 1, n: int = 1) -> dict:
+    def _cmd_marker_top_peaks(self, trace: int = 1, n: int = 1, polarity: str = an.PEAK) -> dict:
         if isinstance(n, bool) or not isinstance(n, int):
             raise self._error("not_integer", "n")
-        rs = self._markers.place_top_peaks(self._view(trace), n)
+        polarity = self._polarity(polarity)
+        v = self._view(trace)
+        self._no_dips_on_power(v, polarity)
+        rs = self._markers.place_top_peaks(v, n, polarity)
         self._markers_changed()
         return {"placed": [self._op_dict(r) for r in rs]}
 
-    def _cmd_marker_register_peak(self, trace: int, freq_hz: int) -> dict:
+    def _cmd_marker_register_peak(self, trace: int, freq_hz: int, polarity: str = an.PEAK) -> dict:
         self._check_hz("freq_hz", freq_hz)
-        return self._op_result(self._markers.register_peak(self._view(trace), freq_hz))
+        return self._op_result(self._markers.register_peak(self._view(trace), freq_hz, self._polarity(polarity)))
 
     def _cmd_marker_offset_add(self, id, type: str, sign: str, delta) -> dict:  # noqa: A002
         m = self._marker(id)
@@ -866,11 +894,17 @@ class DisplayMixin:
         self._markers_changed()
         return {"xy": self._marker_snap["xy"]}
 
-    def _cmd_peak_list(self, trace: int = 1, floor_margin_db: float = 10.0) -> dict:
+    def _cmd_peak_list(self, trace: int = 1, floor_margin_db: float = 10.0, polarity: str = an.PEAK) -> dict:
+        """ピークの一覧（設計P §9.7）。floor_margin_db は基準からの N dB（電力はノイズフロア + N、基準との比は最大 − N）。
+
+        戻り値: base（"noise_floor" | "max"）・base_level（その値）・polarity・peaks（周波数・レベル・基準からの差 diff_db）。
+        """
+        polarity = self._polarity(polarity)
         v = self._view(trace)
-        floor, rows = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db)
-        return {"trace": trace, "unit": v.unit, "floor": floor,
-                "peaks": [{"freq_hz": r.freq_hz, "level": r.level, "height_db": r.height_db} for r in rows]}
+        self._no_dips_on_power(v, polarity)
+        pl = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db, polarity)
+        return {"trace": trace, "unit": v.unit, "base": pl.base, "base_level": pl.base_level, "polarity": pl.polarity,
+                "peaks": [{"freq_hz": r.freq_hz, "level": r.level, "diff_db": r.diff_db} for r in pl.rows]}
 
     def _cmd_marker_to(self, id, target: str) -> dict:  # noqa: A002
         """マーカーから条件を変える（設計G §3.4）。Center・Span は設計C §5.11 の規則を通る。"""

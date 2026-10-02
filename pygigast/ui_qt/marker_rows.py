@@ -86,8 +86,9 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
         mid = m["id"]
         delta = m.get("delta") or {}
         status = m.get("status", "ok")
-        note = _join(texts.MARKER_STATUS.get(status, status), texts.LABELS["row_track"] if m.get("peak_track") else "",
-                     *note_texts(m.get("notes")))
+        dip = m.get("polarity") == "dip"  # 谷に置いたマーカー（G §3.8）
+        note = _join(texts.MARKER_STATUS.get(status, status), texts.LABELS["row_dip"] if dip else "",
+                     texts.LABELS["row_track"] if m.get("peak_track") else "", *note_texts(m.get("notes")))
         if m.get("ref") and delta.get("status") not in (None, "ok"):
             note = _join(note, texts.MARKER_STATUS.get(delta["status"], delta["status"]))
         rows.append({
@@ -116,15 +117,17 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
                 "delta_value": d if o.get("level") is not None else None, "child": True,
                 "note": texts.MARKER_STATUS.get(st, st), "status": st, "offset": ("level", i),
             })
-        # 機能の線（G §3.6）はマーカーが値を持つ間だけ。N dB 帯域幅の横線は マーカーの値 − N
+        # 機能の線（G §3.6）はマーカーが値を持つ間だけ。N dB 帯域幅の横線は マーカーの値 − N（谷に置いたマーカーは
+        # 谷から N 上がる点を探すので + N: G §3.8）
         level = m.get("level") if status == "ok" else None
         for b in m.get("bandwidth") or []:
+            n_db = float(b["n_db"])
             rows.append({
                 "id": f"{mid}.bw{b['n_db']:g}", "parent": mid, "name": texts.w("row_bw", m=mid, n=f"{b['n_db']:g}"),
                 "kind": "function", "trace": m.get("trace"), "freq_hz": None, "value": None,
                 "unit": m.get("unit"), "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": _band_note(b), "status": b.get("status"),
-                "line": function_line(None if level is None else level - float(b["n_db"]), b),
+                "line": function_line(None if level is None else level + (n_db if dip else -n_db), b),
             })
         if m.get("shape_factor") is not None:
             rows.append({
@@ -245,6 +248,35 @@ def remove_command(r: dict, snap: Optional[dict]) -> Optional[tuple[str, dict]]:
         if tail.startswith("bw"):
             return "marker_function", {"id": mid, "bandwidth_db": [n for n in ns if f"bw{n:g}" != tail]}
     return None
+
+
+def row_ops(r: dict, snap: Optional[dict]) -> list[Optional[dict]]:
+    """行の「操作」の項目（G §3.4・§3.7）。Qt の行のドロップダウンと右クリック、Web の行のドロップダウンが同じ並び・同じ語。
+
+    項目: {"name"（部品の名前）, "text", "cmd", "args", "why"（使えない理由。None で使える）}。None は区切り線。
+    マーカーの行: Center に・REF に・デルタの2点を Start・Stop に（デルタの基準が無ければ理由付きで無効: U-08）・
+    消す。子の行・XY カーソル: その行だけを消す（remove_command）。消せない行は項目なし。
+    """
+    rid = r["id"]
+    if r.get("kind") == "marker" and not r.get("parent"):
+        return [
+            {"name": "row_center", "text": texts.LABELS["row_center"], "cmd": "marker_to",
+             "args": {"id": rid, "target": "center"}, "why": None},
+            {"name": "row_ref", "text": texts.LABELS["row_ref"], "cmd": "marker_to",
+             "args": {"id": rid, "target": "ref"}, "why": None},
+            {"name": "row_span", "text": texts.MENU_ITEMS["marker_span"], "cmd": "marker_to",
+             "args": {"id": rid, "target": "span"},
+             "why": None if r.get("ref") else texts.REASON_TEXTS["delta_ref"]},
+            None,
+            {"name": "row_remove", "text": texts.w("row_remove", m=rid), "cmd": "marker_remove", "args": {"id": rid},
+             "why": None},
+        ]
+    rm = remove_command(r, snap)
+    if rm is None:
+        return []
+    text = (texts.LABELS["row_remove_cursor"] if r.get("offset")
+            else texts.w("row_unset", m=rid) if rid in XY_KEYS else texts.LABELS["row_remove_function"])
+    return [{"name": "row_remove", "text": text, "cmd": rm[0], "args": rm[1], "why": None}]
 
 
 def edit_spec(r: dict, col: int, rows: list[dict], snap: Optional[dict]) -> Optional[dict]:
