@@ -31,6 +31,24 @@ def level_text(v: float) -> str:
     return minus_sign("0.0" if s == "-0.0" else s)
 
 
+# 縦軸のドラッグで、動かした量が1目盛の整数倍にこの割合（目盛の幅に対して）まで近ければ、その整数倍に吸い付く
+REF_DRAG_SNAP_DIV = 0.15
+
+
+def drag_ref_level(ref0: float, frac: float, db_per_div: float, divisions: int = 10) -> float:
+    """縦軸をドラッグしたときの REF レベル（設計J §4.1。Qt と Web で同じ: ui_web/units.js の dragRefLevel）。
+
+    frac はつかんでからの移動（グラフの高さに対する割合。下へ +）。下へ引くとより上の値が見える（REF が上がる）。
+    動かした量が1目盛の整数倍に近いときはその整数倍に吸い付く（-5dB ずらしたいのに -5.1dB になって使いにくかった:
+    2026-10-03 ユーザー指摘）。量は刻まない（細かく動かせる。ユーザー決定）。値は欄と目盛と同じ 0.1 dB に丸める。
+    """
+    delta = frac * divisions * db_per_div
+    k = round(delta / db_per_div)
+    if abs(delta - k * db_per_div) <= REF_DRAG_SNAP_DIV * db_per_div:
+        delta = k * db_per_div
+    return round(ref0 + delta, 1) + 0.0
+
+
 class ParseError(ValueError):
     pass
 

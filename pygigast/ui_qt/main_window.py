@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..api.local import LocalApi
-from ..core.units import format_freq, level_text
+from ..core.units import drag_ref_level, format_freq, level_text
 from . import device_menu, look, marker_rows, menu_table, menus, png_data, screen_model, sizes, texts, theme, widget_sync
 from .docks import Parts
 from .fields import FreqField, RefLevelField, SpanLockButton, ValueField
@@ -555,7 +555,8 @@ class MainWindow(QMainWindow):
         # つかんだ目盛がマウスに付いてくる: 下へ引くと、より上の値が見える（REF が上がる）
         if start:
             self._drag_ref0 = self._ref_dbm
-        self._set_ref(self._drag_ref0 + frac * DIVISIONS * self._db_div)
+        # 動かした量が1目盛の整数倍に近ければ吸い付く（Web と同じ計算: core/units.drag_ref_level）
+        self._set_ref(drag_ref_level(self._drag_ref0, frac, self._db_div, DIVISIONS))
 
     def _update_y_axis(self) -> None:
         top = self._ref_dbm

@@ -119,7 +119,26 @@
     return idx < dot ? dot - idx - 1 : dot - idx;
   }
 
-  const api = { ParseError, parseFreqHz, formatFreq, freqFieldText, parseDb, digitExponent, minusSign, levelText };
+  // 縦軸のドラッグの REF（core/units.py の drag_ref_level と同じ: 動かした量が1目盛の整数倍に近ければ吸い付く・
+  // 量は刻まない・0.1 dB に丸める）
+  const REF_DRAG_SNAP_DIV = 0.15;
+  function dragRefLevel(ref0, frac, dbPerDiv, divisions = 10) {
+    let delta = frac * divisions * dbPerDiv;
+    const k = pyRound(delta / dbPerDiv);
+    if (Math.abs(delta - k * dbPerDiv) <= REF_DRAG_SNAP_DIV * dbPerDiv) delta = k * dbPerDiv;
+    return pyRound((ref0 + delta) * 10) / 10 + 0;
+  }
+  // Python の round と同じ（.5 は偶数へ）。Math.round と違い -2.5 → -2・2.5 → 2
+  function pyRound(x) {
+    const f = Math.floor(x);
+    const d = x - f;
+    if (d > 0.5) return f + 1;
+    if (d < 0.5) return f;
+    return f % 2 === 0 ? f : f + 1;
+  }
+
+  const api = { ParseError, parseFreqHz, formatFreq, freqFieldText, parseDb, digitExponent, minusSign, levelText,
+                dragRefLevel };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GSUnits = api;
 })(typeof window !== "undefined" ? window : globalThis);

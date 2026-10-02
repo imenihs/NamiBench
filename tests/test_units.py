@@ -1,6 +1,6 @@
 import unittest
 
-from pygigast.core.units import ParseError, format_freq, parse_db, parse_freq_hz
+from pygigast.core.units import ParseError, drag_ref_level, format_freq, parse_db, parse_freq_hz
 
 
 class ParseFreqTest(unittest.TestCase):
@@ -37,6 +37,24 @@ class ParseFreqTest(unittest.TestCase):
         self.assertEqual(parse_db("5dB"), 5.0)
         with self.assertRaises(ParseError):
             parse_db("x")
+
+
+
+class DragRefLevelTest(unittest.TestCase):
+    """縦軸のドラッグの REF（設計J §4.1.1）: 1目盛の整数倍の ±0.15 目盛で吸い付き、量は刻まず 0.1 dB に丸める。"""
+
+    def test_snaps_to_whole_divisions(self):
+        # 10dB/div・グラフの高さの 10% で 1目盛（10dB）
+        self.assertEqual(drag_ref_level(0.0, -0.1, 10), -10.0)
+        self.assertEqual(drag_ref_level(0.0, -0.114, 10), -10.0)   # −11.4 → 吸い付く（1.4dB ≦ 1.5dB）
+        self.assertEqual(drag_ref_level(0.0, -0.116, 10), -11.6)   # −11.6 → 吸い付かない
+        self.assertEqual(drag_ref_level(0.0, 0.2, 5), 10.0)
+
+    def test_not_quantized_and_relative(self):
+        self.assertEqual(drag_ref_level(0.0, -0.05, 10), -5.0)     # 半目盛は吸い付かない・刻まない
+        self.assertEqual(drag_ref_level(0.0, -0.051, 10), -5.1)
+        self.assertEqual(drag_ref_level(-3.7, -0.1, 10), -13.7)    # 動かした量で吸い付く
+        self.assertEqual(drag_ref_level(0.0, 0.0, 10), 0.0)
 
 
 if __name__ == "__main__":

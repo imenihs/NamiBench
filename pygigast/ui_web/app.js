@@ -549,7 +549,7 @@
       onLevelDrag(start, frac) {
         // つかんだ目盛がマウスに付いてくる: 下へ引くと、より上の値が見える（REF が上がる）
         if (start) { this.dragRef0 = this.amp.ref; return; }
-        this.setAmp({ ref_level: Math.round((this.dragRef0 + frac * GSGraph.DIVISIONS * this.amp.div) * 10) / 10 });
+        this.setAmp({ ref_level: GSUnits.dragRefLevel(this.dragRef0, frac, this.amp.div, GSGraph.DIVISIONS) });
       },
       nearestTrace(x, y) {
         // クリック位置に縦方向で最も近い、見えているトレース（G §3.2）

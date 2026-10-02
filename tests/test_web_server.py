@@ -26,7 +26,7 @@ from pygigast.api.local import LocalApi, _SimulatorBackend
 from pygigast.api.web import server as web
 from pygigast.core.devices.base import load_profile
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.units import format_freq, parse_freq_hz
+from pygigast.core.units import drag_ref_level, format_freq, parse_freq_hz
 
 UI_WEB = Path(web.UI_WEB_DIR)
 
@@ -342,6 +342,20 @@ class UnitsJsTest(unittest.TestCase):
                 expect_p.append(None)
         self.assertEqual(got["p"], expect_p)
         self.assertEqual(got["f"], [format_freq(h) for h in self.HZ])
+
+    # 縦軸のドラッグの REF（J §4.1）: (REF の元, 移動の割合, dB/div)
+    DRAGS = [(0.0, -0.05, 10), (0.0, -0.051, 10), (0.0, -0.1, 10), (0.0, -0.11, 10), (0.0, -0.114, 10),
+             (0.0, -0.116, 10), (-3.7, -0.05, 10), (-3.7, -0.1, 10), (0.0, 0.2, 5), (0.0, 0.016, 1),
+             (12.3, 0.0, 2), (0.0, -0.0149, 10), (0.0, 0.0151, 10), (0.0, 0.25, 10), (-120.0, 1.0, 10)]
+
+    def test_drag_ref_level_same_as_python(self):
+        script = (
+            "const u = require(process.argv[1]); const d = JSON.parse(process.argv[2]);"
+            "console.log(JSON.stringify(d.map(([r, f, v]) => u.dragRefLevel(r, f, v, 10))));"
+        )
+        out = subprocess.run(["node", "-e", script, str(UI_WEB / "units.js"), json.dumps(self.DRAGS)],
+                             capture_output=True, text=True, timeout=30, check=True).stdout
+        self.assertEqual(json.loads(out), [drag_ref_level(r, f, v) for r, f, v in self.DRAGS])
 
 
 @unittest.skipUnless(shutil.which("node"), "Node が無い")
