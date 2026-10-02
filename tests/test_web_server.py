@@ -126,7 +126,13 @@ class WebServerTest(unittest.TestCase):
         self.assertEqual(texts["REASONS"]["upper_limit"], "上限")
         self.assertIsInstance(texts["RULE_REASONS"], list)
         _, body = self.get("/api/v1/info")
-        self.assertIn("version", json.loads(body))
+        info = json.loads(body)
+        self.assertIn("version", info)
+        # トレースの線の描き方（設計F §9）は Qt と同じ1か所の値
+        from pygigast.core import report_layout as rl
+
+        self.assertEqual(info["line_styles"], json.loads(json.dumps(rl.LINE_STYLES)))
+        self.assertEqual(list(texts["TRACE_LINES"]), list(rl.TRACE_LINE_STYLES))
 
     def test_error_shape(self):
         st, body = self.post("run", {"mode": "continuous"})

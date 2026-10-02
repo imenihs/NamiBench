@@ -59,6 +59,17 @@ class HoldAfterCount(str, enum.Enum):
     STOP = "stop"  # それ以上は蓄積しない
 
 
+class TraceLine(str, enum.Enum):
+    """トレースの線（設計F §9）。描き方だけの設定で値の意味は変わらないので、変えても蓄積を捨てない。
+    描き方の数（幅・切れ目・重なりの順）は core/report_layout.TRACE_LINE_STYLES（Qt・Web・PNG が同じ値を使う）。"""
+
+    THIN = "thin"
+    SOLID = "solid"  # 既定（今までの線）
+    THICK = "thick"
+    DASH = "dash"
+    DOT = "dot"
+
+
 class ConditionChange(str, enum.Enum):
     """値の意味が変わる条件の変更。蓄積を捨てる（設計F §5.3）。"""
 
@@ -149,6 +160,7 @@ class Trace:
         average_type: Optional[AverageType] = None,
         average_after: AverageAfterCount = AverageAfterCount.EXPONENTIAL,
         hold_after: HoldAfterCount = HoldAfterCount.CONTINUE,
+        line: TraceLine = TraceLine.SOLID,
     ) -> None:
         if not isinstance(number, int) or not 1 <= number <= TRACE_COUNT:
             raise ValueError(f"トレースの番号は 1〜{TRACE_COUNT}")
@@ -160,6 +172,7 @@ class Trace:
         self.average_type = None if average_type is None else AverageType(average_type)
         self.average_after = AverageAfterCount(average_after)
         self.hold_after = HoldAfterCount(hold_after)
+        self.line = TraceLine(line)
         self._validate()
 
         # 表示する値と、その値の条件
@@ -202,15 +215,18 @@ class Trace:
         average_after=_UNSET,
         hold_after=_UNSET,
         visible=_UNSET,
+        line=_UNSET,
     ) -> tuple[str, ...]:
         """設定を変える。渡した欄だけ変え、知らせのコードを返す。
 
         動作・回数・平均の種類が変わったら蓄積を捨てる（蓄積の意味が変わるため。設計に無い判断）。
         固定に変えたときは、いまの値を残す（比べるために残す: 設計F §5.2）。
-        表示するか・N 回に達した後の選び方は何も捨てない。
+        表示するか・N 回に達した後の選び方・線（設計F §9）は何も捨てない。
         """
         old = (self.action, self.count, self.average_type, self.average_after,
-               self.hold_after, self.visible)
+               self.hold_after, self.visible, self.line)
+        if line is not _UNSET:
+            self.line = TraceLine(line)  # 読めない線は ValueError（ほかの欄はまだ変えていない）
         if action is not _UNSET:
             self.action = TraceAction(action)
         if count is not _UNSET:
@@ -230,7 +246,7 @@ class Trace:
                     raise ValueError("この値の種類では選べない平均の種類")
         except ValueError:
             (self.action, self.count, self.average_type, self.average_after,
-             self.hold_after, self.visible) = old
+             self.hold_after, self.visible, self.line) = old
             raise
 
         notices: list[str] = []

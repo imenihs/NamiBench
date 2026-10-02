@@ -36,7 +36,7 @@ ALLOWED_WORDS: dict[str, str] = {
 
 # 画面の語ではない表（コード・並び・色の種類）。値は画面に出ない
 STRUCTURAL = {"MENU_LAYOUT", "MENU_NOT_YET", "MENU_MNEMONICS", "DEVICE_STATE_CLS", "RULE_REASONS", "FREQ_FIELDS",
-              "MARKER_NOTES_SILENT", "POWER_HINT_REASONS"}
+              "MARKER_NOTES_SILENT", "POWER_HINT_REASONS", "DETACH_PARTS"}
 
 # 日本語の文字（ひらがな・カタカナ・漢字）。「・」「ー」と全角のかっこ・句読点は文の部品の区切りとして許す
 JP_LETTER = re.compile(r"[ぁ-ゖァ-ヺ一-鿿]")

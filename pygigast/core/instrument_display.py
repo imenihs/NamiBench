@@ -22,7 +22,7 @@ from .marker.markers import Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
-from .trace import ConditionChange, HoldKeep, TraceAction, TraceSet, to_db
+from .trace import ConditionChange, HoldKeep, TraceAction, TraceLine, TraceSet, to_db
 from .types import AdoptedSweep, Frame, Mode, Quantity, RawSweep, ValueKind
 from .view_units import shift_values
 
@@ -106,14 +106,19 @@ def trace_settings(t) -> dict:
         "average_type": None if t.average_type is None else t.average_type.value,
         "average_after": t.average_after.value,
         "hold_after": t.hold_after.value,
+        "line": t.line.value,
     }
 
 
 def apply_trace_settings(t, d: dict) -> tuple[str, ...]:
+    # 線（設計F §9）は前の版の設定・プリセットに無い。無い・読めないときは既定の実線にし、ほかの欄は戻す
+    # （線が読めないだけでトレースの設定を全部捨てない）
+    line = d.get("line")
     return t.configure(
         action=d["action"], count=d.get("count"), average_type=d.get("average_type"),
         average_after=d.get("average_after", "exponential"), hold_after=d.get("hold_after", "continue"),
         visible=bool(d.get("visible", True)),
+        line=line if line in {x.value for x in TraceLine} else TraceLine.SOLID,
     )
 
 
@@ -453,6 +458,7 @@ class DisplayMixin:
             "values": shift_values(db_values(t.values, t.quantity), shift),
             "action": t.action.value,
             "visible": t.visible,
+            "line": t.line.value,  # 描く線（設計F §9）
             "average_type": None if eff is None else eff.value,
             "count": t.current_count,
             "count_target": t.effective_count,
@@ -608,11 +614,12 @@ class DisplayMixin:
         self._diff_refresh()
 
     def _cmd_set_trace(self, number, action=_UNSET, count=_UNSET, visible=_UNSET, average_type=_UNSET,
-                       average_after=_UNSET, hold_after=_UNSET) -> dict:
+                       average_after=_UNSET, hold_after=_UNSET, line=_UNSET) -> dict:
+        """トレースの設定（設計F §5）。line は描く線（設計F §9: thin・solid・thick・dash・dot）で、変えても蓄積を捨てない。"""
         t = self._trace_of(number)
         kw = {k: v for k, v in (("action", action), ("count", count), ("visible", visible),
                                 ("average_type", average_type), ("average_after", average_after),
-                                ("hold_after", hold_after)) if v is not _UNSET}
+                                ("hold_after", hold_after), ("line", line)) if v is not _UNSET}
         if "count" in kw and kw["count"] is not None and (isinstance(kw["count"], bool) or not isinstance(kw["count"], int)):
             raise self._error("not_integer", "count")
         before = self._undo_snapshot()

@@ -357,13 +357,13 @@ class MainWindow(QMainWindow):
         self._update_y_axis()
 
     def _add_part_menu(self) -> None:
-        """メニュー「表示」に部分ごとの「別ウィンドウで開く」（J §4.3.2。Web の「≡」と同じ語）。"""
+        """メニュー「表示」に部分ごとの「別ウィンドウで開く」（J §4.3.2。Web のメニューと同じ並び・語・コード）。"""
         view = next((a.menu() for a in self.menuBar().actions()
                      if a.menu() is not None and a.text().startswith(texts.MENU_TITLES["view"])), None)
         if view is None:
             return
         view.addSeparator()
-        for key in ("graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"):
+        for key in texts.DETACH_PARTS:
             act = view.addAction(texts.w("detach_item", part=texts.LABELS["part_" + key]))
             act.setObjectName("detach_" + key)
             act.triggered.connect(lambda _=False, k=key: self.parts.detach(k))

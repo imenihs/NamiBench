@@ -324,3 +324,77 @@ class ImageRejectChoiceTest(UiBase):
         self.pump()
         self.assertFalse(c.isEnabled())
         self.assertIn(texts.REASON_TEXTS["image_reject_zero_span"], c.toolTip())
+
+
+class TraceLineQtTest(UiBase):
+    """トレースの線（設計F §9）: 2段目のクリアの真下のドロップダウン・線のペン・重なりの順・凡例の見本・PNG。"""
+
+    def choose(self, n, code):
+        c = self.win.trace_tab.rows[n].line
+        i = c.findData(code)
+        c.setCurrentIndex(i)
+        c.activated.emit(i)
+        self.pump()
+
+    def test_dropdown_under_clear(self):
+        tab = self.win.trace_tab
+        grid = tab.g_traces.layout()
+        for r in tab.rows.values():
+            self.assertEqual([(r.line.itemData(i), r.line.itemText(i)) for i in range(r.line.count())],
+                             list(texts.TRACE_LINES.items()))
+            self.assertEqual(r.line.currentData(), "solid")  # 初期値は実線
+            rl_, cl, _rs, _cs = grid.getItemPosition(grid.indexOf(r.line))
+            rc, cc, _rs, _cs = grid.getItemPosition(grid.indexOf(r.clear))
+            self.assertEqual((rl_, cl), (rc + 1, cc))  # クリアの真下
+        self.pump(0.2)
+        widths = {r.line.width() for r in tab.rows.values()}
+        self.assertEqual(len(widths), 1)  # 列の幅は1つ（一番長い名前とクリアの広い方）
+        self.assertGreaterEqual(widths.pop(), max(r.clear.width() for r in tab.rows.values()))
+
+    def test_pen_order_legend_and_accumulation(self):
+        self.cmd("set_trace", number=2, action="average", count=4, visible=True)
+        self.connect_and_sweep()
+        self.wait(lambda: self.win.traces.live_payload(2) is not None, what="トレース2")
+        before = self.state()["traces"][1]["current_count"]
+        self.assertEqual(before, 4)
+        layer = self.win.traces
+        self.choose(2, "thick")
+        self.choose(1, "thin")
+        st = {t["number"]: t for t in self.state()["traces"]}
+        self.assertEqual((st[1]["line"], st[2]["line"]), ("thin", "thick"))
+        self.assertEqual(st[2]["current_count"], before)  # 線を変えても蓄積は捨てない
+        self.wait(lambda: layer.line_of(2) == "thick" and layer.line_of(1) == "thin", what="線が画面に届く")
+        c1, c2 = layer.live[1]["curve"], layer.live[2]["curve"]
+        self.assertEqual(c2.opts["pen"].widthF(), 2.0)
+        # 細線（0.5 画素）は 1 画素の線を幅の割合だけ薄く描く
+        self.assertEqual(c1.opts["pen"].widthF(), 1.0)
+        self.assertAlmostEqual(c1.opts["pen"].color().alphaF(), 0.5, delta=0.01)
+        self.assertEqual(c2.opts["pen"].color().alphaF(), 1.0)
+        # 太い線を上に（番号の小さい 1 が細線でも、2 の太線が上）。参照トレースより上
+        self.assertGreater(c2.zValue(), c1.zValue())
+        self.choose(1, "thick")
+        self.choose(2, "solid")
+        self.wait(lambda: layer.line_of(1) == "thick", what="線が画面に届く")
+        self.assertGreater(c1.zValue(), c2.zValue())
+        self.choose(1, "dash")
+        self.wait(lambda: layer.line_of(1) == "dash", what="線が画面に届く")
+        pen = c1.opts["pen"]
+        self.assertEqual(pen.dashPattern(), [8.0, 4.0])
+        self.assertGreater(c2.zValue(), c1.zValue())  # 破線と実線は同じ段（番号順: 2 が上）
+        # 凡例の見本は曲線のペン（線を変えたら作り直す）
+        samples = [it[0] for it in layer.legend.items]
+        self.assertEqual([s.item for s in samples], [c1, c2])
+        self.assertEqual(samples[0].item.opts["pen"].dashPattern(), [8.0, 4.0])
+        # PNG の中身にも線が入る（PNG は画面と同じ線で描く: I §3）
+        from pygigast.ui_qt import png_data
+
+        data = png_data.build(self.win)
+        self.assertEqual([(t["number"], t["line"]) for t in data["traces"]], [(1, "dash"), (2, "solid")])
+        self.assertEqual([it["line"] for it in png_data.rl.layout(data, (1600, 1000))["legend"]], ["dash", "solid"])
+
+    def test_line_comes_back_from_core(self):
+        """別の口（Web など）で変えた線も、欄とグラフに映る。"""
+        self.cmd("set_trace", number=3, line="dot", visible=True)
+        self.pump()
+        self.assertEqual(self.win.trace_tab.rows[3].line.currentData(), "dot")
+        self.assertEqual(self.win.traces.line_of(3), "dot")

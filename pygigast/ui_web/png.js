@@ -167,14 +167,17 @@
 
     // 凡例（グラフの上の1段: U-14）
     let lx = margin;
-    const sw = g2.measureText(WIDE).width * 1.4;
+    const sw = g2.measureText(WIDE).width * lay.legend_sample;
     for (const it of lay.legend) {
       const col = String(it.color || "").startsWith("#") ? it.color : (c[it.color] || c.trace1);
       const tw = g2.measureText(it.text).width;
       if (lx + sw + tw > W - margin) break;
+      // 線の見本はそのトレースの線（設計F §9。太さと切れ目はサーバーの report_layout.legend_stroke: Qt と同じ）
       g2.strokeStyle = col;
-      g2.lineWidth = Math.max(2, px / 6);
+      g2.lineWidth = it.stroke.width;
+      g2.setLineDash(it.stroke.dash || []);
       g2.beginPath(); g2.moveTo(lx, margin + lh / 2); g2.lineTo(lx + sw * 0.8, margin + lh / 2); g2.stroke();
+      g2.setLineDash([]);
       g2.lineWidth = 1;
       g2.fillStyle = c.text;
       g2.fillText(it.text, lx + sw, margin + lh / 2);
@@ -189,7 +192,8 @@
     host.style.cssText = `position:fixed;left:-20000px;top:0;width:${graphW}px;height:${graphH}px;background:${c.graph_bg}`;
     document.body.appendChild(host);
     try {
-      const g = new GSGraph(host, { colors: c, static: true, width: graphW, height: graphH });
+      // トレースの線の基準の幅は Qt の PNG と同じ（report_layout.png_line_base: 文字の大きさから）
+      const g = new GSGraph(host, { colors: c, static: true, width: graphW, height: graphH, lineBase: lay.line_base_px });
       const s = (ctx.st || {}).sweep || {};
       if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true); else g.setX(s.start_hz, s.stop_hz, false);
       // 周波数オフセット（設計O）: 目盛の数字と軸の名前は画面と同じく換算後

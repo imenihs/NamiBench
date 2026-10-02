@@ -23,6 +23,7 @@ from .trace import (
     HoldKeep,
     Trace,
     TraceAction,
+    TraceLine,
     TraceSet,
     TraceUpdate,
 )

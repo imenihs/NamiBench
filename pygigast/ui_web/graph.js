@@ -14,6 +14,19 @@
   // マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Qt の plot_layers.FUNCTION_LINE_ALPHA と同じ）
   const FUNCTION_LINE_ALPHA = 89 / 255;
   const FUNCTION_LINE_DASH = [2, 3];
+  // 画面の線の基準の幅（px。設計F §9 の実線 = 今までの線）。PNG は opts.lineBase で渡す
+  const SCREEN_LINE_BASE = 1.25;
+  // 凡例の線の見本の長さと行の高さ（px。Qt の pyqtgraph の凡例の見本と同じ 20px）
+  const LEGEND_SAMPLE = 20;
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  // 線の描き方（core/report_layout.TRACE_LINE_STYLES の1つ: width・dash の倍率）から、描く幅と切れ目（px）。
+  // report_layout.stroke と同じ計算
+  function lineStroke(style, base) {
+    const s = style || { width: 1, dash: null };
+    const width = base * s.width;
+    return { width, dash: s.dash ? s.dash.map((v) => v * width) : [] };
+  }
 
   function xUnit(span) {
     const a = Math.abs(span);
@@ -44,6 +57,9 @@
       this.xy = null;
       this.zeroLine = false;
       this.mouse = null; // グラフの上のマウスの位置（M キー用）
+      this.lineBase = opts.lineBase || SCREEN_LINE_BASE;
+      this.legendEl = null;
+      this._legendKey = "";
       this._build(opts.width || el.clientWidth || 600, opts.height || el.clientHeight || 300);
       if (!opts.static) this._wire();
     }
@@ -164,7 +180,44 @@
       this.u.setScale("y", { min: ref - DIVISIONS * div, max: ref });
     }
 
+    // list は下から描く順（参照トレース → 線の段 → 番号: 設計F §9。並べるのは app.js の graphTraces）
     setTraces(list) { this.traces = list; this.u.redraw(false); }
+
+    // 凡例（Qt の pyqtgraph の凡例と同じ: グラフの中の右上の箱。1行に線の見本と文字）。items: [{text, color, style}]。
+    // 見本はそのトレースの線（設計F §9）。マウスの操作は下のグラフへ通す
+    setLegend(items) {
+      if (this.o.static) return;
+      const list = items || [];
+      const key = JSON.stringify(list.map((it) => [it.text, it.color, it.style]));
+      if (key === this._legendKey) return;
+      this._legendKey = key;
+      if (!this.legendEl) {
+        this.legendEl = document.createElement("div");
+        this.legendEl.className = "glegend";
+        this.u.over.appendChild(this.legendEl);
+      }
+      const box = this.legendEl;
+      box.replaceChildren();
+      box.hidden = !list.length;
+      for (const it of list) {
+        const row = document.createElement("div");
+        row.className = "glegend-row";
+        const s = lineStroke(it.style, SCREEN_LINE_BASE);
+        const svg = document.createElementNS(SVG_NS, "svg");
+        svg.setAttribute("width", String(LEGEND_SAMPLE));
+        svg.setAttribute("height", String(LEGEND_SAMPLE));
+        const ln = document.createElementNS(SVG_NS, "line");
+        for (const [k, v] of [["x1", 0], ["y1", LEGEND_SAMPLE / 2], ["x2", LEGEND_SAMPLE], ["y2", LEGEND_SAMPLE / 2]]) ln.setAttribute(k, String(v));
+        ln.setAttribute("stroke", it.color);
+        ln.setAttribute("stroke-width", String(s.width));
+        if (s.dash.length) ln.setAttribute("stroke-dasharray", s.dash.join(" "));
+        svg.appendChild(ln);
+        const text = document.createElement("span");
+        text.textContent = it.text;
+        row.append(svg, text);
+        box.appendChild(row);
+      }
+    }
     // 機器の範囲の外・意味の無い区間の帯（J §4.8）: [{start_hz, stop_hz, label, fill}]
     setBands(list) { this.bands = list || []; this.u.redraw(false); }
     setMarkers(rows, selected) { this.markers = rows || []; this.selectedMarker = selected; this.u.redraw(false); }
@@ -315,9 +368,11 @@
           }
           ctx.globalAlpha = 1;
         }
+        // そのトレースの線（設計F §9: 幅と切れ目。参照トレースは点線）。印の区間も同じ線で描く
+        const st = lineStroke(t.style, this.lineBase);
         ctx.strokeStyle = color;
-        ctx.lineWidth = t.width || 1.25;
-        ctx.setLineDash(t.dash || []);
+        ctx.lineWidth = st.width;
+        ctx.setLineDash(st.dash);
         ctx.beginPath();
         for (const r of runs) {
           ctx.moveTo(r[0], r[1]);
@@ -460,5 +515,7 @@
   }
 
   Graph.DIVISIONS = DIVISIONS;
+  Graph.SCREEN_LINE_BASE = SCREEN_LINE_BASE;
+  Graph.lineStroke = lineStroke;
   root.GSGraph = Graph;
 })(window);

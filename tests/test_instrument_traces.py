@@ -191,6 +191,57 @@ class MarkerCommandsTest(InstrumentCase):
         self.assertEqual(cm.exception.code, "no_ref")
 
 
+class TraceLineTest(InstrumentCase):
+    """トレースの線（設計F §9）: 5つから選ぶ・既定は実線・変えても蓄積を捨てない・トレースの設定と一緒に覚える。"""
+
+    def lines(self):
+        return [t["line"] for t in self.call("get_state")["traces"]]
+
+    def test_default_and_choices(self):
+        self.assertEqual(self.lines(), ["solid"] * 4)
+        for code in ("thin", "solid", "thick", "dash", "dot"):
+            r = self.call("set_trace", number=3, line=code)
+            self.assertEqual(r["trace"]["line"], code)
+        with self.assertRaises(CommandError) as cm:
+            self.call("set_trace", number=3, line="wavy")
+        self.assertEqual(cm.exception.code, "bad_trace_setting")
+        self.assertEqual(self.lines()[2], "dot")  # 読めない線では何も変えない
+
+    def test_changing_line_keeps_accumulation(self):
+        self.connect()
+        self.call("set_trace", number=2, action="average", count=3, visible=True)
+        self.single()
+        before = {t["number"]: t for t in self.call("get_state")["traces"]}[2]
+        self.assertEqual(before["current_count"], 3)
+        self.clear_events()
+        self.call("set_trace", number=2, line="thick")
+        after = {t["number"]: t for t in self.call("get_state")["traces"]}[2]
+        self.assertEqual((after["line"], after["current_count"], after["has_values"]), ("thick", 3, True))
+        # 捨てた知らせを出さず、描き直すトレースの中身に線が入る
+        self.assertFalse([p for k, p in self.events if k == "notice" and p.get("code") == "trace_reset"])
+        t = self.wait_for(lambda k, p: k == "trace" and p["trace"] == 2)
+        self.assertEqual((t["line"], t["count"]), ("thick", 3))
+
+    def test_line_survives_restart(self):
+        self.call("set_trace", number=1, line="thin")
+        self.call("set_trace", number=2, action="average", count=8, visible=True, line="thick")
+        self.inst.shutdown()
+        self.inst = self.make_instrument()
+        self.assertEqual(self.lines(), ["thin", "thick", "solid", "solid"])
+
+    def test_old_or_broken_saved_line_is_solid(self):
+        # 前の版の設定（線が無い）・読めない線は実線にし、ほかの欄は戻す
+        from pygigast.core.instrument_display import apply_trace_settings
+        from pygigast.core.trace import Trace
+
+        t = Trace(2)
+        apply_trace_settings(t, {"number": 2, "action": "max_hold", "count": 4, "visible": True})
+        self.assertEqual((t.action.value, t.count, t.line.value), ("max_hold", 4, "solid"))
+        t.configure(line="dash")
+        apply_trace_settings(t, {"number": 2, "action": "average", "count": 8, "visible": True, "line": "wavy"})
+        self.assertEqual((t.action.value, t.count, t.line.value), ("average", 8, "solid"))
+
+
 class PersistTest(InstrumentCase):
     def test_trace_and_marker_settings_survive_restart(self):
         # 終了時の状態を次の起動で戻す（設計O §1.2）

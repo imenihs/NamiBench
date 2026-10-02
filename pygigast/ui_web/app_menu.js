@@ -8,7 +8,6 @@
   const X = root.GSTexts;
   const W = (k, kw) => X.w(k, kw);
 
-  const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"];
   // Web のメニューに無い項目（Qt だけのもの: 終了はブラウザの窓を閉じる）
   const WEB_SKIP = new Set(["quit"]);
 
@@ -110,8 +109,8 @@
             }));
           }
           if (sec === "view") {
-            // Web は部分ごとに「別ウィンドウで開く」を置く（J §4.3.2）
-            list.push(null, ...PARTS.map((p) => ({
+            // 部分ごとの「別ウィンドウで開く」（J §4.3.2。Qt のメニュー「表示」と同じ並び・語・コード: texts の DETACH_PARTS）
+            list.push(null, ...X.list("DETACH_PARTS").map((p) => ({
               code: "detach_" + p, label: W("detach_item", { part: W("part_" + p) }), run: () => this.detach(p),
               why: this.part ? X.get("REASON_TEXTS", "part_window") : null, keys: [], graphOnly: false,
             })));

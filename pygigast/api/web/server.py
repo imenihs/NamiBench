@@ -428,10 +428,11 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
     @app.get("/api/v1/info")
     async def get_info(request: Request) -> JSONResponse:
         who = gs(request)
-        # 配色の初期値（J §4.4。Qt と同じ値を1か所から: U-09）も渡す
+        # 配色の初期値（J §4.4）とトレースの線の描き方（設計F §9）も渡す（Qt と同じ値を1か所から: U-09）
         return JSONResponse({"app": "pyGigaSt", "version": __version__, "lan": access.lan,
                              "trace_rate_hz": trace_rate_hz,
                              "palettes": {"dark": rl.DARK_DEFAULT, "light": rl.LIGHT_DEFAULT},
+                             "line_styles": rl.LINE_STYLES,
                              "access": {"kind": who["kind"], "local": who["local"]}})
 
     @app.post("/api/v1/png_layout")

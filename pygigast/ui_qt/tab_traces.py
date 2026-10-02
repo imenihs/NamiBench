@@ -2,7 +2,8 @@
 
 並びは用事と頻度の順（J §4.5・U-10。よく変える掃引の設定をスクロールせずに見える一番上に置く）:
 - ① 掃引: 点数（自動・手動）・Step・掃引時間の見積もり・イメージ除去（正確・スピード・なしと1画面の見積もり: F §7.4）
-- ② トレース 1〜4: 色・表示するか・動作・回数・平均の種類・N 回の後・いまの回数・一度きりの知らせ（F §3）
+- ② トレース 1〜4: 色・表示するか・動作・回数・平均の種類・N 回の後・線（クリアの真下: F §9）・いまの回数・
+  一度きりの知らせ（F §3）
 - ③ 参照トレース: 開いたファイルのトレース（表示するか・外す）（F §5.4・H §6）
 - ④ 機器に固有の欄（RTL-SDR の受信: rtl_panel.py）。その機器に繋いでいるときだけ出す（add_device_section）
 - 周波数オフセット（設計O）: 表示する周波数 = 測った周波数 + オフセット
@@ -27,8 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.report_layout import TRACE_LINE_DEFAULT
 from ..core.units import format_freq
-from . import screen_model, sizes, texts, widget_sync
+from . import menus, screen_model, sizes, texts, widget_sync
 from .fields import COUNT_CHOICES, COUNT_MAX, CountField
 from .theme import trace_color
 
@@ -101,17 +103,21 @@ class SameWidth(QObject):
     """並びの同じ列のドロップダウンを1つの幅にそろえる。幅はその列が出しうる一番長い選択肢の幅で、選択肢が変わっても
     動かさない（行ごとに幅が違うと列がガタガタし、行を移るたびにマウスを横へ探しに行くことになる: 2026-10-03 ユーザー指摘）。
 
-    見た目の決まり・文字が変わったら測り直す。
+    見た目の決まり・文字が変わったら測り直す。others は同じ列に置くほかの部品（ボタンなど）で、列の幅はその幅も
+    下回らない（列の一番広い部品の幅にそろえる: S-02。ボタンは文字の幅のまま: S-03）。
     """
 
-    def __init__(self, combos: list[QComboBox], items) -> None:
+    def __init__(self, combos: list[QComboBox], items, others: tuple[QWidget, ...] = ()) -> None:
         super().__init__(combos[0])
         self.combos = list(combos)
         self.items = list(items)
+        self.others = list(others)
         self._pending = False
         for c in self.combos:
             c.setProperty("column", True)  # 幅は値の種類ではなく列で決まる（試験の印）
             c.installEventFilter(self)
+        for w in self.others:
+            w.installEventFilter(self)
         self.apply()
 
     def eventFilter(self, obj, e) -> bool:
@@ -123,7 +129,8 @@ class SameWidth(QObject):
 
     def apply(self) -> None:
         self._pending = False
-        w = max(combo_width(c, self.items) for c in self.combos)
+        w = max([combo_width(c, self.items) for c in self.combos]
+                + [max(o.sizeHint().width(), o.minimumWidth()) for o in self.others])
         for c in self.combos:
             if c.width() != w or c.minimumWidth() != w or c.maximumWidth() != w:
                 c.setFixedWidth(w)
@@ -195,6 +202,12 @@ class _TraceRow:
                                                        average_type=self.avg.currentData()))
         self.after = QComboBox()
         self.after.activated.connect(self._after_chosen)
+        # 線（設計F §9）。描き方だけなので、変えても蓄積は捨てない
+        self.line = QComboBox()
+        for code, name in texts.TRACE_LINES.items():
+            self.line.addItem(name, code)
+        self.line.setToolTip(L["line"])
+        self.line.activated.connect(lambda i: win.call("set_trace", number=number, line=self.line.itemData(i)))
         # いまの様子（「44/64」）は掃引ごとに長さが変わる。列の幅も行の高さも動かさない（文が延びて欄が右へずれる・
         # 折り返して行が高くなると、掃引のたびに部品が動く）: 1行目の部品で決まる列の幅に収めて切り、全部はツールチップ
         self.status = _ElidedLabel()
@@ -217,6 +230,7 @@ class _TraceRow:
         grid.addWidget(self.status, row + 1, 0, 1, 2)
         grid.addWidget(self.avg, row + 1, 2)
         grid.addWidget(self.after, row + 1, 3)
+        grid.addWidget(self.line, row + 1, 4)  # クリアの真下
         grid.addWidget(self.note, row + 2, 0, 1, 5)
 
     def _action_chosen(self, _i: int) -> None:
@@ -260,6 +274,7 @@ class _TraceRow:
         cur = s.get("average_after") if a == "average" else s.get("hold_after")
         widget_sync.set_items(self.after, [(name, code) for code, name in choices.items()])
         widget_sync.set_data(self.after, cur)
+        widget_sync.set_data(self.line, s.get("line") or TRACE_LINE_DEFAULT)
         counted = a in COUNTED and s.get("count")
         set_enabled(self.after, None if counted else REASON_AFTER, L["after_n"])
         v = screen_model.trace_status(s)
@@ -349,6 +364,9 @@ class TraceTab(QWidget):
         counts = [L["no_count"]] + [f"{v}{L['times_suffix']}" for v in (*COUNT_CHOICES, COUNT_MAX)]
         self._col_count = SameWidth([r.count for r in rows] + [r.after for r in rows],
                                     [*counts, *texts.AVERAGE_AFTER.values(), *texts.HOLD_AFTER.values()])
+        # 線（クリアの真下の列）: 一番長い線の名前とクリアのボタンの広い方（Web の --col-line と同じ）
+        self._col_line = SameWidth([r.line for r in rows], texts.TRACE_LINES.values(),
+                                   others=tuple(r.clear for r in rows))
         lay.addWidget(g_traces)
 
         g_files = QGroupBox(L["files"])
@@ -360,7 +378,9 @@ class TraceTab(QWidget):
         self._file_checks: dict[str, QCheckBox] = {}
         self._files_key: tuple = ()
         open_btn = QPushButton(texts.MENU_ITEMS["open"])
+        open_btn.setToolTip(menus.tooltip_for(win.actions["open"], texts.MENU_ITEMS["open"]))  # Web と同じ（キーも出す: U-12）
         open_btn.clicked.connect(win.actions["open"].trigger)
+        self.open_btn = open_btn
         self.files_lay.addLayout(sizes.buttons_row(open_btn))
         lay.addWidget(g_files)
         lay.addStretch(1)

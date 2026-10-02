@@ -30,11 +30,14 @@ def build(win: "MainWindow") -> dict:
                 "values_db": np.asarray(p["values"], dtype=np.float64), "visible": True,
                 "flags": None}
         if p.get("source") == "file":
-            # 色は名前で渡す（画面の色の値を焼き込むと、ライト・ダークを選んでもこの線だけ画面の色になる: I §3.6）
-            item.update({"number": "", "action": "", "label": label,
+            # 色は名前で渡す（画面の色の値を焼き込むと、ライト・ダークを選んでもこの線だけ画面の色になる: I §3.6）。
+            # 線は画面と同じ参照トレースの線（設計F §9）
+            item.update({"number": "", "action": "", "label": label, "line": rl.REFERENCE_LINE,
                          "color": win.traces.files[str(p["trace"])]["color_key"], "count": None})
         else:
-            item.update({**texts.legend_parts(p), "color": f"trace{p['trace']}"})
+            # 線は画面で描いている線（設計F §9）
+            item.update({**texts.legend_parts(p), "color": f"trace{p['trace']}",
+                         "line": win.traces.line_of(int(p["trace"]))})
             item["flags"] = marked_points(p, ax["points"]).tolist()
         traces.append(item)
     sw = st.get("sweep") or {}

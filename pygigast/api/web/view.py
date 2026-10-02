@@ -33,6 +33,9 @@ def state_view(st: dict) -> dict:
     """状態に `ui`（状態バー・条件の注意・RBW の選択肢・使えない理由・受信の欄・凡例）を足す。"""
     ui = screen_model.ui_view(st)
     ui["legend"] = {str(t.get("number")): rl.legend_text(texts.legend_parts(t)) for t in st.get("traces") or []}
+    # 参照トレースの凡例の文字（Qt のグラフの凡例・PNG と同じ: 名前・番号・日時・機器）。id は "F1.1" の形
+    ui["file_legend"] = {str(tr.get("id")): texts.file_trace_label(f, str(tr.get("id")))
+                         for f in st.get("files") or [] for tr in f.get("traces") or []}
     ui["unit"] = default_unit(st)
     out = {**st, "ui": ui}
     if isinstance(st.get("markers"), dict):
@@ -129,10 +132,12 @@ def png_layout(st: dict, req: dict) -> dict:
     マーカー表は Qt と同じ行、注意は上段の注意と同じ文。
     """
     sw = st.get("sweep") or {}
-    traces = [{**texts.legend_parts(t), "color": f"trace{t['number']}", "visible": True}
+    # 凡例の線の見本はトレースの線（設計F §9）。参照トレースは画面と同じ参照トレースの線
+    traces = [{**texts.legend_parts(t), "color": f"trace{t['number']}", "visible": True, "line": t.get("line")}
               for t in st.get("traces") or [] if t.get("visible") and t.get("has_values")]
     traces += [{"number": "", "action": "", "count": None, "label": str(f.get("label", "")),
-                "color": f.get("color") or "trace1", "visible": True} for f in req.get("files") or []]
+                "color": f.get("color") or "trace1", "visible": True, "line": rl.REFERENCE_LINE}
+               for f in req.get("files") or []]
     rows = marker_rows.png_rows(marker_rows.rows_from_snapshot(st.get("markers") or {}),
                                 lines=marker_rows.function_lines_on(st))
     data = rl.build_data(st, ref_level=float(req.get("ref_level", 0.0)), db_per_div=float(req.get("db_per_div", 10.0)),

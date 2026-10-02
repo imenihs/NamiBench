@@ -32,7 +32,12 @@ class SaveOpenTest(UiBase):
         self.pump(0.2)
         tid = next(iter(self.win.traces.files))
         c = self.win.traces.files[tid]["curve"]
-        self.assertEqual(c.opts["pen"].style(), Qt.PenStyle.DashLine)
+        # 参照トレースは点線（設計F §9: 選べない。切れ目は Web・PNG と同じ core/report_layout の参照トレースの線）
+        from pygigast.core import report_layout as rl
+
+        self.assertEqual(c.opts["pen"].style(), Qt.PenStyle.CustomDashLine)
+        self.assertEqual(c.opts["pen"].dashPattern(), rl.REFERENCE_LINE_STYLE["dash"])
+        self.assertLess(c.zValue(), min(e["curve"].zValue() for e in self.win.traces.live.values()))
         self.assertGreater(len(c.yData), 100)
         self.assertTrue(any(s.startswith("a.h5 #1") for _c, s, _p in self.win.traces.legend_entries()))
         self.assertIn("開きました: 1 ファイル", self.win.st_note.text())

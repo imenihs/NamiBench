@@ -216,3 +216,114 @@ class FunctionLinesPngTest(unittest.TestCase):
         self.assertIsNone(marker_rows.png_rows(rows, lines=False)[0]["line"])
         self.assertFalse(marker_rows.function_lines_on({"view": {"function_lines": False}}))
         self.assertTrue(marker_rows.function_lines_on({}))
+
+
+class TraceLinePngTest(unittest.TestCase):
+    """トレースの線（設計F §9）: PNG も画面と同じ線で描き、太い線を上に重ね、凡例の見本もその線。"""
+
+    W, H = 1600, 1000
+
+    def render(self, traces):
+        """平らなトレース（線の名前, レベル）を並べた PNG（ダーク）。"""
+        start, stop, n = 100_000_000, 200_000_000, 201
+        step = (stop - start) // (n - 1)
+        data = {"conditions": {"start_hz": start, "stop_hz": stop, "ref_level": 0.0, "db_per_div": 10.0,
+                               "unit": "dBm"},
+                "traces": [{"number": i + 1, "start_hz": start, "step_hz": step, "values_db": np.full(n, lv),
+                            "color": f"trace{i + 1}", "action": "更新", "count": None, "line": ln}
+                           for i, (ln, lv) in enumerate(traces)],
+                "markers": [], "warnings": []}
+        img = QImage.fromData(pe.render_png(data, size=(self.W, self.H), palette="dark"), "PNG")
+        self.assertFalse(img.isNull())
+        return img
+
+    @staticmethod
+    def near(img, x, y, hexcolor, tol=60):
+        from PySide6.QtGui import QColor
+
+        c, w = img.pixelColor(x, y), QColor(hexcolor)
+        return abs(c.red() - w.red()) + abs(c.green() - w.green()) + abs(c.blue() - w.blue()) <= tol
+
+    def column(self, img, x, hexcolor, tol=60, y0=60, y1=800):
+        return [y for y in range(y0, y1) if self.near(img, x, y, hexcolor, tol)]
+
+    def test_widths_follow_the_line(self):
+        img = self.render([("thin", -30.0), ("thick", -60.0), ("solid", -45.0)])
+        x = self.W // 2
+        thick = self.column(img, x, pe.DARK_DEFAULT["trace2"])
+        solid = self.column(img, x, pe.DARK_DEFAULT["trace3"])
+        self.assertTrue(thick and solid, (thick, solid))
+        self.assertGreaterEqual(len(thick), 2 * len(solid) - 1, (thick, solid))
+        # 細線は 1 画素より細く、ぼかして描く（色が薄い: はっきりした色の点は無い）
+        self.assertTrue(self.column(img, x, pe.DARK_DEFAULT["trace1"], tol=400))
+        self.assertEqual(self.column(img, x, pe.DARK_DEFAULT["trace1"], tol=60), [])
+
+    def test_thick_is_drawn_on_top(self):
+        # 同じ値の 1（太線）と 2（実線）: 番号順なら 2 が上だが、太い線を上に描く（設計F §9）
+        x = self.W // 2
+        img = self.render([("thick", -50.0), ("solid", -50.0)])
+        self.assertTrue(self.column(img, x, pe.DARK_DEFAULT["trace1"]))
+        self.assertEqual(self.column(img, x, pe.DARK_DEFAULT["trace2"], tol=40), [])
+        # 同じ段なら番号の大きいほうが上（今までと同じ）
+        img = self.render([("solid", -50.0), ("solid", -50.0)])
+        self.assertTrue(self.column(img, x, pe.DARK_DEFAULT["trace2"]))
+        self.assertEqual(self.column(img, x, pe.DARK_DEFAULT["trace1"], tol=40), [])
+
+    def test_dash_and_dot_have_gaps(self):
+        img = self.render([("dash", -30.0), ("dot", -60.0), ("solid", -45.0)])
+        for n, line in ((1, "dash"), (2, "dot"), (3, "solid")):
+            col = pe.DARK_DEFAULT[f"trace{n}"]
+            ys = [y for x in range(790, 830) for y in self.column(img, x, col, tol=200)]
+            self.assertTrue(ys, line)
+            y = sorted(ys)[len(ys) // 2]
+            hit = [any(self.near(img, x, yy, col, tol=200) for yy in (y - 1, y, y + 1)) for x in range(300, 1400)]
+            covered = sum(hit) / len(hit)
+            if line == "solid":
+                self.assertGreater(covered, 0.97, line)
+            else:
+                self.assertLess(covered, 0.85, line)
+
+    def test_legend_sample_is_the_line(self):
+        from pygigast.core import report_layout as rl
+
+        data = {"conditions": {"start_hz": 1, "stop_hz": 2}, "traces": [
+            {"number": 1, "action": "更新", "line": "thin"}, {"number": 2, "action": "平均", "line": "thick"},
+            {"number": 3, "action": "更新", "line": "dash"},
+            {"number": "", "action": "", "label": "a.h5 #1", "line": rl.REFERENCE_LINE}]}
+        lay = rl.layout(data, (1600, 1000))
+        base = lay["line_base_px"]
+        self.assertEqual(base, rl.png_line_base(lay["font_px"]))
+        got = {it["line"]: it["stroke"] for it in lay["legend"]}
+        for code in ("thin", "thick", "dash", rl.REFERENCE_LINE):
+            tr = rl.stroke(code, base)
+            # 見本はトレースの線の倍の太さ、切れ目の長さはトレースの線と同じ
+            self.assertAlmostEqual(got[code]["width"], 2 * tr["width"])
+            self.assertEqual(got[code]["dash"], tr["dash"])
+        self.assertIsNone(got["thin"]["dash"])
+        self.assertAlmostEqual(got["thick"]["width"], 4 * got["thin"]["width"])
+        # 破線は見本の長さに切れ目が入る（見本の線は全角1字 × legend_sample × 0.8。全角1字は文字の大きさとみなす）
+        sample = lay["font_px"] * lay["legend_sample"] * 0.8
+        self.assertGreater(sample, got["dash"]["dash"][0] + got["dash"]["dash"][1])
+        self.assertEqual(lay["line_styles"], rl.LINE_STYLES)
+
+
+class TraceLineRuleTest(unittest.TestCase):
+    """線の描き方は1か所（core/report_layout）: 名前は core の TraceLine と画面の語の表と同じ。重なりの順。"""
+
+    def test_names_and_order(self):
+        from pygigast.core import report_layout as rl
+        from pygigast.core.trace import TraceLine
+        from pygigast.ui_qt import texts
+
+        codes = [x.value for x in TraceLine]
+        self.assertEqual(list(rl.TRACE_LINE_STYLES), codes)
+        self.assertEqual(list(texts.TRACE_LINES), codes)
+        self.assertEqual(list(texts.TRACE_LINES.values()), ["細線", "実線", "太線", "破線", "点線"])
+        self.assertEqual(rl.TRACE_LINE_DEFAULT, TraceLine.SOLID.value)
+        order = sorted([("thick", 1), ("solid", 4), ("thin", 3), ("dash", 2), ("dot", 1), (rl.REFERENCE_LINE, "")],
+                       key=lambda t: rl.draw_order_key(*t))
+        self.assertEqual(order, [(rl.REFERENCE_LINE, ""), ("thin", 3), ("dot", 1), ("dash", 2), ("solid", 4),
+                                 ("thick", 1)])
+        self.assertEqual(rl.stroke("solid", 1.25), {"width": 1.25, "dash": None})
+        self.assertEqual(rl.stroke("dash", 1.0)["dash"], [8.0, 4.0])
+        self.assertEqual(rl.stroke("nonsense", 1.0), rl.stroke("solid", 1.0))

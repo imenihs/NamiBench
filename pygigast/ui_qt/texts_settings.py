@@ -175,6 +175,10 @@ LAYOUT_TEXTS = {
 }
 LABELS["part_peaks"] = LAYOUT_TEXTS["part_peaks"]
 
+# 別ウィンドウで開ける部分と、メニュー「表示」の「…を別ウィンドウで開く」の並び（J §4.3.2。Qt と Web が同じ並び・
+# 同じ項目のコード detach_<部分>）。名前は LABELS の part_<部分>
+DETACH_PARTS = ("graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks")
+
 # ---------------------------------------------------------------- キーの初期値（J §4.6）
 
 # Qt の初期値。マーカーを動かすキーは Shift を付けると10点（Shift の分は自動で足す）

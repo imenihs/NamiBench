@@ -66,6 +66,16 @@ def _color(pal: dict[str, str], key_or_hex: Optional[str], fallback: str = "trac
     return QColor(pal.get(key_or_hex or fallback, pal[fallback]))
 
 
+def _stroke_pen(color: QColor, stroke: dict) -> QPen:
+    """report_layout.stroke の形（幅と切れ目は画素）からペンを作る。切れ目の端は切りっぱなし（Web の canvas と同じ）。"""
+    pen = QPen(color, float(stroke["width"]))
+    if stroke.get("dash"):
+        w = max(float(stroke["width"]), 1e-6)
+        pen.setDashPattern([float(v) / w for v in stroke["dash"]])  # Qt の切れ目は線の幅に対する倍率
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+    return pen
+
+
 # ---------------------------------------------------------------- PNG の塊
 
 def _chunk(kind: bytes, body: bytes) -> bytes:
@@ -319,12 +329,13 @@ class _Painter:
         self._draw_x_axis(plot, start, stop)
         self._draw_legend(QRectF(plot.left(), rect.top(), plot.width(), legend_h))
 
-        # トレースと印は枠の中だけに描く（横軸は表示の Start–Stop で切る）
+        # トレースと印は枠の中だけに描く（横軸は表示の Start–Stop で切る）。重ねる順は画面と同じ（参照トレースが下、
+        # 太い線が上、同じ段は番号順: 設計F §9）
         self.p.save()
         self.p.setClipRect(plot)
-        for tr in self.data.get("traces") or []:
-            if tr.get("visible", True):
-                self._draw_trace(tr, fx, fy, start, stop)
+        shown = [tr for tr in self.data.get("traces") or [] if tr.get("visible", True)]
+        for tr in sorted(shown, key=lambda t: rl.draw_order_key(t.get("line"), t.get("number"))):
+            self._draw_trace(tr, fx, fy, start, stop)
         self.p.restore()
         self._draw_markers(plot, fx, fy, start, stop, ref, bottom)
 
@@ -351,14 +362,15 @@ class _Painter:
     def _draw_legend(self, rect: QRectF) -> None:
         self.p.setFont(self.font)
         x = rect.left()
-        sw = self.fm.horizontalAdvance("あ") * 1.4
+        sw = self.fm.horizontalAdvance("あ") * self.lay["legend_sample"]
         for item in self.lay["legend"]:
             s = item["text"]
             col = _color(self.pal, item["color"])
             yc = rect.top() + self.lh / 2
             if x + sw + self.fm.horizontalAdvance(s) > rect.right() + 1:
                 break  # 凡例は1段。あふれる分は描かない（トレースは最大4本なので実際には起きない想定）
-            self.p.setPen(QPen(col, max(2.0, self.px / 6)))
+            # 線の見本はそのトレースの線（設計F §9。太さと切れ目は report_layout が決める: Web と同じ）
+            self.p.setPen(_stroke_pen(col, item["stroke"]))
             self.p.drawLine(QPointF(x, yc), QPointF(x + sw * 0.8, yc))
             self.p.setPen(self.c("text"))
             self.p.drawText(QPointF(x + sw, rect.top() + self.fm.ascent()), s)
@@ -376,7 +388,8 @@ class _Painter:
         flags = tr.get("flags")
         flags = list(flags.tolist() if hasattr(flags, "tolist") else flags) if flags is not None else None
         col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")
-        width = max(1.0, self.px / 12)
+        # そのトレースの線（設計F §9）。基準の幅は Web の PNG と同じ（report_layout.png_line_base）
+        line = rl.stroke(tr.get("line"), self.lay["line_base_px"])
         # 範囲の1点外側までは描いて、枠の端まで線をつなぐ
         lo = max(0, int(math.floor((start - f0) / st)) - 1) if st > 0 else 0
         hi = min(n, int(math.ceil((stop - f0) / st)) + 2) if st > 0 else n
@@ -398,7 +411,7 @@ class _Painter:
             cur.lineTo(pt)
             prev = pt
         for fl, path in segs:
-            self.p.setPen(QPen(self.c("text_dim") if fl else col, width))
+            self.p.setPen(_stroke_pen(self.c("text_dim") if fl else col, line))
             self.p.setBrush(Qt.BrushStyle.NoBrush)
             self.p.drawPath(path)
 

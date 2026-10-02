@@ -73,6 +73,7 @@ LABELS = {
     "action": "動作",
     "count": "回数",
     "clear": "クリア",
+    "line": "線",
     "average_type": "平均の種類",
     "after_n": "N 回に達した後",
     "sweep": "掃引",

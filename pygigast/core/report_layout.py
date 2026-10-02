@@ -23,6 +23,7 @@ I §3.1 の「配置（帯の項目・順・文字の大きさ）はコアのデ
       "calibration": {"source": "...", "at": "..."} | None,      # None は「校正データ: なし」
       "normalization": {"name", "at", "applied", "before_power_cycle", "reason"} | None,
       "traces": [{"number", "action", "average", "count", "count_target", "label", "color", "visible",
+                  "line",                                    # 線（TRACE_LINE_STYLES の名前・参照トレースは reference）
                   "start_hz", "step_hz", "points", "values_db", "flags"}],   # 値は Qt が描くときだけ
       "markers": [{"name", "kind", "trace", "freq_hz", "value", "ref", "delta_freq_hz", "delta_value",
                    "child", "note"}],
@@ -83,6 +84,62 @@ LIGHT_DEFAULT: dict[str, str] = {
     "marker": "#1b1f24",
 }
 
+# トレースの線の描き方（設計F §9）。Qt の画面・PNG と Web の画面・PNG が同じ値を使う（Web は /api/v1/info と
+# png_layout で受け取る）。名前は core/trace/trace.TraceLine のコード。
+# - width: 描く所の基準の幅に掛ける倍率。基準は Qt の画面 1 画素・Web の画面 1.25 画素（今までの線）・PNG は
+#   文字の大きさの 1/12（下限 1 画素）。実線（倍率 1）が今までの線
+# - dash: 線と隙間の長さの並び（その線の幅に対する倍率。端は切りっぱなし）。None は切れ目なし
+# - z: 重なりの段。大きいほど上に描く（太線 > 実線・破線・点線 > 細線）。同じ段は番号の大きいトレースが上（今までと同じ）
+# 1 画素より細い線（細線）は、ぼかして描く（Web の canvas・PNG）か、1 画素の線を幅の割合だけ薄く描く（Qt の画面:
+# ui_qt/plot_layers.line_pen）。どちらでもなく描くと 1 画素の線になり、実線と同じに見える
+TRACE_LINE_STYLES: dict[str, dict] = {
+    "thin": {"width": 0.5, "dash": None, "z": 0},
+    "solid": {"width": 1.0, "dash": None, "z": 1},
+    "thick": {"width": 2.0, "dash": None, "z": 2},
+    "dash": {"width": 1.0, "dash": [8.0, 4.0], "z": 1},
+    "dot": {"width": 1.0, "dash": [2.0, 3.0], "z": 1},
+}
+TRACE_LINE_DEFAULT = "solid"
+# 参照トレース（開いたファイル）の線。選べない（設計F §9: 今のまま点線）。測っているトレースより下に描く
+REFERENCE_LINE = "reference"
+REFERENCE_LINE_STYLE = {"width": 1.0, "dash": [4.0, 2.0], "z": -1}
+LINE_STYLES: dict[str, dict] = {**TRACE_LINE_STYLES, REFERENCE_LINE: REFERENCE_LINE_STYLE}
+
+
+def line_style(code: Optional[str]) -> dict:
+    """線の名前から描き方。読めない名前は実線。"""
+    return LINE_STYLES.get(code or "", TRACE_LINE_STYLES[TRACE_LINE_DEFAULT])
+
+
+def stroke(code: Optional[str], base_px: float) -> dict:
+    """描く線の幅と切れ目（画素）。base_px は描く所の基準の幅（TRACE_LINE_STYLES の説明）。
+    Web の graph.js の lineStroke と同じ計算。"""
+    s = line_style(code)
+    w = base_px * s["width"]
+    return {"width": w, "dash": [v * w for v in s["dash"]] if s["dash"] else None}
+
+
+def png_line_base(px: float) -> float:
+    """PNG のトレースの基準の線の幅（画素）: 文字の大きさの 1/12、下限 1 画素（Qt と Web の PNG で同じ）。"""
+    return max(1.0, px / 12.0)
+
+
+def legend_stroke(code: Optional[str], base_px: float) -> dict:
+    """PNG の凡例の線の見本: トレースの線の倍の太さで、切れ目の長さはトレースの線と同じ（見本は短いので、太さに
+    合わせて伸ばすと切れ目が見本に入らない）。"""
+    s = stroke(code, base_px)
+    return {"width": s["width"] * LAYOUT["legend_line"], "dash": s["dash"]}
+
+
+def draw_order_key(code: Optional[str], number: Any) -> tuple:
+    """重ねて描く順（小さいほど先 = 下）: 線の段、同じ段なら番号の小さい順。参照トレースは一番下。"""
+    try:
+        n = int(number)
+    except (TypeError, ValueError):
+        n = 0
+    return (line_style(code)["z"], n)
+
+
 # 配置（I §3.1: 帯の項目・順・文字の大きさ）。文字の大きさは画像の大きさに比例させる（1600×1000 で 16 画素）。
 # 長さはどれも文字の大きさ（px）に対する倍率
 LAYOUT = {
@@ -94,6 +151,9 @@ LAYOUT = {
     "item_gap": 1.6,          # 帯の項目どうしの間（全角1字の幅に対する倍率）
     "table_max_ratio": 0.30,  # マーカー表に使ってよい高さ（画像の高さに対する割合）
     "table_two_columns_from": 7,  # この行数を超えたら2列に（I §3.2）
+    "legend_line": 2.0,       # 凡例の線の見本の太さ（そのトレースの線の幅に対する倍率）
+    # 凡例の1項目の見本の場所（全角1字の幅に対する倍率。見本の線はその 0.8）。破線・点線の切れ目が見本に2つ以上入る長さ
+    "legend_sample": 2.0,
     # 帯の段（I §3.2 の 1〜3・6・5 の順）。マーカー表（4）はグラフのすぐ下に置く
     "band_rows": ("when", "conditions", "correction", "warnings", "note"),
 }
@@ -396,9 +456,15 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
         "band": [[color, items] for color, items in band_rows(data, note, app_version)],
         "table": {"header": list(MARKER_COLUMNS), "right": list(MARKER_RIGHT), "rows": rows,
                   "cols": cols, "rows_per_col": per_col},
+        # 凡例の線の見本は、そのトレースの線（設計F §9）。stroke は見本の太さと切れ目（画素）
         "legend": [{"number": t.get("number"), "color": t.get("color") or f"trace{t.get('number', 1)}",
-                    "text": legend_text(t)}
+                    "text": legend_text(t), "line": t.get("line") or TRACE_LINE_DEFAULT,
+                    "stroke": legend_stroke(t.get("line"), png_line_base(px))}
                    for t in data.get("traces") or [] if t.get("visible", True)],
+        "legend_sample": LAYOUT["legend_sample"],
+        # トレースの線の基準の幅（画素）。線ごとの倍率は line_styles（Web は画面と同じ部品でグラフを描くので渡す）
+        "line_base_px": png_line_base(px),
+        "line_styles": LINE_STYLES,
         "y_labels": y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0))),
         # 横軸の数字は換算後の周波数、見出しに換算中であることを書く（設計O: 軸の名前で示す）
         "x_labels": x_labels(start + off, stop + off),

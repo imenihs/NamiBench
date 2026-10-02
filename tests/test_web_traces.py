@@ -44,6 +44,81 @@ class TraceMarkupTest(unittest.TestCase):
         self.assertNotIn("setTraceCount", app)
 
 
+class TraceLineMarkupTest(unittest.TestCase):
+    """トレースの線（設計F §9）・グラフの中の凡例・参照トレースの［開く…］（Qt と同じ形: J §5）。"""
+
+    def test_line_dropdown_and_open_button(self):
+        html = (UI_WEB / "index.html").read_text(encoding="utf-8")
+        start = html.index('data-sec="traces"')
+        sec = html[start:html.index('data-sec="files"')]
+        # 線のドロップダウン: 語は texts の TRACE_LINES、変えたら set_trace の line
+        self.assertIn('class="tline"', sec)
+        self.assertIn("Td('TRACE_LINES')", sec)
+        self.assertIn("setTrace(t.number, 'line', $event.target.value)", sec)
+        # 参照トレースのまとまりに［開く…］（メニュー「ファイル → 開く…」と同じ項目を呼ぶ）
+        files = html[html.index('data-sec="files"'):html.index('data-sec="rtlsdr"')]
+        self.assertIn("trigger('open')", files)
+        self.assertIn("T('MENU_ITEMS', 'open')", files)
+        # 凡例はグラフの上の帯ではなく、グラフの中の箱（graph.js の setLegend）
+        self.assertNotIn('class="legend"', html)
+        app = (UI_WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("setLegend(this.legendItems())", app)
+
+    def test_words_reach_the_web(self):
+        tj = web.texts_json()
+        self.assertEqual(tj["TRACE_LINES"], qt_texts.TRACE_LINES)
+        self.assertEqual(tj["LABELS"]["line"], qt_texts.LABELS["line"])
+        self.assertEqual(tj["DETACH_PARTS"], list(qt_texts.DETACH_PARTS))
+
+    def test_state_view_file_legend_and_png_lines(self):
+        """参照トレースの凡例の文字は Qt と同じ関数、PNG の凡例の見本はトレースの線（参照トレースは参照トレースの線）。"""
+        from pygigast.api.web import view
+        from pygigast.core import report_layout as rl
+
+        f = {"file_id": "F1", "name": "a.h5", "created_at": "2026-10-03T10:20:30", "device_serial": "SIM00001",
+             "traces": [{"id": "F1.1", "number": 1}, {"id": "F1.2", "number": 2}]}
+        st = {"traces": [{"number": 1, "action": "update", "visible": True, "has_values": True, "line": "thin",
+                          "current_count": 1},
+                         {"number": 2, "action": "average", "visible": True, "has_values": True, "line": "thick",
+                          "current_count": 3, "count_target": 4, "average_type_effective": "power"}],
+              "files": [f], "sweep": {"start_hz": 1, "stop_hz": 2}}
+        ui = view.state_view(st)["ui"]
+        self.assertEqual(ui["file_legend"], {"F1.1": qt_texts.file_trace_label(f, "F1.1"),
+                                             "F1.2": qt_texts.file_trace_label(f, "F1.2")})
+        self.assertEqual(ui["file_legend"]["F1.1"], "a.h5 #1 2026-10-03 10:20 SIM00001")
+        lay = view.png_layout(st, {"files": [{"label": ui["file_legend"]["F1.1"], "color": "trace2"}]})
+        self.assertEqual([(it["text"].split(" ")[0], it["line"]) for it in lay["legend"]],
+                         [("1", "thin"), ("2", "thick"), ("a.h5", rl.REFERENCE_LINE)])
+
+
+@unittest.skipUnless(shutil.which("node"), "Node が無い")
+class LineStrokeJsTest(unittest.TestCase):
+    """graph.js の線の幅と切れ目が core/report_layout.stroke と同じ（Qt と Web が同じ線を描く: 設計F §9）。"""
+
+    def test_same_as_python(self):
+        from pygigast.core import report_layout as rl
+
+        script = (
+            "globalThis.window = globalThis; require(process.argv[1]);"
+            "const st = JSON.parse(process.argv[2]); const out = {};"
+            "for (const base of [1, 1.25, 1.3333]) for (const [k, s] of Object.entries(st))"
+            "  out[k + '@' + base] = GSGraph.lineStroke(s, base);"
+            "console.log(JSON.stringify([out, GSGraph.SCREEN_LINE_BASE]));"
+        )
+        out = subprocess.run(["node", "-e", script, str(UI_WEB / "graph.js"), json.dumps(rl.LINE_STYLES)],
+                             capture_output=True, text=True, timeout=30, check=True).stdout
+        got, screen = json.loads(out)
+        self.assertEqual(screen, 1.25)  # 画面の実線の幅は今までの線（Qt は 1 画素: plot_layers.SCREEN_LINE_BASE）
+        for base in (1, 1.25, 1.3333):
+            for code in rl.LINE_STYLES:
+                want = rl.stroke(code, base)
+                g = got[f"{code}@{base}"]
+                self.assertAlmostEqual(g["width"], want["width"])
+                self.assertEqual(len(g["dash"]), len(want["dash"] or []))
+                for a, b in zip(g["dash"], want["dash"] or []):
+                    self.assertAlmostEqual(a, b)
+
+
 @unittest.skipUnless(shutil.which("node"), "Node が無い")
 class CountRulesTest(unittest.TestCase):
     """fields.js の回数の欄を、Vue を使わずに中の処理だけ動かして確かめる。"""

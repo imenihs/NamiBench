@@ -345,6 +345,15 @@ HOLD_AFTER = {
     "stop": "N 回で止める",
 }
 
+# トレースの線（設計F §9。並びは細線 → 実線 → 太線 → 破線 → 点線。コードは core の TraceLine）
+TRACE_LINES = {
+    "thin": "細線",
+    "solid": "実線",
+    "thick": "太線",
+    "dash": "破線",
+    "dot": "点線",
+}
+
 # イメージ除去の3つ（設計F §7.4。並びは正確 → スピード → なし）
 IMAGE_REJECT_CHOICES = {
     "accurate": "正確",

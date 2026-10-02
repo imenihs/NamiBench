@@ -186,8 +186,16 @@ label.disabled { color: var(--axis); cursor: default; }
 .left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .graph-box { flex: 0 0 var(--split); min-height: 120px; display: flex; flex-direction: column; background: var(--graph-bg); }
 .partmode .graph-box { flex: 1 1 auto; }
-.part-bar { display: flex; gap: var(--section-gap); align-items: center; padding: var(--gap) var(--inset) 0; font-size: var(--font-s); }
-.part-bar .legend { display: flex; gap: var(--section-gap); flex-wrap: wrap; margin-left: auto; }
+.part-bar { display: flex; gap: var(--section-gap); align-items: center; justify-content: flex-end; padding: var(--gap) var(--inset) 0;
+            font-size: var(--font-s); }
+/* グラフの中の凡例（Qt の pyqtgraph の凡例と同じ: 右上から 8px・上から 6px の箱。背景はグラフの背景を少し透かし、枠は軸の色、
+   文字は 12px（9pt）。1行（24px）に 20px の線の見本と文字）。マウスの操作は下のグラフへ通す（graph.js の setLegend） */
+.glegend { position: absolute; top: 6px; right: 8px; z-index: 5; pointer-events: none; padding: 0 8px 0 6px;
+           background: color-mix(in srgb, var(--graph-bg) 78%, transparent); border: 1px solid var(--axis); color: var(--text);
+           font-size: var(--font-s); line-height: 24px; white-space: nowrap; }
+.glegend[hidden] { display: none; }
+.glegend-row { display: flex; align-items: center; gap: var(--label-gap); height: 24px; }
+.glegend-row svg { flex: none; display: block; }
 .hover-tip { position: fixed; z-index: 45; pointer-events: none; background: var(--panel-bg); color: var(--text); border: 1px solid var(--axis); padding: 3px 7px; font-size: var(--font-s); font-variant-numeric: tabular-nums; white-space: nowrap; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
 .graph { flex: 1; min-height: 0; position: relative; outline: none; overflow: hidden; }
 .graph .uplot { outline: none; }
@@ -283,11 +291,15 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
 .tsec[data-sec="traces"] { align-self: stretch; }
 .tgrid { display: grid; grid-template-columns: max-content max-content var(--col-a, max-content) var(--col-b, max-content) max-content;
          justify-content: start; justify-items: start; align-items: center; gap: var(--gap); font-variant-numeric: tabular-nums; }
+/* トレース1本の包みと、色と番号・表示の包み。広い画面では包みを持たず、中の部品が表の列に並ぶ */
+.trow, .thead { display: contents; }
 .tnum { grid-column: 1; white-space: nowrap; }
 .tvis { grid-column: 2; }
 .tact { grid-column: 3; width: var(--col-a, auto); }
 .tcnt { grid-column: 4; width: var(--col-b, auto); }
 .tclr { grid-column: 5; }
+/* 線（設計F §9）: クリアの真下。幅は一番長い線の名前とクリアのボタンの広い方（app.js の fitColumns が --col-line に置く） */
+.tline { grid-column: 5; width: var(--col-line, auto); }
 /* いまの様子: はじめの2列の幅で折り返す（文が変わっても列の幅を動かさない） */
 /* トレースの行の様子（回数と値の様子）。1行に収めて切り、全部はツールチップ（Qt と同じ: 掃引ごとに文が延びても
    列の幅も行の高さも動かさない） */
@@ -388,3 +400,28 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
 /* マーカー表のセルを直す欄（G §3.7）: セルの幅に従う（J §4.11） */
 .mtable td.editable { cursor: text; }
 .mtable input.cell-edit { width: 100%; min-width: var(--w-int); }
+
+/* ---- スマートフォンの幅（J §5: グラフが上、設定が下）。右のパネルは画面の幅に収め、ページを横にスクロールさせない。
+        見ていないタブは場所を取らない（広い画面ではタブを替えてもパネルの幅を変えないために重ねて置くが、この幅では
+        パネルは画面の幅いっぱいなので要らない）。トレースの表は1本ずつ縦に積む: 1行目 色と番号・表示（動作の列）といまの
+        様子、2行目 動作・回数・クリア、3行目 平均の種類・N 回の後・線（2行目の真下）。列の幅は広い画面と同じ（--col-*） ---- */
+@media (max-width: 760px) {
+  .side { min-width: 0; }
+  .tab-stack { grid-template-columns: minmax(0, 1fr); }
+  .tab-stack > .tab-body.off { display: none; }
+  .tab-body > .sec, .tab-body > .tsec { min-width: 0; max-width: 100%; }
+  .tgrid { display: flex; flex-direction: column; align-items: flex-start; gap: var(--section-gap); }
+  .trow { display: grid; grid-template-columns: var(--col-a, max-content) var(--col-b, max-content) var(--col-line, max-content);
+          grid-template-areas: "head stat stat" "act cnt clr" "avg aft line";
+          justify-items: start; align-items: center; gap: var(--gap); max-width: 100%; }
+  .thead { grid-area: head; display: flex; align-items: center; gap: var(--label-gap); }
+  .tact { grid-area: act; }
+  .tcnt { grid-area: cnt; }
+  .tclr { grid-area: clr; }
+  .tavg { grid-area: avg; }
+  .taft { grid-area: aft; }
+  .tline { grid-area: line; }
+  .tstat { grid-area: stat; }
+  .tnote { grid-column: 1 / -1; }
+  .tnum, .tvis { grid-column: auto; }
+}

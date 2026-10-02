@@ -192,8 +192,10 @@ window.__gsLayout = function (rootSel, where, cfg) {
     let key = null;
     if (td && (!grid || grid.contains(td))) key = [td.closest("table"), cellCol(td), el.tagName];
     else if (grid && getComputedStyle(grid).display === "grid") {
+      // 格子に並ぶ箱（箱を持たない包み display: contents の中の部品は、そのまま格子に並ぶ: トレースの表の trow）
       let item = el;
-      while (item.parentElement && item.parentElement !== grid) item = item.parentElement;
+      while (item.parentElement && item.parentElement !== grid && getComputedStyle(item.parentElement).display !== "contents")
+        item = item.parentElement;
       key = [grid, gridCol(grid, item), el.tagName];
     }
     if (!key) continue;
@@ -230,15 +232,19 @@ window.__gsLayout = function (rootSel, where, cfg) {
     const w = box(el).getBoundingClientRect().width;
     if (Math.abs(w - want) > 1.5) out.push(`${where}: 上段の REF の欄の幅 ${w}px（いまの単位の一番長い値が入る幅 ${want.toFixed(1)}px）`);
   }
-  // トレースの表: 2行目の選択（平均の種類・N 回の後）は1行目（動作・回数）の真下で同じ幅
+  // トレースの表: 2行目の選択（平均の種類・N 回の後・線）は1行目（動作・回数・クリア）の真下で同じ幅（線とクリアは
+  // 列の幅: 一番長い線の名前とクリアの広い方。設計F §9）
   const acts = [...document.querySelectorAll(".tgrid .tact")].filter((e) => inScope(e) && shown(e));
   const avgs = [...document.querySelectorAll(".tgrid .tavg")].filter((e) => inScope(e) && shown(e));
   const cnts = [...document.querySelectorAll(".tgrid .tcnt")].filter((e) => inScope(e) && shown(e));
   const afts = [...document.querySelectorAll(".tgrid .taft")].filter((e) => inScope(e) && shown(e));
-  if (acts.length !== avgs.length || cnts.length !== afts.length || acts.length !== cnts.length)
+  const clrs = [...document.querySelectorAll(".tgrid .tclr")].filter((e) => inScope(e) && shown(e));
+  const lines = [...document.querySelectorAll(".tgrid .tline")].filter((e) => inScope(e) && shown(e));
+  if (acts.length !== avgs.length || cnts.length !== afts.length || acts.length !== cnts.length
+      || clrs.length !== lines.length || clrs.length !== acts.length)
     out.push(`${where}: トレースの表の1行目と2行目の数が合わない`);
-  for (let i = 0; i < Math.min(acts.length, avgs.length, cnts.length, afts.length); i++) {
-    for (const [a, b] of [[acts[i], avgs[i]], [cnts[i], afts[i]]]) {
+  for (let i = 0; i < Math.min(acts.length, avgs.length, cnts.length, afts.length, clrs.length, lines.length); i++) {
+    for (const [a, b] of [[acts[i], avgs[i]], [cnts[i], afts[i]], [clrs[i], lines[i]]]) {
       const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
       if (Math.abs(ra.left - rb.left) > 1 || Math.abs(ra.width - rb.width) > 1)
         out.push(`${where}: トレース ${i + 1} の2行目 ${name(b)}（左端 ${rb.left}・幅 ${rb.width}）が1行目（左端 ${ra.left}・幅 ${ra.width}）の真下でない`);
@@ -627,12 +633,13 @@ class WebLayoutTest(unittest.TestCase):
                               ".map((e) => e.textContent.trim())")
         self.assertEqual(titles, [f"{T.MENU_TITLES[sec]}({T.MENU_MNEMONICS[sec]})" for sec, _codes in T.MENU_LAYOUT])
         web = self.page.ev("gsApp.menu.map((s) => s.items.filter((i) => i).map((i) => i.label))")
-        # Qt の menu_table.table と同じ項目。Web が違えてよいのは次の2つだけ（理由つき）:
-        # - 終了: ブラウザの窓を閉じる（app_menu.js の WEB_SKIP）
-        # - 表示の「…を別ウィンドウで開く」: Qt はドックを掴んで外す。Web は部分ごとの項目（J §4.3.2）
+        # Qt の menu_table.table と同じ項目。Web が違えてよいのは終了だけ（ブラウザの窓を閉じる: app_menu.js の WEB_SKIP）。
+        # 表示の「…を別ウィンドウで開く」は Qt のメニュー「表示」の後ろに足す項目と同じ並び・語・コード（texts の DETACH_PARTS。
+        # Qt の側は test_ui_qt_settings の DockLayoutTest が数える）
         detach = self.page.ev("gsApp.menu.find((s) => s.code === 'view').items.filter((i) => i && i.code.startsWith('detach_'))"
-                              ".map((i) => i.label)")
-        self.assertTrue(detach)
+                              ".map((i) => [i.code, i.label])")
+        self.assertEqual(detach, [[f"detach_{k}", T.w("detach_item", part=T.LABELS["part_" + k])] for k in T.DETACH_PARTS])
+        detach = [label for _code, label in detach]
         for (sec, codes), got in zip(T.MENU_LAYOUT, web):
             if sec == "mode":
                 want = [f"{label}（{name}）" for _c, label, name, _why in T.MODES]
@@ -663,6 +670,106 @@ class WebLayoutTest(unittest.TestCase):
         self.assertEqual(self.page.ev(f"{key}('ArrowLeft', 'ArrowLeft', false)"), 0)
         self.assertEqual(self.page.ev(f"{key}('h', 'KeyH', true)"), len(self.page.ev("gsApp.menu")) - 1)
         self.assertIs(self.page.ev(f"{key}('Escape', 'Escape', false)"), False)
+
+    def sweep_once(self) -> None:
+        n0 = self.app.call("get_state")["run"]["sweep_count"]
+        self.app.call("run", mode="single")
+        end = time.monotonic() + 30
+        while True:
+            st = self.app.call("get_state")
+            if st["run"]["state"] == "stopped" and st["run"]["sweep_count"] > n0:
+                return
+            self.assertLess(time.monotonic(), end, "掃引が終わらない")
+            time.sleep(0.05)
+
+    def test_graph_legend_box_and_lines(self):
+        """凡例はグラフの中の右上の箱（Qt と同じ中身と並び）。線の見本はそのトレースの線（設計F §9）。
+        トレースの表の線のドロップダウンで変えるとコアの線が変わる。"""
+        try:
+            self.app.call("set_trace", number=2, visible=True, line="thick")
+            self.sweep_once()
+            open_app(self.page, self.app, *SIZES[0])
+            self.page.wait("gsApp.traceShown(2) && !!gsApp.$traces.get('2')", "トレース2")
+            self.page.settle()
+            self.page.ev("new Promise((r) => requestAnimationFrame(() => setTimeout(r, 50)))")
+            box = self.page.ev("""(() => {
+              const g = document.querySelector('.graph .uplot .u-over .glegend');
+              if (!g || g.hidden) return null;
+              const o = g.parentElement.getBoundingClientRect(), b = g.getBoundingClientRect();
+              return {right: o.right - b.right, top: b.top - o.top,
+                      rows: [...g.querySelectorAll('.glegend-row')].map((r) => [r.textContent,
+                        r.querySelector('line').getAttribute('stroke-width'), r.querySelector('line').getAttribute('stroke-dasharray')]),
+                      want: [gsApp.ui.legend['1'], gsApp.ui.legend['2']], strip: !!document.querySelector('.part-bar .legend')};
+            })()""")
+            self.assertIsNotNone(box)
+            self.assertAlmostEqual(box["right"], 8, delta=1)   # Qt の凡例と同じ位置（右上から 8px・上から 6px）
+            self.assertAlmostEqual(box["top"], 6, delta=1)
+            self.assertEqual([r[0] for r in box["rows"]], box["want"])
+            self.assertEqual([(r[1], r[2]) for r in box["rows"]], [("1.25", None), ("2.5", None)])
+            self.assertFalse(box["strip"])
+            # 線のドロップダウン（2段目のクリアの真下）で変える → コアの線 → 凡例の見本も破線
+            self.page.ev("(() => { const s = document.querySelectorAll('.tline')[0]; s.value = 'dash';"
+                         " s.dispatchEvent(new Event('change')); return 1; })()")
+            end = time.monotonic() + 10
+            while self.app.call("get_state")["traces"][0]["line"] != "dash":
+                self.assertLess(time.monotonic(), end, "線がコアに届かない")
+                time.sleep(0.05)
+            self.page.wait("(document.querySelector('.glegend-row line') || {getAttribute() { return null; }})"
+                           ".getAttribute('stroke-dasharray') === '10 5'", "凡例の見本が破線")
+            # 太い線を上に描く順（参照トレース → 細線 → 実線・破線・点線 → 太線、同じ段は番号順）
+            c1, c2 = self.page.ev("[gsApp.palette.trace1, gsApp.palette.trace2]")
+            self.assertEqual(self.page.ev("gsApp.graphTraces(gsApp.palette).map((t) => t.color)"), [c1, c2])
+            self.app.call("set_trace", number=1, line="thick")
+            self.app.call("set_trace", number=2, line="solid")
+            self.page.wait("gsApp.traceLine(1) === 'thick' && gsApp.traceLine(2) === 'solid'", "線が画面に届く")
+            self.assertEqual(self.page.ev("gsApp.graphTraces(gsApp.palette).map((t) => t.color)"), [c2, c1])
+            self.assertEqual(self.page.problems(".app", "線を変えた画面"), [])
+        finally:
+            self.app.call("set_trace", number=1, line="solid")
+            self.app.call("set_trace", number=2, visible=False, line="solid")
+
+    def test_open_button_in_reference_traces(self):
+        """参照トレースのまとまりの［開く…］は、メニュー「ファイル → 開く…」と同じ処理（ファイルを選ぶ）を呼ぶ（Qt と同じ）。"""
+        open_app(self.page, self.app, *SIZES[0])
+        self.page.ev("gsApp.tab = 'trace'; window.__opened = 0; gsApp.openDialog = () => { window.__opened += 1; }; 1")
+        self.page.settle()
+        text = self.page.ev("(() => { const b = document.querySelector('[data-sec=files] [data-act=open]');"
+                            " b.click(); return b.textContent.trim(); })()")
+        from pygigast.ui_qt import texts as T
+
+        self.assertEqual(text, T.MENU_ITEMS["open"])
+        self.assertEqual(self.page.ev("window.__opened"), 1)
+
+    def test_phone_width_stacks_without_side_scroll(self):
+        """スマートフォンの幅（400px）: グラフが上・設定が下に縦に並び、右のパネルがページを横にスクロールさせない（J §5）。
+        トレースの表は1本ずつ積み、2段目の選択は1段目の真下のまま。広い画面の並びは変えない（他の試験）。"""
+        open_app(self.page, self.app, *SIZES[0])
+        try:
+            self.page.size(400, 860)
+            self.page.settle()
+            for tab in TABS:
+                self.page.ev(f"gsApp.tab = '{tab}'; 1")
+                self.page.settle()
+                w, cw = self.page.ev("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+                self.assertLessEqual(w, cw, tab)
+            self.page.ev("gsApp.tab = 'trace'; 1")
+            self.page.settle()
+            r = self.page.ev("""(() => {
+              const g = document.querySelector('.graph-box').getBoundingClientRect();
+              const s = document.querySelector('.side').getBoundingClientRect();
+              const pairs = [['.tact', '.tavg'], ['.tcnt', '.taft'], ['.tclr', '.tline']].map(([a, b]) =>
+                [...document.querySelectorAll(a)].map((e, i) => {
+                  const ra = e.getBoundingClientRect(), rb = document.querySelectorAll(b)[i].getBoundingClientRect();
+                  return Math.abs(ra.left - rb.left) <= 1 && Math.abs(ra.width - rb.width) <= 1 && rb.top > ra.top;
+                }));
+              return {stacked: s.top >= g.bottom, pairs, right: s.right, vw: document.documentElement.clientWidth};
+            })()""")
+            self.assertTrue(r["stacked"], r)
+            self.assertLessEqual(r["right"], r["vw"])
+            self.assertTrue(all(all(p) for p in r["pairs"]), r["pairs"])
+        finally:
+            self.page.size(*SIZES[0])
+            self.page.settle()
 
     def test_checker_finds_a_broken_control(self):
         """検査そのものが働くこと（わざと崩して見つかるか: S-01〜S-03・C-01）。前提は本番と同じ画面と同じ台本。"""

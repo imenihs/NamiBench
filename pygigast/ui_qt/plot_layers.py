@@ -1,6 +1,7 @@
 """グラフの上に描くもの（設計F §5・E §6.4・E §6.6・G §3.5）。
 
-- TraceLayer: 測定中のトレース 1〜4（J §4.4 の色）と参照トレース（ファイル。破線）、凡例（動作・平均の種類・回数）、
+- TraceLayer: 測定中のトレース 1〜4（J §4.4 の色・選んだ線と重なりの順: F §9）と参照トレース（ファイル。点線で一番下）、
+  凡例（動作・平均の種類・回数。線の見本はそのトレースの線）、
   値なしの点は線を切る、前置き不足・校正の範囲外の点は控えめな色、比（dB）のときの 0dB の線（E §6.6）、
   基準の範囲外の区間の帯（E §6.4）
 - MarkerLayer: マーカーの印と名前、オフセットのカーソル（縦線・横線）、XY カーソル（掴んで動かせる）
@@ -17,6 +18,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 from . import texts
+from ..core import report_layout as rl
 from ..core.palette import FILE_TRACE_ORDER
 from ..core.report_layout import legend_text
 from .screen_model import nearest_point, trace_x
@@ -56,6 +58,34 @@ def _alpha(color: str, a: int) -> QColor:
     return c
 
 
+# 画面の線の基準の幅（画素。設計F §9 の実線 = 今までの線）
+SCREEN_LINE_BASE = 1.0
+
+
+def line_pen(color, code: Optional[str]):
+    """線の名前（設計F §9・参照トレースは reference）から画面のペン。幅と切れ目は report_layout.stroke（Web と同じ）。
+
+    1 画素より細い線（細線）は、1 画素の線を幅の割合だけ薄く描く。ぼかして細く描くのと同じ見え方（Web の canvas・PNG は
+    ぼかして描く）で、点の多いトレースでも実線に近い速さで描ける（20 万点で ぼかす 約 2 倍・薄く 約 1.3 倍: 2026-10-03 測定）。
+    """
+    s = rl.stroke(code, SCREEN_LINE_BASE)
+    c = QColor(color)
+    width = s["width"]
+    if width < 1.0:
+        c.setAlphaF(c.alphaF() * width)
+        width = 1.0
+    pen = pg.mkPen(c, width=width)
+    if s["dash"]:
+        pen.setDashPattern([v / width for v in s["dash"]])  # Qt の切れ目は線の幅に対する倍率
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)  # 端は切りっぱなし（Web の canvas と同じ）
+    return pen
+
+
+def line_z(code: Optional[str], number: int) -> float:
+    """測っているトレースの重なりの高さ（太い線が上・同じ段は番号の大きいほうが上: 設計F §9）。参照トレースは 5。"""
+    return 10 + 5 * rl.line_style(code)["z"] + number
+
+
 class TraceLayer:
     def __init__(self, plot: pg.PlotWidget, pal: dict[str, str]) -> None:
         self.plot = plot
@@ -68,13 +98,12 @@ class TraceLayer:
         self._fill_level = -100.0
         self.unit = "dBm"
         for n in LIVE_TRACES:
-            col = trace_color(n, pal)
-            curve = self.pi.plot(pen=pg.mkPen(col, width=1), connect="finite")
+            curve = self.pi.plot(connect="finite")
             # 印の付いた点（前置き不足・校正の範囲外）は同じ線の上に控えめな色で重ねる
-            mark = self.pi.plot(pen=pg.mkPen(pal["text_dim"], width=1), connect="finite")
-            curve.setZValue(10 + n)
-            mark.setZValue(15 + n)
-            self.live[n] = {"curve": curve, "mark": mark, "payload": None, "visible": n == 1, "has_values": False}
+            mark = self.pi.plot(connect="finite")
+            self.live[n] = {"curve": curve, "mark": mark, "payload": None, "visible": n == 1, "has_values": False,
+                            "line": rl.TRACE_LINE_DEFAULT}
+            self._style_live(n)
         self.zero_line = pg.InfiniteLine(pos=0.0, angle=0, movable=False, pen=pg.mkPen(pal["zero_db"], width=1.5))
         self.zero_line.setZValue(-5)
         self.pi.addItem(self.zero_line, ignoreBounds=True)
@@ -97,8 +126,31 @@ class TraceLayer:
         e["has_values"] = True
         if t.get("visible") is not None:
             e["visible"] = bool(t["visible"])
+        self._set_line(n, t.get("line"))
         self._draw_live(n)
         self._update_legend()
+
+    # ---------------------------------------------------------------- 線（設計F §9）
+
+    def line_of(self, n: int) -> str:
+        """トレース n をいま描いている線の名前。"""
+        return self.live[n]["line"]
+
+    def _set_line(self, n: int, code: Optional[str]) -> None:
+        if code and code in rl.TRACE_LINE_STYLES and code != self.live[n]["line"]:
+            self.live[n]["line"] = code
+            self._style_live(n)
+
+    def _style_live(self, n: int) -> None:
+        """トレース n の線を描き方（色・幅・切れ目）と重なりの高さに合わせる。印の点も同じ幅・切れ目で重ねる。"""
+        e = self.live[n]
+        code = e["line"]
+        # 凡例の見本は曲線のペンで描く（同じ線になる）
+        for item, color in ((e["curve"], trace_color(n, self.pal)), (e["mark"], self.pal["text_dim"])):
+            item.setPen(line_pen(color, code))
+        z = line_z(code, n)
+        e["curve"].setZValue(z)
+        e["mark"].setZValue(z + 0.5)
 
     def _draw_live(self, n: int) -> None:
         e = self.live[n]
@@ -131,11 +183,12 @@ class TraceLayer:
             changed = (e["visible"], e["has_values"]) != (bool(s["visible"]), bool(s["has_values"]))
             e["visible"] = bool(s["visible"])
             e["has_values"] = bool(s["has_values"])
+            self._set_line(n, s.get("line"))
             if e["payload"] is not None:
                 # 凡例の回数・動作は状態の方が新しいことがある（設定を変えた直後）
                 e["payload"] = {**e["payload"], "action": s["action"], "count": s["current_count"],
                                 "count_target": s["count_target"], "average_type": s["average_type_effective"],
-                                "axis_differs": s["axis_differs"]}
+                                "axis_differs": s["axis_differs"], "line": e["line"]}
             if changed:
                 self._draw_live(n)
             if e["visible"] and e["has_values"] and e["payload"] is None:
@@ -166,7 +219,8 @@ class TraceLayer:
             # 色は名前（trace1〜4）も持つ。PNG は名前で渡し、選んだ配色で描く（ライト・ダークでも同じ名前の色: I §3.6）
             key = FILE_TRACE_ORDER[idx % len(FILE_TRACE_ORDER)]
             col = self.pal[key]
-            curve = self.pi.plot(pen=pg.mkPen(col, width=1, style=Qt.PenStyle.DashLine), connect="finite")
+            # 参照トレースの線は選べない（設計F §9: 点線のまま）。測っているトレースより下（5）
+            curve = self.pi.plot(pen=line_pen(col, rl.REFERENCE_LINE), connect="finite")
             curve.setZValue(5)
             e = {"curve": curve, "payload": None, "color": col, "color_key": key, "shown": True, "init": False}
             self.files[tid] = e
@@ -235,11 +289,8 @@ class TraceLayer:
         return [tid for tid in present if tid not in self.files]
 
     def file_label(self, tid: str) -> str:
-        f = self.file_meta.get(tid) or {}
-        num = tid.split(".", 1)[-1]
-        when = str(f.get("created_at") or "")[:16].replace("T", " ")
-        dev = f.get("device_serial") or ""
-        return " ".join(p for p in (f.get("name", tid), f"#{num}", when, dev) if p)
+        # Web の凡例（状態の ui.file_legend）と同じ関数
+        return texts.file_trace_label(self.file_meta.get(tid) or {}, tid)
 
     # ---------------------------------------------------------------- 凡例・0dB・帯・塗りつぶし
 
@@ -256,7 +307,8 @@ class TraceLayer:
 
     def _update_legend(self) -> None:
         entries = self.legend_entries()
-        key = tuple((id(c), s) for c, s, _ in entries)
+        # 線を変えたら見本を描き直す（見本は線のペンで描く: 設計F §9）
+        key = tuple((id(c), s, p.get("line")) for c, s, p in entries)
         if key == self._legend_key:
             return
         self._legend_key = key
@@ -271,14 +323,12 @@ class TraceLayer:
     def restyle(self) -> None:
         """配色を変えたとき（設計J §4.4: 変えた結果はその場で画面に出る）。self.pal は画面と同じ辞書を見ている。"""
         for n in LIVE_TRACES:
-            e = self.live[n]
-            e["curve"].setPen(pg.mkPen(trace_color(n, self.pal), width=1))
-            e["mark"].setPen(pg.mkPen(self.pal["text_dim"], width=1))
-            self._apply_fill(e["curve"], n)
+            self._style_live(n)
+            self._apply_fill(self.live[n]["curve"], n)
         for i, e in enumerate(self.files.values()):
             e["color_key"] = FILE_TRACE_ORDER[i % len(FILE_TRACE_ORDER)]
             e["color"] = self.pal[e["color_key"]]
-            e["curve"].setPen(pg.mkPen(e["color"], width=1, style=Qt.PenStyle.DashLine))
+            e["curve"].setPen(line_pen(e["color"], rl.REFERENCE_LINE))
         self.zero_line.setPen(pg.mkPen(self.pal["zero_db"], width=1.5))
         self.legend.setBrush(pg.mkBrush(_alpha(self.pal["graph_bg"], 200)))
         self.legend.setPen(pg.mkPen(self.pal["axis"]))

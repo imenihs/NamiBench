@@ -227,6 +227,27 @@ class ViewOptionsTest(UiBase):
 
 
 class DockLayoutTest(UiBase):
+    def test_view_menu_has_detach_items(self):
+        """メニュー「表示」の後ろに部分ごとの「…を別ウィンドウで開く」（Web のメニューと同じ並び・語・コード: J §4.3.2）。
+        押すとその部分が別の窓になる。"""
+        view = next(a.menu() for a in self.win.menuBar().actions()
+                    if a.menu() is not None and a.text().startswith(texts.MENU_TITLES["view"]))
+        acts = [a for a in view.actions() if a.objectName().startswith("detach_")]
+        self.assertEqual([(a.objectName(), a.text()) for a in acts],
+                         [(f"detach_{k}", texts.w("detach_item", part=texts.LABELS["part_" + k])) for k in texts.DETACH_PARTS])
+        # 区切り線の後ろに並ぶ（Web の表示のメニューと同じ並び）
+        items = view.actions()
+        self.assertTrue(items[items.index(acts[0]) - 1].isSeparator())
+        self.assertEqual(items[-len(acts):], acts)
+        acts[0].trigger()  # グラフ
+        self.pump(0.2)
+        self.assertTrue(self.win.parts.graph.detached)
+        self.win.parts.graph.attach()
+        acts[2].trigger()  # トレース・掃引
+        self.pump(0.2)
+        self.assertTrue(self.win.parts.docks["tab-trace"].isFloating())
+        self.win.parts.reset()
+
     def test_detach_and_reattach_parts(self):
         parts = self.win.parts
         parts.detach("graph")

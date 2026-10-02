@@ -174,8 +174,7 @@
         });
       },
       traceRows() {
-        const legend = this.ui.legend || {};
-        return ((this.st && this.st.traces) || []).map((t) => ({ ...t, color: this.palette["trace" + t.number], legend: legend[String(t.number)] || "" }));
+        return ((this.st && this.st.traces) || []).map((t) => ({ ...t, color: this.palette["trace" + t.number] }));
       },
       // 画面の配色はコアの配色（ユーザー設定の1つ。Qt と共有: J §4.4）。状態が届くまではダークの初期値
       palette() { return (this.st && this.st.palette && this.st.palette.colors) || (this.colors && this.colors.dark) || {}; },
@@ -476,39 +475,66 @@
         return !!(t && t.visible && t.has_values);
       },
       shownFiles(colors) {
-        // 重ねている参照トレース（見えているもの）と色。PNG の凡例にも同じものを渡す
+        // 重ねている参照トレース（見えているもの）と色。凡例の文字は Qt と同じ（サーバーの ui.file_legend）。PNG の凡例にも
+        // 同じものを渡す
         const out = [];
+        const names = this.ui.file_legend || {};
         let i = 0;
         for (const f of this.files) {
           for (const tr of f.traces) {
             const color = FILE_COLORS[i++ % FILE_COLORS.length];
-            if (!this.fileHidden[tr.id]) out.push({ id: tr.id, colorKey: color, color: colors[color], label: X.fmt("file_trace_label", { name: f.name, number: tr.number }) });
+            if (!this.fileHidden[tr.id]) out.push({ id: tr.id, colorKey: color, color: colors[color], label: names[tr.id] || X.fmt("file_trace_label", { name: f.name, number: tr.number }) });
           }
         }
         return out;
       },
+      // 線の名前（設計F §9: 状態の traces[].line・参照トレースは reference）から描き方（core/report_layout.LINE_STYLES）
+      lineStyle(code) {
+        const styles = this.info.line_styles || {};
+        return styles[code] || styles.solid || { width: 1, dash: null, z: 1 };
+      },
+      traceLine(n) {
+        const t = ((this.st && this.st.traces) || []).find((x) => x.number === n);
+        return (t && t.line) || "solid";
+      },
+      // 描く順に並べる（下から: 参照トレース → 細線 → 実線・破線・点線 → 太線。同じ段は番号順: 設計F §9。Qt の重なりと同じ）
       graphTraces(colors) {
         const out = [];
+        for (const f of this.shownFiles(colors)) {
+          const t = this.$traces.get(f.id);
+          if (t) out.push(this.graphTrace(t, f.color, colors, true, this.lineStyle("reference")));
+        }
+        const live = [];
         for (const n of [1, 2, 3, 4]) {
           const t = this.$traces.get(String(n));
           if (!t || !this.traceShown(n)) continue;
-          out.push(this.graphTrace(t, colors["trace" + n], colors, false));
+          const style = this.lineStyle(this.traceLine(n));
+          live.push([style.z, n, this.graphTrace(t, colors["trace" + n], colors, false, style)]);
         }
-        for (const f of this.shownFiles(colors)) {
-          const t = this.$traces.get(f.id);
-          if (t) out.push(this.graphTrace(t, f.color, colors, true));
-        }
-        return out;
+        live.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        return out.concat(live.map((x) => x[2]));
       },
-      graphTrace(t, color, colors, isFile) {
+      graphTrace(t, color, colors, isFile, style) {
         const ax = t.axis;
         const x = ax.freqs_hz ? (i) => ax.freqs_hz[i] : (i) => ax.start_hz + ax.step_hz * i;
         const zero = this.sw && this.sw.step_hz === 0 && !isFile;
         return {
           x: zero ? (i) => i : x, y: t.values, color, minHold: t.action === "min_hold",
           head: isFile ? 0 : (t.flags && t.flags.transient_head_points) || 0, fill: !isFile && this.drawFill,
-          dimColor: colors.text_dim, dash: isFile ? [6, 4] : null,
+          dimColor: colors.text_dim, style,
         };
+      },
+      // グラフの中の凡例（Qt と同じ中身と並び: 表示中のトレースを番号順、その後に参照トレース）
+      legendItems() {
+        const legend = this.ui.legend || {};
+        const out = [];
+        for (const n of [1, 2, 3, 4]) {
+          if (this.$traces.get(String(n)) && this.traceShown(n)) out.push({ text: legend[String(n)] || "", color: this.palette["trace" + n], style: this.lineStyle(this.traceLine(n)) });
+        }
+        for (const f of this.shownFiles(this.palette)) {
+          if (this.$traces.get(f.id)) out.push({ text: f.label, color: f.color, style: this.lineStyle("reference") });
+        }
+        return out;
       },
       redraw() {
         if (this.rafPending) return;
@@ -518,6 +544,7 @@
           if (!this.$graph) return;
           this.$graph.setBands(this.marks());
           this.$graph.setTraces(this.graphTraces(this.palette));
+          this.$graph.setLegend(this.legendItems());
           this.drawMarkers();
         });
       },
@@ -825,7 +852,12 @@
         const modeW = Math.ceil(Math.max(...X.list("MODES").map((m) => F.textWidth(m[1], lb)))) + 2 * F.rootPx("--btn-pad-x") + 2;
         // イメージ除去の欄: 出しうる一番長い選択肢（秒は 999.9 で測る。Qt の screen_model.image_reject_width_samples と同じ）
         const reject = Object.values(X.dict("IMAGE_REJECT_CHOICES")).map((name) => W("image_reject_item", { name, s: "999.9" }));
-        F.fitColumns({ a: colA, b: colB, reject });
+        // 線の列（クリアの真下: 設計F §9）: 一番長い線の名前と、同じ列のクリアのボタン（文字＋左右の余白と枠・最小幅）の広い方
+        // （Qt の tab_traces の線の列と同じ）
+        const clearW = Math.max(F.rootPx("--btn-min-w"),
+          Math.ceil(F.textWidth(W("clear"), F.rootPx("--font-m"))) + 2 * F.rootPx("--btn-pad-x") + 2);
+        const line = Math.max(F.selectWidth(Object.values(X.dict("TRACE_LINES"))), clearW);
+        F.fitColumns({ a: colA, b: colB, reject, line });
         document.documentElement.style.setProperty("--top-freq-w", freqW + "px");
         document.documentElement.style.setProperty("--mode-w", modeW + "px");
       },
@@ -848,6 +880,7 @@
         const colors = this.pngColors();
         return GSPng.render({
           st: this.st, amp: { ...this.amp, unit: this.axisUnit }, colors,
+          // 描く順と線（設計F §9）は画面と同じ。線の幅は PNG の基準の幅（png.js が lineBase で渡す）
           traces: (c) => this.graphTraces(c), markers: this.markers,
           files: this.shownFiles(colors).map((f) => ({ label: f.label, color: f.colorKey })), note,
           offset: { hz: this.freqOff, text: this.ui.freq_offset_text || "" },

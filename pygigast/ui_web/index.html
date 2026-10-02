@@ -147,11 +147,9 @@
   <main class="main" ref="main">
     <section class="left" v-show="show('graph') || show('markers') || (!part && (detached.graph || detached.markers))">
       <div class="graph-box" v-show="show('graph')">
-        <div class="part-bar">
-          <span class="legend">
-            <span v-for="t in traceRows" :key="t.number" v-show="t.visible && t.has_values" :style="{color: t.color}">{{ t.legend }}</span>
-          </span>
-          <button v-if="!part" @click="detach('graph')" :title="W('detach_item', {part: W('part_graph')})">{{ W('detach') }}</button>
+        <!-- 凡例はグラフの中の右上の箱（Qt と同じ: graph.js の setLegend） -->
+        <div class="part-bar" v-if="!part">
+          <button @click="detach('graph')" :title="W('detach_item', {part: W('part_graph')})">{{ W('detach') }}</button>
         </div>
         <!-- グラフの操作の説明は、マウスの位置の読み値を出している間は出さない（2つの吹き出しを重ねない） -->
         <div class="graph" ref="graph" :title="hoverLines ? '' : W('graph_tip')"></div>
@@ -261,12 +259,14 @@
         <section class="tsec" data-sec="traces">
           <h3>{{ W('traces') }}</h3>
           <!-- トレースごとに2行を同じ列に置く（Qt の tab_traces と同じ並び。見出しの行は置かない）: 1行目 色と番号・表示・
-               動作・回数・クリア、2行目 いまの様子・平均の種類（動作の真下）・N 回の後（回数の真下）。使えない欄は消さずに
-               無効にして理由を出す（U-08）。同じ列の欄は同じ幅（その列に出うる一番長い中身の幅: app.js の fitColumns） -->
+               動作・回数・クリア、2行目 いまの様子・平均の種類（動作の真下）・N 回の後（回数の真下）・線（クリアの真下: 設計F §9）。
+               使えない欄は消さずに無効にして理由を出す（U-08）。同じ列の欄は同じ幅（その列に出うる一番長い中身の幅: app.js の
+               fitColumns）。trow はトレース1本の包み（広い画面では包みを持たない形で表の列に並び、スマートフォンの幅では
+               1本ずつ縦に積む: style.css） -->
           <div class="tgrid" data-repeat>
-            <template v-for="t in traceRows" :key="t.number">
-              <span class="tnum"><span class="swatch" :style="{background: t.color}"></span>{{ t.number }}</span>
-              <label class="inline tvis"><input type="checkbox" :checked="t.visible" @change="setTrace(t.number, 'visible', $event.target.checked)">{{ W('visible') }}</label>
+            <div class="trow" v-for="t in traceRows" :key="t.number">
+              <span class="thead"><span class="tnum"><span class="swatch" :style="{background: t.color}"></span>{{ t.number }}</span>
+                <label class="inline tvis"><input type="checkbox" :checked="t.visible" @change="setTrace(t.number, 'visible', $event.target.checked)">{{ W('visible') }}</label></span>
               <select class="tact" :value="t.action" @change="setTraceAction(t, $event.target.value)">
                 <option v-for="(l, c) in Td('TRACE_ACTIONS')" :key="c" :value="c">{{ l }}</option></select>
               <!-- 回数: 打てるドロップダウン（一覧から選ぶ・数を打つ。平均は回数が要るので「回数なし」を出さない: 設計F §2） -->
@@ -288,8 +288,11 @@
                       :title="traceTip('after_n', ['average', 'max_hold', 'min_hold'].includes(t.action) && t.count ? null : Td('REASON_TEXTS').after_only)"
                       @change="setTrace(t.number, t.action === 'average' ? 'average_after' : 'hold_after', $event.target.value)">
                 <option v-for="(l, c) in Td(t.action === 'average' ? 'AVERAGE_AFTER' : 'HOLD_AFTER')" :key="c" :value="c">{{ l }}</option></select>
+              <!-- 線（設計F §9）。描き方だけなので、変えても蓄積は捨てない -->
+              <select class="tline" :value="t.line || 'solid'" :title="W('line')" @change="setTrace(t.number, 'line', $event.target.value)">
+                <option v-for="(l, c) in Td('TRACE_LINES')" :key="c" :value="c">{{ l }}</option></select>
               <div class="tnote" v-if="traceNotes[t.number] || notes['trace' + t.number]">{{ traceNotes[t.number] || notes['trace' + t.number].text }}</div>
-            </template>
+            </div>
           </div>
         </section>
         <section class="tsec" data-sec="files">
@@ -300,6 +303,8 @@
               <button @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
             <label class="inline" v-for="tr in f.traces" :key="tr.id"><input type="checkbox" :checked="!fileHidden[tr.id]" @change="toggleFileTrace(tr.id)">{{ W('file_trace_row', {id: tr.id, number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
           </div>
+          <!-- 開く（Qt の参照トレースのまとまりの［開く…］と同じ: メニュー「ファイル → 開く…」と同じ項目を呼ぶ） -->
+          <div class="row"><button data-act="open" :title="T('MENU_ITEMS', 'open') + keyHint('open')" @click="trigger('open')">{{ T('MENU_ITEMS', 'open') }}</button></div>
         </section>
         <!-- 受信（RTL-SDR: 設計Q §6.5・§6.6）。RTL-SDR に繋いでいるときだけ出す（J §4.5）。
              繋いでいる間に使えない操作（AGC の間のレベルの校正など）は、消さずに無効にして理由を出す（U-08） -->
