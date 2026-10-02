@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime
 from typing import TYPE_CHECKING, Optional
 
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
 
 from . import screen_model, sizes, texts
@@ -21,8 +22,9 @@ from .texts_devices import REF_QUICK_LABELS as L
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-# 基準の状態の文の幅の上限（上段を押し広げない。全文はツールチップ）
-STATUS_MAX_W = 230
+# 基準の状態の文の幅の上限。小の字で2行まで（上段の高さ 40px の中）に収め、上段を押し広げない（全文はツールチップ）。
+# 1行で 230px 取ると、TG の 1920 幅で RBW 以降が2行目へ落ちた（設計の PDCA 2巡目）
+STATUS_MAX_W = 150
 
 
 class RefQuick(QWidget):
@@ -40,6 +42,10 @@ class RefQuick(QWidget):
         self.status.setObjectName("dim")
         self.status.setWordWrap(True)
         self.status.setMaximumWidth(STATUS_MAX_W)
+        self.status.setMaximumHeight(sizes.H_L)
+        f = QFont(self.status.font())
+        f.setPixelSize(sizes.FONT_S)
+        self.status.setFont(f)
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)  # 1回の掃引の途中は進みが分からないので、動いていることだけを示す
         self.bar.setMaximumWidth(80)

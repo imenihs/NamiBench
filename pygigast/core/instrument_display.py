@@ -393,6 +393,16 @@ class DisplayMixin:
             # 単位が黙って変わったと思わせないよう、画面が一度知らせる（J §4.10 の 3）
             self._notice("ratio_display", {"name": self._ref.name if self._ref is not None else "",
                                            "unit": self._view_opts.get("level_unit")})
+        elif shown_before == Quantity.RATIO and frame.quantity == Quantity.POWER:
+            # 基準との比 → 電力に戻った（SA・SG へ移った・基準を外した・基準と条件が合わなくなった）。電力 → 比と同じく
+            # 黙って変えずに、なぜ戻ったかを画面が一度知らせる（J §4.10 の 3。片向きだけ知らせると遷移が非対称で、
+            # イメージキャンセルを切ったら比が黙って外れた: 2026-10-03 ユーザー指摘）
+            a = frame.adopted
+            if a is None or a.mode not in NORMALIZED_MODES:
+                why, mode = "mode", (a.mode.value if a is not None else None)
+            else:
+                why, mode = self._norm_state.get("reason") or "", a.mode.value
+            self._notice("power_display", {"reason": why, "mode": mode, "unit": self._view_opts.get("level_unit")})
         updates = self._traces.apply(frame)
         for u in updates:
             if u.notices:

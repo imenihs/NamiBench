@@ -259,7 +259,8 @@ class MainWindow(QMainWindow):
             self.mode_group.addButton(b)
             self.mode_buttons[code] = b
             top.addWidget(b)
-        top.addSpacing(8)
+        sizes.same_width_buttons(list(self.mode_buttons.values()), sizes.FONT_L_BUTTON)
+        top.addSpacing(sizes.GAP)
         self.f_center = FreqField("Center", lambda hz: self._set_sweep(center_hz=hz, field=self.f_center))
         self.f_span = FreqField("Span", lambda hz: self._set_sweep(span_hz=hz, field=self.f_span))
         self.f_start = FreqField("Start", lambda hz: self._set_sweep(start_hz=hz, field=self.f_start))

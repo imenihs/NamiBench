@@ -19,6 +19,15 @@ from pygigast.ui_qt.prefs import UiPrefs  # noqa: E402
 from pygigast.ui_qt import wheel_guard  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
+if os.name == "nt":
+    # 画面を出さない試験（offscreen）でも、字は本番の Windows の既定（Yu Gothic UI 9.75pt = 13px）にする。offscreen の
+    # 既定の字は別の書体（幅が狭い）で、崩れを数える試験が本番と違う前提で通っていた（設計の PDCA 2巡目・CLAUDE.md §6.6）
+    from PySide6.QtGui import QFont, QFontDatabase  # noqa: E402
+
+    QFontDatabase.addApplicationFont(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "YuGothR.ttc"))
+    _f = QFont("Yu Gothic UI")
+    _f.setPointSizeF(9.75)
+    app.setFont(_f)
 wheel_guard.install(app)  # 画面の起動（ui_qt/app.py）と同じく、スクロールする場所の欄のホイールの決まりを付ける
 
 

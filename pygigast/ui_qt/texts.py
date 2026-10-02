@@ -822,6 +822,10 @@ def level_unit_label(code) -> str:
     return LEVEL_UNITS.get(code or "dBm", str(code))
 
 
+# 条件が基準と合わなくなって電力に戻ったとき（比で見る手立てを添える）。基準を外した・モードを変えたときは添えない
+POWER_HINT_REASONS = ("image_cancel_mismatch", "rbw_mismatch", "out_of_range", "serial_mismatch", "mode_mismatch")
+
+
 def notice_view(n: dict, state: Optional[dict] = None) -> dict:
     """知らせ1件の出し方: {"text": 状態バーの文, "traces": {番号: トレースの欄の文}, "path": 保存先 or None,
     "field": 欄の下にも出すときの欄の名前 or None, "modal": 窓で知らせるときの中身 or None}。
@@ -844,6 +848,21 @@ def notice_view(n: dict, state: Optional[dict] = None) -> dict:
                  "text": VIEW_TEXTS["ratio_text"].replace("{name}", name).replace("{unit}", unit)}
         return {"text": VIEW_TEXTS["ratio_status"].replace("{name}", name), "traces": {}, "path": None,
                 "field": None, "modal": modal}
+    if code == "power_display":
+        # 基準との比 → 電力に戻った（J §4.10 の 3。窓は比に変わったときと同じ覚え書き ratio_display で出すかを決める）
+        unit = level_unit_label(d.get("unit"))
+        r = d.get("reason") or ""
+        if r == "mode":
+            reason = VIEW_TEXTS["power_reason_mode"].replace("{mode}", MODE_LABELS.get(d.get("mode"), d.get("mode") or ""))
+        else:
+            reason = NORM_REASONS.get(r, r)
+        text = VIEW_TEXTS["power_text"].replace("{reason}", reason).replace("{unit}", unit)
+        if r in POWER_HINT_REASONS:
+            text += "\n" + VIEW_TEXTS["power_hint"]
+        modal = {"key": "ratio_display", "title": VIEW_TEXTS["power_title"], "check": VIEW_TEXTS["dont_show_again"],
+                 "text": text}
+        return {"text": VIEW_TEXTS["power_status"].replace("{unit}", unit).replace("{reason}", reason), "traces": {},
+                "path": None, "field": None, "modal": modal}
     if code in ("task_done", "task_failed", "task_cancelled"):
         text, path = task_end_text(code, d)
         res = d.get("result") or {}

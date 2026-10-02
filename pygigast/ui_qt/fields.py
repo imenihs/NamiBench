@@ -337,7 +337,9 @@ class FreqField(ValueField):
         if big:
             f = QFont(self.edit.font())
             f.setPixelSize(sizes.FONT_L_VALUE)
-            self.edit.setFixedWidth(QFontMetrics(f).horizontalAdvance(sizes.TOP_FREQ_SAMPLE) + 2 * 6 + 2)
+            fm = QFontMetrics(f)
+            text = max(fm.horizontalAdvance(t) for t in sizes.TOP_FREQ_SAMPLES)
+            self.edit.setFixedWidth(text + 2 * 6 + 2 + 2 * sizes.EDIT_INNER + 1)
         self._hz = 0
         # 周波数オフセット（設計O）: 欄は「測った周波数 + これ」を出し、打った値からこれを引いて渡す
         self.offset_hz = 0
@@ -492,6 +494,10 @@ class DbChoiceField(DbField):
         self.combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.layout().replaceWidget(self.edit, self.combo)
         self.combo.setLineEdit(self.edit)
+        # 欄の幅はドロップダウンが決める（ValueField が付けた固定の幅を外す。外さないと欄が ▼ の上に重なり、▼ を
+        # 押しても一覧が開かなかった: 設計の PDCA 2巡目）
+        self.edit.setMinimumWidth(0)
+        self.edit.setMaximumWidth(16777215)
         self.combo.setCompleter(None)  # 打っている途中に一覧の値で補わない（「+1」が「+10」にならない）
         self.edit.wheel_exp = 0
         if big:
@@ -562,10 +568,14 @@ class DbChoiceField(DbField):
         # 上段だけ: 値と単位が全部見え、一覧の矢印の分も取る（J §4.3: 欄を切らない）。標準の段は「値」の幅（J §4.11）
         if not self.big:
             return
-        fm = self.combo.fontMetrics()
+        # 上段の字で測る（見た目の決まりで字が当たる前に測ると 13px の幅になり、「−10.0 dBm」の m が切れた:
+        # 設計の PDCA 2巡目）
+        f = QFont(self.combo.font())
+        f.setPixelSize(sizes.FONT_L_VALUE)
+        fm = QFontMetrics(f)
         ends = [x for x in (self.lo, self.hi) if x is not None] or [-120.0]
         widest = max(fm.horizontalAdvance(f"{level_text(x)} {self._unit}") for x in ends)
-        self.combo.setFixedWidth(widest + 2 * sizes.BTN_PAD_X + sizes.CHOICE_ARROW + 2)
+        self.combo.setFixedWidth(widest + 2 * 6 + 2 + 2 * sizes.EDIT_INNER + sizes.CHOICE_ARROW + 1)
 
 
 class LocalDbChoiceField(DbChoiceField):

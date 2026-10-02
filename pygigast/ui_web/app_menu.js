@@ -117,7 +117,8 @@
             })));
           }
           while (list.length && list[list.length - 1] === null) list.pop();
-          out.push({ title: X.get("MENU_TITLES", sec), items: list });
+          // 題とアクセスキー（Qt のメニューバーと同じ「ファイル(F)」の形で出す）
+          out.push({ code: sec, title: X.get("MENU_TITLES", sec), key: X.get("MENU_MNEMONICS", sec, ""), items: list });
         }
         return out;
       },
@@ -139,6 +140,48 @@
         it.run();
       },
       keyHint(code) { const k = this.keySeqs[code]; return k && k.length ? X.fmt("paren", { text: k.map(keyLabel).join("・") }) : ""; },
+      // メニューバー: menuOpen は開いている題の番号（「≡」で全部を開いているときは true）。1つ開いている間は、
+      // 題の上にマウスを動かすとその題を開く（Qt のメニューバーと同じ）
+      hoverMenu(i) { if (typeof this.menuOpen === "number") this.menuOpen = i; },
+      openMenu(i, focusFirst) {
+        this.menuOpen = i;
+        if (focusFirst) this.$nextTick(() => this.focusMenuItem(0));
+      },
+      // 開いているメニューの項目に、上から n 番目（負なら下から）へフォーカスを移す
+      focusMenuItem(n) {
+        const items = [...document.querySelectorAll(".menubar .menu .menu-item")];
+        if (!items.length) return;
+        items[((n % items.length) + items.length) % items.length].focus();
+      },
+      // メニューバーのキー（Qt と同じ）: Alt+アクセスキーで開く（ブラウザが先に取らないとき・割り当てに使っていないとき）、
+      // 開いている間は ←→ で隣の題、↑↓ で項目を移る。扱ったら true
+      menuKey(e, k) {
+        const n = this.menu.length;
+        if (typeof this.menuOpen === "number") {
+          if (k === "ArrowLeft" || k === "ArrowRight") {
+            e.preventDefault();
+            this.openMenu((this.menuOpen + (k === "ArrowLeft" ? -1 : 1) + n) % n, true);
+            return true;
+          }
+          if (k === "ArrowDown" || k === "ArrowUp") {
+            e.preventDefault();
+            const items = [...document.querySelectorAll(".menubar .menu .menu-item")];
+            const i = items.indexOf(document.activeElement);
+            this.focusMenuItem(i < 0 ? (k === "ArrowDown" ? 0 : -1) : i + (k === "ArrowDown" ? 1 : -1));
+            return true;
+          }
+        }
+        const m = /^Alt\+([A-Z])$/.exec(k);
+        if (m && !this.part && !Object.values(this.keySeqs).some((ks) => ks.includes(k))) {
+          const i = this.menu.findIndex((s) => s.key === m[1]);
+          if (i >= 0) {
+            e.preventDefault();
+            this.openMenu(i, true);
+            return true;
+          }
+        }
+        return false;
+      },
       keysText(it) { return it.keys.map(keyLabel).join("・"); },
       onKey(e) {
         // キーの割り当ての画面で「キーを押して割り当てる」の後は、押したキーを操作に使わずに受ける（J §4.6）
@@ -147,6 +190,7 @@
         const tag = (e.target && e.target.tagName) || "";
         const inField = ["INPUT", "SELECT", "TEXTAREA"].includes(tag);
         const inGraph = this.$graph && this.$graph.u.root.contains(e.target);
+        if (this.menuKey(e, k)) return;
         if (k === "Escape") {
           this.menuOpen = false;
           this.ctx = null;

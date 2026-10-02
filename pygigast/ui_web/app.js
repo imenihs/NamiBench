@@ -22,8 +22,9 @@
   // 参照トレース（ファイル）の色。J §4.4 に無いので、トレースの色を順に使い点線で描く（設計に無い判断）
   const FILE_COLORS = ["trace2", "trace3", "trace4", "trace1"];
   const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"];
-  // 上段の周波数の欄の幅を決める一番長い値（Qt の sizes.TOP_FREQ_SAMPLE と同じ: 100Hz 単位の最長の形）
-  const TOP_FREQ_SAMPLE = "-12100.0000 MHz";
+  // 上段の周波数の欄の幅を決める値の見本（Qt の sizes.TOP_FREQ_SAMPLES と同じ。100Hz 単位の最長の形と、RTL-SDR の
+  // 1Hz 単位の形）。一番広い見本で測る
+  const TOP_FREQ_SAMPLES = ["-12100.0000 MHz", "0000.000000 MHz"];
 
   function nowName() {
     const d = new Date();
@@ -45,7 +46,7 @@
         textsReady: false,
         notes: {},
         status: "",
-        menuOpen: false,
+        menuOpen: false,  // false・メニューバーの開いている題の番号・true（「≡」で全部）
         ctx: null,
         modal: null,
         tab: "trace",
@@ -211,7 +212,8 @@
       });
       this.stream.open();
       window.addEventListener("keydown", (e) => this.onKey(e));
-      window.addEventListener("click", () => { this.ctx = null; });
+      // 外を押したら右クリックのメニューとメニューバー・「≡」のメニューを閉じる（Qt と同じ）
+      window.addEventListener("click", () => { this.ctx = null; this.menuOpen = false; });
       setInterval(() => this.pollDetached(), 1000);
     },
     methods: {
@@ -804,10 +806,16 @@
         const counts = [F.countText(null), ...F.COUNT_CHOICES.map((n) => F.countText(n)), F.countText(F.COUNT_MAX)];
         const countW = Math.max(...counts.map((t) => F.textWidth(t, F.rootPx("--font-m")))) + 2 * 6 + 2 + 21;
         const colB = Math.max(F.selectWidth([...Object.values(X.dict("AVERAGE_AFTER")), ...Object.values(X.dict("HOLD_AFTER"))]), countW);
-        // 上段の周波数の欄: 上段の字で一番長い値＋欄の左右の余白（6px×2）と枠（1px×2）（Qt の FreqField と同じ）
-        const freqW = F.textWidth(TOP_FREQ_SAMPLE, F.rootPx("--font-l-value")) + 2 * 6 + 2;
+        // 上段の周波数の欄: 上段の字で一番広い見本＋欄の左右の余白（6px×2）と枠（1px×2）（Qt の FreqField と同じ）。
+        // 字の幅の端数で文字がはみ出さない（scrollWidth が clientWidth を超えない）よう 1px 足す
+        const lv = F.rootPx("--font-l-value");
+        const freqW = Math.ceil(Math.max(...TOP_FREQ_SAMPLES.map((t) => F.textWidth(t, lv)))) + 2 * 6 + 2 + 1;
+        // モードのボタン: 5つとも一番長い名前＋左右の余白と枠（同じ幅にそろえる。最小幅は使わない）
+        const lb = F.rootPx("--font-l-button");
+        const modeW = Math.ceil(Math.max(...X.list("MODES").map((m) => F.textWidth(m[1], lb)))) + 2 * F.rootPx("--btn-pad-x") + 2;
         F.fitColumns({ a: colA, b: colB });
-        document.documentElement.style.setProperty("--top-freq-w", Math.ceil(freqW) + "px");
+        document.documentElement.style.setProperty("--top-freq-w", freqW + "px");
+        document.documentElement.style.setProperty("--mode-w", modeW + "px");
       },
 
       // ------------------------------------------------------------ 入力の窓（ファイルの窓は app_files.js）

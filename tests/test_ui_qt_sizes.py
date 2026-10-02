@@ -204,3 +204,33 @@ class LayoutRtlWideTest(LayoutRtlTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TopBarOneRowTest(UiBase):
+    """上段は SA の 1600 幅・TG（直結を 0dB にするとその基準の文が出る）の 1920 幅で1段に収まる（RBW 以降を2行目へ
+    追い出さない: 2026-10-03 ユーザー指摘・設計の PDCA 2巡目）。上段の周波数の欄は一番長い値でも切れない。"""
+
+    def one_row(self) -> bool:
+        self.pump(0.3)
+        return not self.win.topbar._two_rows and abs(
+            self.win.rbw_combo.mapToGlobal(self.win.rbw_combo.rect().topLeft()).y()
+            - self.win.f_center.edit.mapToGlobal(self.win.f_center.edit.rect().topLeft()).y()) <= 1
+
+    def test_sa_1600(self):
+        self.win.resize(1600, 900)
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.assertTrue(self.one_row(), self.win.topbar.needed_one_row())
+
+    def test_tg_1920(self):
+        self.win.resize(1920, 1080)
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_mode", mode="tg").result(5)
+        self.wait(lambda: self.win.ref_quick.isVisible(), what="直結を 0dB にする")
+        self.assertTrue(self.one_row(), self.win.topbar.needed_one_row())
+
+    def test_widest_top_frequency_fits(self):
+        e = self.win.f_center.edit
+        self.pump(0.2)
+        for t in sizes.TOP_FREQ_SAMPLES:
+            room = e.width() - 2 - 12 - 2 * sizes.EDIT_INNER
+            self.assertLessEqual(e.fontMetrics().horizontalAdvance(t), room, t)

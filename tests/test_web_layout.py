@@ -6,7 +6,7 @@ Qt の tests/qt_layout_check.py と同じ決まりを、ヘッドレスの Edge 
 ついて次を数える（Qt の試験と同じく、機器の一覧・CSV に書き出す・保存・ブラウザからの接続のしかたの窓も数える）:
 
 - 高さが段の値（上段 40px・標準 26px・状態バーと上段の名前の行 20px）でない
-- 文字の大きさが段の値でない（上段は欄 20px・ボタン 16px・連続/単発/停止 17px、標準 13px、小 12px）
+- 文字の大きさが段の値でない（上段は欄・ボタン・連続/単発/停止、標準、小。値は sizes.py と同じ）
 - 同じ場所（スクロールする枠・窓）で同じ行に並ぶ同じ段の部品の、上端か高さが 1px より違う（縦にずれている）
 - ボタンの文字が切れている（文字の幅・高さがボタンの中に入らない）・ボタンが文字の幅より伸びている（S-03）
 - ドロップダウンの幅が一番長い選択肢より狭い・欄の幅が中の文字（値・空の見本）より狭い
@@ -15,8 +15,11 @@ Qt の tests/qt_layout_check.py と同じ決まりを、ヘッドレスの Edge 
 - 行を重ねる並び（表と data-repeat の格子）で、同じ列の欄・ドロップダウン（格子ではボタンも）の幅か左端が 1px より違う
   （2026-10-03 ユーザー指摘「箱の長さがそろってなくてガタガタ」）。格子では部品の種類を問わず同じ列で比べる（トレースの
   表の2行目の選択は、1行目の動作・回数の真下で同じ幅）
-- 上段の周波数の欄の幅が、上段の字で「-12100.0000 MHz」が入る幅（＋左右の余白と枠）でない（伸ばさない: S-02）。
-  上段の REF の欄（欄＋▼）の幅が、いまの単位の「−120.0 単位」＋左右の余白×2＋▼＋枠でない（Qt の DbChoiceField と同じ）
+- 上段の周波数の欄の幅が、上段の字で一番広い見本（sizes.TOP_FREQ_SAMPLES）の幅＋左右の余白と枠＋1px でない
+  （伸ばさない: S-02）。上段の REF の欄（欄＋▼）の幅が、いまの単位の「−120.0 単位」＋左右の余白×2＋▼＋枠でない
+  （Qt の DbChoiceField と同じ）。モードのボタン（data-same-width の組）が、5つとも一番長い名前の幅で同じでない
+- 上段が1行に収まる幅（SA の 1600×900・1920×1080、TG の 1920×1080）で、RBW が Center と同じ行にない
+- メニューバーの題・並び・項目が Qt と違う。広い画面の上段に Qt に無い部品（「≡」・保存・PNG）がある
 - 1行の文字（名前・状態）とチェックボックス・ラジオが、同じ行の部品と縦の真ん中で 2px より違う
 - 名前の付いたチェックボックス・ラジオの高さが標準の段の値でない
 
@@ -43,18 +46,23 @@ SIZES = ((1280, 720), (1920, 1080))
 # 主画面の右のタブ（app.js の tabList と同じ並び）
 TABS = ("trace", "marker", "view", "source")
 
-# 上段の周波数の欄の幅を決める一番長い値（Qt の sizes.TOP_FREQ_SAMPLE。sizes.py は Qt を読まずに読める）
-def top_freq_sample() -> str:
+def layout_config() -> dict:
+    """数える台本に渡す値（Qt の sizes.py と同じ値。sizes.py は Qt を読まずに読める）。"""
     from pygigast.ui_qt import sizes
 
-    return sizes.TOP_FREQ_SAMPLE
+    return {
+        "H": {"L": sizes.H_L, "M": sizes.H_M, "S": sizes.H_S}, "rowH": sizes.ROW_H,
+        "font": {"lValue": sizes.FONT_L_VALUE, "lButton": sizes.FONT_L_BUTTON, "run": sizes.FONT_RUN,
+                 "m": sizes.FONT_M, "s": sizes.FONT_S},
+        "freqSamples": list(sizes.TOP_FREQ_SAMPLES),
+    }
 
 
-# 画面で数える台本（Qt の qt_layout_check.problems と同じ決まり）。root は数える範囲（CSS の選び方）
+# 画面で数える台本（Qt の qt_layout_check.problems と同じ決まり）。root は数える範囲（CSS の選び方）、cfg は layout_config()
 CHECK_JS = r"""
-window.__gsLayout = function (rootSel, where, topFreqSample) {
-  const H = { L: 40, M: 26, S: 20 };
-  const ROW_H = 28;
+window.__gsLayout = function (rootSel, where, cfg) {
+  const H = cfg.H;
+  const ROW_H = cfg.rowH;
   const out = [];
   const roots = [...document.querySelectorAll(rootSel)];
   if (!roots.length) return [where + ": " + rootSel + " がありません"];
@@ -107,11 +115,12 @@ window.__gsLayout = function (rootSel, where, topFreqSample) {
   // 打てるドロップダウン（欄＋右の ▼）は ▼ まで入れた箱で測る
   const box = (el) => (el.nextElementSibling && el.nextElementSibling.classList.contains("field-choices") ? el.parentElement : el);
   // 段ごとの文字の大きさ（S-01・J §4.11）。上段のメニューの ≡ は文字ではなく印なので欄と同じ大きさ
+  const F = cfg.font;
   const fontWant = (el, t) => {
-    if (t === "S") return 12;
-    if (t === "M") return 13;
-    if (el.tagName !== "BUTTON" || el.classList.contains("menu-btn")) return 20;
-    return el.classList.contains("run-btn") ? 17 : 16;
+    if (t === "S") return F.s;
+    if (t === "M") return F.m;
+    if (el.tagName !== "BUTTON" || el.classList.contains("menu-btn")) return F.lValue;
+    return el.classList.contains("run-btn") ? F.run : F.lButton;
   };
   for (const { el, r, t } of recs) {
     const h = H[t];
@@ -120,10 +129,16 @@ window.__gsLayout = function (rootSel, where, topFreqSample) {
     if (fs !== fontWant(el, t)) out.push(`${where}: ${name(el)} の文字 ${fs}px（段の値 ${fontWant(el, t)}px）`);
     if (el.tagName === "BUTTON" && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1))
       out.push(`${where}: ${name(el)} の文字が切れている（中 ${el.clientWidth}×${el.clientHeight}px・文字 ${el.scrollWidth}×${el.scrollHeight}px）`);
-    // ボタンは文字の幅（短い語は最小幅）。横に伸ばさない（S-03）
+    // ボタンは文字の幅（短い語は最小幅）。横に伸ばさない（S-03）。同じ幅にそろえる組（data-same-width: モードの
+    // ボタン）は、組の中で一番広い文字の幅にそろえる
     if (el.tagName === "BUTTON") {
-      const want = natural(el);
+      const group = el.closest("[data-same-width]");
+      const want = group ? Math.max(...[...group.querySelectorAll("button")].map(natural)) : natural(el);
       if (r.width > want + 1) out.push(`${where}: ${name(el)} の幅 ${r.width}px が文字の幅 ${want}px より広い（伸びている）`);
+      if (group) {
+        const first = group.querySelector("button").getBoundingClientRect().width;
+        if (Math.abs(r.width - first) > 0.5) out.push(`${where}: 同じ幅の組の ${name(el)} の幅 ${r.width}px が組の幅 ${first}px と違う`);
+      }
     }
     // 標準の段の入力欄の幅は、値の種類の幅のどれか（S-02）
     if (el.tagName === "INPUT" && el.type !== "color" && t === "M" && !el.classList.contains("w-grow")
@@ -202,9 +217,9 @@ window.__gsLayout = function (rootSel, where, topFreqSample) {
   const pad = (el) => { const cs = getComputedStyle(el); return parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth); };
   for (const el of document.querySelectorAll("[data-tier=L] .field.big .field-input")) {
     if (!inScope(el) || !shown(el)) continue;
-    const want = textW(el, topFreqSample) + pad(el);
+    const want = Math.ceil(Math.max(...cfg.freqSamples.map((t) => textW(el, t)))) + pad(el) + 1;
     const w = el.getBoundingClientRect().width;
-    if (Math.abs(w - want) > 1) out.push(`${where}: 上段の周波数の欄 ${name(el)} の幅 ${w}px（「${topFreqSample}」が入る幅 ${want.toFixed(1)}px）`);
+    if (Math.abs(w - want) > 1) out.push(`${where}: 上段の周波数の欄 ${name(el)} の幅 ${w}px（一番広い見本が入る幅 ${want}px）`);
   }
   // 上段の REF の欄（欄＋▼）: いまの単位の一番長い値＋左右の余白×2（ボタンの余白）＋▼＋枠（Qt の DbChoiceField._fit_width）
   for (const el of document.querySelectorAll("[data-tier=L] .field.ref .field-input")) {
@@ -364,7 +379,8 @@ class EdgePage:
 
     def problems(self, root: str, where: str) -> list[str]:
         self.ev(CHECK_JS)
-        return self.ev(f"window.__gsLayout({json.dumps(root)}, {json.dumps(where)}, {json.dumps(top_freq_sample())})")
+        return self.ev(f"window.__gsLayout({json.dumps(root)}, {json.dumps(where)}, "
+                       f"{json.dumps(layout_config(), ensure_ascii=False)})")
 
     def close(self) -> None:
         # ブラウザを閉じてから（ページの接続を閉じさせる）、残っていれば止める
@@ -502,7 +518,11 @@ def views(page: EdgePage, tabs_only: bool = False):
     page.wait("!!(gsApp.presetsWin && gsApp.presetsWin.ready)", "プリセットの一覧")
     page.settle()
     yield "プリセット", ".modal.presetwin"
-    page.ev("gsApp.closePresets(); gsApp.openDevices(); 1")
+    page.ev("gsApp.closePresets(); gsApp.openMenu(0, false); 1")
+    page.wait("!!document.querySelector('.menubar .menu .menu-item')", "メニューバーのファイル")
+    page.settle()
+    yield "メニューバー（ファイル）", ".menubar"
+    page.ev("gsApp.menuOpen = false; gsApp.openDevices(); 1")
     page.wait("!!(gsApp.devWin && (gsApp.devWin.rows.length || gsApp.devWin.empty))", "機器の一覧")
     page.settle()
     yield "機器の一覧", ".modal.devwin"
@@ -545,7 +565,7 @@ class WebLayoutTest(unittest.TestCase):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
         # 数えた画面が揃っていること（開けずに数えなければ何も守らない）
-        self.assertEqual(len(seen), len(TABS) + 8 + 5, seen)
+        self.assertEqual(len(seen), len(TABS) + 8 + 6, seen)
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
@@ -554,6 +574,95 @@ class WebLayoutTest(unittest.TestCase):
 
     def test_1920x1080(self):
         self.check_size(*SIZES[1])
+
+    def test_top_freq_samples_fit(self):
+        """見本の値を上段の周波数の欄に入れても、文字が欄からはみ出さない（scrollWidth <= clientWidth）。"""
+        open_app(self.page, self.app, *SIZES[0])
+        js = """((samples) => {
+          const out = [];
+          for (const el of document.querySelectorAll('[data-tier=L] .field.big .field-input')) {
+            const keep = el.value;
+            for (const t of samples) {
+              el.value = t;
+              if (el.scrollWidth > el.clientWidth) out.push(`${t}: ${el.scrollWidth} > ${el.clientWidth}`);
+            }
+            el.value = keep;
+          }
+          return [document.querySelectorAll('[data-tier=L] .field.big .field-input').length, out];
+        })(%s)""" % json.dumps(layout_config()["freqSamples"], ensure_ascii=False)
+        n, over = self.page.ev(js)
+        self.assertEqual(n, 4)
+        self.assertEqual(over, [])
+
+    def test_top_bar_one_row(self):
+        """上段が1行に収まる幅では1行（RBW が Center と同じ行）: SA の 1600×900 と 1920×1080、TG（直結を 0dB にすると
+        いまの基準の文を出す）の 1920×1080。どれも数えた問題は 0。上段は Qt と同じ部品だけ（ユーザーの決定 2026-10-03:
+        「Qt と違う UI を採用している時点でおかしい」）。"""
+        same_row = ("(() => { const c = document.querySelector('[data-tier=L] .field.big .field-input').getBoundingClientRect();"
+                    " const r = document.querySelector('[data-tier=L] .field-select').getBoundingClientRect();"
+                    " return [c.top, r.top]; })()")
+        found: list[str] = []
+        try:
+            for mode, (w, h) in (("sa", (1600, 900)), ("tg", (1920, 1080)), ("sa", (1920, 1080))):
+                self.app.call("set_mode", mode=mode)
+                open_app(self.page, self.app, w, h)
+                if mode == "tg":
+                    self.page.wait("!!(gsApp.refQuick.visible && document.querySelector('.refquick-state'))", "直結を 0dB にする")
+                c_top, r_top = self.page.ev(same_row)
+                self.assertAlmostEqual(c_top, r_top, delta=0.5, msg=f"{mode} {w}×{h}: 上段が2行になった")
+                self.page.ev("gsApp.tab = 'trace'; 1")
+                self.page.settle()
+                found += self.page.problems(".app", f"{w}×{h} {mode} 上段")
+        finally:
+            self.app.call("set_mode", mode="sa")
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_menu_bar_and_top_bar_same_as_qt(self):
+        """メニューバーの題・並び・アクセスキー・項目は Qt と同じ表から同じ形（ui_qt/menu_table.table と同じ作り方）。
+        広い画面の上段には Qt に無い部品（「≡」・保存・PNG）を置かない（狭い画面だけ「≡」）。"""
+        from pygigast.ui_qt import texts as T
+
+        open_app(self.page, self.app, *SIZES[0])
+        titles = self.page.ev("[...document.querySelectorAll('.menubar .menubar-title')].filter((e) => e.getClientRects().length)"
+                              ".map((e) => e.textContent.trim())")
+        self.assertEqual(titles, [f"{T.MENU_TITLES[sec]}({T.MENU_MNEMONICS[sec]})" for sec, _codes in T.MENU_LAYOUT])
+        web = self.page.ev("gsApp.menu.map((s) => s.items.filter((i) => i).map((i) => i.label))")
+        # Qt の menu_table.table と同じ項目。Web が違えてよいのは次の2つだけ（理由つき）:
+        # - 終了: ブラウザの窓を閉じる（app_menu.js の WEB_SKIP）
+        # - 表示の「…を別ウィンドウで開く」: Qt はドックを掴んで外す。Web は部分ごとの項目（J §4.3.2）
+        detach = self.page.ev("gsApp.menu.find((s) => s.code === 'view').items.filter((i) => i && i.code.startsWith('detach_'))"
+                              ".map((i) => i.label)")
+        self.assertTrue(detach)
+        for (sec, codes), got in zip(T.MENU_LAYOUT, web):
+            if sec == "mode":
+                want = [f"{label}（{name}）" for _c, label, name, _why in T.MODES]
+            else:
+                want = [T.MENU_ITEMS[c] for c in codes if c is not None and c != "quit"]
+            if sec == "view":
+                want += detach
+            self.assertEqual(got, want, sec)
+        self.assertEqual(len(web), len(T.MENU_LAYOUT))
+        # 広い画面の上段: 「≡」は出さず、保存・PNG のボタンは置かない（ファイルのメニューとキーで使う: Qt と同じ）
+        top = self.page.ev("[...document.querySelectorAll('.topbar button')].filter((e) => e.getClientRects().length)"
+                           ".map((e) => e.textContent.trim())")
+        for word in ("≡", "PNG", T.LABELS["save"]):
+            self.assertNotIn(word, top)
+        # 狭い画面（スマートフォン）ではメニューバーの代わりに「≡」
+        self.page.size(400, 860)
+        self.page.settle()
+        self.assertTrue(self.page.ev("!!document.querySelector('.menu-btn').getClientRects().length"))
+        self.assertFalse(self.page.ev("!!document.querySelector('.menubar').getClientRects().length"))
+
+    def test_menu_keys(self):
+        """Alt+アクセスキーで題を開き、←→ で隣の題、Esc で閉じる（Qt のメニューバーと同じ。ブラウザが先に取るキーは除く）。"""
+        open_app(self.page, self.app, *SIZES[0])
+        key = ("((k, code, alt) => { document.body.dispatchEvent(new KeyboardEvent('keydown', {key: k, code, altKey: alt,"
+               " bubbles: true, cancelable: true})); return gsApp.menuOpen; })")
+        self.assertEqual(self.page.ev(f"{key}('f', 'KeyF', true)"), 0)
+        self.assertEqual(self.page.ev(f"{key}('ArrowRight', 'ArrowRight', false)"), 1)
+        self.assertEqual(self.page.ev(f"{key}('ArrowLeft', 'ArrowLeft', false)"), 0)
+        self.assertEqual(self.page.ev(f"{key}('h', 'KeyH', true)"), len(self.page.ev("gsApp.menu")) - 1)
+        self.assertIs(self.page.ev(f"{key}('Escape', 'Escape', false)"), False)
 
     def test_checker_finds_a_broken_control(self):
         """検査そのものが働くこと（わざと崩して見つかるか: S-01〜S-03・C-01）。前提は本番と同じ画面と同じ台本。"""
@@ -582,12 +691,13 @@ class WebLayoutTest(unittest.TestCase):
 
 
 class TopFreqSampleTest(unittest.TestCase):
-    def test_web_uses_the_same_sample_as_qt(self):
-        """上段の周波数の欄の幅を決める見本は Qt と Web で同じ（同じ幅になる: U-09）。"""
+    def test_web_uses_the_same_samples_as_qt(self):
+        """上段の周波数の欄の幅を決める見本は Qt と Web で同じ（同じ並び・同じ文字。同じ幅になる: U-09）。"""
         from pygigast.api.web import server as web
 
         js = (Path(web.UI_WEB_DIR) / "app.js").read_text(encoding="utf-8")
-        self.assertIn(f'const TOP_FREQ_SAMPLE = "{top_freq_sample()}";', js)
+        samples = json.dumps(layout_config()["freqSamples"], ensure_ascii=False)
+        self.assertIn(f"const TOP_FREQ_SAMPLES = {samples};", js)
 
 
 @unittest.skipUnless(edge_available(), "Microsoft Edge が無い")

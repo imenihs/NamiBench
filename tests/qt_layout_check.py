@@ -142,7 +142,7 @@ def problems(root: QWidget, where: str = "") -> list[str]:
         if isinstance(w, QLineEdit) and w.text():
             fm = w.fontMetrics()
             m = w.textMargins()
-            room = w.width() - 2 - 12 - m.left() - m.right()
+            room = w.width() - 2 - 12 - 2 * sizes.EDIT_INNER - m.left() - m.right()
             if fm.horizontalAdvance(w.text()) > room + 1:
                 out.append(f"{where}: {_name(w)} の文字 {fm.horizontalAdvance(w.text())}px が欄の中 {room}px に入らない")
         # ボタンは文字の幅（短い語は最小幅）。横に伸ばさない（S-03）
@@ -154,6 +154,19 @@ def problems(root: QWidget, where: str = "") -> list[str]:
         # 標準の段の入力欄の幅は、値の種類の幅のどれか（S-02）。伸ばしてよい部品・表のセルの欄・上段は除く
         if _typed_field(w) and _tier(w) is None and w.width() not in KIND_WIDTHS:
             out.append(f"{where}: {_name(w)} の幅 {w.width()}px が値の種類の幅 {sorted(KIND_WIDTHS)} のどれでもない")
+    # 打てるドロップダウン: 中の欄が ▼ に重ならない（重なると ▼ を押しても一覧が開かない）・中の欄の文字が切れない
+    for c in root.findChildren(QComboBox):
+        if not (c.isEditable() and _shown(c, root) and c.lineEdit() is not None):
+            continue
+        le = c.lineEdit()
+        if le.geometry().right() > c.width() - 12:
+            out.append(f"{where}: {_name(c)} の中の欄（右端 {le.geometry().right()}）が ▼（幅 {c.width()}）に重なっている")
+        if le.text():
+            m = le.textMargins()
+            room = le.width() - 2 * sizes.EDIT_INNER - m.left() - m.right()
+            if le.fontMetrics().horizontalAdvance(le.text()) > room:
+                out.append(f"{where}: {_name(c)} の文字 {le.fontMetrics().horizontalAdvance(le.text())}px が"
+                           f"中の欄 {room}px に入らない")
     # 同じ行（縦に重なる）の同じ段の部品は、上端と高さがそろう
     rects = [(w, _grect(w), _tier(w), _area(w)) for w in ws]
     for i, (a, ra, ta, aa) in enumerate(rects):

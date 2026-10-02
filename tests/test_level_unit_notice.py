@@ -93,6 +93,35 @@ class RatioDisplayTest(InstrumentCase):
         self.single()
         self.assertEqual(len(self.ratio_notices()), 1)
 
+    def power_notices(self):
+        return [p["detail"] for k, p in self.events if k == "notice" and p["code"] == "power_display"]
+
+    def test_ratio_to_power_notifies_with_reason(self):
+        """比 → 電力に戻ったときも知らせる（J §4.10 の 3 を両向きに: イメージキャンセルを切ったら比が黙って外れた）。"""
+        self.connect(100 * MHZ, 200 * MHZ)
+        self.take_reference()
+        self.single()
+        self.assertEqual(self.call("get_state")["display_quantity"], "ratio")
+        ic = bool(self.call("get_state")["sweep"].get("image_cancel"))
+        # 基準とイメージキャンセルの有無が違う → 電力。理由を付けて1回
+        self.call("set_sweep", image_cancel=not ic)
+        self.clear_events()
+        self.single()
+        self.assertEqual(self.call("get_state")["display_quantity"], "power")
+        self.assertEqual(self.power_notices(), [{"reason": "image_cancel_mismatch", "mode": "tg", "unit": "dBm"}])
+        # 電力 → 電力（続けて掃引）では出さない
+        self.clear_events()
+        self.single()
+        self.assertEqual(self.power_notices(), [])
+        # 戻すと比（比の知らせ）。SA へ移ると電力（理由はモード）
+        self.call("set_sweep", image_cancel=ic)
+        self.single()
+        self.assertEqual(self.call("get_state")["display_quantity"], "ratio")
+        self.call("set_mode", mode="sa")
+        self.clear_events()
+        self.single()
+        self.assertEqual(self.power_notices(), [{"reason": "mode", "mode": "sa", "unit": "dBm"}])
+
     def test_not_at_startup(self):
         self.connect(100 * MHZ, 200 * MHZ)
         self.take_reference()
@@ -152,6 +181,18 @@ class UnitViewTest(unittest.TestCase):
         # ほかの知らせは欄にも窓にも出さない
         v = texts.notice_view({"code": "sweep_discarded", "detail": {}})
         self.assertEqual((v["field"], v["modal"]), (None, None))
+        # 比 → 電力: 同じ覚え書き（ratio_display）で窓を出し、なぜ戻ったかと、条件が合わないときは比で見る手立てを言う
+        pv = texts.notice_view({"code": "power_display", "detail": {"reason": "image_cancel_mismatch", "mode": "tg",
+                                                                   "unit": "dBuV"}})
+        pm = pv["modal"]
+        self.assertEqual((pm["key"], pm["title"]), ("ratio_display", texts.VIEW_TEXTS["power_title"]))
+        self.assertIn(texts.NORM_REASONS["image_cancel_mismatch"], pm["text"])
+        self.assertIn("電力（dBμV）", pm["text"])
+        self.assertIn(texts.VIEW_TEXTS["power_hint"], pm["text"])
+        self.assertIn(texts.NORM_REASONS["image_cancel_mismatch"], pv["text"])
+        pv = texts.notice_view({"code": "power_display", "detail": {"reason": "mode", "mode": "sa", "unit": "dBm"}})
+        self.assertIn("SA モードでは基準との比を使いません", pv["modal"]["text"])
+        self.assertNotIn(texts.VIEW_TEXTS["power_hint"], pv["modal"]["text"])
 
 
 if __name__ == "__main__":

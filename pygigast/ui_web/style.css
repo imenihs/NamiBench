@@ -20,7 +20,7 @@
   --h-s: 20px;
   --row-h: 28px;
   /* 文字の大きさ。標準の 13px は本文と同じ */
-  --font-l-value: 20px;
+  --font-l-value: 18px;
   --font-l-button: 16px;
   --font-run: 17px;
   --font-m: 13px;
@@ -125,7 +125,14 @@ label.disabled { color: var(--axis); cursor: default; }
 [data-tier=M] :where(button, select, input:not([type=checkbox], [type=radio], [type=range])) {
   height: var(--h-m); font-size: var(--font-m); }
 
-.menu-wrap { position: relative; display: flex; align-items: flex-end; }
+/* ---- メニューバー（Qt の QMenuBar と同じ。標準の段の高さと字）。題は平らな押せる文字 ---- */
+.menubar { display: flex; align-items: center; padding: 0 var(--gap); border-bottom: 1px solid var(--grid); }
+.menubar-item { position: relative; }
+.menubar .menubar-title { min-width: 0; border: 0; border-radius: 0; background: transparent; padding: 0 var(--label-gap); }
+.menubar .menubar-title:hover, .menubar .menubar-title.open { background: var(--grid); }
+.menubar .menu { width: max-content; }
+/* 「≡」はスマートフォンの幅だけ（メニューバーが入らない: J §5）。それより広い画面はメニューバー */
+.menu-wrap { position: relative; display: none; align-items: flex-end; }
 .menu-btn { min-width: var(--h-l); padding: 0; }
 [data-tier=L] .menu-btn { font-size: var(--font-l-value); }
 .menu { position: absolute; left: 0; top: 100%; z-index: 30; background: var(--panel-bg); border: 1px solid var(--axis);
@@ -137,7 +144,10 @@ label.disabled { color: var(--axis); cursor: default; }
 .menu-item.dis { color: var(--axis); cursor: default; }
 .menu-item .keys { color: var(--text-dim); }
 .menu hr { border: 0; border-top: 1px solid var(--grid); margin: 3px 0; }
-.modes, .runbtns, .filebtns { display: flex; gap: var(--gap); }
+.modes, .runbtns { display: flex; gap: var(--gap); }
+/* モードのボタンは5つとも1つの幅: 一番長い名前＋左右の余白と枠（最小幅は使わない。幅は app.js の fitColumns が
+   --mode-w に置く） */
+.mode-btn { min-width: 0; width: var(--mode-w, auto); }
 .mode-btn.on { background: var(--accent); color: var(--graph-bg); }
 .run-btn.running { background: var(--running); }
 
@@ -150,8 +160,8 @@ label.disabled { color: var(--axis); cursor: default; }
 /* 打てるドロップダウン（欄＋右の ▼）は、▼ まで入れて「値」の幅（Qt の DbChoiceField と同じ: J §4.11） */
 .field-line.choices .field-input { width: calc(var(--w-value) - 21px); }
 /* 上段の Center・Span・Start・Stop は上段の幅を4つで分け合う（S-02）。値が全部見える幅（-12100.0000 MHz）を下限にする */
-/* 上段の Center・Span・Start・Stop は伸ばさない。上段の字で「-12100.0000 MHz」が入る幅（＋左右の余白と枠）で止める
-   （S-02。Qt の FreqField と同じ。幅は app.js の fitColumns が --top-freq-w に置く） */
+/* 上段の Center・Span・Start・Stop は伸ばさない。上段の字で一番長い値（100Hz 単位の最長の形と RTL-SDR の 1Hz 単位の形の
+   広い方）が入る幅（＋左右の余白と枠）で止める（S-02。Qt の FreqField と同じ。幅は app.js の fitColumns が --top-freq-w に置く） */
 .field.big .field-input { width: var(--top-freq-w, 9.4em); }
 /* 上段の REF レベル: いまの単位で一番長い値（−120.0 単位）＋左右の余白＋▼（Qt の DbChoiceField._fit_width と同じ）。
    文字の幅は app.js の refTextW が --ref-text-w に置く。▼ は欄に1px 重ねるので、欄＋▼ で 文字＋余白×2＋▼＋枠 になる */
@@ -248,13 +258,10 @@ fieldset.group { display: flex; flex-direction: column; gap: var(--gap); align-i
                  padding: var(--inset); border: 1px solid var(--axis); border-radius: 3px; min-width: 0; }
 fieldset.group > legend { padding: 0 4px; color: var(--text); }
 
-/* ---- 狭い画面（J §4.3.3）: 連続・単発・停止はアイコンだけ ---- */
-@media (max-width: 1100px) {
-  .run-btn .lbl { display: none; }
-  [data-tier=L] .run-btn { min-width: var(--h-l); }
-}
 /* スマホの幅: グラフが上、設定が下（J §5）。縦に並べてページごとスクロールする */
 @media (max-width: 760px) {
+  .menubar { display: none; }
+  .menu-wrap { display: flex; }
   .app { height: auto; min-height: 100vh; }
   .main { flex-direction: column; }
   .graph-box { flex: 0 0 auto; height: 55vh; }
@@ -306,7 +313,9 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
 
 /* ---- 上段の「直結を 0dB にする」（J §4.2）。TG・S11 のときだけ ---- */
 .refquick { display: flex; gap: var(--gap); align-items: center; height: var(--h-l); }
-.refquick-state { max-width: 16em; font-size: var(--font-s); line-height: 1.3; }
+/* いまの基準の文: 小の段の字で2行まで（上段の高さに入る）。それより長い分は … にし、全文はツールチップ */
+.refquick-state { max-width: 150px; font-size: var(--font-s); line-height: 1.3; display: -webkit-box; -webkit-box-orient: vertical;
+                  -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .refquick progress { width: 70px; }
 
 /* ---- 機器の一覧（J §4.7）。名前を変える窓（.modal-back）をこの上に重ねる ---- */

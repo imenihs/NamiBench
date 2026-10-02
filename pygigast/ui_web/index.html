@@ -37,28 +37,32 @@
 <!-- マウントする要素そのものの属性はテンプレートにならないので、内側の要素に付ける -->
 <div :style="layoutStyle" :class="['app', part ? 'partmode' : '']" v-if="textsReady">
 
-  <!-- ================= 上段（J §4.3 の案B: 主な値を大きく並べてその場で直接入力）。大の段（J §4.11・S-01）:
-       欄もボタンも同じ高さ。名前は値の上の小さな行（小の段）で、欄とボタンの下端をそろえる ================= -->
+  <!-- ================= メニューバー（Qt の QMenuBar と同じ題・並び・アクセスキー・項目。標準の段）。
+       スマートフォンの幅では入らないので、上段の「≡」に同じ項目をまとめる（J §5） ================= -->
+  <nav class="menubar" v-if="!part" @click.stop>
+    <div class="menubar-item" v-for="(sec, si) in menu" :key="sec.code">
+      <button class="menubar-title" :class="{open: menuOpen === si}" @click="menuOpen = menuOpen === si ? false : si"
+              @mouseenter="hoverMenu(si)">{{ sec.title }}(<u>{{ sec.key }}</u>)</button>
+      <div class="menu" v-if="menuOpen === si"><gs-menu-list :items="sec.items"></gs-menu-list></div>
+    </div>
+  </nav>
+
+  <!-- ================= 上段（J §4.3 の案B: 主な値を大きく並べてその場で直接入力）。Qt の上段と同じ部品・同じ並び。
+       大の段（J §4.11・S-01）: 欄もボタンも同じ高さ。名前は値の上の小さな行（小の段）で、欄とボタンの下端をそろえる ================= -->
   <header class="topbar" data-tier="L" v-if="!part">
     <div class="topgroup tg-freq">
       <div class="menu-wrap">
-        <button class="menu-btn" :title="W('menu_button')" @click.stop="menuOpen = !menuOpen">≡</button>
-        <div class="menu" data-tier="M" v-if="menuOpen" @click.stop>
-          <div class="menu-sec" v-for="sec in menu" :key="sec.title">
+        <button class="menu-btn" :title="W('menu_button')" @click.stop="menuOpen = menuOpen === true ? false : true">≡</button>
+        <div class="menu" data-tier="M" v-if="menuOpen === true" @click.stop>
+          <div class="menu-sec" v-for="sec in menu" :key="sec.code">
             <div class="menu-title">{{ sec.title }}</div>
-            <template v-for="(it, i) in sec.items" :key="sec.title + i">
-              <hr v-if="!it">
-              <!-- 使えない項目も押せば理由を状態バーに出す（触れる画面でもツールチップに頼らない: U-08） -->
-              <button v-else class="menu-item" :class="{dis: !!it.why || !it.run}" :aria-disabled="!!it.why || !it.run" :title="itemTitle(it)" @click="trigger(it.code)">
-                <span>{{ it.label }}</span><span class="keys">{{ keysText(it) }}</span>
-              </button>
-            </template>
+            <gs-menu-list :items="sec.items"></gs-menu-list>
           </div>
         </div>
       </div>
       <!-- 見るだけの接続では値の欄とボタンを無効にして理由を出す（A §4.3.2 の 4）。メニューと PNG は使える -->
       <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
-      <div class="modes">
+      <div class="modes" data-same-width>
         <button v-for="m in modes" :key="m[0]" class="mode-btn" :class="{on: sw && sw.mode === m[0]}"
                 :disabled="!!modeReason(m[0])" :title="m[2] + keyHint('mode_' + m[0]) + (modeReason(m[0]) ? ' — ' + modeReason(m[0]) : '')"
                 @click="trigger('mode_' + m[0])">{{ m[1] }}</button>
@@ -116,11 +120,11 @@
       <span class="grow"></span>
       <div class="runbtns">
         <button class="run-btn" :class="{running: run.state === 'continuous'}" :disabled="!connected"
-                :title="W('run_cont_tip') + keyHint('run_cont')" @click="trigger('run_cont')">▶ <span class="lbl">{{ T('MENU_ITEMS', 'run_cont') }}</span></button>
+                :title="W('run_cont_tip') + keyHint('run_cont')" @click="trigger('run_cont')">{{ T('MENU_ITEMS', 'run_cont') }}</button>
         <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!connected"
-                :title="W('run_single_tip') + keyHint('run_single')" @click="trigger('run_single')">⏵| <span class="lbl">{{ T('MENU_ITEMS', 'run_single') }}</span></button>
+                :title="W('run_single_tip') + keyHint('run_single')" @click="trigger('run_single')">{{ T('MENU_ITEMS', 'run_single') }}</button>
         <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
-                :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">■ <span class="lbl">{{ T('MENU_ITEMS', 'stop') }}</span></button>
+                :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
       </div>
       <!-- TG・S11 のとき「直結を 0dB にする」といまの基準（J §4.2: 基準を取るは1クリックで届く所に） -->
       <div class="refquick" v-if="refQuick.visible">
@@ -133,10 +137,6 @@
         <span class="refquick-state dim" :title="[refQuick.taking ? refQuick.progress_text : refQuick.text, refQuick.tip].filter((t) => t).join('\n')">{{ refQuick.taking ? refQuick.progress_text : refQuick.text }}</span>
       </div>
       </fieldset>
-      <div class="filebtns">
-        <button :disabled="readOnly" :title="(readOnlyReason || W('save')) + keyHint('save')" @click="trigger('save')">{{ W('save') }}</button>
-        <button :title="T('MENU_ITEMS', 'png_save') + keyHint('png_save')" @click="trigger('png_save')">PNG</button>
-      </div>
     </div>
   </header>
 

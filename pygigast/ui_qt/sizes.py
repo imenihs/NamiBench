@@ -17,7 +17,9 @@ H_S = 20
 # 表の行（中に置く標準の部品が収まる高さ）
 ROW_H = 28
 # 文字の大きさ（px）。標準の 13px は Web の本文・Qt の既定（Yu Gothic UI 9.75pt）と同じ
-FONT_L_VALUE = 20
+# 上段の値の字は 18px（20px では1行に要る幅が増え、SA の 1600 幅・TG の 1920 幅で RBW 以降が2行目へ落ちた:
+# 設計の PDCA 2巡目）
+FONT_L_VALUE = 18
 FONT_L_BUTTON = 16
 FONT_RUN = 17
 FONT_M = 13
@@ -50,8 +52,11 @@ WIDTH_SAMPLES = {
     "value": ("-12100.000000 MHz", "-120.00 dBμV", "-120.00 dBmV", f"-120.0 {UNIT_UNCALIBRATED}"),
     "color": ("#rrggbb",),
 }
-# 上段の周波数の欄の一番長い値（100Hz 単位。上段の字で測った幅で止める: S-02）
-TOP_FREQ_SAMPLE = "-12100.0000 MHz"
+# 上段の周波数の欄の一番長い値（上段の字で測った一番広いものの幅で止める: S-02）。GigaSt は 100Hz 単位で負の Start も
+# ある。RTL-SDR は 1Hz 単位で小数 6 桁（1420.405752 MHz など。100Hz 単位の見本だけでは切れた: 設計の PDCA 2巡目）
+TOP_FREQ_SAMPLES = ("-12100.0000 MHz", "0000.000000 MHz")
+# QLineEdit が文字の左右に持つ内側の余白（見た目の決まりの余白・枠とは別。幅の式に入れないと文字が切れた）
+EDIT_INNER = 2
 # 打てるドロップダウンの ▼ の幅（見本を測るときに足す）
 CHOICE_ARROW = 22
 
@@ -137,6 +142,22 @@ def buttons_row(*buttons, right: bool = False):
     return h
 
 
+def same_width_buttons(buttons, font_px: int) -> None:
+    """並んだボタンを1つの幅（一番長い文字＋左右の余白）にそろえる（上段のモードの5つ: 短い語に最小幅 64px を当てると
+    上段が1行に収まらなかった・設計の PDCA 2巡目）。字は段の字の大きさで測る（見た目の決まりが当たる前でも同じ幅）。"""
+    from PySide6.QtGui import QFont, QFontMetrics
+
+    if not buttons:
+        return
+    f = QFont(buttons[0].font())
+    f.setPixelSize(font_px)
+    fm = QFontMetrics(f)
+    w = max(fm.horizontalAdvance(b.text()) for b in buttons) + 2 * BTN_PAD_X + 2
+    for b in buttons:
+        b.setProperty("same_width", True)
+        b.setFixedWidth(w)
+
+
 _filter = None
 
 
@@ -178,6 +199,8 @@ def install(app) -> None:
     def _button_min(b) -> None:
         # 最小幅は文字の幅と BTN_MIN_W（連続・単発・停止は RUN_MIN_W）の大きい方。見た目の決まりの min-width で
         # 決めると、Qt はそれを「縮めてよい下限」に使い、並びが狭いとボタンが文字より細く縮んだ（2026-10-03 確認）
+        if b.property("same_width"):
+            return  # 並びで1つの幅にそろえたボタン（same_width_buttons が決める）
         b.setMinimumWidth(0)
         floor = RUN_MIN_W if b.property("run") else BTN_MIN_W
         b.setMinimumWidth(max(floor, b.sizeHint().width()))
