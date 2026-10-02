@@ -3,7 +3,8 @@
 // tab_display.py・look.py と同じ欄・同じ語・同じ決まり。窓の形（テンプレート）は app_windows.js。
 // - 変えたらすぐ効く（「適用」を置かない）。戻したいときは各項目の「初期値に戻す」
 // - 配色・表示の設定・覚えた機器・プリセットはコアが持つ（Qt と共有）。キーの割り当て・PNG の大きさと配色・
-//   手動の COM 番号・並びはブラウザごと（localStorage。設計O §1.1）
+//   手動の COM 番号・並び・窓で知らせるか（「次から出さない」）はブラウザごと（localStorage。設計O §1.1）
+// - 単位の欄は実際に使っている単位を出し、単位が変わったら欄の下に一度、比の表示に変わったら窓で知らせる（J §4.10）
 // - 周波数オフセットは表示だけ: 画面の周波数 = 機器の周波数 + オフセット。機器へ送る値は機器の周波数（設計O）
 // app.js が読み込んで合わせる。文言はここに書かない（texts の表とサーバーが足した文だけ）。
 (function (root) {
@@ -16,6 +17,12 @@
   const PNG_STORE = "pygigast.png";
   const MANUAL_STORE = "pygigast.manual_port";
   const LAYOUT_STORE = "pygigast.layout";
+  // 窓で知らせるか（{窓の名前: false} が「次から出さない」。ブラウザごと: Qt の画面の覚え書きと同じ扱い）
+  const NOTIFY_STORE = "pygigast.notify";
+  // 欄の下の一度きりの知らせを出しておく長さ（Qt の tab_display.UNIT_NOTE_MS と同じ）
+  const FIELD_NOTE_MS = 6000;
+  // 単位の欄で「基準との比」を表す値（Qt の screen_model.RATIO_UNIT と同じ。選んで送るものではない）
+  const RATIO_UNIT = "ratio";
   // PNG の大きさの選択肢と初期値（Qt の settings_dialog.PNG_SIZES と同じ）
   const PNG_SIZES = [[1600, 1000], [1920, 1080], [1280, 800], [2560, 1600]];
   // PNG の配色: ユーザー指定（screen。画面の配色そのもの）／ライト／ダーク。既定はユーザー指定（Qt の
@@ -66,10 +73,23 @@
         keyMsg: null, // { text, warn }
         manualPort: manual,
         pngPrefs: { ...PNG_DEFAULTS, ...readJson(PNG_STORE, {}) },
+        notifyPrefs: readJson(NOTIFY_STORE, {}),
       };
     },
     computed: {
       viewOpts() { return (this.st && this.st.view) || {}; },
+      // 単位の欄（J §4.10 の 2）。中身はサーバーの screen_model.unit_view（Qt と同じ）: 実際に使っている単位・
+      // いま選べない単位と理由。状態が届く前は設定の単位だけ
+      unitView() {
+        const u = this.ui.level;
+        if (u) return u;
+        const code = this.viewOpts.level_unit || "dBm";
+        return { ratio: false, current: code, choices: Object.entries(this.levelUnits).map(([c, t]) => ({ code: c, text: t, enabled: true, tip: "" })), tip: V("level_unit_tip") };
+      },
+      // 比の表示に変わったら窓で知らせるか（初期値: 知らせる）
+      notifyRatio() { return this.notifyPrefs.ratio_display !== false; },
+      // トレースの蓄積の決まり（設計F §8。コアの設定で Qt と共有）
+      traceOpts() { return (this.st && this.st.trace_options) || {}; },
       // 周波数オフセット（Hz）。画面に出す周波数 = 機器の周波数 + これ
       freqOff() { return Number(this.viewOpts.freq_offset_hz || 0); },
       freqOffText() { return this.viewOpts.freq_offset_hz ? GSUnits.formatFreq(this.viewOpts.freq_offset_hz) : ""; },
@@ -100,11 +120,40 @@
       askConfirm(title, text) {
         return new Promise((resolve) => { this.confirmBox = { title, text, resolve }; });
       },
+      // 知らせるだけの窓（［閉じる］と「次から出さない」）。閉じたら { checked } で返す
+      showInfo(title, text, check, key) {
+        return new Promise((resolve) => { this.confirmBox = { title, text, check, key, checked: false, info: true, resolve }; });
+      },
       answerConfirm(ok) {
         const b = this.confirmBox;
         this.confirmBox = null;
-        if (b) b.resolve(ok);
+        if (b) b.resolve(b.info ? { checked: !!b.checked } : ok);
       },
+      // ---- 単位が変わった・比の表示に変わった知らせ（J §4.10 の 3・4。文と出し方はサーバーの texts.notice_view）
+      onViewNotice(v) {
+        if (!v) return;
+        if (v.field) this.flashNote(v.field, v.text);
+        const m = v.modal;
+        // 窓は元の画面だけが出す（別ウィンドウにした部分も同じ知らせを受けるので、窓の数だけ重ねない）
+        if (!m || this.part || this.notifyPrefs[m.key] === false) return;
+        const b = this.confirmBox;
+        if (b && b.info && b.key === m.key) { b.text = m.text; return; }
+        if (b) return; // ほかの確かめる窓に答えている間は重ねない（状態バーには出ている）
+        this.showInfo(m.title, m.text, m.check, m.key).then((r) => { if (r.checked) this.setNotify(m.key, false); });
+      },
+      flashNote(field, text) {
+        this.note(field, text);
+        clearTimeout((this.$noteTimers || (this.$noteTimers = {}))[field]);
+        this.$noteTimers[field] = setTimeout(() => { if (this.notes[field] && this.notes[field].text === text) this.clearNote(field); }, FIELD_NOTE_MS);
+      },
+      setNotify(key, on) {
+        const p = { ...this.notifyPrefs };
+        if (on) delete p[key]; else p[key] = false;
+        this.notifyPrefs = p;
+        writeStore(NOTIFY_STORE, Object.keys(p).length ? p : null);
+      },
+      setUnit(code) { if (code !== RATIO_UNIT) this.setView({ level_unit: code }, "unit"); },
+      setTraceOptions(args) { return this.cmd("set_trace_options", args, { field: "sg" }); },
 
       // ------------------------------------------------------------ 設定の画面（O §1.3）
       openSettings(page) {

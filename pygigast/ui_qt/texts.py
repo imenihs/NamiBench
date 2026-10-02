@@ -348,6 +348,7 @@ RESET_CAUSES = {
     "image_cancel": "イメージキャンセル",
     "calibration": "校正データ",
     "reference": "ノーマライズの基準",
+    "sg_freq": "SG の周波数",
     "gain": "受信の利得",
     "ppm": "周波数の補正（ppm）",
     "level": "レベルの補正",
@@ -801,12 +802,35 @@ def fit_gain_text(res: dict) -> str:
     return text
 
 
+def level_unit_label(code) -> str:
+    """単位のコード（dBm・dBuV・dBmV）を画面の名前にする。"""
+    from ..core.view_units import LEVEL_UNITS
+
+    return LEVEL_UNITS.get(code or "dBm", str(code))
+
+
 def notice_view(n: dict, state: Optional[dict] = None) -> dict:
-    """知らせ1件の出し方: {"text": 状態バーの文, "traces": {番号: トレースの欄の文}, "path": 保存先 or None}。"""
+    """知らせ1件の出し方: {"text": 状態バーの文, "traces": {番号: トレースの欄の文}, "path": 保存先 or None,
+    "field": 欄の下にも出すときの欄の名前 or None, "modal": 窓で知らせるときの中身 or None}。
+
+    modal は {"key": 「次から出さない」の覚え書きの名前, "title", "text", "check": チェックの文}。
+    出すかどうかは画面ごとの覚え書きで画面が決める（設計O §1.1）。
+    """
     code = n.get("code", "")
     d = n.get("detail") or {}
     traces: dict = {}
     path = None
+    if code == "level_unit_changed":
+        # 単位の設定が変わった（どこから変わっても: J §4.10 の 4）。単位の欄の下と状態バーに出す
+        return {"text": VIEW_TEXTS["level_unit_changed"].replace("{unit}", level_unit_label(d.get("unit"))),
+                "traces": {}, "path": None, "field": "unit", "modal": None}
+    if code == "ratio_display":
+        # 電力 → 基準との比に変わった（J §4.10 の 3）
+        name, unit = str(d.get("name") or ""), level_unit_label(d.get("unit"))
+        modal = {"key": "ratio_display", "title": VIEW_TEXTS["ratio_title"], "check": VIEW_TEXTS["dont_show_again"],
+                 "text": VIEW_TEXTS["ratio_text"].replace("{name}", name).replace("{unit}", unit)}
+        return {"text": VIEW_TEXTS["ratio_status"].replace("{name}", name), "traces": {}, "path": None,
+                "field": None, "modal": modal}
     if code in ("task_done", "task_failed", "task_cancelled"):
         text, path = task_end_text(code, d)
         res = d.get("result") or {}
@@ -834,7 +858,8 @@ def notice_view(n: dict, state: Optional[dict] = None) -> dict:
         text = normalization_text({**((state or {}).get("normalization") or {}), **d, "used": True})             or TEMPLATES["norm_changed"]
     else:
         text = notice_text(n)
-    return {"text": text, "traces": {str(k): v for k, v in traces.items() if k is not None}, "path": path}
+    return {"text": text, "traces": {str(k): v for k, v in traces.items() if k is not None}, "path": path,
+            "field": None, "modal": None}
 
 
 def waiting_text(remaining_s: float) -> str:

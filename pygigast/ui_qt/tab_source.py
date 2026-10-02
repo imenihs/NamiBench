@@ -1,6 +1,6 @@
 """右のタブ「信号源」（設計J §4.5・L・E §6）。
 
-- SG: 周波数・出力中の表示（ステップ掃引は次の回）
+- SG: 周波数・周波数を変えたら最大・最小保持を消すか（設計F §8）・出力中の表示（ステップ掃引は次の回）
 - TG・S11 の基準: いまの基準の状態（名前・精度・経過時間・電源の入れ直し前）・一覧と選択・名前・消す・
   「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 のオープン/ショート
 - NF: 次の回
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import texts
+from . import texts, widget_sync
 from .fields import FreqField
 from .tab_traces import scroll, set_enabled
 
@@ -64,6 +65,13 @@ class SourceTab(QWidget):
         form = QFormLayout(g)
         self.f_sg = FreqField(L["sg_freq"], self._set_sg, big=False)
         form.addRow(self.f_sg)
+        # SG の周波数を変えたときに最大・最小保持も消すか（設計F §8。コアの設定で Qt と Web が共有）
+        self.sg_clear_holds = QCheckBox(L["sg_clear_holds"])
+        self.sg_clear_holds.setToolTip(L["sg_clear_holds_tip"])
+        self.sg_clear_holds.setChecked(True)
+        self.sg_clear_holds.toggled.connect(
+            lambda on: win.call("set_trace_options", sg_clears_holds=bool(on)))
+        form.addRow(self.sg_clear_holds)
         self.sg_state = QLabel("")
         self.sg_state.setObjectName("dim")
         form.addRow(self.sg_state)
@@ -146,6 +154,7 @@ class SourceTab(QWidget):
         sw = st["sweep"]
         if sw.get("sg_hz") is not None:
             self.f_sg.set_hz(sw["sg_hz"])
+        widget_sync.set_checked(self.sg_clear_holds, (st.get("trace_options") or {}).get("sg_clears_holds", True))
         self.sg_state.setText(self.win.source_text() or L["sg_not_output"])
         n = st.get("normalization") or {}
         sel = n.get("selected")

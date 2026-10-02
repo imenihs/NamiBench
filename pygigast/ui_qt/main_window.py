@@ -875,6 +875,7 @@ class MainWindow(QMainWindow):
             row = self.trace_tab.rows.get(int(num)) if str(num).isdigit() else None
             if row is not None:
                 row.flash(text)
+        self.display_tab.on_notice(v)  # 単位が変わった（欄の下）・比の表示に変わった（窓）: J §4.10
         self.status_note(v["text"])
 
     def _trace_note(self, number, text: str) -> None:

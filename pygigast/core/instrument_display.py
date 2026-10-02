@@ -22,7 +22,7 @@ from .marker.markers import Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
-from .trace import ConditionChange, TraceAction, TraceSet, to_db
+from .trace import ConditionChange, HoldKeep, TraceAction, TraceSet, to_db
 from .types import AdoptedSweep, Frame, Mode, Quantity, RawSweep, ValueKind
 from .view_units import shift_values
 
@@ -45,6 +45,20 @@ _RTLSDR_ENCODING = "rtlsdr_power_w"
 # マーカーの読み値の注意のコード: Hann 窓の FFT で測ったトレース（_trace_own_notes）
 NOTE_HANN_SCALLOPING = "hann_scalloping"
 
+# トレースの蓄積の決まり（Qt・Web で共有し、前回終了時の状態に入る。命令 set_trace_options）。
+# sg_clears_holds: SG の周波数を手で変えたら最大・最小保持も捨てる（設計F §8。初期値: 捨てる）
+TRACE_OPTION_DEFAULTS = {"sg_clears_holds": True}
+
+
+def restore_trace_options(d) -> dict:
+    """保存した形から戻す。読めない値は初期値。"""
+    out = dict(TRACE_OPTION_DEFAULTS)
+    if isinstance(d, dict):
+        for k in TRACE_OPTION_DEFAULTS:
+            if isinstance(d.get(k), bool):
+                out[k] = d[k]
+    return out
+
 
 def unit_for(quantity: Optional[Quantity], profile: Optional[dict]) -> Optional[str]:
     """トレースの値の単位。電力は、測った機器の単位（RTL-SDR の「dB（未校正）」など: Frame.profile の
@@ -61,7 +75,8 @@ def unit_for(quantity: Optional[Quantity], profile: Optional[dict]) -> Optional[
 def _condition_kind(old: AdoptedSweep, new: AdoptedSweep) -> Optional[ConditionChange]:
     """値の意味が変わる条件の変更の種類（設計F §5.3）。複数が同時に変わっても捨てるのは1回なので最初の1つ。
 
-    SG の周波数だけの変更は捨てない（SG 掃引は最大保持で積み上げる: 設計L）。
+    SG モードの SG の周波数の変更は SG_FREQ（設計F §8）。平均は捨て、最大・最小保持を残すかは呼ぶ側が
+    選択とステップ掃引かで決める（_on_sweep_condition）。SG を出さないモードの SG の周波数は値を変えない。
     """
     if old.mode != new.mode:
         return ConditionChange.MODE
@@ -71,6 +86,8 @@ def _condition_kind(old: AdoptedSweep, new: AdoptedSweep) -> Optional[ConditionC
         return ConditionChange.RBW
     if old.image_cancel != new.image_cancel:
         return ConditionChange.IMAGE_CANCEL
+    if new.mode == Mode.SG and old.sg_hz != new.sg_hz:
+        return ConditionChange.SG_FREQ
     return None
 
 
@@ -137,8 +154,12 @@ class DisplayMixin:
         self._no_calibration = True
         self._last_raw: Optional[RawSweep] = None
         self._last_quantity = Quantity.POWER
+        # いま画面に出している測定の量（電力・比）。起動してまだ掃引が無ければ None（J §4.10: 電力 → 比に
+        # 変わったときだけ知らせる。起動して最初の掃引は「変わった」にしない）
+        self._shown_quantity: Optional[Quantity] = None
         self._ref_auto_file_cache: dict = {}  # REF の自動の参照トレースの最大値（_ref_auto_state）
         st = st or {}
+        self._trace_opts = restore_trace_options(st.get("trace_options"))
         # 前回終了時のトレースの設定・マーカーの置き方を戻す（設計O §1.2）。読めないものは既定のまま
         for d in st.get("traces") or []:
             try:
@@ -158,6 +179,7 @@ class DisplayMixin:
             "traces": [trace_settings(t) for t in self._traces],
             **{k: v for k, v in self._markers.to_defs().items() if k in ("markers", "xy")},
             "amplitude": dict(self._amplitude),
+            "trace_options": dict(self._trace_opts),
         }
 
     # ------------------------------------------------------------------ 状態
@@ -192,6 +214,9 @@ class DisplayMixin:
             "display_marks": dm.display_marks(self._adopted.mode, self._profile, int(self._adopted.start_hz),
                                               int(self._adopted.stop_hz)),
             "ref_auto": self._ref_auto_state(),
+            "trace_options": dict(self._trace_opts),
+            # いま出している測定の量（"power"・"ratio"。まだ掃引が無ければ None）。単位の欄が実際の単位を出す（J §4.10）
+            "display_quantity": None if self._shown_quantity is None else self._shown_quantity.value,
         }
 
     def _ref_auto_state(self) -> dict:
@@ -362,6 +387,12 @@ class DisplayMixin:
         frame = self._mark_frame(frame)
         frame = self._normalize(frame)
         self._last_quantity = frame.quantity
+        shown_before, self._shown_quantity = self._shown_quantity, frame.quantity
+        if shown_before == Quantity.POWER and frame.quantity == Quantity.RATIO:
+            # 電力 → 基準との比に変わった（基準を選んだ TG・S11 へ移った・基準を選んだ・直結を 0dB にした）。
+            # 単位が黙って変わったと思わせないよう、画面が一度知らせる（J §4.10 の 3）
+            self._notice("ratio_display", {"name": self._ref.name if self._ref is not None else "",
+                                           "unit": self._view_opts.get("level_unit")})
         updates = self._traces.apply(frame)
         for u in updates:
             if u.notices:
@@ -421,22 +452,41 @@ class DisplayMixin:
 
     # ------------------------------------------------------------------ 条件の変更
 
-    def _on_condition(self, kind: ConditionChange, cause: Optional[str] = None) -> None:
+    def _on_condition(self, kind: ConditionChange, cause: Optional[str] = None,
+                      holds: HoldKeep = HoldKeep.DISCARD) -> None:
         """値の意味が変わる条件の変更。蓄積を捨て、捨てたトレースを1回だけ知らせる（設計F §3・§5.3）。
 
         cause は知らせに書く原因（省略は kind の値）。RTL-SDR の利得・ppm のように、種類は校正と同じでも
-        原因を分けて見せたいときに渡す。
+        原因を分けて見せたいときに渡す。holds は最大・最小保持を残すか（設計F §8）。
         """
-        resets = self._traces.on_condition_change(kind)
+        resets = self._traces.on_condition_change(kind, holds)
         self._diff_refresh()
         if resets:
             self._notice("trace_reset", {"traces": sorted(resets), "cause": cause or kind.value,
                                          "codes": {str(k): v for k, v in resets.items()}})
 
-    def _on_sweep_condition(self, old: AdoptedSweep, new: AdoptedSweep) -> None:
+    def _on_sweep_condition(self, old: AdoptedSweep, new: AdoptedSweep, step_sweep: bool = False) -> None:
+        """step_sweep: SG のステップ掃引（設計L）が SG の周波数を変えたとき True。選択によらず最大・最小保持を
+        残す（特性を積み上げて描く: 設計F §8 の 2）。手で変えたときは選択 sg_clears_holds に従う（§8 の 1）。"""
         kind = _condition_kind(old, new)
-        if kind is not None:
-            self._on_condition(kind)
+        if kind is None:
+            return
+        holds = HoldKeep.DISCARD
+        if kind == ConditionChange.SG_FREQ:
+            if step_sweep:
+                holds = HoldKeep.ALL
+            elif not self._trace_opts["sg_clears_holds"]:
+                holds = HoldKeep.UNLIMITED
+        self._on_condition(kind, holds=holds)
+
+    def _cmd_set_trace_options(self, sg_clears_holds=_UNSET) -> dict:
+        """トレースの蓄積の決まり（設計F §8）。真偽だけ受ける。いまの蓄積は変えない（次の変更から効く）。"""
+        if sg_clears_holds is not _UNSET:
+            if not isinstance(sg_clears_holds, bool):
+                raise self._error("bad_value", "sg_clears_holds", {"value": sg_clears_holds})
+            self._trace_opts["sg_clears_holds"] = sg_clears_holds
+        self._changed()
+        return {"trace_options": dict(self._trace_opts)}
 
     # ------------------------------------------------------------------ 元に戻す（設計J §3）
 

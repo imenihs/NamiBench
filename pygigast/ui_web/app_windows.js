@@ -7,7 +7,7 @@
 
   const parent = { computed: { a() { return this.$root; } } };
 
-  // ---- 設定の画面。ページは SETTINGS_PAGES の順（接続・表示（配色）・キー操作・保存・ブラウザから使う・rtl_tcp・RTL-SDR）
+  // ---- 設定の画面。ページは SETTINGS_PAGES の順（接続・表示（配色・知らせ）・キー操作・保存・ブラウザから使う・rtl_tcp・RTL-SDR）
   const SETTINGS = `
 <div class="modal-back settings-back" @click="a.closeSettings()">
 <div class="modal setwin" @click.stop>
@@ -58,6 +58,8 @@
       <div class="fnote" v-if="a.notes.settings_palette">{{ a.notes.settings_palette.text }}</div>
       <div class="warn" v-if="pv.warnings.length"><div v-for="w in pv.warnings" :key="w">{{ w }}</div></div>
       <div class="dim" v-else>{{ pv.ok_text }}</div>
+      <h4>{{ a.V('notify_group') }}</h4>
+      <label class="inline" :title="a.V('notify_ratio_tip')"><input type="checkbox" :checked="a.notifyRatio" @change="a.setNotify('ratio_display', $event.target.checked)"> {{ a.V('notify_ratio') }}</label>
     </template>
 
     <template v-else-if="page === 'keys'">
@@ -158,13 +160,18 @@
 </div>
 </div>`;
 
-  // ---- 確かめる窓（何が失われるか・何とぶつかるかを言ってから聞く: U-18・M-02）
+  // ---- 確かめる窓（何が失われるか・何とぶつかるかを言ってから聞く: U-18・M-02）。知らせるだけの窓（info）は
+  // ［閉じる］と「次から出さない」のチェック（J §4.10 の 3。Qt の QMessageBox と同じ形）
   const CONFIRM = `
 <div class="modal-back confirm-back" @click="a.answerConfirm(false)">
 <div class="modal confirm" @click.stop>
   <h3>{{ b.title }}</h3>
   <p>{{ b.text }}</p>
-  <div class="modal-btns">
+  <label v-if="b.check" class="inline"><input type="checkbox" v-model="b.checked"> {{ b.check }}</label>
+  <div class="modal-btns" v-if="b.info">
+    <button class="primary" @click="a.answerConfirm(false)">{{ a.T('SETTINGS_LABELS', 'close') }}</button>
+  </div>
+  <div class="modal-btns" v-else>
     <button class="primary" @click="a.answerConfirm(true)">OK</button>
     <button @click="a.answerConfirm(false)">{{ a.W('cancel') }}</button>
   </div>

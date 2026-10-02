@@ -16,8 +16,10 @@ from pygigast.core.devices.base import load_profile  # noqa: E402
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
 from pygigast.ui_qt.main_window import MainWindow  # noqa: E402
 from pygigast.ui_qt.prefs import UiPrefs  # noqa: E402
+from pygigast.ui_qt import wheel_guard  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
+wheel_guard.install(app)  # 画面の起動（ui_qt/app.py）と同じく、スクロールする場所の欄のホイールの決まりを付ける
 
 
 def make_api(root: Path, speed: float = 0.05) -> LocalApi:

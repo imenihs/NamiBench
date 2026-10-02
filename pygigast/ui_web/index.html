@@ -443,17 +443,18 @@
         <h3>{{ W('draw_style') }}</h3>
         <div class="row"><label class="inline" v-for="d in ['line', 'fill']" :key="d">
           <input type="radio" name="draw_style" :value="d" :checked="(viewOpts.draw_style || 'line') === d" @change="setView({draw_style: d})"> {{ W('draw_' + d) }}</label></div>
-        <!-- 振幅の詳細（設計O）: 単位と外部補正。換算はコア（グラフ・マーカー・CSV・PNG・REF が同じ単位） -->
+        <!-- 振幅の詳細（設計O）: 単位と外部補正。換算はコア（グラフ・マーカー・CSV・PNG・REF が同じ単位）。
+             単位の欄は実際に使っている単位を出し、いま選べない単位は理由付きで選べない（J §4.10。中身は ui.level） -->
         <h3>{{ W('amplitude_detail') }}</h3>
         <div class="form">
           <label>{{ V('level_unit') }}</label>
-          <select :value="viewOpts.level_unit || 'dBm'" :title="V('level_unit_tip')" @change="setView({level_unit: $event.target.value})">
-            <option v-for="(l, c) in levelUnits" :key="c" :value="c">{{ l }}</option></select>
+          <select data-field="level_unit" :value="unitView.current" :title="unitView.tip" @change="setUnit($event.target.value)">
+            <option v-for="o in unitView.choices" :key="o.code" :value="o.code" :disabled="!o.enabled" :title="o.tip">{{ o.text }}</option></select>
+          <template v-if="notes.unit"><label></label><div class="fnote">{{ notes.unit.text }}</div></template>
           <label>{{ V('ext_db') }}</label>
           <div class="row"><input class="num" data-field="ext_db" v-steady="extText" :placeholder="V('ext_db_placeholder')" :title="V('ext_db_tip')" @change="commitExt($event.target.value)"><span>dB</span></div>
         </div>
         <div class="fnote" v-if="notes.view">{{ notes.view.text }}</div>
-        <div class="dim">{{ V('level_unit_ratio') }}</div>
         <div class="row"><button class="small" @click="setView({level_unit: null, ext_db: null})">{{ V('reset_amp') }}</button></div>
         <!-- 配色（J §4.4）: ライト・ダークは初期値に戻すボタン（変えた色の数を言ってから聞く）と、編集の画面への入口 -->
         <h3>{{ W('colors') }}</h3>
@@ -468,6 +469,8 @@
         <h3>SG</h3>
         <num-field :label="W('sg_freq')" :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')"
                    @commit="commitFreq('sg', 'sg_hz', $event)" @step="(e, d) => stepFreq('sg', 'sg_hz', e, d)"></num-field>
+        <!-- SG の周波数を変えたら最大・最小保持も消すか（設計F §8。コアの設定で Qt と共有） -->
+        <label class="inline" :title="W('sg_clear_holds_tip')"><input type="checkbox" data-field="sg_clears_holds" :checked="traceOpts.sg_clears_holds !== false" @change="setTraceOptions({sg_clears_holds: $event.target.checked})"> {{ W('sg_clear_holds') }}</label>
         <div class="dim">{{ sw && sw.mode === 'sg' ? W('sg_on') : W('sg_off') }}</div>
 
         <h3>{{ W('references') }}</h3>

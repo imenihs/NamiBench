@@ -703,15 +703,19 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
     def _cmd_get_state(self) -> dict:
         return self._snapshot()
 
-    def _set_adopted(self, new: AdoptedSweep) -> None:
-        """採用値を置き換える。値の意味が変わる条件ならトレースの蓄積を捨てる（設計F §5.3）。"""
+    def _set_adopted(self, new: AdoptedSweep, step_sweep: bool = False) -> None:
+        """採用値を置き換える。値の意味が変わる条件ならトレースの蓄積を捨てる（設計F §5.3）。
+
+        step_sweep は SG のステップ掃引（設計L。まだ無い）が SG の周波数を動かすときに True で呼ぶ。最大・最小
+        保持を選択によらず残す（設計F §8 の 2）。利用者の操作（set_mode・set_sweep・元に戻す・プリセット）は False。
+        """
         old = self._adopted
         # 機器へ送る中身が変わったときだけ掃引をやり直す（固定の切り替え・知らせだけの違いではやり直さない）
         changed = _sweep_key(new) != _sweep_key(old)
         self._adopted = new
         self._last_estimate = new.estimated_sweep_s
         if changed:
-            self._on_sweep_condition(old, new)
+            self._on_sweep_condition(old, new, step_sweep=step_sweep)
             if self._run == "single":
                 self._single_done = 0
             self._push_job()

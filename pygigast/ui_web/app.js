@@ -402,6 +402,7 @@
           this.onNoticeFiles(p);
           const v = p.view || { text: p.code, traces: {} };
           for (const [n, text] of Object.entries(v.traces || {})) this.traceNote(Number(n), text);
+          this.onViewNotice(v); // 単位が変わった（欄の下）・比の表示に変わった（窓）: J §4.10。app_settings.js
           this.note(null, v.text);
         } else if (kind === "progress") {
           if (p.kind === "task") this.progress = { ...this.progress, [p.task_id]: p };

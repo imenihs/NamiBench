@@ -15,6 +15,23 @@
   // - 表示が変わらないときは書かない
   // - 書かなかった値は、フォーカスが外れたときに最新の値で入れる（打って確定したときは確定の戻りを待つ）
   // - この欄で確定した（Enter・change）・桁を送った値の戻りは、フォーカスがあっても映す。次に触ると解く
+  // スクロールする場所の中の欄は、フォーカスがあるときだけホイールで値を変える（設計J §4.10 の 1。Qt の wheel_guard と同じ決まり）。
+  // フォーカスが無ければ何もせず、ホイールはその場所のスクロールに任せる。上段の欄はスクロールしない場所にあるので今まで通り
+  function inScrollPlace(el) {
+    const view = (el.ownerDocument && el.ownerDocument.defaultView) || root;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const oy = view.getComputedStyle ? view.getComputedStyle(p).overflowY : "";
+      if (oy === "auto" || oy === "scroll") return true;
+    }
+    return false;
+  }
+  function wheelIgnored(container) {
+    if (!container || !container.parentElement) return false;  // 画面に置かれていない欄（試験の入れ物など）は今まで通り
+    const doc = container.ownerDocument;
+    const focused = !!(doc && doc.activeElement && container.contains(doc.activeElement));
+    return !focused && inScrollPlace(container);
+  }
+
   function steadyPut(el) {
     const s = el._svValue == null ? "" : String(el._svValue);
     if (el.value === s) return;
@@ -119,7 +136,7 @@
         }
       },
       onWheel(e) {
-        if (this.disabled) return;
+        if (this.disabled || wheelIgnored(this.$el)) return;
         e.preventDefault();
         const dir = e.deltaY < 0 ? 1 : -1;
         if (this.wheelExp !== null) {
@@ -247,7 +264,7 @@
         }
       },
       onWheel(e) {
-        if (this.disabled) return;
+        if (this.disabled || wheelIgnored(this.$el)) return;
         e.preventDefault();
         this.step(0, e.deltaY < 0 ? 1 : -1);  // ホイールは 1 ずつ（一覧の行を送らない）
       },
@@ -358,6 +375,6 @@
   root.GSFields = {
     NumField, CountField, DbField, Steady, COUNT_CHOICES, COUNT_MAX, countText, parseCount, stepCount,
     BANDWIDTH_CHOICES, FLOOR_CHOICES, REF_CHOICES, DB_RANGES, roundTo, dbText, dbChoiceText, rangeNote, parseDbIn,
-    stepDb,
+    stepDb, wheelIgnored, inScrollPlace,
   };
 })(window);

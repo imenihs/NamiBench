@@ -68,6 +68,18 @@ class ConditionChange(str, enum.Enum):
     IMAGE_CANCEL = "image_cancel"
     CALIBRATION = "calibration"
     REFERENCE = "reference"  # ノーマライズの基準
+    # SG モードで SG の周波数を変えた（設計F §8）。最大・最小保持を残すかは HoldKeep で渡す
+    SG_FREQ = "sg_freq"
+
+
+class HoldKeep(str, enum.Enum):
+    """条件の変更で最大保持・最小保持を残すか（設計F §8）。平均・更新の蓄積はどれでも捨てる。"""
+
+    DISCARD = "discard"  # 残さない（ふつうの条件の変更。SG の周波数を手で変え「消す」を選んでいるとき）
+    # 回数で止まらない保持だけ残す（SG の周波数を手で変え「消す」を外しているとき）。「N 回で止める」保持は
+    # 残すと N 回で止まったまま新しい周波数を取り込まないので捨てる（F §8 の「回数で止まる蓄積」）
+    UNLIMITED = "unlimited"
+    ALL = "all"  # 全部残す（SG のステップ掃引が周波数を変えたとき: 特性を積み上げて描く）
 
 
 class DisplayChange(str, enum.Enum):
@@ -268,11 +280,13 @@ class Trace:
             return
         self._discard(clear_values=self.action in ACCUMULATING_ACTIONS)
 
-    def on_condition_change(self, kind: Union[ConditionChange, DisplayChange, str]) -> Optional[str]:
+    def on_condition_change(self, kind: Union[ConditionChange, DisplayChange, str],
+                            holds: Union[HoldKeep, str] = HoldKeep.DISCARD) -> Optional[str]:
         """条件が変わったことを受ける（設計F §5.3）。捨てたら知らせのコードを返す。
 
         値の意味が変わる条件（ConditionChange）なら蓄積を捨てる。動作は OFF にしない。
         表示だけの変更（DisplayChange）では何も捨てない。固定のトレースは何も捨てない。
+        holds が残すと言う最大・最小保持は捨てない（設計F §8: SG の周波数の変更）。
         知らない種類は ValueError（捨てるか捨てないかを決められないため）。
         """
         if isinstance(kind, DisplayChange):
@@ -283,11 +297,19 @@ class Trace:
             except ValueError:
                 DisplayChange(kind)  # どちらでもなければ ValueError
                 return None
-        if self.action == TraceAction.FIXED:
+        if self.action == TraceAction.FIXED or self._keeps_hold(HoldKeep(holds)):
             return None
         had = self.action in ACCUMULATING_ACTIONS and self._k > 0
         self._discard(clear_values=self.action in ACCUMULATING_ACTIONS)
         return NOTICE_RESET_BY_CONDITION if had else None
+
+    def _keeps_hold(self, holds: HoldKeep) -> bool:
+        """この最大・最小保持を holds の決まりで残すか（設計F §8）。"""
+        if holds == HoldKeep.DISCARD or self.action not in (TraceAction.MAX_HOLD, TraceAction.MIN_HOLD):
+            return False
+        if holds == HoldKeep.ALL:
+            return True
+        return not (self.effective_count is not None and self.hold_after == HoldAfterCount.STOP)
 
     def axis_differs(self, current_axis: Optional[FreqAxis]) -> bool:
         """持っている値の軸がいまの軸と違うか（固定のトレースの凡例に出す: 設計F §5.3）。"""
@@ -437,11 +459,12 @@ class TraceSet:
         """4本すべてに掃引を渡す（非表示でも動作に従って処理する: 設計F §5.1）。"""
         return [t.apply(frame) for t in self.traces]
 
-    def on_condition_change(self, kind: Union[ConditionChange, DisplayChange, str]) -> dict[int, str]:
-        """条件の変更を4本に渡し、捨てたトレースの番号と知らせのコードを返す（設計F §5.3）。"""
+    def on_condition_change(self, kind: Union[ConditionChange, DisplayChange, str],
+                            holds: Union[HoldKeep, str] = HoldKeep.DISCARD) -> dict[int, str]:
+        """条件の変更を4本に渡し、捨てたトレースの番号と知らせのコードを返す（設計F §5.3・§8）。"""
         out: dict[int, str] = {}
         for t in self.traces:
-            notice = t.on_condition_change(kind)
+            notice = t.on_condition_change(kind, holds)
             if notice is not None:
                 out[t.number] = notice
         return out

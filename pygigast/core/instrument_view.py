@@ -100,6 +100,10 @@ class ViewMixin:
                     self._emit("trace", self._file_trace_payload(tid))
                 except CommandError:
                     pass
+        if new.get("level_unit") != old.get("level_unit"):
+            # 単位の設定が変わったら、どこから変わっても（この画面・別の画面・プリセット・元に戻す）全部の画面が
+            # 一度知らせる。いまの表示が比でも知らせる（J §4.10 の 4）。起動で戻すときはここを通らない
+            self._notice("level_unit_changed", {"unit": new.get("level_unit"), "previous": old.get("level_unit")})
 
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
                       layout=_UNSET, function_lines=_UNSET) -> dict:

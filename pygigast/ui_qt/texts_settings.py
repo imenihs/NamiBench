@@ -14,7 +14,7 @@ from .texts_ui import MENU_ITEMS, NOT_YET, REASON_TEXTS, TEMPLATES
 
 SETTINGS_PAGES = {
     "connection": "接続",
-    "display": "表示（配色）",
+    "display": "表示（配色・知らせ）",
     "keys": "キー操作",
     "save": "保存",
     "web": "ブラウザから使う",
@@ -115,7 +115,21 @@ PALETTE_BASES = {"light": "ライト", "dark": "ダーク"}
 VIEW_TEXTS = {
     "level_unit": "単位",
     "level_unit_tip": "電力の読み値の単位（50Ω で換算）。グラフ・マーカー・CSV・PNG・REF レベルが同じ単位になります",
-    "level_unit_ratio": "ノーマライズ中の比（dB）は単位を換えません",
+    # 単位の欄は実際に使っている単位を出す（TG・S11 で基準との比を出している間は比の dB）
+    "level_unit_ratio_item": "dB（基準との比）",
+    "level_unit_ratio_item_tip": "TG・S11 で基準を使っている間だけ、この単位で出します",
+    "level_unit_ratio_reason": "基準との比を出している間は電力の単位を使いません。SA・SG に戻すか基準を外すと {unit} で出します",
+    "level_unit_changed": "単位を {unit} にしました",
+    # 電力から基準との比の表示に変わったときの窓
+    "ratio_title": "基準との比で表示します",
+    "ratio_text": "基準「{name}」との比（dB）で表示します。電力（{unit}）で見るときは基準を外してください（信号源タブ）。"
+                  "SA・SG に戻すと {unit} で表示します",
+    "ratio_status": "基準「{name}」との比（dB）で表示します",
+    "dont_show_again": "次から出さない",
+    # 設定の画面の「表示」: 窓で知らせるか（この画面だけの覚え書き）
+    "notify_group": "知らせ（この画面だけ）",
+    "notify_ratio": "比の表示に切り替わったら知らせる",
+    "notify_ratio_tip": "TG・S11 で基準を使い始めて、電力（dBm など）から基準との比（dB）の表示に変わったときに窓で知らせます",
     "ext_db": "外部補正",
     "ext_db_tip": "外付けのアッテネータ・アンプの分。電力の読み値に足します（10dB の減衰なら +10）",
     "ext_db_placeholder": "例 10（dB）",

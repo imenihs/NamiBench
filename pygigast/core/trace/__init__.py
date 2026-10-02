@@ -20,6 +20,7 @@ from .trace import (
     ConditionChange,
     DisplayChange,
     HoldAfterCount,
+    HoldKeep,
     Trace,
     TraceAction,
     TraceSet,

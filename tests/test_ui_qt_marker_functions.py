@@ -52,6 +52,13 @@ class FunctionBase(UiBase):
                 out += [(90, float(f)) for f in r["line"]["freqs_hz"]]
         return sorted(out)
 
+    def focus(self, field):
+        """欄をクリックした状態にする（スクロールする場所の欄は、フォーカスがあるときだけホイールで変わる: J §4.10）。"""
+        self.win.show_part("tab-marker")
+        field.edit.setFocus()
+        self.pump(0.05)
+        self.assertTrue(field.edit.hasFocus())
+
     def type_into(self, field, text, key=Qt.Key.Key_Return):
         field.edit.setFocus()
         field.edit.selectAll()
@@ -124,6 +131,7 @@ class DbFieldsTest(FunctionBase):
         self.wait(lambda: [b["n_db"] for b in self.marker()["bandwidth"]] == [3.0], what="3dB 帯域幅")
         self.pump()
         old = dict(self.tab._marker)  # N = 3 のときのマーカー
+        self.focus(f)
         wheel(f.edit)
         wheel(f.edit)  # 5 を送った（戻りはまだ受けていない）
         self.tab.apply(old, self.tab._snap)  # 前の値（3）の戻りが届いた
@@ -135,6 +143,7 @@ class DbFieldsTest(FunctionBase):
     def test_wheel_stops_at_range_end(self):
         f = self.tab.bw1_n
         f.combo.activated.emit(f.choices().index("3 dB"))
+        self.focus(f)
         for _ in range(5):
             wheel(f.edit, up=False)
         self.assertEqual(f.value(), 0.1)  # 下の端で止まる（0 以下にしない）

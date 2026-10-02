@@ -4,6 +4,7 @@ import unittest
 
 import numpy as np
 
+from pygigast.ui_qt import texts
 from tests.test_ui_qt_support import UiBase
 
 
@@ -184,7 +185,10 @@ class DisplayTabTest(UiBase):
         # 単位・外部補正・配色は作った（設計O・J §4.4）ので使える
         for w in (d.ext, d.colors, d.unit, d.reset_light, d.reset_dark):
             self.assertTrue(w.isEnabled())
-        self.assertEqual([d.unit.itemText(i) for i in range(d.unit.count())], ["dBm", "dBμV", "dBmV"])
+        # 4つ目は基準との比を出している間に欄が出す値（選ぶものではないのでいつも選べない: J §4.10）
+        self.assertEqual([d.unit.itemText(i) for i in range(d.unit.count())],
+                         ["dBm", "dBμV", "dBmV", texts.VIEW_TEXTS["level_unit_ratio_item"]])
+        self.assertFalse(d.unit.model().item(3).isEnabled())
 
 
 class StatusTest(UiBase):

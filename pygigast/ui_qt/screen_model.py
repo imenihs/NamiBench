@@ -112,6 +112,35 @@ def mode_reasons(st: dict) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- 単位の欄（J §4.10 の 2。C §5.14 の RBW と同じ決まり）
+
+# 単位の欄で「基準との比」を表す値（単位の設定のコードではない。選んで送るものではない）
+RATIO_UNIT = "ratio"
+
+
+def unit_view(st: dict) -> dict:
+    """単位の欄の中身。欄は実際に使っている単位を出す。
+
+    TG・S11 で基準との比を出している間（状態の display_quantity が "ratio"）は「dB（基準との比）」を出し、
+    電力の単位は一覧に残して選べなくし、理由を出す（U-08）。選んでいた電力の単位（view.level_unit）は
+    そのまま覚えていて、電力の表示に戻ったら使う。「dB（基準との比）」は選ぶものではないので、いつも選べない。
+    形: {"ratio", "current": 欄に出す値, "unit": 電力の単位のコード, "label": その名前,
+         "choices": [{"code", "text", "enabled", "tip"}], "tip": 欄のツールチップ}
+    """
+    V = texts.VIEW_TEXTS
+    v = st.get("view") or {}
+    code = v.get("level_unit") or "dBm"
+    units = v.get("level_units") or {"dBm": "dBm"}
+    label = units.get(code, code)
+    ratio = st.get("display_quantity") == "ratio"
+    reason = V["level_unit_ratio_reason"].replace("{unit}", label) if ratio else None
+    choices = [{"code": c, "text": t, "enabled": not ratio, "tip": reason or ""} for c, t in units.items()]
+    choices.append({"code": RATIO_UNIT, "text": V["level_unit_ratio_item"], "enabled": False,
+                    "tip": V["level_unit_ratio_item_tip"]})
+    return {"ratio": ratio, "current": RATIO_UNIT if ratio else code, "unit": code, "label": label,
+            "choices": choices, "tip": "\n".join(t for t in (V["level_unit_tip"], reason) if t)}
+
+
 # ---------------------------------------------------------------- 受信（RTL-SDR: 設計Q §6.5・§6.6）
 
 def rtl_view(st: dict) -> dict:
@@ -360,6 +389,7 @@ def ui_view(st: dict) -> dict:
         "ref_quick": ref_quick_view(st),
         "marks": marks_view(st),
         "palette": palette_view(st),
+        "level": unit_view(st),  # 単位の欄（J §4.10）
         # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う
         "freq_offset_text": texts.offset_text(texts.freq_offset_of(st)) if texts.freq_offset_of(st) else "",
     }

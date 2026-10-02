@@ -82,7 +82,9 @@ class SettingsDialogTest(UiBase):
         dlg = self.open_settings("display")
         pages = [dlg.pages.tabText(i) for i in range(dlg.pages.count())]
         self.assertEqual(pages, list(texts.SETTINGS_PAGES.values()))
-        self.assertEqual(dlg.pages.currentWidget(), dlg.palette_page)
+        # 「表示」のページは配色の編集と、比の表示の窓を出すか（J §4.10）
+        self.assertTrue(dlg.pages.currentWidget().isAncestorOf(dlg.palette_page))
+        self.assertTrue(dlg.pages.currentWidget().isAncestorOf(dlg.notify_ratio))
         page = dlg.palette_page
         # 色を変えたら、その場で画面の配色と印が変わる（J §4.4）
         self.win.ask_color = lambda title, cur: "#00ff00"

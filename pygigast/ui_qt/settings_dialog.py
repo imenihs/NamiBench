@@ -1,6 +1,7 @@
 """アプリ設定の画面（設計O §1.3。メニュー「設定 → アプリ設定…」から開く別の画面: M-10）。
 
-項目（ページ）: 接続（覚えた機器・手動の COM 番号）／表示（配色の編集: J §4.4）／キー操作（J §4.6）／
+項目（ページ）: 接続（覚えた機器・手動の COM 番号）／表示（配色の編集: J §4.4・比の表示に変わったら窓で
+知らせるか: J §4.10）／キー操作（J §4.6）／
 保存（既定の保存先・PNG の大きさと配色: 設計I）／ブラウザから使う（設計A §4.3.2）／rtl_tcp の送出
 （設計Q §4.3・§6.7）／RTL-SDR の DLL のフォルダ（設計Q §6.2）。
 変えたらすぐ効く（「適用」を置かない）。戻したいときは各項目の「初期値に戻す」。
@@ -83,7 +84,7 @@ class SettingsDialog(QDialog):
         P = texts.SETTINGS_PAGES
         self._add_page("connection", P["connection"], self._build_connection())
         self.palette_page = PalettePage(win)
-        self._add_page("display", P["display"], self.palette_page)
+        self._add_page("display", P["display"], self._build_display())
         self.keys_page = KeysPage(win)
         self._add_page("keys", P["keys"], self.keys_page)
         self._add_page("save", P["save"], self._build_save())
@@ -98,6 +99,7 @@ class SettingsDialog(QDialog):
         self.resize(680, 640)
         widget_sync.fit_all(self)  # ドロップダウンは一番長い選択肢が切れない幅（J §4.3）
         self.apply(win.state)
+        self.apply_notify()
         self.apply_web()
         self.show_save()
 
@@ -107,6 +109,32 @@ class SettingsDialog(QDialog):
     def open_page(self, key: str) -> None:
         if key in self._page_index:
             self.pages.setCurrentIndex(self._page_index[key])
+
+    # ---------------------------------------------------------------- 表示（配色・窓で知らせるか）
+
+    def _build_display(self) -> QWidget:
+        """配色の編集（settings_colors.py）と、比の表示に変わったときの窓を出すか（J §4.10 の 3。「次から出さない」
+        を戻す所。この画面だけの覚え書き: 設計O §1.1）。"""
+        from .tab_display import PREF_NOTIFY_RATIO
+
+        V = texts.VIEW_TEXTS
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self.palette_page, 1)
+        g = QGroupBox(V["notify_group"])
+        gv = QVBoxLayout(g)
+        self.notify_ratio = QCheckBox(V["notify_ratio"])
+        self.notify_ratio.setToolTip(V["notify_ratio_tip"])
+        self.notify_ratio.toggled.connect(lambda on: self.win.prefs.set(PREF_NOTIFY_RATIO, bool(on)))
+        gv.addWidget(self.notify_ratio)
+        v.addWidget(g)
+        return page
+
+    def apply_notify(self) -> None:
+        from .tab_display import notify_ratio_on
+
+        widget_sync.set_checked(self.notify_ratio, notify_ratio_on(self.win))
 
     # ---------------------------------------------------------------- 接続（覚えた機器・手動の COM 番号）
 
@@ -398,3 +426,4 @@ class SettingsDialog(QDialog):
         self.dll_folder.setText(rtl["dll_text"])
         self._apply_known(st)
         self.palette_page.apply(st)
+        self.apply_notify()
