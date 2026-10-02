@@ -258,7 +258,7 @@ class RecordingTest(InstrumentCase):
         a = self.call("get_state")["sweep"]
         axis = FreqAxis(a["start_hz"], a["step_hz"], a["points"])
         adopted = AdoptedSweep(a["start_hz"], a["stop_hz"], axis, a["rbw_hz"], a["rbw_preference_hz"], Mode.SA,
-                               None, False, 0, 0, 0.1)
+                               None, "off", 0, 0, 0.1)
         path = d / "active_20260101_000000.sqlite"
         rec = Recorder(path, FileHeader("gigast-v5", SERIAL))
         rec.wait_opened(10)

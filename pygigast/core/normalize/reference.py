@@ -34,13 +34,14 @@ class ReferenceSegment:
     """基準の1区間（設計E §6.1）。
 
     power_w は axis の各点の受けた電力（W、float64）。NaN の点は使わない。
-    image_cancel・rbw_hz は当てるときに測定と一致を求める条件（設計E §6.3）。
+    image_reject（実際に使ったイメージ除去 "accurate"・"fast"・"off"）・rbw_hz は当てるときに測定と一致を求める
+    条件（設計E §6.3・設計F §7.3）。
     connected_at は取ったときの接続（＝電源投入）の時刻。いまの接続と違えば「電源の入れ直し前」（設計E §4.1）。
     """
 
     axis: FreqAxis
     power_w: np.ndarray
-    image_cancel: bool
+    image_reject: str
     rbw_hz: int
     connected_at: float
     taken_at: float
@@ -60,7 +61,7 @@ class ReferenceSegment:
 
     def same_conditions(self, other: "ReferenceSegment") -> bool:
         """上書き合成の相手になる（当てるときの条件が同じ）か。"""
-        return self.image_cancel == other.image_cancel and self.rbw_hz == other.rbw_hz
+        return self.image_reject == other.image_reject and self.rbw_hz == other.rbw_hz
 
 
 @dataclass
@@ -93,7 +94,7 @@ class Reference:
     def merge(self, segment: ReferenceSegment) -> None:
         """区間を上書き合成する（設計E §6.2）。
 
-        同じ条件（イメージキャンセル・RBW）の既存の区間から、新しい区間の範囲
+        同じ条件（イメージ除去・RBW）の既存の区間から、新しい区間の範囲
         [start, last] に入る点を捨て、新しい区間を足す。範囲の外の点は残る。
         範囲の境目の隙間は当てるときに隣の区間の点どうしで補間する（apply.py）。
         """
@@ -123,11 +124,12 @@ def _cut_outside(seg: ReferenceSegment, lo: int, hi: int) -> list[ReferenceSegme
     return out
 
 
-def _frame_conditions(frame: Frame) -> tuple[Mode, bool, int]:
+def _frame_conditions(frame: Frame) -> tuple[Mode, str, int]:
+    """(モード, 実際に使ったイメージ除去, RBW)。イメージ除去はゼロスパンでは選択によらず "off"（設計F §7.1）。"""
     if frame.adopted is None:
-        raise ReferenceBuildError("フレームに掃引条件が無い（モード・イメージキャンセル・RBW が分からない）")
+        raise ReferenceBuildError("フレームに掃引条件が無い（モード・イメージ除去・RBW が分からない）")
     a = frame.adopted
-    return a.mode, a.image_cancel, a.rbw_hz
+    return a.mode, a.image_reject_used, a.rbw_hz
 
 
 def average_power(frames: Sequence[Frame]) -> np.ndarray:
@@ -146,7 +148,7 @@ def average_power(frames: Sequence[Frame]) -> np.ndarray:
         if fr.axis != first.axis:
             raise ReferenceBuildError("フレームの周波数軸がそろわない")
         if _frame_conditions(fr) != cond:
-            raise ReferenceBuildError("フレームの条件（モード・イメージキャンセル・RBW）がそろわない")
+            raise ReferenceBuildError("フレームの条件（モード・イメージ除去・RBW）がそろわない")
         v = np.array(np.real(fr.values), dtype=np.float64)
         tr = fr.flags.get("transient")
         if tr is not None:
@@ -174,13 +176,13 @@ def segment_from_frames(
     （Stop を超える最後の点も実際に測った点なので基準に入れる）。
     """
     power = average_power(frames)
-    mode, image_cancel, rbw_hz = _frame_conditions(frames[0])
+    mode, image_reject, rbw_hz = _frame_conditions(frames[0])
     if mode != expected_mode:
         raise ReferenceBuildError(f"モードが {expected_mode.value} でない（{mode.value}）")
     return ReferenceSegment(
         axis=frames[0].axis,
         power_w=power,
-        image_cancel=image_cancel,
+        image_reject=image_reject,
         rbw_hz=rbw_hz,
         connected_at=connected_at,
         taken_at=taken_at,

@@ -179,6 +179,20 @@ class _Fit(QObject):
         self.combo.updateGeometry()
 
 
+def combo_width(combo: QComboBox, items) -> int:
+    """選択肢 items を全部持ったときのドロップダウンの幅（Qt が中身に合わせて求める幅と同じ求め方: 一番長い文字を
+    中身にして、見た目の決まりで外側の大きさにする）。ドロップダウンが覚えている大きさの見積もりは使わない
+    （見た目の決まりが当たる前の値が残っていることがあり、狭く測って試験がときどき落ちた）。"""
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QStyle, QStyleOptionComboBox
+
+    fm = combo.fontMetrics()
+    opt = QStyleOptionComboBox()
+    combo.initStyleOption(opt)
+    inner = QSize(max((fm.horizontalAdvance(t) for t in items), default=0), fm.height())
+    return combo.style().sizeFromContents(QStyle.ContentsType.CT_ComboBox, opt, inner, combo).width()
+
+
 def fit_combo(combo: QComboBox) -> QComboBox:
     """欄の幅を一番長い選択肢に、開いた一覧の幅を一番長い行に合わせる（選択肢が変わるたびに合わせ直す）。"""
     combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)

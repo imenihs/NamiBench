@@ -148,13 +148,16 @@ class TestFft(Base):
         s2 = self.req(points=0)
         self.assertNotIn("points", adj_map(s2))
 
-    def test_unsupported_mode_and_image_cancel(self):
-        s = self.req(mode=Mode.TG, image_cancel=True)
+    def test_unsupported_mode_and_image_reject(self):
+        # RTL-SDR はイメージ除去を持たない（設計F §7.1）: なしにして知らせる。見積もり・区間も出さない
+        s = self.req(mode=Mode.TG, image_reject="accurate")
         self.assertEqual(s.mode, Mode.SA)
-        self.assertFalse(s.image_cancel)
+        self.assertEqual(s.image_reject, "off")
         a = adj_map(s)
         self.assertEqual(a["mode"].reason, "mode_unsupported")
-        self.assertEqual(a["image_cancel"].reason, "image_cancel_unsupported")
+        self.assertEqual(a["image_reject"].reason, "image_reject_unsupported")
+        self.assertEqual((s.segments, s.image_reject_estimates, s.accurate_segments), ((), (), ()))
+        self.assertEqual(self.m.default().image_reject, "off")
 
     def test_sg_rejected(self):
         with self.assertRaises(ValueError):

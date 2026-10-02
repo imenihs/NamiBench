@@ -16,6 +16,7 @@ import concurrent.futures
 import copy
 import dataclasses
 import datetime
+import inspect
 import os
 import queue
 import threading
@@ -38,6 +39,7 @@ from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
 from .settings import Settings
 from .level.legacy_cal import LegacyCalError, parse_legacy_cal
+from .sweep import image_reject as ir
 from .sweep.model import SweepModel
 from .trace import ConditionChange
 from .types import (
@@ -252,7 +254,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                 points=st.get("points_setting") or 0,
                 mode=Mode(st.get("mode", "sa")),
                 sg_hz=st.get("sg_hz"),
-                image_cancel=bool(st.get("image_cancel", False)),
+                # 前回の値。前の版の覚え書きの image_cancel は読み替え、どちらも無ければ機種の初期値（設計F §7.3）
+                image_reject=ir.read_choice(st),
             )
             try:
                 restored = self._model.apply(req, base)
@@ -273,7 +276,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         return {
             "start_hz": a.start_hz, "stop_hz": a.stop_hz,
             "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
-            "mode": a.mode.value, "sg_hz": a.sg_hz, "image_cancel": a.image_cancel,
+            "mode": a.mode.value, "sg_hz": a.sg_hz, "image_reject": a.image_reject,
             "span_lock_hz": a.span_lock_hz,
             **self._display_state_to_save(),
             **self._files_state_to_save(),
@@ -342,15 +345,22 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             try:
                 if fn is None:
                     raise CommandError("unknown_command", None, {"name": name})
+                # 引数の名前と数が命令に合わないときだけ「操作の値が正しくありません」。命令の中で起きた型の誤りまで
+                # これにすると、正しい値を入れた利用者に入力を疑わせた（2026-10-03 ユーザー指摘「絶対におかしくない
+                # はずなのに弾かれる」）。中の誤りは内部の失敗として中身を付けて返し、記録にも残す
+                try:
+                    inspect.signature(fn).bind(**kwargs)
+                except TypeError as e:
+                    raise CommandError("bad_arguments", None, {"message": str(e)}) from None
                 res = fn(**kwargs)
                 if res is not DEFERRED:  # 書き込みスレッドの仕事が終わってから結果を入れる
                     fut.set_result(res)
             except CommandError as e:
                 fut.set_exception(e)
-            except TypeError as e:
-                fut.set_exception(CommandError("bad_arguments", None, {"message": str(e)}))
             except Exception as e:  # noqa: BLE001
-                fut.set_exception(e)
+                traceback.print_exc()  # 中身は標準エラーにも残す（ほかの内部の失敗と同じ）
+                fut.set_exception(CommandError("internal_error", None,
+                                               {"message": f"{type(e).__name__}: {e}", "command": name}))
             finally:
                 self._cur_fut = None
         elif kind == "call":
@@ -619,7 +629,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             start, stop = base.start_hz, base.stop_hz
         req = SweepRequest(start_hz=start, stop_hz=stop, edited=("start_hz", "stop_hz"),
                            rbw_preference_hz=old.rbw_preference_hz, mode=old.mode,
-                           image_cancel=old.image_cancel)
+                           image_reject=old.image_reject)
         try:
             new = self._model.apply(req, base)
         except (ValueError, TypeError):
@@ -749,7 +759,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         rbw_hz: Optional[int] = None,
         points: Optional[int] = None,
         points_auto: bool = False,
-        image_cancel: Optional[bool] = None,
+        image_reject: Optional[str] = None,
         span_lock: Optional[bool] = None,
         one_shot: bool = False,
     ) -> dict:
@@ -757,13 +767,15 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                         ("span_hz", span_hz), ("rbw_hz", rbw_hz), ("points", points)):
             if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
                 raise CommandError("not_integer", name)
+        if image_reject is not None and image_reject not in ir.CHOICES:
+            raise CommandError("bad_value", "image_reject", {"choices": list(ir.CHOICES)})
         if edited is None:
             edited = [n for n, v in (("start_hz", start_hz), ("stop_hz", stop_hz), ("center_hz", center_hz),
                                      ("span_hz", span_hz)) if v is not None]
         req = SweepRequest(
             start_hz=start_hz, stop_hz=stop_hz, center_hz=center_hz, span_hz=span_hz,
             edited=tuple(edited), rbw_preference_hz=rbw_hz,
-            points=points, image_cancel=image_cancel,
+            points=points, image_reject=image_reject,
             span_lock=span_lock, one_shot=bool(one_shot),
         )
         if points_auto:

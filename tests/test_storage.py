@@ -52,7 +52,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MHZ = 1_000_000
 
 
-def adopted(start=100 * MHZ, step=1 * MHZ, points=11, stop=None, image_cancel=False, mode=Mode.SA) -> AdoptedSweep:
+def adopted(start=100 * MHZ, step=1 * MHZ, points=11, stop=None, image_reject="off", mode=Mode.SA) -> AdoptedSweep:
     stop = start + step * (points - 1) if stop is None else stop
     return AdoptedSweep(
         start_hz=start,
@@ -62,7 +62,7 @@ def adopted(start=100 * MHZ, step=1 * MHZ, points=11, stop=None, image_cancel=Fa
         rbw_preference_hz=180_000,
         mode=mode,
         sg_hz=None,
-        image_cancel=image_cancel,
+        image_reject=image_reject,
         preroll_points=3,
         transient_head_points=0,
         estimated_sweep_s=0.1,
@@ -75,9 +75,10 @@ def pattern(i: int, n: int) -> np.ndarray:
     return ((np.arange(n, dtype=np.int64) * 7 + i * 13) % 2000 + 100).astype(np.uint16)
 
 
-def raw_sweep(i: int, a: AdoptedSweep, t0: float = 1_780_000_000.0) -> RawSweep:
+def raw_sweep(i: int, a: AdoptedSweep, t0: float = 1_780_000_000.0, legacy_two_pass: bool = False) -> RawSweep:
+    """legacy_two_pass は前の2回の形のイメージキャンセル（前の版のファイルから読み戻した RawSweep の形）。"""
     n = a.axis.points
-    if a.image_cancel:
+    if legacy_two_pass:
         b1 = pattern(i, n)
         b0 = pattern(i + 1000, n)
         return RawSweep(a, np.minimum(b0, b1), "gigast_ad_u16", t0 + i, 0.1, raw_b3_0=b0, raw_b3_1=b1)
@@ -216,9 +217,10 @@ class TestH5(TmpCase):
             ov = rec.overview(0, 16, (0, 5))
             self.assertEqual(len(ov.t_start), ov.values.shape[0])
 
-    def test_image_cancel_keeps_both_passes(self):
-        a = adopted(image_cancel=True)
-        r = raw_sweep(3, a)
+    def test_legacy_two_pass_keeps_both_passes(self):
+        # 前の2回の形（読み戻した RawSweep）を保存し直しても、2回とも残る
+        a = adopted(image_reject="fast")
+        r = raw_sweep(3, a, legacy_two_pass=True)
         p = save_snapshot(self.dir / "ic.h5", header(), r)
         with H5Record(p) as rec:
             self.assertEqual(rec.segments[0].raw_layout, LAYOUT_IMAGE_CANCEL)

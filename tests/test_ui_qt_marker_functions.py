@@ -41,7 +41,7 @@ class FunctionBase(UiBase):
 
     def drawn(self):
         """グラフに描いている機能の線: [(角度, 位置)]（横線は 0 度・レベル、縦線は 90 度・周波数）。"""
-        return sorted((int(ln.angle), round(float(ln.value()), 3)) for ln in self.win.marker_layer.function_items)
+        return sorted((int(ln.angle), round(float(ln.value()), 3)) for ln in self.win.marker_layer.function_items if ln.isVisible())
 
     def expected(self):
         """いまの画面のマーカー表の行から作った線（Qt・Web・PNG が同じ行の line を使う）。"""
@@ -191,7 +191,7 @@ class FunctionLinesTest(FunctionBase):
         self.assertEqual(self.drawn(), sorted([(0, round(m["level"] - 3.0, 3)), (90, float(b["left_hz"])),
                                                (90, float(b["right_hz"]))]))
         # つまんで動かせない・XY カーソルとは別（読み値の表に出ない）
-        self.assertTrue(all(not ln.movable for ln in self.win.marker_layer.function_items))
+        self.assertTrue(all(not ln.movable for ln in self.win.marker_layer.function_items if ln.isVisible()))
         self.assertFalse(any(r["kind"] in ("freq_cursor", "level_cursor") for r in self.win.marker_row_list))
         # 掃引ごとに結果と一緒に動く（シミュレータの雑音で交点が毎回少し動く）
         first = self.drawn()

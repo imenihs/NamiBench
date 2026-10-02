@@ -12,6 +12,8 @@
   // 回数を持つ動作と、平均を選んだときの既定の回数（設計F §2。Qt の tab_traces と同じ）
   const COUNTED = ["average", "max_hold", "min_hold"];
   const DEFAULT_AVERAGE_COUNT = 16;
+  // イメージ除去の正確・スピードを選んだときの注意を出しておく長さ（Qt の tab_traces.IC_NOTE_MS と同じ）
+  const IC_NOTE_MS = 10000;
   const call = GSApi.call;
 
   const DB_PER_DIV_CHOICES = [1, 2, 5, 10];
@@ -54,7 +56,7 @@
         selectedRow: null,  // マーカー表で選んだ行（子の行を含む。Delete はこの行だけを消す: G §3.7）
         editCell: null,  // ダブルクリックで直しているセル {id, col, text}
         traceNotes: {},
-        icNote: false,  // イメージキャンセルを入れたときだけ一度出す注意（ずっとは出さない）
+        icNote: false,  // イメージ除去の正確・スピードを選んだときだけ一度出す注意（ずっとは出さない。ツールチップにもある）
         fileHidden: {},
         progress: {},
         waiting: "",
@@ -94,6 +96,11 @@
         return [limit, g ? g.note : ""].filter((t) => t).join("\n");
       },
       sweepReasons() { return this.ui.sweep_reasons || {}; },
+      // イメージ除去の選択（サーバーの screen_model.image_reject_view: 選択肢の文字・いまの値・使えない理由）
+      rejectView() {
+        const s = this.sw || {};
+        return this.ui.image_reject || { items: [], value: s.image_reject, reason: this.sweepReasons.image_reject || null };
+      },
       divChoices() { return DB_PER_DIV_CHOICES; },
       sw() { return (this.st && this.st.sweep) || null; },
       run() { return (this.st && this.st.run) || {}; },
@@ -423,11 +430,14 @@
           }
         }
       },
-      setImageCancel(on) {
-        this.sweep({ image_cancel: on });
+      // イメージ除去を選んだ（設計F §7.4。Qt の tab_traces と同じ）: 同じ値なら何もしない。正確・スピードは注意を
+      // IC_NOTE_MS だけ出し、切るは注意を消す
+      setImageReject(code) {
+        if (code === this.rejectView.value) return;
+        this.sweep({ image_reject: code });
         clearTimeout(this._icNoteTimer);
-        this.icNote = on;
-        if (on) this._icNoteTimer = setTimeout(() => { this.icNote = false; }, 10000);
+        this.icNote = code === "accurate" || code === "fast";
+        if (this.icNote) this._icNoteTimer = setTimeout(() => { this.icNote = false; }, IC_NOTE_MS);
       },
       traceNote(n, text) {
         this.traceNotes = { ...this.traceNotes, [n]: text };
@@ -813,7 +823,9 @@
         // モードのボタン: 5つとも一番長い名前＋左右の余白と枠（同じ幅にそろえる。最小幅は使わない）
         const lb = F.rootPx("--font-l-button");
         const modeW = Math.ceil(Math.max(...X.list("MODES").map((m) => F.textWidth(m[1], lb)))) + 2 * F.rootPx("--btn-pad-x") + 2;
-        F.fitColumns({ a: colA, b: colB });
+        // イメージ除去の欄: 出しうる一番長い選択肢（秒は 999.9 で測る。Qt の screen_model.image_reject_width_samples と同じ）
+        const reject = Object.values(X.dict("IMAGE_REJECT_CHOICES")).map((name) => W("image_reject_item", { name, s: "999.9" }));
+        F.fitColumns({ a: colA, b: colB, reject });
         document.documentElement.style.setProperty("--top-freq-w", freqW + "px");
         document.documentElement.style.setProperty("--mode-w", modeW + "px");
       },

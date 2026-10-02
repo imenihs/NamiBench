@@ -38,8 +38,8 @@ def s11_segment_from_frames(
         raise ReferenceBuildError("オープンとショートの周波数軸がそろわない")
     cond = _frame_conditions(open_frames[0])
     if _frame_conditions(short_frames[0]) != cond:
-        raise ReferenceBuildError("オープンとショートの条件（モード・イメージキャンセル・RBW）がそろわない")
-    mode, image_cancel, rbw_hz = cond
+        raise ReferenceBuildError("オープンとショートの条件（モード・イメージ除去・RBW）がそろわない")
+    mode, image_reject, rbw_hz = cond
     if mode != Mode.S11:
         raise ReferenceBuildError(f"モードが s11 でない（{mode.value}）")
     p_open = average_power(open_frames)
@@ -49,7 +49,7 @@ def s11_segment_from_frames(
     return ReferenceSegment(
         axis=open_frames[0].axis,
         power_w=ref,
-        image_cancel=image_cancel,
+        image_reject=image_reject,
         rbw_hz=rbw_hz,
         connected_at=connected_at,
         taken_at=taken_at,

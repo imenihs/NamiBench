@@ -75,6 +75,16 @@ class Base(unittest.TestCase):
                 self.assertLess(ax.last_hz - ax.step_hz, s.stop_hz)
         for v in (s.start_hz, s.stop_hz, ax.start_hz, ax.step_hz, ax.points):
             self.assertIs(type(v), int)
+        # イメージ除去の区間（設計F §7.2）: 点を順に重ならずに覆い、各区間の要求も制約内
+        for segs in (s.segments, s.accurate_segments):
+            self.assertEqual(sum(g.points for g in segs), ax.points)
+            pos = 0
+            for g in segs:
+                self.assertEqual(g.point0, pos)
+                pos += g.points
+                self.assertGreaterEqual(ax.start_hz + (g.point0 - g.preroll_points) * ax.step_hz, MIN_HZ)
+                self.assertLessEqual(g.points + g.preroll_points, 12500)
+        self.assertEqual(s.preroll_points, s.segments[0].preroll_points)
 
 
 class TestDefault(Base):
@@ -727,22 +737,23 @@ class TestRbwAndMode(Base):
 
 class TestEstimate(Base):
     def test_estimate_and_doubling(self):
-        # GigaSt の既定はイメージキャンセル ON（設計F §4）なので、1回分の見積もりは OFF にして比べる
-        s = self.req(self.at(1000 * MHZ, 1100 * MHZ), image_cancel=False)
+        # GigaSt の初期値はスピード（設計F §7.3）なので、1回分の見積もりはなしにして比べる。範囲は帯の中
+        s = self.req(self.at(500 * MHZ, 600 * MHZ), image_reject="off")
         first, pp = design_timing(s.axis.step_hz, s.rbw_hz)
         one = first + (s.axis.points + s.preroll_points) * pp
         self.assertAlmostEqual(s.estimated_sweep_s, one)
         self.assertEqual(s.preroll_points, math.ceil(0.030 / pp))
-        # イメージキャンセル ON は b3=0・1・0・1 の4回で1画面（設計F §6 の 4）
-        self.assertAlmostEqual(self.req(s, image_cancel=True).estimated_sweep_s, 4 * one)
+        # スピードは2回、正確は帯の中なので4回で1画面（設計F §7.1）
+        self.assertAlmostEqual(self.req(s, image_reject="fast").estimated_sweep_s, 2 * one)
+        self.assertAlmostEqual(self.req(s, image_reject="accurate").estimated_sweep_s, 4 * one)
         self.assertAlmostEqual(self.req(s, mode=Mode.NF).estimated_sweep_s, 2 * one)
-        # NF は HOT/COLD の2回だけ（イメージキャンセルの設定があっても機器の層は4回にしない）
-        nf_ic = self.req(s, mode=Mode.NF, image_cancel=True)
-        self.assertAlmostEqual(nf_ic.estimated_sweep_s, 2 * one)
+        # NF は HOT/COLD の2回だけ（イメージ除去の選択によらない: 設計F §7.1）
+        nf_acc = self.req(s, mode=Mode.NF, image_reject="accurate")
+        self.assertAlmostEqual(nf_acc.estimated_sweep_s, 2 * one)
 
-    def test_image_cancel_default_on_for_gigast(self):
-        # SA でのイメージキャンセルの初期値は ON（設計F §4。2026-10-01 ユーザー決定・T16）
-        self.assertTrue(self.m.default().image_cancel)
+    def test_image_reject_default_fast_for_gigast(self):
+        # イメージ除去の初期値はスピード（設計F §7.3。2026-10-02 ユーザー決定。プロファイル image_reject.default）
+        self.assertEqual(self.m.default().image_reject, "fast")
 
 
 class TestInvariant(Base):
@@ -775,7 +786,7 @@ class TestInvariant(Base):
             elif kind == "rbw":
                 r = SweepRequest(rbw_preference_hz=rnd.choice((180 * KHZ, 30 * KHZ, 15 * KHZ)))
             else:
-                r = SweepRequest(mode=rnd.choice(list(Mode)), image_cancel=rnd.choice((True, False)))
+                r = SweepRequest(mode=rnd.choice(list(Mode)), image_reject=rnd.choice(("accurate", "fast", "off")))
             prev_lock = cur.span_lock_hz
             cur = self.m.apply(r, cur)
             self.assertDeviceOk(cur)

@@ -7,8 +7,10 @@
   1掃引の確定は最悪 140ms かかりうる（`調査/保存形式_ベンチマーク.md`）ので、通信と画面を待たせない
 - 表: meta（キーと値）・segments（区間の番号と属性の JSON）・sweeps（番号・区間・区間の中の番号・開始時刻・
   raw・raw2）・overview_<k>（連続する k 掃引ごとの最大値。k が揃った塊だけを、その掃引と同じトランザクションで書く）
-- raw2 は持ち方ごとの残りの生の値: イメージキャンセル（4回）は b3=0・1・0・1 の4回を続けたもの（raw は合わせた
-  採用する値: 設計F §6）、前の2回の形のイメージキャンセルは b3=0 の回（raw は b3=1 の回）、NF は COLD（raw は HOT）
+- raw2 は持ち方ごとの残りの生の値: イメージ除去は区間ごとの [回数, 点数] を区間の順に平らに続けたもの（raw は
+  区間ごとに回を合わせた採用する値: 設計F §7.3。区間の並びは区間の属性 raw_segments）、前の4回の形は
+  b3=0・1・0・1 の4回を続けたもの、前の2回の形のイメージキャンセルは b3=0 の回（raw は b3=1 の回）、
+  NF は COLD（raw は HOT）
 - BLOB の型は区間の生の値の形（raw_encoding: h5file.RAW_ENCODINGS）で決まる。GigaSt の AD 値は uint16、
   RTL-SDR のリニアの電力は float32（値の無い点は NaN。概観の最大値は NaN を除いて取る）
 - 記録を止めたら HDF5 へまとめ、まとめ終わってから作業ファイルを消す。まとめる前に落ちたものは
@@ -33,7 +35,9 @@ import numpy as np
 
 from ..types import Quantity, RawSweep, ValueKind
 from . import ProgressFn, StorageError, WriterThread, dumps, remove_quietly
+from . import raw_segments as rs
 from .h5file import (
+    LAYOUT_IMAGE_REJECT,
     OVERVIEW_LEVELS,
     FileHeader,
     OverviewBlock,
@@ -43,7 +47,7 @@ from .h5file import (
     SegmentSource,
     TraceData,
     adopted_values,
-    passes_of,
+    raw2_tail,
     segment_meta_for,
     split_raw,
     write_h5,
@@ -124,14 +128,13 @@ def _to_blob(a: np.ndarray, dtype: np.dtype) -> bytes:
     return np.ascontiguousarray(a, dtype=np.dtype(dtype).newbyteorder("<")).tobytes()
 
 
-def _from_blob(b: bytes, points: int, dtype: np.dtype, passes: Optional[int] = None) -> np.ndarray:
-    """BLOB を [点]（passes が None）か [回, 点] に戻す。"""
+def _from_blob(b: bytes, shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
+    """BLOB を shape（[点]・[回, 点]・イメージ除去の平らな1本）に戻す。"""
     arr = np.frombuffer(b, dtype=np.dtype(dtype).newbyteorder("<"))
-    expected = points if passes is None else points * passes
+    expected = int(np.prod(shape))
     if arr.shape[0] != expected:
         raise StorageError("corrupt_sweep", {"points": int(arr.shape[0]), "expected": expected})
-    arr = arr.astype(dtype)
-    return arr if passes is None else arr.reshape(passes, points)
+    return arr.astype(dtype).reshape(shape)
 
 
 # ---------------------------------------------------------------------------
@@ -475,14 +478,21 @@ class RecordingReader:
         dt = s.dtype
         t = np.array([r[1] for r in rows], dtype=np.float64)
         raw = np.empty((n, i1 - i0), dtype=dt)
-        k = passes_of(s.raw_layout)
-        shape2 = (n, i1 - i0) if k is None else (n, k, i1 - i0)
-        raw2 = np.empty(shape2, dtype=dt) if n and rows[0][3] is not None else None
+        tail = raw2_tail(s)
+        full2 = np.empty((n,) + tail, dtype=dt) if tail is not None and n and rows[0][3] is not None else None
         for j, r in enumerate(rows):
-            raw[j] = _from_blob(r[2], s.points, dt)[i0:i1]
-            if raw2 is not None:
-                raw2[j] = _from_blob(r[3], s.points, dt, k)[..., i0:i1]
+            raw[j] = _from_blob(r[2], (s.points,), dt)[i0:i1]
+            if full2 is not None:
+                full2[j] = _from_blob(r[3], tail, dt)
         s0 = int(rows[0][0]) if n else 0
+        if s.raw_layout == LAYOUT_IMAGE_REJECT:
+            # 区間ごとの回を [i0, i1) に入る部分だけにする（区間の並びも切る: raw_segments.py）
+            sub = rs.clip(s.raw_segments or [], i0, i1)
+            raw2 = None
+            if full2 is not None:
+                raw2, sub = rs.clip_flat(full2, s.raw_segments or [], i0, i1)
+            return RawBlock(s.index, s.raw_layout, s0, i0, t, s.freqs(i0, i1), raw, raw2, sub)
+        raw2 = None if full2 is None else full2[..., i0:i1]
         return RawBlock(s.index, s.raw_layout, s0, i0, t, s.freqs(i0, i1), raw, raw2)
 
     def overview(self, seg: int, k: int, points: Optional[tuple[int, int]] = None) -> OverviewBlock:
@@ -496,7 +506,7 @@ class RecordingReader:
         ).fetchall()
         vals = np.empty((len(rows), i1 - i0), dtype=s.dtype)
         for j, r in enumerate(rows):
-            vals[j] = _from_blob(r[1], s.points, s.dtype)[i0:i1]
+            vals[j] = _from_blob(r[1], (s.points,), s.dtype)[i0:i1]
         t = np.array([r[0] for r in rows], dtype=np.float64)
         return OverviewBlock(s.index, k, i0, t, s.freqs(i0, i1), vals)
 

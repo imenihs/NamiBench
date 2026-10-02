@@ -96,11 +96,34 @@ def rbw_window_of(st: dict, hz: Optional[int]) -> Optional[str]:
 
 
 def sweep_reasons(st: dict) -> dict:
-    """掃引の欄のうち、この機器では使えないものと理由（U-08: 消さずに無効にして理由を出す）。"""
+    """掃引の欄のうち、いまの機器・条件では使えないものと理由（U-08: 消さずに無効にして理由を出す）。
+
+    イメージ除去は RTL-SDR・NF・ゼロスパンでは選べない（設計F §7.1）。
+    """
     if is_fft(st):
         return {"points": RTL_LABELS["points_fft"], "zero_span": RTL_LABELS["zero_span_fft"],
-                "image_cancel": RTL_LABELS["image_cancel_fft"]}
-    return {"points": None, "zero_span": None, "image_cancel": None}
+                "image_reject": RTL_LABELS["image_reject_fft"]}
+    sw = st.get("sweep") or {}
+    reject = None
+    if sw.get("mode") == "nf":
+        reject = texts.REASON_TEXTS["image_reject_nf"]
+    elif sw.get("step_hz") == 0:
+        reject = texts.REASON_TEXTS["image_reject_zero_span"]
+    return {"points": None, "zero_span": None, "image_reject": reject}
+
+
+def image_reject_view(st: dict) -> dict:
+    """イメージ除去の選択（設計F §7.4。Qt と Web が同じものを出す）: 選択肢（文字は名前と、いまの条件での1画面の
+    見積もり）・いまの選択・選べないときの理由。"""
+    sw = st.get("sweep") or {}
+    est = sw.get("image_reject_estimates") or {}
+    items = [{"code": c, "text": texts.image_reject_item(c, est.get(c))} for c in texts.IMAGE_REJECT_CHOICES]
+    return {"items": items, "value": sw.get("image_reject"), "reason": sweep_reasons(st)["image_reject"]}
+
+
+def image_reject_width_samples() -> list[str]:
+    """選択肢の一番長い文字の見本（ドロップダウンの幅を秒の桁で動かさないため。1画面は長くても数十秒: 設計F §7.4）。"""
+    return [texts.image_reject_item(c, 999.9) for c in texts.IMAGE_REJECT_CHOICES]
 
 
 def mode_reasons(st: dict) -> dict:
@@ -432,6 +455,7 @@ def ui_view(st: dict) -> dict:
         "cond": texts.condition_lines(st),
         "rbw": rbw_groups(st),
         "sweep_reasons": sweep_reasons(st),
+        "image_reject": image_reject_view(st),  # イメージ除去の選択肢（設計F §7.4）
         "mode_reasons": mode_reasons(st),
         "fft": is_fft(st),
         "rtl": rtl_view(st),

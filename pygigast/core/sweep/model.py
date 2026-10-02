@@ -16,7 +16,8 @@ import math
 import re
 from typing import Callable, Optional
 
-from ..types import Adjustment, AdoptedSweep, Alternative, FreqAxis, Mode, SweepRequest
+from ..types import Adjustment, AdoptedSweep, Alternative, FreqAxis, Mode, SweepRequest, SweepSegment
+from . import image_reject as ir
 
 # (step_hz, rbw_hz, mode) → (初バイトまでの秒, 1点あたりの秒)。機器の層が作る（設計B §7.2）
 TimingFn = Callable[[int, int, Mode], tuple[float, float]]  # (step_hz, rbw_hz, mode)
@@ -25,9 +26,6 @@ FftTimingFn = Callable[[FreqAxis, int], float]
 
 SWEEP_STEPPED = "stepped"
 SWEEP_FFT = "fft"
-
-# イメージキャンセル ON の1画面の掃引の回数（b3=0・1・0・1: 設計F §6 の 1。機器の層の measure と同じ）
-IMAGE_CANCEL_PASSES = 4
 
 # 周波数の欄の名前（SweepRequest.edited に入れる名前。Adjustment.field と同じ）
 START = "start_hz"
@@ -113,8 +111,8 @@ class SweepModel:
         self._kind = profile.get("sweep_kind", SWEEP_STEPPED)
         if self._kind not in (SWEEP_STEPPED, SWEEP_FFT):
             raise ValueError(f"知らない sweep_kind: {self._kind}")
-        # イメージキャンセルの既定（機種のプロファイル。GigaSt は ON: 設計F §4・T16）
-        self._profile_image_cancel_default = bool(profile.get("image_cancel_default", False))
+        # イメージ除去の初期値・帯・帯の中の回数（機種のプロファイル。GigaSt はスピード: 設計F §7.1・§7.3）
+        self._reject = ir.RejectProfile(profile)
         f = profile["freq"]
         self._unit = int(f["unit_hz"])
         self._min = int(f["min_hz"])
@@ -190,13 +188,12 @@ class SweepModel:
 
     def default(self) -> AdoptedSweep:
         """既定の条件: SA・機種の既定の範囲（無ければ周波数範囲いっぱい）・点数は自動・RBW は既定・
-        イメージキャンセルは機種の既定（GigaSt は ON: 設計F §4。生の値に掃引ごとに位置の変わる山が出て、
-        2回の min でほぼ消えるため。T16）。"""
+        イメージ除去は機種の初期値（GigaSt はスピード: 設計F §7.3。2026-10-02 ユーザー決定）。"""
         adj = _Adj()
         return self._finish(
             start=self._default_start, stop=self._default_stop, points_setting=None,
             rbw_pref=self._rbw_default, mode=Mode.SA, sg_hz=None,
-            image_cancel=bool(self._profile_image_cancel_default),
+            image_reject=self._reject.default if self._kind == SWEEP_STEPPED else ir.OFF,
             prev_rbw=None, rbw_requested=False, adj=adj,
         )
 
@@ -205,9 +202,9 @@ class SweepModel:
         adj = _Adj()
 
         mode = current.mode if request.mode is None else Mode(request.mode)
-        image_cancel = current.image_cancel if request.image_cancel is None else bool(request.image_cancel)
+        image_reject = current.image_reject if request.image_reject is None else ir.check(request.image_reject)
         if self._kind == SWEEP_FFT:
-            mode, image_cancel = self._fft_mode(mode, image_cancel, adj)
+            mode, image_reject = self._fft_mode(mode, image_reject, adj)
 
         # RBW の好み（設計C §5.4）。選択肢に無い値は受け付けない
         rbw_pref = current.rbw_preference_hz
@@ -249,22 +246,22 @@ class SweepModel:
 
         return self._finish(
             start=start, stop=stop, points_setting=points_setting,
-            rbw_pref=rbw_pref, mode=mode, sg_hz=sg_hz, image_cancel=image_cancel,
+            rbw_pref=rbw_pref, mode=mode, sg_hz=sg_hz, image_reject=image_reject,
             prev_rbw=current.rbw_hz, rbw_requested=request.rbw_preference_hz is not None, adj=adj,
             span_lock_hz=lock_hz, alternative=alternative,
         )
 
     # ------------------------------------------------------------------ 点数・信号源
 
-    def _fft_mode(self, mode: Mode, image_cancel: bool, adj: _Adj) -> tuple[Mode, bool]:
-        """sweep_kind "fft" で測れないモード・イメージキャンセルは、測れる形に直して知らせる。"""
+    def _fft_mode(self, mode: Mode, image_reject: str, adj: _Adj) -> tuple[Mode, str]:
+        """sweep_kind "fft" で測れないモード・イメージ除去は、測れる形に直して知らせる。"""
         if mode not in self._measurements:
             adj.add("mode", mode, self._measurements[0], "mode_unsupported")
             mode = self._measurements[0]
-        if image_cancel:
-            adj.add("image_cancel", True, False, "image_cancel_unsupported")
-            image_cancel = False
-        return mode, image_cancel
+        if image_reject != ir.OFF:
+            adj.add("image_reject", image_reject, ir.OFF, "image_reject_unsupported")
+            image_reject = ir.OFF
+        return mode, image_reject
 
     def _points_setting(self, request: SweepRequest, current: AdoptedSweep, adj: _Adj) -> Optional[int]:
         """利用者が選んだ点数（None は自動）。None の要求は前の値を引き継ぎ、POINTS_AUTO で自動へ戻す。"""
@@ -646,7 +643,27 @@ class SweepModel:
         n = max(n, 0)
         return n, min(want - n, points)
 
-    def _finish(self, *, start, stop, points_setting, rbw_pref, mode, sg_hz, image_cancel,
+    def _plan(self, choice: str, axis: FreqAxis, mode: Mode, first_s: float,
+              per_point_s: float) -> tuple[tuple[SweepSegment, ...], float]:
+        """選択ごとの区間の並びと1画面の見積もり秒（設計F §7.2・§7.3）。
+
+        区間ごとに前置きを置き（設計C §5.6）、回数分を続けて送る。見積もりは全部の回と区間ごとの前置きを含む。
+        NF（HOT/COLD の2回）とゼロスパンは選択によらずイメージ除去をしない（設計F §7.1）。
+        """
+        if mode == Mode.NF or axis.step_hz == 0:
+            choice = ir.OFF
+        segs = []
+        est = 0.0
+        for p0, n, passes, inside in ir.passes_by_region(choice, axis, self._reject):
+            pre, head = self._preroll(axis.start_hz + p0 * axis.step_hz, axis.step_hz, n, per_point_s)
+            segs.append(SweepSegment(point0=p0, points=n, b3=ir.b3_order(passes), preroll_points=pre,
+                                     transient_head_points=head, in_band=inside))
+            est += passes * (first_s + (n + pre) * per_point_s)
+        if mode == Mode.NF:
+            est *= 2  # HOT/COLD の2回（b3 は 1 に固定: 設計B §7.2）
+        return tuple(segs), est
+
+    def _finish(self, *, start, stop, points_setting, rbw_pref, mode, sg_hz, image_reject,
                 prev_rbw, rbw_requested, adj: _Adj, span_lock_hz: Optional[int] = None,
                 alternative: Optional[Alternative] = None) -> AdoptedSweep:
         if self._kind == SWEEP_FFT:
@@ -671,34 +688,36 @@ class SweepModel:
             adj.add("rbw_hz", prev_rbw, rbw, "rbw_restored")
 
         first_s, per_point_s = self._timing(step, rbw, mode)
-        preroll, head = self._preroll(start, step, points, per_point_s)
-        est = first_s + (points + preroll) * per_point_s
-        # 1画面の掃引の回数（機器の層の measure と同じ並び）: NF は HOT/COLD の2回（b3 は 1 に固定し、
-        # イメージキャンセルは使わない）、イメージキャンセル ON は b3=0・1・0・1 の4回（設計F §6 の 4）
-        if mode == Mode.NF:
-            est *= 2
-        elif image_cancel:
-            est *= IMAGE_CANCEL_PASSES
-
         axis = FreqAxis(start_hz=start, step_hz=step, points=points)
-        self._check_device(axis, preroll)
+        # 3つの選択の区間と見積もり（画面が選択肢に出す: 設計F §7.3）。送るのはいまの選択の区間
+        plans = {c: self._plan(c, axis, mode, first_s, per_point_s) for c in ir.CHOICES}
+        segs, est = plans[image_reject]
+        for plan, _est in plans.values():
+            self._check_device(axis, plan)
         return AdoptedSweep(
             start_hz=start, stop_hz=stop, axis=axis, rbw_hz=rbw, rbw_preference_hz=rbw_pref,
-            mode=mode, sg_hz=sg_hz, image_cancel=image_cancel, preroll_points=preroll,
-            transient_head_points=head, estimated_sweep_s=est, adjustments=adj.items(),
+            mode=mode, sg_hz=sg_hz, image_reject=image_reject, preroll_points=segs[0].preroll_points,
+            transient_head_points=segs[0].transient_head_points, estimated_sweep_s=est, adjustments=adj.items(),
             points_setting=points_setting, tail_gap=tail_gap,
             warnings=self._warnings(rbw, span, step),
             span_lock_hz=span_lock_hz, alternative=alternative,
             **dict(zip(("rbw_usable_hz", "rbw_limit"), self._rbw_usable(mode, span))),
+            segments=segs,
+            image_reject_estimates=tuple((c, plans[c][1]) for c in ir.CHOICES),
+            accurate_segments=plans[ir.ACCURATE][0],
         )
 
-    def _check_device(self, axis: FreqAxis, preroll: int) -> None:
+    def _check_device(self, axis: FreqAxis, segments: tuple[SweepSegment, ...]) -> None:
         """機器へ送る条件がプロファイルの制約に収まっているか（ここで外れたらモデルの誤り）。"""
-        dev_start = axis.start_hz - preroll * axis.step_hz
-        if not (self._min <= dev_start and axis.last_hz <= self._max):
-            raise AssertionError(f"機器へ送る範囲が外れた: {dev_start}〜{axis.last_hz}")
-        if not (1 <= axis.points + preroll <= self._points_device_max):
-            raise AssertionError(f"機器へ送る点数が外れた: {axis.points + preroll}")
+        if sum(s.points for s in segments) != axis.points:
+            raise AssertionError(f"区間の点数の和が軸と合わない: {[s.points for s in segments]} / {axis.points}")
+        for s in segments:
+            dev_start = axis.start_hz + (s.point0 - s.preroll_points) * axis.step_hz
+            last = axis.start_hz + (s.point0 + s.points - 1) * axis.step_hz
+            if not (self._min <= dev_start and last <= self._max):
+                raise AssertionError(f"機器へ送る範囲が外れた: {dev_start}〜{last}")
+            if not (1 <= s.points + s.preroll_points <= self._points_device_max):
+                raise AssertionError(f"機器へ送る点数が外れた: {s.points + s.preroll_points}")
         if axis.step_hz > self._step_max or axis.step_hz % self._unit or axis.start_hz % self._unit:
             raise AssertionError(f"Step・Start が制約の外: {axis.step_hz}, {axis.start_hz}")
 
@@ -741,7 +760,7 @@ class SweepModel:
         usable = tuple(r for r in self._rbw_choices if self._fft_points(span, r)[1] <= self._points_max)
         return AdoptedSweep(
             start_hz=start, stop_hz=stop, axis=axis, rbw_hz=rbw, rbw_preference_hz=rbw_pref,
-            mode=mode, sg_hz=sg_hz, image_cancel=False, preroll_points=0,
+            mode=mode, sg_hz=sg_hz, image_reject=ir.OFF, preroll_points=0,
             transient_head_points=0, estimated_sweep_s=est, adjustments=adj.items(),
             points_setting=None, tail_gap=tail_gap, warnings=(),
             span_lock_hz=span_lock_hz, alternative=alternative,

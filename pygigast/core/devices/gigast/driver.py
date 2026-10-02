@@ -1,6 +1,6 @@
 """GigaSt v5 の機器の口（設計B §7.1〜§7.3）。
 
-measure() の中で、前置きの切り落とし・イメージキャンセルの4回の掃引と合わせ方（設計F §6）・NF の HOT/COLD の組を行う。
+measure() の中で、前置きの切り落とし・イメージ除去の区間ごとの回と合わせ方（設計F §7）・NF の HOT/COLD の組を行う。
 機器ごとの癖はここに閉じ、外へは生の AD 値（uint16）と、それをどう読むかの encoding だけを返す。
 
 制御のスレッドへの組み込み（切れたら状態を出して再接続を待つ）は呼ぶ側が行う。そのための部品として
@@ -20,13 +20,15 @@ from ...types import (
     DeviceDisconnected,
     DeviceError,
     DeviceIdentity,
+    InvalidSweep,
     Mode,
     PortInUse,
+    RawSegment,
     RawSweep,
     SweepDiscarded,
 )
 from ..base import Device
-from . import image_cancel, protocol
+from . import image_reject, protocol
 from .protocol import DeviceSweep, Limits
 from .traffic_log import TrafficLog
 from .transport import Exchange, PortInfo, Transport, discover, find_by_serial, open_serial
@@ -39,7 +41,7 @@ PROBE_START_HZ = 495_000_000
 PROBE_STEP_HZ = 20_000
 PROBE_POINTS = 500
 PROBE_RBW_HZ = 180_000
-PROBE_MODE_BITS = protocol.MODE_B3  # SA・イメージキャンセル OFF と同じ b3=1（信号源は出さない）
+PROBE_MODE_BITS = protocol.MODE_B3  # SA・イメージ除去なしと同じ b3=1（信号源は出さない）
 
 
 def timing_fn(profile: dict) -> Callable[..., tuple[float, float]]:
@@ -47,18 +49,26 @@ def timing_fn(profile: dict) -> Callable[..., tuple[float, float]]:
     return protocol.timing_fn(profile)
 
 
-def _passes(sweep: AdoptedSweep) -> list[tuple[str, int, int]]:
-    """1回の measure で送る要求の並び (名前, b3, b2)。
+def _requests(sweep: AdoptedSweep) -> list[tuple[str, Optional[int], int, int]]:
+    """1回の measure で送る要求の並び (名前, 区間の番号, b3, b2)。
 
-    - NF: b2 を 1/0（HOT/COLD）。b3 は 1（イメージキャンセルは使わない）
-    - イメージキャンセル ON: b3=0 → b3=1 → b3=0 → b3=1 の4回（設計F §6 の 1）
-    - OFF: 常に b3=1（旧アプリの校正ファイルのレベルに合う: 設計B §7.2）
+    - NF: b2 を 1/0（HOT/COLD）。b3 は 1（イメージ除去は使わない）。軸の全部を1つの要求で送る
+    - それ以外: 掃引条件モデルが決めた区間ごとに、区間の b3 の並びの回数分を続けて送る（設計F §7.2: 区間 1 を
+      N1 回 → 区間 2 を N2 回…）。なしは b3=1 の1回（旧アプリの校正ファイルのレベルに合う: 設計B §7.2）
+    名前は「s<区間>_b3_<b3><同じ b3 の何回目 a・b>」（送受信の記録と捨てた知らせに出る）。
     """
     if sweep.mode == Mode.NF:
-        return [("hot", 1, 1), ("cold", 1, 0)]
-    if sweep.image_cancel:
-        return [(name, b3, 0) for name, b3 in zip(image_cancel.PASS_NAMES, image_cancel.PASS_B3)]
-    return [("b3_1", 1, 0)]
+        return [("hot", None, 1, 1), ("cold", None, 1, 0)]
+    if not sweep.segments:
+        raise InvalidSweep("送る区間が無い（掃引条件モデルを通していない条件）")
+    out: list[tuple[str, Optional[int], int, int]] = []
+    for k, seg in enumerate(sweep.segments):
+        seen: dict[int, int] = {}
+        for b3 in seg.b3:
+            j = seen.get(b3, 0)
+            seen[b3] = j + 1
+            out.append((f"s{k}_b3_{b3}{chr(ord('a') + j)}", k, b3, 0))
+    return out
 
 
 def _cancelled(cancel: Optional[threading.Event]) -> bool:
@@ -84,15 +94,18 @@ class SweepRunner:
 
         - 送る前に全部の要求を検証する（範囲外は1つも送らずに InvalidSweep）
         - cancel が立っていたら次の要求を送らない。送った要求は終わりまで受けてから cancelled で捨てる
-        - 組（イメージキャンセルの4回・NF の2回）のどれかが捨てられたら組ごと捨てる（設計F §6 の 5）
+        - 1画面の要求（イメージ除去の全部の区間の回・NF の2回）のどれかが捨てられたら画面ごと捨てる（設計F §7.2）
         """
-        plan = [(name, protocol.device_sweep(sweep, self._profile, b3, b2)) for name, b3, b2 in _passes(sweep)]
+        plan = []
+        for name, k, b3, b2 in _requests(sweep):
+            seg = None if k is None else sweep.segments[k]
+            plan.append((name, k, protocol.device_sweep(sweep, self._profile, b3, b2, seg)))
         if _cancelled(cancel):
             raise SweepDiscarded("cancelled", {"sent": 0})
         started_at = time.time()
         t0 = time.monotonic()
         got: dict[str, np.ndarray] = {}
-        for i, (name, ds) in enumerate(plan):
+        for i, (name, k, ds) in enumerate(plan):
             if i > 0 and _cancelled(cancel):
                 raise SweepDiscarded("cancelled", {"sent": i})
             try:
@@ -104,13 +117,14 @@ class SweepRunner:
                     e.detail.setdefault("passes", len(plan))
                 raise
             data = np.frombuffer(ex.response, dtype="<u2", count=ds.points)
-            # 前置きの点を切り落とす（設計C §5.6）。uint16 のまま持つ（換算は機器の口の外: 設計D）
-            got[name] = data[sweep.preroll_points:].astype(np.uint16)
+            # 前置きの点を切り落とす（設計C §5.6。区間ごとの前置き: 設計F §7.2）。uint16 のまま持つ（換算は機器の口の外: 設計D）
+            pre = sweep.preroll_points if k is None else sweep.segments[k].preroll_points
+            got[name] = data[pre:].astype(np.uint16)
         # 掃引は最後まで受けた。そのあとで取り消しが分かったら結果を捨てる（設計B §3）
         if _cancelled(cancel):
             raise SweepDiscarded("cancelled", {"sent": len(plan)})
         duration = time.monotonic() - t0
-        first_ds = plan[0][1]
+        first_ds = plan[0][2]
         extra = {
             "sample": first_ds.sample,
             "device_points": first_ds.points,
@@ -127,21 +141,17 @@ class SweepRunner:
         )
         if sweep.mode == Mode.NF:
             return RawSweep(raw=got["hot"], raw_hot=got["hot"], raw_cold=got["cold"], **common)
-        if sweep.image_cancel:
-            # 4回を合わせた値を採る（同じ b3 の2回 → b3 の両側の min: 設計F §6 の 2）。
-            # 4回の生の値はどれも返す（保存する: 設計F §6 の 3）
-            passes = np.stack([got[n] for n in image_cancel.PASS_NAMES])
-            extra["pass_b3"] = list(image_cancel.PASS_B3)
-            return RawSweep(
-                raw=image_cancel.combine(
-                    passes,
-                    image_cancel.noise_floor_ad(self._profile, sweep.rbw_hz),
-                    image_cancel.counts_per_db(self._profile),
-                ),
-                raw_passes=passes,
-                **common,
-            )
-        return RawSweep(raw=got["b3_1"], **common)
+        # 区間ごとに回を合わせ、区間を並べて1画面にする（設計F §7.1・§7.2）。区間ごとの生の値はどれも返す（保存する: §7.3）
+        parts: list[np.ndarray] = []
+        segs: list[RawSegment] = []
+        for k, seg in enumerate(sweep.segments):
+            vals = np.stack([got[name] for name, kk, _ds in plan if kk == k])
+            parts.append(image_reject.combine(vals, seg.b3, sweep.rbw_hz, self._profile))
+            segs.append(RawSegment(point0=seg.point0, b3=tuple(seg.b3), values=vals))
+        raw = np.concatenate(parts).astype(np.uint16)
+        if all(s.passes == 1 for s in segs):
+            return RawSweep(raw=raw, **common)  # なし: b3=1 の1回だけ（生の値はそのまま raw）
+        return RawSweep(raw=raw, raw_segments=tuple(segs), **common)
 
 
 class GigaStDevice(SweepRunner, Device):

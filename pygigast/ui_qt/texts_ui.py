@@ -143,6 +143,9 @@ REASON_TEXTS = {
     "not_listening": "聞いていません",
     "no_data_to_save": "保存する値がありません（掃引してください）",
     "part_window": "別ウィンドウの中からは開けません",
+    # イメージ除去を選べないとき（設計F §7.1。NF は HOT/COLD の2回だけ・ゼロスパンは点が時刻の並び）
+    "image_reject_nf": "NF ではイメージ除去を使いません",
+    "image_reject_zero_span": "ゼロスパンではイメージ除去を使いません",
 }
 
 # 機器の範囲の外・意味の無い区間の帯の説明（設計J §4.8）。グラフの帯・PNG の注意・マーカーの読み値の注意で同じ文
@@ -285,7 +288,7 @@ RTL_LABELS = {
     "needs_manual_gain": "AGC の間は利得が分からないので、レベルの校正は利得を手動にしてから行います",
     "points_fft": "この機器の点数は RBW と Span で決まります",
     "zero_span_fft": "この機器はゼロスパンを持ちません",
-    "image_cancel_fft": "この機器はイメージキャンセルを持ちません",
+    "image_reject_fft": "この機器はイメージ除去を持ちません",
 }
 
 FIXED_CENTER_CAUSES = {"rtltcp_clients": "rtl_tcp の相手がつながっている", "listening": "聞いている"}

@@ -37,12 +37,12 @@ def db_to_w(db):
     return np.power(10.0, np.asarray(db, dtype=np.float64) / 10.0)
 
 
-def make_frame(start, step, points, power_w, *, mode=Mode.TG, image_cancel=False, rbw=180_000,
+def make_frame(start, step, points, power_w, *, mode=Mode.TG, image_reject="off", rbw=180_000,
                quantity=Quantity.POWER, flags=None):
     axis = FreqAxis(start, step, points)
     adopted = AdoptedSweep(
         start_hz=start, stop_hz=axis.last_hz, axis=axis, rbw_hz=rbw, rbw_preference_hz=rbw,
-        mode=mode, sg_hz=None, image_cancel=image_cancel, preroll_points=0,
+        mode=mode, sg_hz=None, image_reject=image_reject, preroll_points=0,
         transient_head_points=0, estimated_sweep_s=0.1,
     )
     return Frame(
@@ -84,7 +84,7 @@ class TestTakeReference(unittest.TestCase):
 
     def test_mismatched_frames_rejected(self):
         a = make_frame(100 * MHZ, MHZ, 3, np.ones(3))
-        b = make_frame(100 * MHZ, MHZ, 3, np.ones(3), image_cancel=True)
+        b = make_frame(100 * MHZ, MHZ, 3, np.ones(3), image_reject="fast")
         with self.assertRaises(ReferenceBuildError):
             segment_from_frames([a, b], connected_at=CONN, taken_at=1.0)
         c = make_frame(100 * MHZ, MHZ, 3, np.ones(3), mode=Mode.SA)
@@ -109,8 +109,8 @@ class TestTakeReference(unittest.TestCase):
         np.testing.assert_allclose(db[:50], 0.0, atol=1e-9)
         np.testing.assert_allclose(db[50:61], 10.0, atol=1e-9)
         np.testing.assert_allclose(db[61:], 0.0, atol=1e-9)
-        # 違う条件（イメージキャンセルあり）の区間は上書きしない
-        ref.merge(ref_from(100 * MHZ, MHZ, 101, lambda f: np.full(f.shape, -31.0), image_cancel=True))
+        # 違う条件（イメージ除去がスピード）の区間は上書きしない
+        ref.merge(ref_from(100 * MHZ, MHZ, 101, lambda f: np.full(f.shape, -31.0), image_reject="fast"))
         self.assertEqual(len(ref.segments), 4)
 
 
@@ -210,7 +210,8 @@ class TestApply(unittest.TestCase):
 
     def test_condition_mismatch_returns_power_with_reason(self):
         cases = [
-            (dict(image_cancel=True), ap.IMAGE_CANCEL_MISMATCH),
+            (dict(image_reject="fast"), ap.IMAGE_REJECT_MISMATCH),
+            (dict(image_reject="accurate"), ap.IMAGE_REJECT_MISMATCH),
             (dict(rbw=30_000), ap.RBW_MISMATCH),
             (dict(mode=Mode.S11), ap.MODE_MISMATCH),
         ]
@@ -220,13 +221,29 @@ class TestApply(unittest.TestCase):
             self.assertFalse(r.applied, reason)
             self.assertEqual(r.reason, reason)
             self.assertEqual(r.frame.quantity, Quantity.POWER)
-        r = apply(make_frame(100 * MHZ, MHZ, 5, np.ones(5), image_cancel=True), self.ref)
-        self.assertEqual(r.detail["reference_image_cancel"], [False])
+        r = apply(make_frame(100 * MHZ, MHZ, 5, np.ones(5), image_reject="fast"), self.ref)
+        self.assertEqual(r.detail["reference_image_reject"], ["off"])
         fr = make_frame(100 * MHZ, MHZ, 5, np.ones(5))
         self.assertEqual(apply(fr, self.ref, serial="OTHER").reason, ap.SERIAL_MISMATCH)
         self.assertEqual(apply(fr, None).reason, ap.NO_REFERENCE_SELECTED)
         ratio = make_frame(100 * MHZ, MHZ, 5, np.ones(5), quantity=Quantity.RATIO)
         self.assertEqual(apply(ratio, self.ref).reason, ap.NOT_POWER)
+
+    def test_image_reject_must_match_three_ways(self):
+        # 3つの選択のどれで取った基準も、同じ選択の測定にだけ当たる（設計F §7.3・設計E §6.3）
+        for taken in ("accurate", "fast", "off"):
+            ref = new_reference(taken, PROFILE, SERIAL)
+            ref.merge(ref_from(100 * MHZ, MHZ, 5, linear_db, image_reject=taken))
+            for measured in ("accurate", "fast", "off"):
+                r = apply(make_frame(100 * MHZ, MHZ, 5, np.ones(5), image_reject=measured), ref)
+                self.assertEqual(r.applied, taken == measured, (taken, measured))
+
+    def test_zero_span_matches_off_reference(self):
+        # ゼロスパンは選択によらずイメージ除去をしない（設計F §7.1）: なしで取った基準が当たる
+        ref = new_reference("zs", PROFILE, SERIAL)
+        ref.merge(ref_from(100 * MHZ, MHZ, 5, linear_db, image_reject="off"))
+        fr = make_frame(102 * MHZ, 0, 5, np.ones(5), image_reject="fast")
+        self.assertTrue(apply(fr, ref).applied)
 
     def test_power_cycled_flag_and_age(self):
         fr = make_frame(100 * MHZ, MHZ, 5, np.ones(5))
@@ -284,13 +301,15 @@ class TestStore(unittest.TestCase):
         seg = ref_from(MHZ, MHZ, 10, linear_db, kind=KIND_WIDE)
         seg.power_w[3] = np.nan
         ref.merge(seg)
-        ref.merge(ref_from(4 * MHZ + 500_000, 100_000, 5, linear_db, taken_at=2100.0, image_cancel=True))
+        ref.merge(ref_from(4 * MHZ + 500_000, 100_000, 5, linear_db, taken_at=2100.0, image_reject="accurate"))
         with tempfile.TemporaryDirectory() as d:
             p = save_reference(d, ref)
             self.assertEqual(Path(p).suffix, ".h5")
             import h5py
             with h5py.File(p, "r") as f:
-                self.assertEqual(int(f.attrs["version"]), 1)
+                self.assertEqual(int(f.attrs["version"]), 2)
+                self.assertEqual(f["segments/1"].attrs["image_reject"], "accurate")
+                self.assertNotIn("image_cancel", f["segments/1"].attrs)
                 self.assertEqual(f["segments/0"].attrs["start_hz"].dtype, np.int64)
                 self.assertTrue(np.isnan(f["segments/0/power_w"][3]))
             back = load_reference(p)
@@ -300,8 +319,8 @@ class TestStore(unittest.TestCase):
             for a, b in zip(ref.segments, back.segments):
                 self.assertEqual(a.axis, b.axis)
                 np.testing.assert_array_equal(a.power_w, b.power_w)
-                self.assertEqual((a.image_cancel, a.rbw_hz, a.connected_at, a.taken_at, a.kind),
-                                 (b.image_cancel, b.rbw_hz, b.connected_at, b.taken_at, b.kind))
+                self.assertEqual((a.image_reject, a.rbw_hz, a.connected_at, a.taken_at, a.kind),
+                                 (b.image_reject, b.rbw_hz, b.connected_at, b.taken_at, b.kind))
             other = new_reference("B", PROFILE, SERIAL)
             other.merge(ref_from(MHZ, MHZ, 3, linear_db, taken_at=5000.0))
             save_reference(d, other)
@@ -310,6 +329,26 @@ class TestStore(unittest.TestCase):
             self.assertEqual([i.name for i in infos], ["B", "ケーブルA"])
             self.assertTrue(delete_reference(d, other.ref_id))
             self.assertEqual([i.name for i in list_references(d)], ["ケーブルA"])
+
+    def test_old_version_image_cancel_is_read_as_fast_or_off(self):
+        # 前の版（版 1）の基準の区間の image_cancel: true → "fast"、false → "off"（設計F §7.3）
+        import h5py
+
+        ref = new_reference("old", PROFILE, SERIAL)
+        ref.merge(ref_from(MHZ, MHZ, 3, linear_db, image_reject="fast"))
+        ref.merge(ref_from(10 * MHZ, MHZ, 3, linear_db, image_reject="off"))
+        with tempfile.TemporaryDirectory() as d:
+            p = save_reference(d, ref)
+            with h5py.File(p, "r+") as f:
+                f.attrs["version"] = 1
+                for key, ic in (("0", True), ("1", False)):
+                    g = f["segments"][key]
+                    del g.attrs["image_reject"]
+                    g.attrs["image_cancel"] = ic
+            back = load_reference(p)
+            self.assertEqual([s.image_reject for s in back.segments], ["fast", "off"])
+            # 当てるときも新しい選択で一致を見る
+            self.assertTrue(apply(make_frame(MHZ, MHZ, 3, np.ones(3), image_reject="fast"), back).applied)
 
     def test_bad_files(self):
         with tempfile.TemporaryDirectory() as d:

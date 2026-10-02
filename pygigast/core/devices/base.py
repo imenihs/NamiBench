@@ -34,7 +34,7 @@ class Device(abc.ABC):
     def measure(self, sweep: AdoptedSweep, cancel: Optional[threading.Event] = None) -> RawSweep:
         """1回測って生の値を返す。
 
-        - 前置きの切り落とし・イメージキャンセルの2回掃引と min・NF の HOT/COLD の組はこの中で行う
+        - 前置きの切り落とし・イメージ除去の区間ごとの回と合わせ方・NF の HOT/COLD の組はこの中で行う
         - 使えない掃引は SweepDiscarded、切れたら DeviceDisconnected、受け付けない条件は InvalidSweep
         - cancel が立ったら、いまの掃引の終わりを待ってから SweepDiscarded("cancelled") で戻る
           （掃引の途中で次の要求を送らない: 設計B §3・T6）

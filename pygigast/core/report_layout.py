@@ -17,7 +17,8 @@ I §3.1 の「配置（帯の項目・順・文字の大きさ）はコアのデ
       "device": {"model": "GigaSt v5", "serial": "..."},
       "app_version": "0.1.0",
       "mode": "スペクトラムアナライザ",
-      "conditions": {"start_hz", "stop_hz", "rbw_hz", "points", "step_hz", "image_cancel" (None なら出さない),
+      "conditions": {"start_hz", "stop_hz", "rbw_hz", "points", "step_hz",
+                     "image_reject" ("accurate"・"fast"・"off"。実際に使ったもの。None なら出さない),
                      "ref_level", "db_per_div", "unit"},
       "calibration": {"source": "...", "at": "..."} | None,      # None は「校正データ: なし」
       "normalization": {"name", "at", "applied", "before_power_cycle", "reason"} | None,
@@ -38,6 +39,9 @@ from typing import Any, Iterable, Optional, Union
 from .units import format_freq, level_text
 
 META_KEY = "pygigast"
+
+# 条件の行のイメージ除去（設計F §7.3。画像にだけ焼き込む語: 画面の選択肢と同じ名前）
+IMAGE_REJECT_WORDS = {"accurate": "正確", "fast": "スピード", "off": "なし"}
 META_FORMAT = 1
 DIVISIONS = 10
 MIN_SIZE = (320, 240)
@@ -211,8 +215,8 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
         if c.get("step_hz") is not None:
             s += f"（Step {_hz(c['step_hz'])}）"
         cond.append(s)
-    if c.get("image_cancel") is not None:
-        cond.append("イメージキャンセル " + ("ON" if c["image_cancel"] else "OFF"))
+    if c.get("image_reject") is not None:
+        cond.append("イメージ除去 " + IMAGE_REJECT_WORDS.get(c["image_reject"], str(c["image_reject"])))
     if c.get("ref_level") is not None:
         cond.append(f"REF {level_text(c['ref_level'])} {unit}")
     if c.get("db_per_div") is not None:
@@ -465,7 +469,8 @@ def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, m
         "mode": mode_name,
         "conditions": {"start_hz": sw.get("start_hz"), "stop_hz": sw.get("stop_hz"), "rbw_hz": sw.get("rbw_hz"),
                        "points": sw.get("points"), "step_hz": sw.get("step_hz"),
-                       "image_cancel": None if conn.get("sweep_kind") == "fft" else sw.get("image_cancel"),
+                       # 実際に使ったもの（NF・ゼロスパンは選択によらず「なし」: 設計F §7.1）。RTL-SDR は持たない
+                       "image_reject": None if conn.get("sweep_kind") == "fft" else sw.get("image_reject_used"),
                        "ref_level": ref_level, "db_per_div": db_per_div, "unit": unit,
                        # 表示の設定（設計O）: 周波数オフセット・外部補正。帯と横軸に出す
                        "freq_offset_hz": int(view.get("freq_offset_hz") or 0),

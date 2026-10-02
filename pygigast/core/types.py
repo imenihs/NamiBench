@@ -91,7 +91,8 @@ class SweepRequest:
     points: Optional[int] = None  # None は引き継ぐ、0 は自動に戻す（設計C §5.3）
     mode: Optional[Mode] = None
     sg_hz: Optional[int] = None
-    image_cancel: Optional[bool] = None
+    # イメージ除去の選択 "accurate"・"fast"・"off"（None は引き継ぐ。設計F §7.3）
+    image_reject: Optional[str] = None
     # Span 固定の ON/OFF（None は引き継ぐ）。ON にした時点の Span が固定 Span になる（設計C §5.11）
     span_lock: Optional[bool] = None
     # その1回だけの命令: 固定 Span を変えない（設計C §5.11 の 3）
@@ -108,12 +109,35 @@ class Alternative:
 
 
 @dataclass(frozen=True)
+class SweepSegment:
+    """1画面を作る掃引の区間（設計F §7.2）。点は axis の番号 [point0, point0 + points)。
+
+    b3 はこの区間へ送る MODE b3 の並び（回数 = len(b3)。設計F §7.1: 1回は (1,)、2回は (0, 1)、4回は (0, 1, 0, 1)）。
+    区間ごとに前置きを置く（設計C §5.6）。transient_head_points は前置きが足りず「過渡の可能性」の印を付ける、
+    区間の先頭からの点数。in_band は場所の変わる山の出る帯の中か（帯で分けない選択では None）。
+    """
+
+    point0: int
+    points: int
+    b3: tuple[int, ...]
+    preroll_points: int
+    transient_head_points: int = 0
+    in_band: Optional[bool] = None
+
+    @property
+    def passes(self) -> int:
+        return len(self.b3)
+
+
+@dataclass(frozen=True)
 class AdoptedSweep:
     """機器が受け付ける形に直した掃引条件（設計C §5.8）。
 
     start_hz / stop_hz は利用者が指定した範囲（表示・保存はここで切る）。
     axis は機器に測らせる点（前置きを含まない。Stop を超える最初の格子点まで: 設計C §5.3）。
     機器に固有の値（GigaSt の Sample など）は持たない。機器の層が計算する。
+    image_reject は利用者の選択（"accurate"・"fast"・"off"。モードを変えても引き継ぐ: 設計F §7.3）。
+    NF とゼロスパンでは選択によらずイメージ除去をしない（image_reject_used）。
     """
 
     start_hz: int
@@ -123,7 +147,7 @@ class AdoptedSweep:
     rbw_preference_hz: int
     mode: Mode
     sg_hz: Optional[int]
-    image_cancel: bool
+    image_reject: str
     preroll_points: int
     transient_head_points: int
     estimated_sweep_s: float
@@ -141,6 +165,12 @@ class AdoptedSweep:
     # いまの条件で選べる RBW と、選べないものがあるときの理由のコード（設計C §5.14。画面は使えない RBW を無効にする）
     rbw_usable_hz: tuple[int, ...] = ()
     rbw_limit: Optional[str] = None
+    # 機器の層が送る区間の並び（いまの選択で。設計F §7.2）。preroll_points・transient_head_points は先頭の区間の値
+    segments: tuple[SweepSegment, ...] = ()
+    # いまの掃引条件で3つを選んだときの1画面の見積もり秒 ((選択, 秒), …)（設計F §7.3。画面が選択肢に出す）
+    image_reject_estimates: tuple[tuple[str, float], ...] = ()
+    # 正確を選んだときの区間（画面・状態に出す: 設計F §7.3）
+    accurate_segments: tuple[SweepSegment, ...] = ()
 
     @property
     def center_hz(self) -> int:
@@ -154,6 +184,14 @@ class AdoptedSweep:
     def zero_span(self) -> bool:
         return self.axis.step_hz == 0
 
+    @property
+    def image_reject_used(self) -> str:
+        """実際に使うイメージ除去。NF（HOT/COLD の2回だけ）とゼロスパン（点は時刻の並びで、別の回の値と合わせると
+        時間の形が崩れる）では選択によらず "off"（設計F §7.1）。"""
+        if self.mode == Mode.NF or self.zero_span:
+            return "off"
+        return self.image_reject
+
 
 @dataclass(frozen=True)
 class DeviceIdentity:
@@ -164,13 +202,31 @@ class DeviceIdentity:
     port: str
 
 
+@dataclass(frozen=True)
+class RawSegment:
+    """イメージ除去の1区間の生の値（設計F §7.3）。values は [回数, 点数]（b3 の並びの順）。"""
+
+    point0: int
+    b3: tuple[int, ...]
+    values: np.ndarray
+
+    @property
+    def points(self) -> int:
+        return int(self.values.shape[1])
+
+    @property
+    def passes(self) -> int:
+        return len(self.b3)
+
+
 @dataclass
 class RawSweep:
     """機器が返した1回分の生の値（設計B §7.1）。
 
     raw は機器ごとの形（encoding で区別）。GigaSt は AD 値の uint16。
-    イメージキャンセル ON は4回（b3=0・1・0・1。設計F §6）: raw_passes に4回の生の値を [回, 点] で、
-    raw に合わせた採用する値を入れる。raw_b3_0 / raw_b3_1 は前の2回の形（保存ファイルから読んだもの）で使う。
+    イメージ除去（正確・スピード。設計F §7）は raw に区間ごとに合わせた採用する値を、raw_segments に区間ごとの
+    生の値を入れる。なし（b3=1 の1回）は raw だけ。
+    raw_passes（前の4回の形）・raw_b3_0 / raw_b3_1（前の2回の形）は保存ファイルから読んだもので使う。
     NF の HOT/COLD は raw_hot / raw_cold に入れ、raw は HOT とする（設計M）。
     """
 
@@ -184,6 +240,7 @@ class RawSweep:
     raw_passes: Optional[np.ndarray] = None
     raw_hot: Optional[np.ndarray] = None
     raw_cold: Optional[np.ndarray] = None
+    raw_segments: Optional[tuple[RawSegment, ...]] = None
     transient_head_points: int = 0
     extra: dict = field(default_factory=dict)
 

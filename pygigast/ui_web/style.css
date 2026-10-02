@@ -80,6 +80,8 @@ input[type=color] { width: var(--btn-min-w); padding: 2px; cursor: pointer; }
 .w-name { width: var(--w-name); }
 .w-color { width: var(--w-color); }
 .w-grow { flex: 1 1 auto; min-width: 0; width: auto; }
+/* イメージ除去の選択: 出しうる一番長い選択肢の幅（秒の桁が変わっても動かさない。app.js の fitColumns が --col-reject に置く） */
+.w-reject { width: var(--col-reject, auto); }
 
 h3 { margin: 0; font-size: var(--font-m); color: var(--text-dim); font-weight: 600; }
 .dim { color: var(--text-dim); }

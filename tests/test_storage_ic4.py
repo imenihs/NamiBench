@@ -1,4 +1,7 @@
-"""イメージキャンセルの4回の形（raw_layout "image_cancel_4": 設計F §6 の 3・設計H §7.1）の保存・記録・読み戻し。
+"""前の版のイメージキャンセルの4回の形（raw_layout "image_cancel_4": 設計F §6 の 3・設計H §7.1）の保存・記録・読み戻し。
+
+いまの機器の層はイメージ除去の区間の形（test_storage_image_reject.py）で返す。前の版のファイルから読み戻した
+RawSweep を保存し直したときは前の形のまま持つ。
 
 前の2回の形と1回の形のファイルが今までどおり読めることは test_storage.py が確かめる。
 """
@@ -49,7 +52,7 @@ class Base(unittest.TestCase):
 
 class TestSnapshot(Base):
     def test_round_trip_keeps_all_four_passes(self):
-        a = adopted(image_cancel=True)
+        a = adopted(image_reject="accurate")
         r = raw4(3, a)
         p = save_snapshot(self.dir / "ic4.h5", header(), r)
         with h5py.File(p, "r") as f:
@@ -73,7 +76,7 @@ class TestSnapshot(Base):
             np.testing.assert_array_equal(part.raw2[0], r.raw_passes[:, 2:5])
 
     def test_cut_at_stop_cuts_every_pass(self):
-        a = adopted(points=11, stop=100 * MHZ + 7 * MHZ, image_cancel=True)
+        a = adopted(points=11, stop=100 * MHZ + 7 * MHZ, image_reject="accurate")
         r = raw4(0, a)
         p = save_snapshot(self.dir / "cut.h5", header(), r)
         with H5Record(p) as rec:
@@ -82,7 +85,7 @@ class TestSnapshot(Base):
 
     def test_old_two_pass_layout_still_written_and_read(self):
         # 前の2回の形の RawSweep（2回の形のファイルを読み戻したもの）は前の形のまま
-        a = adopted(image_cancel=True)
+        a = adopted(image_reject="accurate")
         b0, b1 = pattern(1, 11), pattern(2, 11)
         r = RawSweep(a, np.minimum(b0, b1), "gigast_ad_u16", T0, 0.1, raw_b3_0=b0, raw_b3_1=b1)
         p = save_snapshot(self.dir / "ic2.h5", header(), r)
@@ -95,7 +98,7 @@ class TestSnapshot(Base):
 
 class TestLarge(Base):
     def test_many_sweeps_overview_and_extract(self):
-        a = adopted(points=600, step=100_000, image_cancel=True)
+        a = adopted(points=600, step=100_000, image_reject="accurate")
         n = 1100  # BLOCK_ROWS（1024）をまたぐ
         sweeps = [raw4(i, a) for i in range(n)]
         meta = segment_meta_for(sweeps[0])
@@ -119,8 +122,8 @@ class TestRecording(Base):
         path = new_recording_path(self.dir)
         rec = Recorder(path, header())
         rec.wait_opened(5)
-        a4 = adopted(points=11, image_cancel=True)
-        a1 = adopted(points=11)  # イメージキャンセルを OFF にした → 新しい区間
+        a4 = adopted(points=11, image_reject="accurate")
+        a1 = adopted(points=11)  # イメージ除去をなしにした → 新しい区間
         for i in range(6):
             rec.append(raw4(i, a4))
         for i in range(6, 9):

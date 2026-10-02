@@ -21,11 +21,15 @@ from typing import Optional
 
 import numpy as np
 
+from ..sweep import image_reject as ir
 from ..types import FreqAxis, Mode
 from .reference import Reference, ReferenceSegment
 
 FORMAT = "pygigast-reference"
-VERSION = 1
+# 2 でイメージキャンセル（区間の image_cancel 真偽）をイメージ除去（image_reject）に置き換えた（設計F §7.3）。
+# 1 は読むときに true → "fast"、false → "off" に読み替える
+VERSION = 2
+READABLE_VERSIONS = (1, 2)
 SUFFIX = ".h5"
 # id はファイル名に使うので、フォルダの外を指す文字を許さない
 _ID_RE = re.compile(r"^[0-9A-Za-z_-]{1,64}$")
@@ -70,7 +74,7 @@ def to_dict(ref: Reference) -> dict:
                 "step_hz": int(s.axis.step_hz),
                 "points": int(s.axis.points),
                 "power_w": [None if not math.isfinite(v) else float(v) for v in s.power_w.tolist()],
-                "image_cancel": bool(s.image_cancel),
+                "image_reject": str(s.image_reject),
                 "rbw_hz": int(s.rbw_hz),
                 "connected_at": float(s.connected_at),
                 "taken_at": float(s.taken_at),
@@ -85,7 +89,7 @@ def to_dict(ref: Reference) -> dict:
 def from_dict(d: dict) -> Reference:
     if not isinstance(d, dict) or d.get("format") != FORMAT:
         raise ReferenceFileError("基準のファイルでない")
-    if d.get("version") != VERSION:
+    if d.get("version") not in READABLE_VERSIONS:
         raise ReferenceFileError(f"対応していない版: {d.get('version')}")
     _check_id(str(d.get("id", "")))
     try:
@@ -97,7 +101,7 @@ def from_dict(d: dict) -> Reference:
                 ReferenceSegment(
                     axis=axis,
                     power_w=power,
-                    image_cancel=bool(s["image_cancel"]),
+                    image_reject=_reject_of(s),
                     rbw_hz=_int(s["rbw_hz"], "rbw_hz"),
                     connected_at=float(s["connected_at"]),
                     taken_at=float(s["taken_at"]),
@@ -118,6 +122,14 @@ def from_dict(d: dict) -> Reference:
         if isinstance(e, ReferenceFileError):
             raise
         raise ReferenceFileError(f"中身が壊れている: {e}") from e
+
+
+def _reject_of(s: dict) -> str:
+    """区間のイメージ除去。前の版の image_cancel は読み替える（設計F §7.3）。どちらも無ければ KeyError（壊れている）。"""
+    v = ir.read_choice(s)
+    if v is None:
+        raise KeyError("image_reject")
+    return v
 
 
 def _check_id(ref_id: str) -> None:
@@ -162,7 +174,7 @@ def _write_h5(path: str, ref: Reference) -> None:
             sg.attrs["start_hz"] = np.int64(seg.axis.start_hz)
             sg.attrs["step_hz"] = np.int64(seg.axis.step_hz)
             sg.attrs["points"] = np.int64(seg.axis.points)
-            sg.attrs["image_cancel"] = bool(seg.image_cancel)
+            sg.attrs["image_reject"] = str(seg.image_reject)
             sg.attrs["rbw_hz"] = np.int64(seg.rbw_hz)
             sg.attrs["connected_at"] = float(seg.connected_at)
             sg.attrs["taken_at"] = float(seg.taken_at)
@@ -191,7 +203,7 @@ def load_reference(path: Path | str) -> Reference:
             d = {k: _attr(v) for k, v in f.attrs.items()}
             if d.get("format") != FORMAT:
                 raise ReferenceFileError("基準のファイルでない")
-            if d.get("version") != VERSION:
+            if d.get("version") not in READABLE_VERSIONS:
                 raise ReferenceFileError(f"対応していない版: {d.get('version')}")
             segs = []
             g = f.get("segments")

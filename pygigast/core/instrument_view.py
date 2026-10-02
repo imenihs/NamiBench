@@ -20,6 +20,7 @@ from . import view_units
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict
 from .palette import BASES, Palette, normalize_color
 from .presets import PresetError, PresetStore
+from .sweep import image_reject as ir
 from .types import Mode, Quantity, SweepRequest
 
 _UNSET = object()
@@ -169,7 +170,7 @@ class ViewMixin:
         return {
             "sweep": {"mode": a.mode.value, "start_hz": a.start_hz, "stop_hz": a.stop_hz,
                       "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
-                      "image_cancel": a.image_cancel, "sg_hz": a.sg_hz, "span_lock_hz": a.span_lock_hz},
+                      "image_reject": a.image_reject, "sg_hz": a.sg_hz, "span_lock_hz": a.span_lock_hz},
             "traces": [trace_settings(t) for t in self._traces],
             "amplitude": {k: self._amplitude.get(k) for k in ("ref_level", "db_per_div", "unit")},
             "view": dict(self._view_opts),
@@ -212,7 +213,9 @@ class ViewMixin:
         req = SweepRequest(
             start_hz=int(sw["start_hz"]), stop_hz=int(sw["stop_hz"]), edited=("start_hz", "stop_hz"),
             rbw_preference_hz=sw.get("rbw_preference_hz"), points=sw.get("points_setting") or 0,
-            mode=Mode(sw.get("mode", "sa")), sg_hz=sw.get("sg_hz"), image_cancel=bool(sw.get("image_cancel")),
+            mode=Mode(sw.get("mode", "sa")), sg_hz=sw.get("sg_hz"),
+            # 前の版のプリセットの image_cancel は読み替える。どちらも無ければいまの選択のまま（設計F §7.3）
+            image_reject=ir.read_choice(sw),
             span_lock=bool(sw.get("span_lock_hz")), one_shot=True,
         )
         try:

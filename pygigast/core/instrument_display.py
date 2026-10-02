@@ -84,8 +84,9 @@ def _condition_kind(old: AdoptedSweep, new: AdoptedSweep) -> Optional[ConditionC
         return ConditionChange.AXIS
     if old.rbw_hz != new.rbw_hz:
         return ConditionChange.RBW
-    if old.image_cancel != new.image_cancel:
-        return ConditionChange.IMAGE_CANCEL
+    if old.image_reject_used != new.image_reject_used:
+        # イメージ除去の選択（設計F §7.3）。NF・ゼロスパンでは選択を変えても測る値は変わらないので捨てない
+        return ConditionChange.IMAGE_REJECT
     if new.mode == Mode.SG and old.sg_hz != new.sg_hz:
         return ConditionChange.SG_FREQ
     return None
@@ -281,6 +282,10 @@ class DisplayMixin:
         n = a.axis.points
         transient = np.zeros(n, dtype=bool)
         transient[: max(0, min(n, int(raw.transient_head_points)))] = True
+        for s in a.segments[1:]:
+            # 2つ目からの区間も、前置きが足りなければその区間の先頭に印（設計F §7.2。区間は帯の境目から始まるので
+            # 範囲の下限には当たらず、ふつうは足りる）
+            transient[s.point0: s.point0 + max(0, s.transient_head_points)] = True
         return Frame(
             axis=a.axis,
             values=dbm_to_watt(levels.dbm),
@@ -523,7 +528,7 @@ class DisplayMixin:
         out: list = [s.get("keys", ("sweep",))]
         if "adopted" in s:
             a = s["adopted"]
-            out += [a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.rbw_preference_hz, a.mode, a.sg_hz, a.image_cancel,
+            out += [a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.rbw_preference_hz, a.mode, a.sg_hz, a.image_reject,
                     a.points_setting, a.span_lock_hz, tuple(tuple(sorted(d.items())) for d in s["traces"])]
         for k in ("view", "amplitude"):
             if k in s:

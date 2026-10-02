@@ -239,9 +239,18 @@
             </div>
             <template v-if="notes.points"><label></label><div class="fnote">{{ notes.points.text }}</div></template>
             <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? W('zero_span_mark') : '' }}</div>
-            <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(2)}) }}</div>
-            <label class="inline span" :class="{disabled: !!sweepReasons.image_cancel}" :title="sweepReasons.image_cancel || W('image_cancel_short')"><input type="checkbox" :checked="sw.image_cancel" :disabled="!!sweepReasons.image_cancel" @change="setImageCancel($event.target.checked)">{{ W('image_cancel') }}</label>
-            <div class="fnote warn span" v-if="icNote">{{ W('image_cancel_short') }}</div>
+            <!-- 見積もりは小数1桁（イメージ除去の選択肢の秒と同じ桁: Qt と同じ） -->
+            <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(1)}) }}</div>
+            <!-- イメージ除去（設計F §7.4）: 正確・スピード・切る。選択肢の文字（名前と、いまの条件での1画面の見積もり）と
+                 使えない理由はサーバーが作る（ui.image_reject: Qt と同じ screen_model.image_reject_view）。幅は出しうる一番長い
+                 選択肢（秒の桁が変わっても欄を動かさない: S-02。app.js の fitColumns） -->
+            <label>{{ W('image_reject') }}</label>
+            <select class="w-reject" data-field="image_reject" :value="rejectView.value" :disabled="!!rejectView.reason"
+                    :title="W('image_reject_short') + (rejectView.reason ? ' — ' + rejectView.reason : '')"
+                    @change="setImageReject($event.target.value)">
+              <option v-for="it in rejectView.items" :key="it.code" :value="it.code">{{ it.text }}</option>
+            </select>
+            <div class="fnote warn span" v-if="icNote">{{ W('image_reject_short') }}</div>
             <!-- 周波数オフセット（設計O・変換器の観測用）。表示だけを換算し、機器へ送る周波数は変えない -->
             <label>{{ V('freq_offset') }}</label>
             <input class="w-value" data-field="freq_offset" v-steady="freqOffText" :placeholder="V('freq_offset_placeholder')" :title="V('freq_offset_tip')" @change="commitOffset($event.target.value)">

@@ -7,7 +7,7 @@ FTDI 0403:6001 のポートを探し、確認の掃引（設計B §7.3）で Gig
 次の掃引を回して、受け取ったバイト数・所要時間と見積もり・捨てた回数を出す。
 - SA 0〜1000MHz（点数は自動）
 - TG 100〜3000MHz
-- SA イメージキャンセル ON
+- SA イメージ除去 正確（帯の中の4回）
 - 12000 点の掃引
 送るのは設計の範囲内の32バイトの要求だけ（範囲外の値は送らない）。
 掃引条件（AdoptedSweep）は掃引条件モデルを使わず、設計C §5.3・§5.6 の決まりで手で作る。
@@ -26,14 +26,16 @@ from pygigast.core.devices.gigast import protocol
 from pygigast.core.devices.gigast.driver import GigaStDevice
 from pygigast.core.devices.gigast.traffic_log import TrafficLog
 from pygigast.core.devices.gigast.transport import discover
-from pygigast.core.types import AdoptedSweep, DeviceDisconnected, FreqAxis, Mode, SweepDiscarded
+from pygigast.core.sweep import image_reject as ir
+from pygigast.core.types import AdoptedSweep, DeviceDisconnected, FreqAxis, Mode, SweepDiscarded, SweepSegment
 
 PROFILE = protocol.default_profile()
 
 
-def make_sweep(start_hz: int, stop_hz: int, mode: Mode, image_cancel: bool = False,
+def make_sweep(start_hz: int, stop_hz: int, mode: Mode, image_reject: str = "off",
                sg_hz: Optional[int] = None, rbw_hz: int = 180_000) -> AdoptedSweep:
-    """設計C §5.3（自動の Step・点数 = ceil(Span/Step)+1）と §5.6（前置き）で手で作る。"""
+    """設計C §5.3（自動の Step・点数 = ceil(Span/Step)+1）と §5.6（前置き）、設計F §7.2（帯で分けた区間）で手で作る。
+    前置きはどの区間も同じ点数（範囲の下限の近くから始めない）。"""
     span = stop_hz - start_hz
     auto = PROFILE["freq"]["auto_step"]
     if span > auto["span_threshold_hz"]:
@@ -43,12 +45,15 @@ def make_sweep(start_hz: int, stop_hz: int, mode: Mode, image_cancel: bool = Fal
     points = math.ceil(span / step) + 1
     pre = protocol.preroll_points_for(PROFILE, step, rbw_hz)
     first, per = protocol.timing(PROFILE, step, rbw_hz)
-    passes = 2 if (image_cancel or mode == Mode.NF) else 1
+    axis = FreqAxis(start_hz, step, points)
+    choice = ir.OFF if mode == Mode.NF else image_reject
+    segs = tuple(SweepSegment(point0=p0, points=n, b3=ir.b3_order(k), preroll_points=pre, in_band=inside)
+                 for p0, n, k, inside in ir.passes_by_region(choice, axis, ir.RejectProfile(PROFILE)))
+    est = sum(s.passes * (first + (s.points + pre) * per) for s in segs) * (2 if mode == Mode.NF else 1)
     return AdoptedSweep(
-        start_hz=start_hz, stop_hz=stop_hz, axis=FreqAxis(start_hz, step, points), rbw_hz=rbw_hz,
-        rbw_preference_hz=rbw_hz, mode=mode, sg_hz=sg_hz, image_cancel=image_cancel,
-        preroll_points=pre, transient_head_points=0,
-        estimated_sweep_s=passes * (first + (points + pre) * per),
+        start_hz=start_hz, stop_hz=stop_hz, axis=axis, rbw_hz=rbw_hz,
+        rbw_preference_hz=rbw_hz, mode=mode, sg_hz=sg_hz, image_reject=image_reject,
+        preroll_points=pre, transient_head_points=0, estimated_sweep_s=est, segments=segs,
     )
 
 
@@ -56,7 +61,7 @@ def run(dev: GigaStDevice, name: str, sweep: AdoptedSweep, repeat: int) -> dict:
     ds = protocol.device_sweep(sweep, PROFILE, 1)
     print(f"\n[{name}] Start {sweep.start_hz / 1e6:g}MHz Stop {sweep.stop_hz / 1e6:g}MHz "
           f"Step {sweep.axis.step_hz}Hz 点数 {sweep.axis.points} 前置き {sweep.preroll_points} "
-          f"機器の点数 {ds.points} Sample {ds.sample} イメージキャンセル {sweep.image_cancel} "
+          f"機器の点数 {ds.points} Sample {ds.sample} イメージ除去 {sweep.image_reject} "
           f"期待バイト数 {ds.expected_bytes} 見積もり {sweep.estimated_sweep_s:.3f}s")
     durs, discards = [], []
     for i in range(repeat):
@@ -107,8 +112,8 @@ def main() -> int:
     try:
         results.append(run(dev, "SA 0-1000MHz 自動", make_sweep(0, 1_000_000_000, Mode.SA), 3))
         results.append(run(dev, "TG 100-3000MHz", make_sweep(100_000_000, 3_000_000_000, Mode.TG), 3))
-        results.append(run(dev, "SA 900-1000MHz イメージキャンセル ON",
-                           make_sweep(900_000_000, 1_000_000_000, Mode.SA, image_cancel=True), 3))
+        results.append(run(dev, "SA 900-1000MHz イメージ除去 正確",
+                           make_sweep(900_000_000, 1_000_000_000, Mode.SA, image_reject="accurate"), 3))
         results.append(run(dev, "SA 0-11999MHz 12000点", make_sweep(0, 11_999_000_000, Mode.SA), 2))
     except DeviceDisconnected as e:
         print(f"切断: {e}")

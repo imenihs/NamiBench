@@ -63,7 +63,7 @@ def sample_data(unit="dBm", many_markers=False):
         "app_version": "0.1.0",
         "mode": "スペアナ",
         "conditions": {"start_hz": start, "stop_hz": stop, "rbw_hz": 180_000, "points": n, "step_hz": step,
-                       "image_cancel": True, "ref_level": 0.0 if unit == "dBm" else 10.0, "db_per_div": 10.0,
+                       "image_reject": "fast", "ref_level": 0.0 if unit == "dBm" else 10.0, "db_per_div": 10.0,
                        "unit": unit},
         "calibration": {"source": "旧校正ファイル gigast.txt", "at": "2026-09-30 14:00 +09:00"},
         "normalization": {"name": "直結 1.4–1.6GHz", "at": "2026-10-01 09:00 +09:00", "applied": True,

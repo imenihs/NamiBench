@@ -53,7 +53,7 @@ FIELD_NAMES = {
     "sg_hz": "SG 周波数",
     "step_hz": "Step",
     "mode": "モード",
-    "image_cancel": "イメージキャンセル",
+    "image_reject": "イメージ除去",
 }
 
 FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz", "span_hz", "sg_hz", "step_hz", "rbw_hz"}
@@ -73,6 +73,8 @@ def adjustment_text(adj: dict, freq_offset_hz: int = 0) -> str:
         value = TEMPLATES["points_auto"]
     elif field == "mode":
         value = MODE_NAMES.get(v, str(v))
+    elif field == "image_reject":
+        value = IMAGE_REJECT_CHOICES.get(v, str(v))
     elif isinstance(v, bool):
         value = TEMPLATES["on"] if v else TEMPLATES["off"]
     else:
@@ -99,7 +101,7 @@ REASONS = {
     "points_by_rbw": "この機器の点数は RBW と Span で決まります",
     "rbw_points_max": "点数の上限を超えるため RBW を広げました",
     "mode_unsupported": "この機器はこのモードで測れません",
-    "image_cancel_unsupported": "この機器はイメージキャンセルを持ちません",
+    "image_reject_unsupported": "この機器はイメージ除去を持ちません",
     "device_default_range": "機器の範囲の外なので、その機器の既定の範囲",
     "device_changed": "機器が変わったため既定",
 }
@@ -308,6 +310,9 @@ def error_text(e) -> str:
         text += tpl("legacy_line", line=detail["line"], field=detail["field"])
     elif code == "rtlsdr_stitching_blocked" and detail.get("max_span_hz"):
         text += tpl("paren", text=tpl("max_span", span=format_freq(int(detail["max_span_hz"]))))
+    elif code == "internal_error" and detail.get("message"):
+        # どこで何が起きたかを出す（「値が正しくない」と取り違えさせない）
+        text += tpl("paren", text=str(detail["message"]))
     elif code == "bad_value" and "min" in detail and "max" in detail:
         text += tpl("paren", text=tpl("range_min_max", min=detail["min"], max=detail["max"]))
     return text
@@ -340,12 +345,32 @@ HOLD_AFTER = {
     "stop": "N 回で止める",
 }
 
+# イメージ除去の3つ（設計F §7.4。並びは正確 → スピード → なし）
+IMAGE_REJECT_CHOICES = {
+    "accurate": "正確",
+    "fast": "スピード",
+    "off": "なし",
+}
+
+
+def seconds_text(s) -> str:
+    """選択肢に出す1画面の見積もりの秒（小数1桁。1 秒未満も 0.4 のように出す: 設計F §7.4）。"""
+    return f"{float(s):.1f}"
+
+
+def image_reject_item(code: str, seconds=None) -> str:
+    """イメージ除去の選択肢の文字「正確（約 3.8 秒）」。見積もりが無い（選べない機器）ときは名前だけ。"""
+    name = IMAGE_REJECT_CHOICES.get(code, code)
+    if seconds is None:
+        return name
+    return w("image_reject_item", name=name, s=seconds_text(seconds))
+
 # 蓄積を捨てた理由（設計F §5.3 の条件）
 RESET_CAUSES = {
     "axis": "周波数軸",
     "rbw": "RBW",
     "mode": "モード",
-    "image_cancel": "イメージキャンセル",
+    "image_reject": "イメージ除去",
     "calibration": "校正データ",
     "reference": "ノーマライズの基準",
     "sg_freq": "SG の周波数",
@@ -426,7 +451,6 @@ MARKER_NOTES = {
     "no_value": "値なし",
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
     "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
-    # イメージキャンセル ON の4回の合わせ方は雑音の床の近くを低く読む（設計F §6）
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
     **DISPLAY_MARKS,
 }
@@ -459,7 +483,7 @@ NORM_REASONS = {
     "unknown_conditions": "掃引条件が分かりません",
     "serial_mismatch": "別の機器で取った基準です",
     "mode_mismatch": "別のモードの基準です",
-    "image_cancel_mismatch": "基準とイメージキャンセルの有無が違います",
+    "image_reject_mismatch": "基準とイメージ除去が違います",
     "rbw_mismatch": "基準と RBW が違います",
     "out_of_range": "表示範囲に基準がありません",
 }
@@ -823,7 +847,7 @@ def level_unit_label(code) -> str:
 
 
 # 条件が基準と合わなくなって電力に戻ったとき（比で見る手立てを添える）。基準を外した・モードを変えたときは添えない
-POWER_HINT_REASONS = ("image_cancel_mismatch", "rbw_mismatch", "out_of_range", "serial_mismatch", "mode_mismatch")
+POWER_HINT_REASONS = ("image_reject_mismatch", "rbw_mismatch", "out_of_range", "serial_mismatch", "mode_mismatch")
 
 
 def notice_view(n: dict, state: Optional[dict] = None) -> dict:

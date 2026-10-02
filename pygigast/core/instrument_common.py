@@ -7,7 +7,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
-from .types import AdoptedSweep
+from .types import AdoptedSweep, SweepSegment
 
 
 class CommandError(Exception):
@@ -39,7 +39,12 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
         "rbw_limit": a.rbw_limit,
         "mode": a.mode.value,
         "sg_hz": a.sg_hz,
-        "image_cancel": a.image_cancel,
+        # イメージ除去（設計F §7.3）: 選択・実際に使うもの（NF・ゼロスパンは "off"）・3つを選んだときの1画面の
+        # 見積もり秒・正確のときの区間（範囲と回数）
+        "image_reject": a.image_reject,
+        "image_reject_used": a.image_reject_used,
+        "image_reject_estimates": dict(a.image_reject_estimates),
+        "accurate_segments": [segment_to_dict(a, s) for s in a.accurate_segments],
         "preroll_points": a.preroll_points,
         "transient_head_points": a.transient_head_points,
         "estimated_sweep_s": a.estimated_sweep_s,
@@ -49,10 +54,18 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
     }
 
 
+def segment_to_dict(a: AdoptedSweep, s: SweepSegment) -> dict:
+    """区間の範囲（最初と最後の点の周波数）と回数。"""
+    step = a.axis.step_hz
+    return {"start_hz": a.axis.start_hz + s.point0 * step, "stop_hz": a.axis.start_hz + (s.point0 + s.points - 1) * step,
+            "points": s.points, "passes": s.passes}
+
+
 def adjustments_to_list(a: AdoptedSweep) -> list[dict]:
     return [dataclasses.asdict(x) for x in a.adjustments]
 
 
 def sweep_key(a: AdoptedSweep) -> tuple:
-    """機器へ送る中身（これが同じなら測り直さなくてよい）。"""
-    return (a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.mode, a.sg_hz, a.image_cancel, a.preroll_points)
+    """機器へ送る中身（これが同じなら測り直さなくてよい）。イメージ除去は実際に使うもの（NF・ゼロスパンでは選択を
+    変えても送る中身は変わらない）。"""
+    return (a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.mode, a.sg_hz, a.image_reject_used, a.segments)

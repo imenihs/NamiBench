@@ -6,7 +6,8 @@
 
 - 再生: ref/capture の実機の応答を、要求（32バイト）が一致するものから返す。一致が無ければ合成に落ちる
 - 合成: ノイズフロア（AD 90〜130）＋指定した信号＋0Hz の局発の漏れ＋プロファイルの内部スプリアス。
-  掃引ごとに位置の変わる山（T16）を足す設定を持つ（既定は出さない。イメージキャンセルの4回の試験用）
+  掃引ごとに位置の変わる山（T16）を、決めた帯の中に足す設定を持つ（既定は出さない。イメージ除去の試験用:
+  正確の帯の中の4回・帯の外の2回・スピードの2回。設計F §7）
   時間は設計B §7.2 の見積もりの式で流す（speed で縮められる）
 - 異常系: 欠けた応答・末尾の無い応答・応答なし・余計な1バイト・切断を、次の要求に起こせる
 """
@@ -61,12 +62,13 @@ class SynthConfig:
     sg_dbm: float = -15.0  # SG・TG の出力（直結で受けたときのレベル）
     b3_level_db: float = -1.0  # b3=1 は b3=0 より約1dB 低い（T2）
     nf_hot_db: float = 3.0  # NF の HOT でノイズフロアが上がる量
-    # 掃引ごとに位置の変わる山（T16: 雑音の上に幅 10〜30kHz・高さ約 10dB の平らな山。0〜1000MHz で出る）。
-    # 1回の掃引に出す数（0 は出さない）・幅・雑音の上の高さ・出る帯。値は T16 の観察に近い仮の値
+    # 掃引ごとに位置の変わる山（T16: 雑音の上に幅 10〜30kHz・高さ約 10dB の平らな山。T18 で −100〜1100MHz と
+    # 2950〜4050MHz の帯の中だけに出た）。1回の要求に出す数（0 は出さない）・幅・雑音の上の高さ・出る帯の並び。
+    # 値は T16 の観察に近い仮の値
     bursts_per_sweep: int = 0
     burst_width_hz: int = 20_000
     burst_db: float = 10.0
-    burst_band_hz: tuple[int, int] = (0, 1_000_000_000)
+    burst_bands_hz: tuple[tuple[int, int], ...] = ((0, 1_000_000_000),)
 
 
 class Synth:
@@ -111,16 +113,25 @@ class Synth:
 
 
     def _add_bursts(self, ad: np.ndarray, f: np.ndarray) -> np.ndarray:
-        """雑音の床に、掃引ごとに違う位置の平らな山を乗せる（T16。信号の上には乗らない: max で重ねる）。"""
+        """雑音の床に、要求ごとに違う位置の平らな山を乗せる（T16。信号の上には乗らない: max で重ねる）。
+
+        山は帯の並びのうち、この要求の範囲と重なる所にだけ出す（重なる幅に比べて数を分ける）。
+        """
         c = self.config
-        lo_band, hi_band = c.burst_band_hz
-        lo = max(int(f[0]), lo_band)
-        hi = min(int(f[-1]), hi_band)
-        if hi <= lo:
+        spans = []
+        for lo_band, hi_band in c.burst_bands_hz:
+            lo, hi = max(int(f[0]), int(lo_band)), min(int(f[-1]), int(hi_band))
+            if hi > lo:
+                spans.append((lo, hi))
+        if not spans:
             return ad
         top = c.noise_ad[1] + c.burst_db * AD_PER_DB
-        for center in self.rng.integers(lo, hi + 1, size=c.bursts_per_sweep):
-            inside = np.abs(f - int(center)) <= c.burst_width_hz // 2
+        widths = np.array([hi - lo for lo, hi in spans], dtype=np.float64)
+        picks = self.rng.choice(len(spans), size=c.bursts_per_sweep, p=widths / widths.sum())
+        for k in picks:
+            lo, hi = spans[int(k)]
+            center = int(self.rng.integers(lo, hi + 1))
+            inside = np.abs(f - center) <= c.burst_width_hz // 2
             ad = np.where(inside, np.maximum(ad, top), ad)
         return ad
 

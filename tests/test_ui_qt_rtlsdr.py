@@ -139,7 +139,8 @@ class TestFftDeviceFields(RtlUiBase):
         tab = self.win.trace_tab
         self.assertFalse(tab.points_auto.isEnabled())
         self.assertIn(texts.RTL_LABELS["points_fft"], tab.points_auto.toolTip())
-        self.assertFalse(tab.image_cancel.isEnabled())
+        self.assertFalse(tab.image_reject.isEnabled())
+        self.assertIn(texts.RTL_LABELS["image_reject_fft"], tab.image_reject.toolTip())
         self.assertIn(texts.RTL_LABELS["zero_span_fft"], tab.sweep_note.text())
         # 受信だけの機器は TG・SG を測れない
         self.assertFalse(self.win.mode_buttons["tg"].isEnabled())

@@ -333,7 +333,12 @@ class MarkerLayer:
     def __init__(self, plot: pg.PlotWidget, pal: dict[str, str], on_xy_moved: Callable[[str, float], None]) -> None:
         self.pi = plot.getPlotItem()
         self.pal = pal
-        self._items: list = []
+        # 名前・カーソルの線・機能の線は掃引ごとに作っては捨てず、使い回す（使わない分は隠す）。取り除いた部品を Python の
+        # 側で手放して壊すと、グラフの部品（pyqtgraph）がまだ参照していて落ちることがあった（試験の access violation）
+        self._labels: list[pg.TextItem] = []
+        self._vlines: list[pg.InfiniteLine] = []
+        self._hlines: list[pg.InfiniteLine] = []
+        self._used = {"labels": 0, "vlines": 0, "hlines": 0, "flines": 0}
         self.scatter = pg.ScatterPlotItem(size=13, symbol="t", pen=pg.mkPen(pal["graph_bg"]))
         self.scatter.setZValue(40)
         self.pi.addItem(self.scatter, ignoreBounds=True)
@@ -354,11 +359,45 @@ class MarkerLayer:
         self.function_lines = True
         self.function_items: list[pg.InfiniteLine] = []
 
+    def _take(self, pool: str, make) -> object:
+        """使い回しの部品を1つ取る（足りなければ作ってグラフに足す）。"""
+        items = {"labels": self._labels, "vlines": self._vlines, "hlines": self._hlines,
+                 "flines": self.function_items}[pool]
+        i = self._used[pool]
+        self._used[pool] = i + 1
+        if i == len(items):
+            it = make()
+            self.pi.addItem(it, ignoreBounds=True)
+            items.append(it)
+        it = items[i]
+        it.show()
+        return it
+
     def _clear(self) -> None:
-        for it in self._items + self.function_items:
-            self.pi.removeItem(it)
-        self._items = []
-        self.function_items = []
+        for k in self._used:
+            self._used[k] = 0
+
+    def _hide_unused(self) -> None:
+        for pool, items in (("labels", self._labels), ("vlines", self._vlines), ("hlines", self._hlines),
+                            ("flines", self.function_items)):
+            for it in items[self._used[pool]:]:
+                it.hide()
+
+    def _cursor_line(self, pool: str, angle: int, pos: float, col: str, name: str, label_pos: float) -> None:
+        def make() -> pg.InfiniteLine:
+            ln = pg.InfiniteLine(angle=angle, movable=False, label=name,
+                                 labelOpts={"position": label_pos, "color": col,
+                                            "fill": _alpha(self.pal["graph_bg"], 180)})
+            ln.setZValue(30)
+            return ln
+
+        ln = self._take(pool, make)
+        ln.setValue(pos)
+        ln.setPen(pg.mkPen(col, width=1, style=Qt.PenStyle.DashLine))
+        ln.label.setFormat(name)
+        ln.label.setColor(col)
+        ln.label.fill = pg.mkBrush(_alpha(self.pal["graph_bg"], 180))
+        ln.label.setPosition(label_pos)
 
     def _function_lines(self, r: dict, col: str) -> None:
         """マーカーの機能の結果の線（G §3.6）: 横線 = レベル、縦線 = 交点の周波数（交点が無い側は出さない）。
@@ -371,10 +410,15 @@ class MarkerLayer:
             return
         pen = pg.mkPen(_alpha(col, FUNCTION_LINE_ALPHA), width=1, style=Qt.PenStyle.DotLine)
         for pos, angle in [(float(line["level"]), 0)] + [(float(f), 90) for f in line.get("freqs_hz") or []]:
-            ln = pg.InfiniteLine(pos=pos, angle=angle, movable=False, pen=pen)
-            ln.setZValue(25)
-            self.pi.addItem(ln, ignoreBounds=True)
-            self.function_items.append(ln)
+            def make() -> pg.InfiniteLine:
+                ln = pg.InfiniteLine(movable=False)
+                ln.setZValue(25)
+                return ln
+
+            ln = self._take("flines", make)
+            ln.setAngle(angle)
+            ln.setValue(pos)
+            ln.setPen(pen)
 
     def restyle(self) -> None:
         """配色を変えたとき。印と名前は次の update で新しい色になる（画面が続けて呼ぶ）。"""
@@ -399,32 +443,26 @@ class MarkerLayer:
                 col = scol if sel else mcol
                 if kind == "marker" and r.get("freq_hz") is not None and r.get("value") is not None:
                     spots.append({"pos": (float(r["freq_hz"]), float(r["value"])), "brush": pg.mkBrush(col)})
-                    lab = pg.TextItem(r["name"], color=col, anchor=(0.5, 1.25), fill=_alpha(self.pal["graph_bg"], 180))
+
+                    def make_label() -> pg.TextItem:
+                        t = pg.TextItem("", anchor=(0.5, 1.25))
+                        t.setZValue(41)
+                        return t
+
+                    lab = self._take("labels", make_label)
+                    lab.setText(r["name"], color=col)
+                    lab.fill = pg.mkBrush(_alpha(self.pal["graph_bg"], 180))
                     lab.setPos(float(r["freq_hz"]), float(r["value"]))
-                    lab.setZValue(41)
-                    self.pi.addItem(lab, ignoreBounds=True)
-                    self._items.append(lab)
                 elif kind == "freq_cursor" and r.get("freq_hz") is not None:
                     # 近い縦線の名前が重ならないよう、名前の高さを1本ごとにずらす
                     pos = 0.92 - 0.06 * (n_vline % 3)
                     n_vline += 1
-                    ln = pg.InfiniteLine(pos=float(r["freq_hz"]), angle=90, movable=False,
-                                         pen=pg.mkPen(col, width=1, style=Qt.PenStyle.DashLine),
-                                         label=r["name"].strip(), labelOpts={"position": pos, "color": col,
-                                                                            "fill": _alpha(self.pal["graph_bg"], 180)})
-                    ln.setZValue(30)
-                    self.pi.addItem(ln, ignoreBounds=True)
-                    self._items.append(ln)
+                    self._cursor_line("vlines", 90, float(r["freq_hz"]), col, r["name"].strip(), pos)
                 elif kind == "level_cursor" and r.get("value") is not None:
-                    ln = pg.InfiniteLine(pos=float(r["value"]), angle=0, movable=False,
-                                         pen=pg.mkPen(col, width=1, style=Qt.PenStyle.DashLine),
-                                         label=r["name"].strip(), labelOpts={"position": 0.08, "color": col,
-                                                                            "fill": _alpha(self.pal["graph_bg"], 180)})
-                    ln.setZValue(30)
-                    self.pi.addItem(ln, ignoreBounds=True)
-                    self._items.append(ln)
+                    self._cursor_line("hlines", 0, float(r["value"]), col, r["name"].strip(), 0.08)
                 elif kind == "function" and self.function_lines:
                     self._function_lines(r, col)
+        self._hide_unused()
         self.scatter.setData(spots)
         for k, line in self.xy.items():
             v = xy.get(k)

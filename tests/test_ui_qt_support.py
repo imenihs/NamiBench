@@ -80,6 +80,11 @@ class UiBase(unittest.TestCase):
         self.confirm_answer = True
         self.win.close()
         self.api.close()
+        # 閉じた窓を消す（残すと何百もの窓とその時計・グラフがたまり、まとめて回したときに落ちた）
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        self.win.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         self.tmp.cleanup()
 
     def pump(self, seconds=0.3):

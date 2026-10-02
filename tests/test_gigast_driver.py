@@ -165,28 +165,80 @@ class TestMeasure(unittest.TestCase):
         self.assertIsNone(raw.raw_b3_0)
         self.assertIs(raw.adopted, a)
 
-    def test_image_cancel_4_passes(self):
-        # b3=0 → 1 → 0 → 1 の4回（設計F §6 の 1）。同じ b3 の2回が同じなら平均はその値、そのあと両側の min
-        a = adopted(points=4, preroll=1, image_cancel=True)
+    def test_accurate_in_band_4_passes(self):
+        # 正確の帯の中: b3=0 → 1 → 0 → 1 の4回（設計F §7.1）。同じ b3 の2回が同じなら平均はその値、そのあと両側の min
+        a = adopted(points=4, preroll=1, image_reject="accurate")
         r0 = [9, 100, 500, 50, 300]
         r1 = [9, 200, 400, 60, 100]
         fake = FakeSerial([payload(r0) + TRAILER, payload(r1) + TRAILER] * 2)
         raw = make_device(fake).measure(a)
         self.assertEqual([w[14] for w in fake.written], [0x00, 0x08, 0x00, 0x08])
-        self.assertEqual(raw.raw_passes.shape, (4, 4))
-        np.testing.assert_array_equal(raw.raw_passes[0], r0[1:])
-        np.testing.assert_array_equal(raw.raw_passes[1], r1[1:])
-        np.testing.assert_array_equal(raw.raw_passes[2], r0[1:])
-        np.testing.assert_array_equal(raw.raw_passes[3], r1[1:])
+        self.assertEqual(len(raw.raw_segments), 1)
+        seg = raw.raw_segments[0]
+        self.assertEqual((seg.point0, seg.b3, seg.values.shape), (0, (0, 1, 0, 1), (4, 4)))
+        np.testing.assert_array_equal(seg.values[0], r0[1:])
+        np.testing.assert_array_equal(seg.values[1], r1[1:])
+        np.testing.assert_array_equal(seg.values[2], r0[1:])
+        np.testing.assert_array_equal(seg.values[3], r1[1:])
         np.testing.assert_array_equal(raw.raw, [100, 400, 50, 100])
         self.assertEqual(raw.raw.dtype, np.uint16)
         self.assertIsNone(raw.raw_b3_0)
         self.assertEqual(raw.extra["passes"], 4)
-        self.assertEqual(raw.extra["pass_b3"], [0, 1, 0, 1])
 
-    def test_image_cancel_burst_on_floor_removed(self):
-        # 180kHz の床は AD 149。b3=0 の1回目に雑音の上の山（+10dB）が乗っても、2回目の低い方を採る
-        a = adopted(points=3, preroll=0, image_cancel=True)
+    def test_fast_two_passes_min(self):
+        # スピード: どこも b3=0 → 1 の2回で、点ごとの小さい方（設計F §7.1。GS5 の Im-Cancel と同じ）
+        a = adopted(points=4, preroll=1, image_reject="fast")
+        r0 = [9, 100, 500, 50, 300]
+        r1 = [9, 200, 400, 60, 100]
+        fake = FakeSerial([payload(r0) + TRAILER, payload(r1) + TRAILER])
+        raw = make_device(fake).measure(a)
+        self.assertEqual([w[14] for w in fake.written], [0x00, 0x08])
+        self.assertEqual([(s.b3, s.values.shape) for s in raw.raw_segments], [((0, 1), (2, 4))])
+        np.testing.assert_array_equal(raw.raw, [100, 400, 50, 100])
+        self.assertEqual(raw.extra["passes"], 2)
+
+    def test_off_one_pass_b3_1(self):
+        # なし: b3=1 の1回だけ。区間ごとの生の値は持たない（raw そのもの）
+        a = adopted(points=4, preroll=0, image_reject="off")
+        fake = FakeSerial([payload([1, 2, 3, 4]) + TRAILER])
+        raw = make_device(fake).measure(a)
+        self.assertEqual([w[14] for w in fake.written], [0x08])
+        self.assertIsNone(raw.raw_segments)
+        np.testing.assert_array_equal(raw.raw, [1, 2, 3, 4])
+
+    def test_accurate_segments_sent_in_order_with_own_preroll(self):
+        # 正確で帯の境目（1100MHz）をまたぐ: 区間ごとに続けて送る（帯の中 4回 → 帯の外 2回: 設計F §7.2）。
+        # 各区間の要求はその区間の先頭から前置きを置く。境目の点（1100MHz）は右の区間
+        a = adopted(start_hz=1_099_960_000, step_hz=20_000, points=5, preroll=2, image_reject="accurate")
+        self.assertEqual([(s.point0, s.points, s.b3) for s in a.segments], [(0, 2, (0, 1, 0, 1)), (2, 3, (0, 1))])
+        seg0 = [7, 7, 10, 11]  # 前置き 2 点 + 2 点
+        seg1 = [7, 7, 20, 21, 22]  # 前置き 2 点 + 3 点
+        fake = FakeSerial([payload(seg0) + TRAILER] * 4 + [payload(seg1) + TRAILER] * 2)
+        raw = make_device(fake).measure(a)
+        sent = [protocol.unpack(w) for w in fake.written]
+        self.assertEqual([s.mode_bits for s in sent], [0x00, 0x08, 0x00, 0x08, 0x00, 0x08])
+        self.assertEqual([s.start_hz for s in sent], [1_099_920_000] * 4 + [1_099_960_000] * 2)
+        self.assertEqual([s.points for s in sent], [4] * 4 + [5] * 2)
+        np.testing.assert_array_equal(raw.raw, [10, 11, 20, 21, 22])
+        self.assertEqual([(s.point0, s.b3, s.values.shape) for s in raw.raw_segments],
+                         [(0, (0, 1, 0, 1), (4, 2)), (2, (0, 1), (2, 3))])
+        self.assertEqual(raw.extra["passes"], 6)
+
+    def test_accurate_screen_discarded_if_later_segment_fails(self):
+        # 区間のどれかが捨てられたら画面ごと捨てる（設計F §7.2）。残りの要求は送らない
+        a = adopted(start_hz=1_099_960_000, step_hz=20_000, points=5, preroll=0, image_reject="accurate")
+        ok0 = payload([1, 2]) + TRAILER
+        fake = FakeSerial([ok0] * 4 + [("partial", payload([1]))])
+        with self.assertRaises(SweepDiscarded) as cm:
+            make_device(fake).measure(a)
+        self.assertEqual(cm.exception.detail["pass"], "s1_b3_0a")
+        self.assertEqual(cm.exception.detail["passes"], 6)
+        self.assertEqual(len(fake.written), 5)
+
+    def test_accurate_burst_on_floor_removed(self):
+        # RBW 180kHz はその場の床（4回の小さい方を ±10 点の中央値でならした値）。b3=0 の1回目に雑音の上の山
+        # （+10dB）が乗っても、2回目の低い方を採る
+        a = adopted(points=3, preroll=0, image_reject="accurate")
         burst = 120 + 248
         p0a, p1a, p0b, p1b = [burst, 120, 2000], [130, 125, 1980], [120, 120, 2000], [128, 126, 1980]
         fake = FakeSerial([payload(x) + TRAILER for x in (p0a, p1a, p0b, p1b)])
@@ -194,29 +246,29 @@ class TestMeasure(unittest.TestCase):
         self.assertLessEqual(int(raw.raw[0]), 130)
         self.assertEqual(int(raw.raw[2]), 1980)
 
-    def test_image_cancel_pair_discarded_if_second_fails(self):
-        a = adopted(points=4, preroll=0, image_cancel=True)
+    def test_accurate_pair_discarded_if_second_fails(self):
+        a = adopted(points=4, preroll=0, image_reject="accurate")
         fake = FakeSerial([payload([1, 2, 3, 4]) + TRAILER, ("partial", payload([1, 2]))])
         with self.assertRaises(SweepDiscarded) as cm:
             make_device(fake).measure(a)
         self.assertEqual(cm.exception.reason, "silence")
         self.assertTrue(cm.exception.detail["pair_discarded"])
-        self.assertEqual(cm.exception.detail["pass"], "b3_1a")
+        self.assertEqual(cm.exception.detail["pass"], "s0_b3_1a")
         self.assertEqual(len(fake.written), 2)  # 残りの2回は送らない
 
-    def test_image_cancel_4set_discarded_if_last_fails(self):
-        # 4回のどれかが捨てられたら、その組（4回）ごと捨てる（設計F §6 の 5）
-        a = adopted(points=4, preroll=0, image_cancel=True)
+    def test_accurate_4set_discarded_if_last_fails(self):
+        # 4回のどれかが捨てられたら、その画面ごと捨てる（設計F §7.2）
+        a = adopted(points=4, preroll=0, image_reject="accurate")
         ok = payload([1, 2, 3, 4]) + TRAILER
         fake = FakeSerial([ok, ok, ok, ("partial", payload([1, 2]))])
         with self.assertRaises(SweepDiscarded) as cm:
             make_device(fake).measure(a)
-        self.assertEqual(cm.exception.detail["pass"], "b3_1b")
+        self.assertEqual(cm.exception.detail["pass"], "s0_b3_1b")
         self.assertEqual(cm.exception.detail["passes"], 4)
         self.assertEqual(len(fake.written), 4)
 
-    def test_image_cancel_pair_discarded_if_first_fails(self):
-        a = adopted(points=4, preroll=0, image_cancel=True)
+    def test_accurate_pair_discarded_if_first_fails(self):
+        a = adopted(points=4, preroll=0, image_reject="accurate")
         fake = FakeSerial([("partial", payload([1, 2])), payload([1, 2, 3, 4]) + TRAILER])
         with self.assertRaises(SweepDiscarded):
             make_device(fake).measure(a)
@@ -241,7 +293,7 @@ class TestMeasure(unittest.TestCase):
         self.assertEqual(fake.written, [])
 
     def test_cancel_during_sweep_waits_for_end_then_discards(self):
-        a = adopted(points=4, preroll=0, image_cancel=True)
+        a = adopted(points=4, preroll=0, image_reject="accurate")
         ev = threading.Event()
 
         class CancelOnWrite(FakeSerial):

@@ -1,7 +1,7 @@
 """基準を当てる（設計E §6.3・§6.4）。
 
 測った電力のフレームを、基準で割った比のフレームにする。
-- 条件（イメージキャンセル・RBW）が合う区間だけを使う。同じ周波数を複数の区間が持つときは
+- 条件（イメージ除去・RBW）が合う区間だけを使う。同じ周波数を複数の区間が持つときは
   Step が最も細かい区間（同じ Step なら新しい方）を使う
 - 基準点の間は dB で線形補間する。出力の帯の境目（機種のプロファイル）をまたいで補間しない。
   境目ちょうどの点は上の帯に属する
@@ -28,7 +28,7 @@ NOT_POWER = "not_power"  # 測った値が電力でない（既に比など）
 UNKNOWN_CONDITIONS = "unknown_conditions"  # フレームに掃引条件が無い
 SERIAL_MISMATCH = "serial_mismatch"  # 別の機器で取った基準
 MODE_MISMATCH = "mode_mismatch"  # TG の基準を S11 に当てる など
-IMAGE_CANCEL_MISMATCH = "image_cancel_mismatch"  # イメージキャンセルの有無が違う
+IMAGE_REJECT_MISMATCH = "image_reject_mismatch"  # イメージ除去（正確・スピード・なし）が違う（設計F §7.3）
 RBW_MISMATCH = "rbw_mismatch"  # RBW が違う
 OUT_OF_RANGE = "out_of_range"  # 条件は合うが、表示範囲のどの点にも基準が無い
 
@@ -181,13 +181,14 @@ def apply_reference(
     a = frame.adopted
     if reference.mode != a.mode:
         return _not_applied(frame, MODE_MISMATCH, reference, reference_mode=reference.mode.value)
-    segs = [s for s in reference.segments if s.image_cancel == a.image_cancel]
+    used = a.image_reject_used  # ゼロスパンでは選択によらず "off"（設計F §7.1）
+    segs = [s for s in reference.segments if s.image_reject == used]
     if not segs:
-        have = sorted({s.image_cancel for s in reference.segments})
-        return _not_applied(frame, IMAGE_CANCEL_MISMATCH, reference, reference_image_cancel=have)
+        have = sorted({s.image_reject for s in reference.segments})
+        return _not_applied(frame, IMAGE_REJECT_MISMATCH, reference, reference_image_reject=have)
     segs = [s for s in segs if s.rbw_hz == a.rbw_hz]
     if not segs:
-        have = sorted({s.rbw_hz for s in reference.segments if s.image_cancel == a.image_cancel})
+        have = sorted({s.rbw_hz for s in reference.segments if s.image_reject == used})
         return _not_applied(frame, RBW_MISMATCH, reference, reference_rbw_hz=have)
 
     m = _merge_segments(segs)

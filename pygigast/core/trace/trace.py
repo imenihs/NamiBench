@@ -65,7 +65,7 @@ class ConditionChange(str, enum.Enum):
     AXIS = "axis"
     RBW = "rbw"
     MODE = "mode"
-    IMAGE_CANCEL = "image_cancel"
+    IMAGE_REJECT = "image_reject"  # イメージ除去の選択（設計F §7.3）
     CALIBRATION = "calibration"
     REFERENCE = "reference"  # ノーマライズの基準
     # SG モードで SG の周波数を変えた（設計F §8）。最大・最小保持を残すかは HoldKeep で渡す

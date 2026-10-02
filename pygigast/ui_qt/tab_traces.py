@@ -1,7 +1,7 @@
 """右のタブ「トレース・掃引」（設計J §4.5・F §5・C §5.3）。
 
 並びは用事と頻度の順（J §4.5・U-10。よく変える掃引の設定をスクロールせずに見える一番上に置く）:
-- ① 掃引: 点数（自動・手動）・Step・掃引時間の見積もり・イメージキャンセル
+- ① 掃引: 点数（自動・手動）・Step・掃引時間の見積もり・イメージ除去（正確・スピード・なしと1画面の見積もり: F §7.4）
 - ② トレース 1〜4: 色・表示するか・動作・回数・平均の種類・N 回の後・いまの回数・一度きりの知らせ（F §3）
 - ③ 参照トレース: 開いたファイルのトレース（表示するか・外す）（F §5.4・H §6）
 - ④ 機器に固有の欄（RTL-SDR の受信: rtl_panel.py）。その機器に繋いでいるときだけ出す（add_device_section）
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -24,8 +24,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QStyle,
-    QStyleOptionComboBox,
     QWidget,
 )
 
@@ -40,7 +38,7 @@ if TYPE_CHECKING:
 COUNTED = ("average", "max_hold", "min_hold")
 DEFAULT_AVERAGE_COUNT = 16
 TRACE_NOTE_MS = 6000
-IC_NOTE_MS = 10000  # イメージキャンセルを入れたときの注意を出しておく長さ
+IC_NOTE_MS = 10000  # イメージ除去（正確・スピード）を選んだときの注意を出しておく長さ
 REASON_COUNT = texts.REASON_TEXTS["count_only"]
 REASON_AVG_TYPE = texts.REASON_TEXTS["average_type_only"]
 REASON_AFTER = texts.REASON_TEXTS["after_only"]
@@ -96,14 +94,7 @@ class _FitScroll(QObject):
             self.sa.setMinimumWidth(w)
 
 
-def combo_width(combo: QComboBox, items) -> int:
-    """選択肢 items を全部持ったときのドロップダウンの幅（Qt が中身に合わせて求める幅と同じ求め方: 一番長い文字を
-    中身にして、見た目の決まりで外側の大きさにする）。"""
-    fm = combo.fontMetrics()
-    opt = QStyleOptionComboBox()
-    combo.initStyleOption(opt)
-    inner = QSize(max((fm.horizontalAdvance(t) for t in items), default=0), fm.height())
-    return combo.style().sizeFromContents(QStyle.ContentsType.CT_ComboBox, opt, inner, combo).width()
+combo_width = widget_sync.combo_width  # 前の名前（呼ぶ所が残っている）
 
 
 class SameWidth(QObject):
@@ -308,11 +299,17 @@ class TraceTab(QWidget):
         form.addRow("Step", self.step_label)
         self.est_label = QLabel("")
         form.addRow(L["estimate"], self.est_label)
-        self.image_cancel = QCheckBox(L["image_cancel"])
-        self.image_cancel.toggled.connect(self._image_cancel_toggled)
-        form.addRow(self.image_cancel)
-        # 入れたときだけ一度出す注意（ずっとは出さない。いつでも読めるようにツールチップにも置く）
-        self.ic_note = QLabel(L["image_cancel_short"])
+        # イメージ除去の3つ。選択肢の文字に、いまの条件での1画面の見積もりを出す（設計F §7.4）。幅は出しうる一番長い
+        # 選択肢（秒の桁が変わっても欄を動かさない: S-02）
+        self.image_reject = QComboBox()
+        for code in texts.IMAGE_REJECT_CHOICES:
+            self.image_reject.addItem(texts.image_reject_item(code), code)
+        self.image_reject.activated.connect(self._image_reject_chosen)
+        self._reject_width = SameWidth([self.image_reject], screen_model.image_reject_width_samples())
+        self._reject_value: Optional[str] = None
+        form.addRow(L["image_reject"], self.image_reject)
+        # 正確・スピードを選んだときだけ一度出す注意（ずっとは出さない。いつでも読めるようにツールチップにも置く）
+        self.ic_note = QLabel(L["image_reject_short"])
         self.ic_note.setObjectName("warn")
         self.ic_note.setWordWrap(True)
         self.ic_note.hide()
@@ -375,10 +372,13 @@ class TraceTab(QWidget):
         """機器に固有の欄（④）を一番下（余白の手前）に足す。出し入れは欄の側が決める（J §4.5）。"""
         self._body.insertWidget(self._body.count() - 1, w)
 
-    def _image_cancel_toggled(self, on: bool) -> None:
-        # 利用者が切り替えたときだけ届く（状態を映すときは知らせを止めている: widget_sync）
-        self.win.call("set_sweep", image_cancel=on)
-        if on:
+    def _image_reject_chosen(self, i: int) -> None:
+        # 利用者が選んだときだけ届く（activated。状態を映すときは知らせを止めている: widget_sync）
+        code = self.image_reject.itemData(i)
+        if code == self._reject_value:
+            return
+        self.win.call("set_sweep", image_reject=code)
+        if code in ("accurate", "fast"):
             self.ic_note.show()
             self._ic_note_timer.start(IC_NOTE_MS)
         else:
@@ -410,9 +410,13 @@ class TraceTab(QWidget):
         self.points_auto.blockSignals(False)
         widget_sync.set_value(self.points_spin, sw["points"])
         self.step_label.setText(format_freq(sw["step_hz"]) + (L["zero_span_mark"] if sw["step_hz"] == 0 else ""))
-        self.est_label.setText(texts.w("estimate_value", s=f"{sw['estimated_sweep_s']:.2f}"))
-        widget_sync.set_checked(self.image_cancel, sw["image_cancel"])
-        set_enabled(self.image_cancel, why["image_cancel"], L["image_cancel_short"])
+        # 小数1桁（イメージ除去の選択肢の秒と同じ形: 設計F §7.4。0.01 秒の桁は見積もりとして意味が無い）
+        self.est_label.setText(texts.w("estimate_value", s=texts.seconds_text(sw["estimated_sweep_s"])))
+        rv = screen_model.image_reject_view(st)
+        self._reject_value = rv["value"]
+        widget_sync.set_items(self.image_reject, [(it["text"], it["code"]) for it in rv["items"]])
+        widget_sync.set_data(self.image_reject, rv["value"])
+        set_enabled(self.image_reject, rv["reason"], L["image_reject_short"])
         notes = [w for w in (why["points"], why["zero_span"]) if w]
         self.sweep_note.setText("\n".join(notes))
         self.sweep_note.setVisible(bool(notes))

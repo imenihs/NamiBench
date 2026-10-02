@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from ...types import AdoptedSweep, InvalidSweep, Mode
+from ...types import AdoptedSweep, InvalidSweep, Mode, SweepSegment
 from ..base import load_profile
 
 HEADER = 0x55
@@ -25,7 +25,7 @@ PLOT_MAX_PROTOCOL = 0xFFFF  # Plot 0 は 65536 点として流れ続けるので
 # RBW のコード（180k=0・30k=1・15k=2）。これ以外のコードは送らない（T7: 意味の無い値が返る）
 RBW_CODES = {180000: 0, 30000: 1, 15000: 2}
 
-# MODE のビット（設計C §5.7）。b2 は NF の HOT/COLD、b3 はイメージキャンセル。定義されていないビットは立てない
+# MODE のビット（設計C §5.7）。b2 は NF の HOT/COLD、b3 はイメージ除去。定義されていないビットは立てない
 MODE_TG = 0x01
 MODE_SG = 0x02
 MODE_B2 = 0x04
@@ -128,7 +128,7 @@ def limits(profile: dict, step_hz: int, rbw_hz: int, device_points: int, passes:
     - 初バイトまで: 見積もり ×2 ＋ 0.5s
     - 無音: 1s
     - 全体: 見積もりの合計 ×2 ＋ 1s
-    上限は要求1回ごとに当てる。passes（イメージキャンセル・NF の2回）は estimated_s にだけ掛ける。
+    上限は要求1回ごとに当てる。passes（イメージ除去・NF の回数）は estimated_s にだけ掛ける。
     """
     first, per_point = timing(profile, step_hz, rbw_hz, mode)
     one = first + device_points * per_point
@@ -148,13 +148,20 @@ def _mode_bits(mode: Mode, b3: int, b2: int) -> int:
     return _MODE_BASE[Mode(mode)] | (MODE_B2 if b2 else 0) | (MODE_B3 if b3 else 0)
 
 
-def device_sweep(adopted: AdoptedSweep, profile: dict, b3: int, b2: int = 0) -> DeviceSweep:
+def device_sweep(adopted: AdoptedSweep, profile: dict, b3: int, b2: int = 0,
+                 segment: Optional[SweepSegment] = None) -> DeviceSweep:
     """採用済みの掃引条件から、機器へ送る掃引（前置きを足したもの）を作り、検証する。
 
     機器の Start = 利用者の Start − 前置き × Step、機器の点数 = 点数 + 前置き（設計C §5.6）。
+    segment を渡すと、その区間（axis の点 [point0, point0 + points)）を区間の前置きで送る（設計F §7.2）。
     """
     step = adopted.axis.step_hz
-    pre = adopted.preroll_points
+    if segment is None:
+        p0, n, pre = 0, adopted.axis.points, adopted.preroll_points
+    else:
+        p0, n, pre = segment.point0, segment.points, segment.preroll_points
+        if p0 < 0 or n < 1 or p0 + n > adopted.axis.points:
+            raise InvalidSweep(f"区間が軸の外: {p0}〜{p0 + n} / {adopted.axis.points}")
     if pre < 0:
         raise InvalidSweep(f"前置きの点数が負: {pre}")
     _check_rbw_rule(adopted, profile)
@@ -162,9 +169,9 @@ def device_sweep(adopted: AdoptedSweep, profile: dict, b3: int, b2: int = 0) -> 
         raise InvalidSweep("SG モードなのに SG の周波数が無い")
     return make_device_sweep(
         profile,
-        start_hz=adopted.axis.start_hz - pre * step,
+        start_hz=adopted.axis.start_hz + (p0 - pre) * step,
         step_hz=step,
-        points=adopted.axis.points + pre,
+        points=n + pre,
         rbw_hz=adopted.rbw_hz,
         mode_bits=_mode_bits(adopted.mode, b3, b2),
         sg_hz=adopted.sg_hz,

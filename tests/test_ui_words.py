@@ -133,6 +133,13 @@ class BannedWordsTest(unittest.TestCase):
             hits = [(ln, s) for ln, s in _literals(PKG / rel) if JP_LETTER.search(s) and banned_in(s)]
             self.assertEqual(hits, [], rel)
 
+    def test_image_reject_word(self):
+        # 画面の語は「イメージキャンセル」を「イメージ除去」にそろえる（設計F §7.4: メニュー・知らせ・ツールチップ・PNG）
+        old = "イメージキャンセル"
+        self.assertEqual([p for p, s in table_strings() if old in s], [])
+        self.assertEqual([(ln, s) for ln, s in _literals(PKG / "core/report_layout.py") if old in s], [])
+        self.assertTrue([p for p, s in table_strings() if "イメージ除去" in s])
+
 
 class HardCodedTextTest(unittest.TestCase):
     def test_qt_code_has_no_japanese_literals(self):

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Optional
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -121,9 +121,12 @@ class MarkerPanel(QWidget):
                                   | Qt.AlignmentFlag.AlignVCenter)
         # 注意の列も中身の幅を取り、入らなければ表を横にスクロールする（文字を切らない: C-01）
         hdr.setSectionResizeMode(COL_NOTE, QHeaderView.ResizeMode.Interactive)
+        hdr.setSectionResizeMode(COL_REF, QHeaderView.ResizeMode.Interactive)  # 幅は _fit_ref_column が入れる
         hdr.setSectionResizeMode(COL_OPS, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._num_font = number_font(self.tree.font())
+        self._fitted_structure: tuple = ()
+        self._refit_pending = False
 
         lay = sizes.vbox(self)
         lay.addLayout(bar)
@@ -161,6 +164,10 @@ class MarkerPanel(QWidget):
             # 一覧を開いている間は組み替えない・選び直さない（閉じたときに最新の状態で入れる）
             widget_sync.set_items(cb, [(texts.LABELS["none"] if i is None else i, i) for i in want])
             widget_sync.set_data(cb, row.get("ref") if row.get("ref") else None)
+        if structure != self._fitted_structure:
+            # 選択肢が入った後の大きさで、基準の列を測り直す（行の組み立てが変わったときだけ）
+            self._fitted_structure = structure
+            self._fit_ref_column()
         # 表の外に隠れた行も含めて、注意の列の幅を一番長い文字に合わせる（表は横にスクロールする）
         fm = self.tree.fontMetrics()
         widest = max([fm.horizontalAdvance(c[COL_NOTE]) for c in texts_] + [fm.horizontalAdvance(marker_rows.COLUMNS[COL_NOTE])])
@@ -188,6 +195,7 @@ class MarkerPanel(QWidget):
             it = self._items[r["id"]]
             if r.get("kind") == "marker":
                 cb = widget_sync.fit_combo(QComboBox())
+                cb.installEventFilter(self)  # 見た目の決まり・字が当たったら列を測り直す（eventFilter）
                 cb.setToolTip(texts.LABELS["ref_combo_tip"])
                 cb.activated.connect(lambda _i, mid=r["id"], c=cb: self._set_ref(mid, c.currentData()))
                 self.tree.setItemWidget(it, COL_REF, cb)
@@ -198,6 +206,36 @@ class MarkerPanel(QWidget):
             ops.setMenu(self._row_menu(r))
             self.tree.setItemWidget(it, COL_OPS, ops)
         self.tree.blockSignals(False)
+        self._fit_ref_column()
+
+    def _fit_ref_column(self) -> None:
+        """基準のドロップダウンの列: 出しうる一番長い名前が入る幅を、実際のドロップダウンで測って列と部品の両方に入れる。
+
+        表に任せると、列の幅は行を作った時に測ったまま後から変わらず、選択肢が入ったり見た目の決まりが当たったりした後の
+        ドロップダウンが列に押し込まれて一番長い選択肢より狭くなった（試験がときどき落ちた）。"""
+        if not self._ref_combos:
+            return
+        probe = next(iter(self._ref_combos.values()))
+        probe.ensurePolished()
+        w = widget_sync.combo_width(probe, (texts.LABELS["none"], "M88", "P88"))
+        for cb in self._ref_combos.values():
+            cb.setFixedWidth(w)
+        self.tree.header().resizeSection(COL_REF, w + 2 * sizes.GAP)
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        self._fit_ref_column()  # 見た目の決まりが当たった後の大きさで測り直す
+
+    def eventFilter(self, obj, e) -> bool:
+        # 基準のドロップダウンに見た目の決まりや字が当たった後で、列を測り直す（当たる前に測ると狭くなった）
+        if e.type() in (QEvent.Type.Polish, QEvent.Type.StyleChange, QEvent.Type.FontChange)                 and obj in self._ref_combos.values() and not self._refit_pending:
+            self._refit_pending = True
+            QTimer.singleShot(0, self._refit_now)
+        return False
+
+    def _refit_now(self) -> None:
+        self._refit_pending = False
+        self._fit_ref_column()
 
     def select(self, mid: Optional[str]) -> None:
         it = self._items.get(mid) if mid else None

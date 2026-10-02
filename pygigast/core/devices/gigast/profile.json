@@ -38,8 +38,14 @@
     "tg_range_hz": [1000000, 4000000000],
     "level_adjustable": false
   },
-  "image_cancel_default": true,
-  "image_cancel": {
+  "image_reject": {
+    "default": "fast",
+    "burst_bands_hz": [[-100000000, 1100000000], [2950000000, 4050000000]],
+    "accurate_in_band_passes": 4,
+    "local_floor_rbw_hz": [180000],
+    "local_floor_half_points": 10,
+    "basis": "measured_on_one_unit",
+    "bands_note": "bursts that move every sweep appear only inside these bands (survey of the whole range, 2026-10-02); 50 MHz margin beyond the 100 MHz survey grid",
     "noise_floor_ad": {"180000": 149, "30000": 74, "15000": 72},
     "noise_floor_basis": "measured_on_one_unit",
     "noise_floor_note": "AD values with 1986 count = 80 dB (uncorrected dBm = AD*80/1986 - 80): 180k ~ -74 dBm, 30k ~ -77 dBm (SA, input open, 2026-10-01). 15k ~ -77 dBm (SA at 1500 MHz, median of 48 sweeps)"

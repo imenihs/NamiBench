@@ -254,25 +254,73 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class ImageCancelNoteTest(UiBase):
-    def test_note_only_when_turned_on(self):
-        """イメージキャンセルを入れたときだけ、短い信号が消えることを一度出す（ずっとは出さない）。"""
+class ImageRejectChoiceTest(UiBase):
+    """イメージ除去の3つの選択（設計F §7.4）: 名前「イメージ除去」・選択肢に1画面の見積もり・一度出す注意。"""
+
+    def choose(self, code):
+        c = self.win.trace_tab.image_reject
+        i = c.findData(code)
+        c.setCurrentIndex(i)
+        c.activated.emit(i)
+        self.pump()
+
+    def items(self):
+        c = self.win.trace_tab.image_reject
+        return [(c.itemData(i), c.itemText(i)) for i in range(c.count())]
+
+    def test_items_show_estimates_and_follow_conditions(self):
         tab = self.win.trace_tab
-        cb = tab.image_cancel
-        self.assertIn("短い時間だけ出る信号は消えます", cb.toolTip())
-        if cb.isChecked():
-            cb.click()
-            self.pump()
-        self.assertTrue(tab.ic_note.isHidden())
-        cb.click()
+        self.cmd("set_sweep", start_hz=0, stop_hz=1_000_000_000)
         self.pump()
-        self.assertTrue(self.state()["sweep"]["image_cancel"])
+        # 設計F §7.4 の例と同じ: 0〜1GHz で 正確 約 3.8 秒・スピード 約 1.9 秒・なし 約 1.0 秒
+        self.assertEqual(self.items(), [("accurate", "正確（約 3.8 秒）"), ("fast", "スピード（約 1.9 秒）"),
+                                        ("off", "なし（約 1.0 秒）")])
+        self.assertEqual(tab.image_reject.currentData(), self.state()["sweep"]["image_reject"])
+        form = tab.image_reject.parentWidget().layout()
+        self.assertEqual(form.labelForField(tab.image_reject).text(), texts.LABELS["image_reject"])
+        width = tab.image_reject.width()
+        # 条件を変えたら文字も変える（1 秒未満も小数1桁）。欄の幅は動かさない
+        self.cmd("set_sweep", start_hz=100_000_000, stop_hz=110_000_000)
+        self.pump()
+        est = self.state()["sweep"]["image_reject_estimates"]
+        want = [(c, texts.image_reject_item(c, est[c])) for c in ("accurate", "fast", "off")]
+        self.assertEqual(self.items(), want)
+        self.assertRegex(self.items()[2][1], r"^なし（約 0\.\d 秒）$")
+        self.assertEqual(tab.image_reject.width(), width)
+
+    def test_note_once_when_accurate_or_fast_chosen(self):
+        """正確・スピードを選んだときだけ、短い信号が消えることを一度出す（ずっとは出さない）。ツールチップにも置く。"""
+        tab = self.win.trace_tab
+        c = tab.image_reject
+        self.assertIn("短い時間だけ出る信号は消えます", c.toolTip())
+        self.assertIn("『なし』と最大保持", c.toolTip())
+        self.choose("off")
+        self.assertEqual(self.state()["sweep"]["image_reject"], "off")
+        self.assertTrue(tab.ic_note.isHidden())
+        self.choose("accurate")
+        self.assertEqual(self.state()["sweep"]["image_reject"], "accurate")
         self.assertFalse(tab.ic_note.isHidden())
-        cb.click()
-        self.pump()
+        self.assertEqual(tab.ic_note.text(), texts.LABELS["image_reject_short"])
+        self.choose("off")
         self.assertTrue(tab.ic_note.isHidden())
-        # 状態を映すだけ（ほかの口で入れた）では出さない
-        self.cmd("set_sweep", image_cancel=True)
+        self.choose("fast")
+        self.assertFalse(tab.ic_note.isHidden())
+        self.choose("off")
+        # 状態を映すだけ（ほかの口で選んだ）では出さない
+        self.cmd("set_sweep", image_reject="accurate")
         self.pump()
-        self.assertTrue(cb.isChecked())
+        self.assertEqual(c.currentData(), "accurate")
         self.assertTrue(tab.ic_note.isHidden())
+
+    def test_disabled_with_reason_in_nf_and_zero_span(self):
+        c = self.win.trace_tab.image_reject
+        self.assertTrue(c.isEnabled())
+        self.cmd("set_mode", mode="nf")
+        self.pump()
+        self.assertFalse(c.isEnabled())
+        self.assertIn(texts.REASON_TEXTS["image_reject_nf"], c.toolTip())
+        self.cmd("set_mode", mode="sa")
+        self.cmd("set_sweep", span_hz=0)
+        self.pump()
+        self.assertFalse(c.isEnabled())
+        self.assertIn(texts.REASON_TEXTS["image_reject_zero_span"], c.toolTip())

@@ -20,13 +20,17 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from ..sweep import image_reject as ir
 from ..types import Adjustment, AdoptedSweep, FreqAxis, Mode
 
 # 進み具合の知らせ: (済んだ数, 全体の数, 経過秒)。書き込みスレッドから呼ぶ（設計H §4.1）
 ProgressFn = Callable[[int, int, float], None]
 
-# 掃引条件の JSON（設計C §5.8）の版。読むときに知らない版は開かずに理由を出す（設計H §7.1）
-CONDITIONS_VERSION = 1
+# 掃引条件の JSON（設計C §5.8）の版。読むときに知らない版は開かずに理由を出す（設計H §7.1）。
+# 2 でイメージキャンセル（真偽 image_cancel）をイメージ除去（image_reject）に置き換えた（設計F §7.3）。
+# 1 は読むときに true → "fast"、false → "off" に読み替える
+CONDITIONS_VERSION = 2
+READABLE_CONDITIONS_VERSIONS = (1, 2)
 
 
 class StorageError(Exception):
@@ -109,7 +113,7 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
         "rbw_preference_hz": int(a.rbw_preference_hz),
         "mode": Mode(a.mode).value,
         "sg_hz": None if a.sg_hz is None else int(a.sg_hz),
-        "image_cancel": bool(a.image_cancel),
+        "image_reject": str(a.image_reject),
         "preroll_points": int(a.preroll_points),
         "transient_head_points": int(a.transient_head_points),
         "estimated_sweep_s": float(a.estimated_sweep_s),
@@ -124,10 +128,14 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
 
 
 def adopted_from_dict(d: dict) -> AdoptedSweep:
-    """adopted_to_dict の逆。知らない版は StorageError("unsupported_version")。"""
+    """adopted_to_dict の逆。知らない版は StorageError("unsupported_version")。前の版のイメージキャンセルは読み替える。"""
     ver = d.get("version")
-    if ver != CONDITIONS_VERSION:
+    if ver not in READABLE_CONDITIONS_VERSIONS:
         raise StorageError("unsupported_version", {"what": "conditions", "version": ver})
+    try:
+        reject = ir.read_choice(d) or ir.OFF
+    except ValueError as e:
+        raise StorageError("unsupported_version", {"what": "conditions", "image_reject": d.get("image_reject")}) from e
     ax = d["axis"]
     return AdoptedSweep(
         start_hz=int(d["start_hz"]),
@@ -137,7 +145,7 @@ def adopted_from_dict(d: dict) -> AdoptedSweep:
         rbw_preference_hz=int(d["rbw_preference_hz"]),
         mode=Mode(d["mode"]),
         sg_hz=None if d.get("sg_hz") is None else int(d["sg_hz"]),
-        image_cancel=bool(d["image_cancel"]),
+        image_reject=reject,
         preroll_points=int(d["preroll_points"]),
         transient_head_points=int(d["transient_head_points"]),
         estimated_sweep_s=float(d["estimated_sweep_s"]),
