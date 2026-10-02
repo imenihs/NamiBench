@@ -2,151 +2,177 @@
 // 収めるために、窓の形をここへ分けた。状態と処理は親（app.js に合わせた app_settings.js ほか）が持ち、
 // 部品は親（$root）を `a` として映すだけ。文言はここに書かない（texts の表を a.S・a.P・a.T・a.W で引く）。
 // 並びと語は Qt の settings_dialog.py・settings_colors.py・settings_keys.py・presets_dialog.py と同じ。
+// 画面に名前だけを置き、使い方や中の動きの説明の文を置かない（J §4.12・U-24・U-26）。大きさと余白は style.css の
+// 段の決まり（J §4.11）: 窓の中は標準の段、入力欄の幅は値の種類（w-int・w-color）
 (function (root) {
   "use strict";
 
   const parent = { computed: { a() { return this.$root; } } };
 
-  // ---- 設定の画面。ページは SETTINGS_PAGES の順（接続・配色・通知・キー操作・保存・ブラウザから使う・rtl_tcp・RTL-SDR）
+  // ---- 設定の画面。ページは SETTINGS_PAGES の順（接続・配色・通知・キー操作・保存・ブラウザから使う・rtl_tcp・RTL-SDR）。
+  // ブラウザから変えられない項目は Qt と同じ欄を出して無効にし、理由をツールチップに出す（U-08）。
+  // - 配色: 行ごとに 変えた印・名前・色・#rrggbb・この色だけ初期値に戻す・読みやすさの知らせ（変えた色の行に出す: U-25）
+  // - 保存: 保存・開くの最初のフォルダと PNG の保存先は PC の画面の項目（ブラウザはブラウザの保存先へダウンロードする）
+  // - ブラウザから使う: 変えるのは pyGigaSt の PC の画面。ここはいまの様子を映し、接続のしかたの窓だけ開ける。
+  //   暗号化していないことは、スマートフォンや PC からも使う間だけそのチェックの下に出す（A §4.3.2 の 7・U-14）
+  // - RTL-SDR: 見つけた rtlsdr.dll の場所。無い・32 ビット版なら注意の色で理由（中身は screen_model.rtl_view: Qt と同じ）
   const SETTINGS = `
 <div class="modal-back settings-back" @click="a.closeSettings()">
 <div class="modal setwin" @click.stop>
   <h3>{{ a.T('SETTINGS_LABELS', 'title') }}</h3>
-  <p class="modal-note">{{ a.T('SETTINGS_LABELS', 'note') }}</p>
   <nav class="tabs setwin-tabs">
-    <button v-for="pg in a.settingsPages" :key="pg[0]" :class="{on: page === pg[0]}" @click="a.setPage(pg[0])">{{ pg[1] }}</button>
+    <button v-for="pg in a.settingsPages" :key="pg[0]" class="tab" :class="{on: page === pg[0]}" @click="a.setPage(pg[0])">{{ pg[1] }}</button>
   </nav>
   <div class="setwin-body" :data-page="page">
     <template v-if="page === 'connection'">
-      <h4>{{ a.S('known_group') }}</h4>
-      <table class="mtable" v-if="a.knownDevices.length"><tbody>
-        <tr v-for="r in a.knownDevices" :key="r.serial">
-          <td>{{ a.knownName(r) }}</td><td class="dim">{{ r.last ? a.S('known_last') : '' }}</td>
-          <td class="ops"><button class="small" @click="a.forgetDevice(r)">{{ a.S('forget') }}</button></td>
-        </tr>
-      </tbody></table>
-      <div class="dim" v-else>{{ a.S('known_none') }}</div>
-      <div class="row"><button class="small" @click="a.openDevices()">{{ a.S('open_devices') }}</button></div>
-      <h4>{{ a.S('manual_group') }}</h4>
-      <div class="row">
-        <span>{{ a.S('manual_port') }}</span>
-        <input class="mid" v-steady="a.manualPort" :placeholder="a.S('manual_placeholder')" @change="a.setManualPort($event.target.value)">
-        <button class="small" @click="a.connectManual()">{{ a.S('manual_connect') }}</button>
-        <button class="small" :title="a.S('reset_tip')" @click="a.setManualPort('')">{{ a.S('reset') }}</button>
-      </div>
-      <div class="dim">{{ a.S('manual_note') }}</div>
-      <div class="fnote" v-if="a.notes.settings_conn">{{ a.notes.settings_conn.text }}</div>
+      <fieldset class="group">
+        <legend>{{ a.S('known_group') }}</legend>
+        <div class="known-scroll" v-if="a.knownDevices.length"><table class="mtable" data-repeat><tbody>
+          <tr v-for="r in a.knownDevices" :key="r.serial">
+            <td class="fill">{{ a.knownName(r) }}</td><td>{{ r.last ? a.S('known_last') : '' }}</td>
+            <td class="ops"><div class="cell-row"><button @click="a.forgetDevice(r)">{{ a.S('forget') }}</button></div></td>
+          </tr>
+        </tbody></table></div>
+        <div class="dim" v-else>{{ a.S('known_none') }}</div>
+        <button @click="a.openDevices()">{{ a.S('open_devices') }}</button>
+      </fieldset>
+      <fieldset class="group">
+        <legend>{{ a.S('manual_group') }}</legend>
+        <div class="form">
+          <label>{{ a.S('manual_port') }}</label>
+          <div class="row">
+            <input class="w-int" v-steady="a.manualPort" :placeholder="a.S('manual_placeholder')" @change="a.setManualPort($event.target.value)">
+            <button @click="a.connectManual()">{{ a.S('manual_connect') }}</button>
+          </div>
+        </div>
+        <div class="fnote" v-if="a.notes.settings_conn">{{ a.notes.settings_conn.text }}</div>
+      </fieldset>
     </template>
 
     <template v-else-if="page === 'display'">
-      <h4>{{ a.S('palette_group') }}</h4>
-      <div>{{ pv.base_text }}</div>
       <div class="row">
         <button @click="a.resetPalette('light')">{{ a.S('palette_reset_light') }}</button>
         <button @click="a.resetPalette('dark')">{{ a.S('palette_reset_dark') }}</button>
       </div>
-      <div class="dim">{{ a.S('palette_note') }}</div>
-      <div class="pal-scroll"><table class="mtable pal"><tbody>
+      <div class="pal-scroll"><table class="mtable pal" data-repeat><tbody>
         <tr v-for="r in pv.rows" :key="r.name" :class="{changed: r.changed}">
           <td class="mark" :title="r.tip">{{ r.changed ? a.S('palette_changed_mark') : '' }}</td>
-          <td class="grow">{{ r.label }}</td>
+          <td>{{ r.label }}</td>
           <td><input type="color" :value="r.color" :title="a.S('palette_pick_title', {name: r.label})" @change="a.setColor(r.name, $event.target.value)"></td>
-          <td><input class="hex" v-steady="r.color" :placeholder="a.S('palette_hex')" :title="a.S('palette_hex')" @change="a.typedColor(r, $event)"></td>
-          <td><button class="small" :disabled="!r.changed" :title="a.S('palette_row_reset_tip')" @click="a.setColor(r.name, r.default)">{{ a.S('reset') }}</button></td>
+          <td><input class="w-color" v-steady="r.color" :placeholder="a.S('palette_hex')" :title="a.S('palette_hex')" @change="a.typedColor(r, $event)"></td>
+          <td><button :disabled="!r.changed" :title="a.S('palette_row_reset_tip')" @click="a.setColor(r.name, r.default)">{{ a.S('reset') }}</button></td>
+          <td class="pal-warn" :title="r.warn_tip || undefined">{{ r.warn }}</td>
         </tr>
       </tbody></table></div>
       <div class="fnote" v-if="a.notes.settings_palette">{{ a.notes.settings_palette.text }}</div>
-      <div class="warn" v-if="pv.warnings.length"><div v-for="w in pv.warnings" :key="w">{{ w }}</div></div>
-      <div class="dim" v-else>{{ pv.ok_text }}</div>
     </template>
 
     <template v-else-if="page === 'notify'">
-      <h4>{{ a.V('notify_group') }}</h4>
-      <label class="inline" :title="a.V('notify_ratio_tip')"><input type="checkbox" :checked="a.notifyRatio" @change="a.setNotify('ratio_display', $event.target.checked)"> {{ a.V('notify_ratio') }}</label>
+      <label class="inline" :title="a.V('notify_ratio_tip')"><input type="checkbox" :checked="a.notifyRatio" @change="a.setNotify('ratio_display', $event.target.checked)">{{ a.V('notify_ratio') }}</label>
     </template>
 
     <template v-else-if="page === 'keys'">
-      <h4>{{ a.S('keys_group') }}</h4>
-      <div class="dim">{{ a.S('keys_note') }}</div>
-      <div class="dim">{{ a.S('keys_shift_note') }}</div>
-      <div class="keys-scroll"><table class="mtable keys">
-        <thead><tr><th>{{ a.S('keys_col_command') }}</th><th>{{ a.S('keys_col_key') }}</th><th>{{ a.S('keys_col_default') }}</th></tr></thead>
+      <div class="keys-scroll"><table class="mtable keys" data-repeat>
+        <thead><tr><th>{{ a.S('keys_col_command') }}</th><th>{{ a.S('keys_col_key') }}</th><th>{{ a.S('keys_col_default') }}</th><th>{{ a.S('keys_col_where') }}</th></tr></thead>
         <tbody>
-          <tr v-for="r in a.keyRows" :key="r.code" :class="{sel: r.code === a.keySel}" :data-code="r.code"
+          <tr v-for="r in a.keyTableRows" :key="r.code" :class="{sel: r.code === a.keySel}" :data-code="r.code"
               @click="a.keySel = r.code" @dblclick="a.keySel = r.code; a.startCapture()">
-            <td>{{ r.name }}</td>
+            <td class="fill">{{ r.name }}</td>
             <td :title="r.changed ? a.S('keys_changed_tip') : ''">{{ r.changed ? a.S('palette_changed_mark') + ' ' : '' }}{{ r.key }}</td>
             <td class="dim">{{ r.def }}</td>
+            <td>{{ r.where }}</td>
           </tr>
         </tbody>
       </table></div>
       <div class="row">
-        <button class="small" :class="{primary: a.keyCapture}" :disabled="!a.keySel" @click="a.startCapture()">{{ a.S('keys_assign') }}</button>
-        <button class="small" :disabled="!a.keySel" @click="a.clearKey()">{{ a.S('keys_clear') }}</button>
-        <button class="small" :disabled="!a.keySel" @click="a.resetKeyRow()">{{ a.S('keys_reset_row') }}</button>
-        <button class="small" @click="a.resetAllKeys()">{{ a.S('keys_reset_all') }}</button>
+        <button :class="{primary: a.keyCapture}" :disabled="!a.keySel" @click="a.startCapture()">{{ a.S('keys_assign') }}</button>
+        <button :disabled="!a.keySel" @click="a.clearKey()">{{ a.S('keys_clear') }}</button>
+        <button :disabled="!a.keySel" @click="a.resetKeyRow()">{{ a.S('keys_reset_row') }}</button>
+        <button @click="a.resetAllKeys()">{{ a.S('keys_reset_all') }}</button>
       </div>
       <div class="keymsg" :class="a.keyMsg.warn ? 'warn' : ''" v-if="a.keyMsg">{{ a.keyMsg.text }}</div>
     </template>
 
     <template v-else-if="page === 'save'">
-      <h4>{{ a.S('save_group') }}</h4>
       <div class="form">
+        <label>{{ a.S('save_dir') }}</label>
+        <div class="row fill" :title="a.S('save_web_reason')"><span class="w-grow"></span>
+          <button disabled :title="a.S('save_web_reason')">{{ a.S('choose') }}</button>
+          <button disabled :title="a.S('save_web_reason')">{{ a.S('reset') }}</button></div>
+        <label>{{ a.S('png_dir') }}</label>
+        <div class="row fill" :title="a.S('save_web_reason')"><span class="w-grow"></span>
+          <button disabled :title="a.S('save_web_reason')">{{ a.S('choose') }}</button>
+          <button disabled :title="a.S('save_web_reason')">{{ a.S('reset') }}</button></div>
         <label>{{ a.S('png_size') }}</label>
         <div class="row"><select :value="a.pngPrefs.size" @change="a.setPng('size', $event.target.value)">
             <option v-for="o in a.pngSizes" :key="o.value" :value="o.value">{{ o.text }}</option></select>
-          <button class="small" :title="a.S('reset_tip')" @click="a.resetPng('size')">{{ a.S('reset') }}</button></div>
+          <button :title="a.S('reset_tip')" @click="a.resetPng('size')">{{ a.S('reset') }}</button></div>
         <label>{{ a.S('png_palette') }}</label>
         <div class="row"><select :value="a.pngPalette" @change="a.setPng('palette', $event.target.value)">
-            <option v-for="(l, c) in a.Td('PNG_PALETTES')" :key="c" :value="c">{{ l }}</option></select>
-          <button class="small" :title="a.S('reset_tip')" @click="a.resetPng('palette')">{{ a.S('reset') }}</button></div>
+            <option v-for="(l, c) in a.Td('PNG_PALETTES')" :key="c" :value="c" :title="a.T('PNG_PALETTE_TIPS', c)">{{ l }}</option></select>
+          <button :title="a.S('reset_tip')" @click="a.resetPng('palette')">{{ a.S('reset') }}</button></div>
       </div>
-      <p class="dim">{{ a.S('png_palette_note') }}</p>
-      <p class="dim">{{ a.S('save_web_note') }}</p>
     </template>
 
     <template v-else-if="page === 'web'">
-      <p class="dim">{{ a.S('web_only_pc') }}</p>
-      <div class="row"><button class="small" :disabled="!!a.connectReason()" :title="a.connectReason() || ''" @click="a.closeSettings(); a.showConnect()">{{ a.T('MENU_ITEMS', 'web_connect') }}</button></div>
+      <div class="stack" :title="a.S('web_only_pc')">
+        <label class="inline disabled"><input type="checkbox" checked disabled>{{ a.T('WEB_LABELS', 'enable') }}</label>
+        <label class="inline disabled"><input type="checkbox" :checked="a.webView.lan" disabled>{{ a.T('WEB_LABELS', 'lan') }}</label>
+        <div class="warn" v-if="a.webView.lan">{{ a.T('WEB_LABELS', 'lan_warn') }}</div>
+      </div>
+      <div class="form">
+        <label>{{ a.T('WEB_LABELS', 'port') }}</label>
+        <input class="w-int" :value="a.webView.port" readonly disabled :title="a.S('web_only_pc')">
+      </div>
+      <div :class="a.webView.warn ? 'warn' : ''" v-if="a.webView.text">{{ a.webView.text }}</div>
+      <div class="row">
+        <button :disabled="!!a.connectReason()" :title="a.connectReason() || ''" @click="a.closeSettings(); a.showConnect()">{{ a.T('WEB_LABELS', 'show_connect') }}</button>
+        <button disabled :title="a.S('web_only_pc')">{{ a.T('WEB_LABELS', 'regenerate') }}</button>
+        <button disabled :title="a.S('web_only_pc')">{{ a.S('reset') }}</button>
+      </div>
     </template>
 
     <template v-else-if="page === 'rtltcp'">
-      <h4>{{ a.T('SETTINGS_LABELS', 'rtltcp_group') }}</h4>
+      <label class="inline"><input type="checkbox" :checked="a.rtltcpView.enabled" @change="a.setRtltcp({enabled: $event.target.checked})">{{ a.T('SETTINGS_LABELS', 'rtltcp_enable') }}</label>
       <div class="form">
-        <label></label><label class="inline"><input type="checkbox" :checked="a.rtltcpView.enabled" @change="a.setRtltcp({enabled: $event.target.checked})"> {{ a.T('SETTINGS_LABELS', 'rtltcp_enable') }}</label>
-        <label>{{ a.T('SETTINGS_LABELS', 'rtltcp_port') }}</label><input class="num" v-steady="a.rtltcpView.port" @change="a.setRtltcpPort($event.target.value)">
+        <label>{{ a.T('SETTINGS_LABELS', 'rtltcp_port') }}</label><input class="w-int" v-steady="a.rtltcpView.port" @change="a.setRtltcpPort($event.target.value)">
         <label>{{ a.T('SETTINGS_LABELS', 'rtltcp_bind') }}</label>
         <select :value="a.rtltcpView.bind" @change="a.setRtltcp({bind: $event.target.value})"><option v-for="(l, c) in a.Td('RTLTCP_BINDS')" :key="c" :value="c">{{ l }}</option></select>
       </div>
-      <div>{{ a.rtltcpView.text }}</div>
-      <div class="dim" v-if="a.rtltcpView.dropped_text">{{ a.rtltcpView.dropped_text }}</div>
-      <div class="warn" v-if="a.rtltcpView.error_text">{{ a.rtltcpView.error_text }}</div>
-      <div class="fnote" v-if="a.notes.rtltcp">{{ a.notes.rtltcp.text }}</div>
-      <div class="row"><button class="small" @click="a.setRtltcp({enabled: false, port: 1234, bind: 'local'})">{{ a.T('SETTINGS_LABELS', 'rtltcp_default') }}</button></div>
-      <p class="dim">{{ a.T('SETTINGS_LABELS', 'rtltcp_note') }}</p>
+      <div class="stack">
+        <div>{{ a.rtltcpView.text }}</div>
+        <div class="dim" v-if="a.rtltcpView.dropped_text">{{ a.rtltcpView.dropped_text }}</div>
+        <div class="warn" v-if="a.rtltcpView.error_text">{{ a.rtltcpView.error_text }}</div>
+        <div class="fnote" v-if="a.notes.rtltcp">{{ a.notes.rtltcp.text }}</div>
+      </div>
+      <button @click="a.setRtltcp({enabled: false, port: 1234, bind: 'local'})">{{ a.S('reset') }}</button>
     </template>
 
     <template v-else-if="page === 'rtlsdr'">
-      <h4>{{ a.T('SETTINGS_LABELS', 'rtlsdr_group') }}</h4>
-      <div :class="a.rtlView.dll_found ? '' : 'warn'">{{ a.rtlView.dll_found ? a.T('SETTINGS_LABELS', 'rtlsdr_found') : a.T('SETTINGS_LABELS', 'rtlsdr_missing') }}</div>
-      <div class="dim">{{ a.rtlView.dll_text }}</div>
-      <p class="dim">{{ a.W('dll_folder_web') }}</p>
+      <div class="form">
+        <label>{{ a.T('SETTINGS_LABELS', 'rtlsdr_dll') }}</label>
+        <div :class="a.rtlView.dll_warn ? 'warn' : ''">{{ a.rtlView.dll_line }}</div>
+        <template v-if="a.rtlView.dll_reason"><label></label><div class="warn">{{ a.rtlView.dll_reason }}</div></template>
+      </div>
+      <div class="row" :title="a.W('dll_folder_web')">
+        <button disabled :title="a.W('dll_folder_web')">{{ a.T('SETTINGS_LABELS', 'rtlsdr_choose') }}</button>
+        <button disabled :title="a.W('dll_folder_web')">{{ a.S('reset') }}</button>
+      </div>
     </template>
   </div>
   <div class="modal-btns"><button @click="a.closeSettings()">{{ a.T('SETTINGS_LABELS', 'close') }}</button></div>
 </div>
 </div>`;
 
-  // ---- プリセットの窓（一覧と、呼び出す・名前・消す・上書き・新しく保存）
+  // ---- プリセットの窓（一覧と、呼び出す・名前・消す・上書き・新しく保存）。呼び出しの意味は「呼び出す」のツールチップ
   const PRESETS = `
 <div class="modal-back settings-back" @click="a.closePresets()">
 <div class="modal presetwin" @click.stop>
   <h3>{{ a.P('title') }}</h3>
-  <p class="modal-note">{{ a.P('note') }}</p>
   <div class="dim" v-if="w.ready && !w.rows.length">{{ a.P('none') }}</div>
-  <div class="preset-scroll" v-if="w.rows.length"><table class="mtable"><tbody>
+  <div class="preset-scroll" v-if="w.rows.length"><table class="mtable" data-repeat><tbody>
     <tr v-for="r in w.rows" :key="r.id" :class="{sel: r.id === w.sel}" @click="w.sel = r.id" @dblclick="w.sel = r.id; a.presetLoad()">
-      <td>{{ r.name }}</td><td class="dim">{{ r.summary }}</td>
+      <td>{{ r.name }}</td><td class="dim fill">{{ r.summary }}</td>
     </tr>
   </tbody></table></div>
   <div class="warn" v-if="w.broken">{{ a.P('broken', {n: w.broken}) }}</div>
@@ -156,8 +182,7 @@
     <button :disabled="!sel" @click="a.presetDelete()">{{ a.P('delete') }}</button>
     <button :disabled="!sel" @click="a.presetOverwrite()">{{ a.P('overwrite') }}</button>
   </div>
-  <div class="dim">{{ a.P('load_tip') }}</div>
-  <div class="row"><button @click="a.presetSaveNew()">{{ a.P('save_new') }}</button></div>
+  <button @click="a.presetSaveNew()">{{ a.P('save_new') }}</button>
   <div class="fnote" v-if="a.notes.presets">{{ a.notes.presets.text }}</div>
   <div class="modal-btns"><button @click="a.closePresets()">{{ a.T('SETTINGS_LABELS', 'close') }}</button></div>
 </div>
@@ -170,7 +195,7 @@
 <div class="modal confirm" @click.stop>
   <h3>{{ b.title }}</h3>
   <p>{{ b.text }}</p>
-  <label v-if="b.check" class="inline"><input type="checkbox" v-model="b.checked"> {{ b.check }}</label>
+  <label v-if="b.check" class="inline"><input type="checkbox" v-model="b.checked">{{ b.check }}</label>
   <div class="modal-btns" v-if="b.info">
     <button class="primary" @click="a.answerConfirm(false)">{{ a.T('SETTINGS_LABELS', 'close') }}</button>
   </div>

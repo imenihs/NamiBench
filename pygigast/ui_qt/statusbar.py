@@ -3,6 +3,7 @@
 - rtl_tcp を出している間はその項目の隣に「止める」を置く（設計Q §4.3: 状態バーからすぐ止められる）
 - 聞いている間はその項目の隣に「やめる」を置く（設計Q §6.8）
 - 一度きりの知らせ（U-05）は右に出し、保存したものならそこから保存先を開ける（U-11・I §3.4）
+- 状態バーの文字とボタンは小の段（高さ 20px・文字 12px: J §4.11・S-01）
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QLabel, QPushButton, QSizePolicy
 
-from . import texts
+from . import sizes, texts
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -29,6 +30,11 @@ class StatusBar:
         self.labels: dict[str, QLabel] = {}
         for key in KEYS:
             lab = QLabel()
+            sizes.set_tier(lab, "S")
+            # 項目と項目の間はまとまりの間（S-04）。部品の間（6px）だと隣の項目と続けて読めてしまう。
+            # 余白は文字の頭に取る（見た目の決まりが欄の外の余白を決め直すので、QLabel の字下げで取る）
+            if key != KEYS[0]:
+                lab.setIndent(sizes.SECTION_GAP)
             self.labels[key] = lab
             sb.addWidget(lab)
             if key == "listen":
@@ -42,6 +48,8 @@ class StatusBar:
         self.web = self._small("", lambda: win.web.show_clients())
         sb.addWidget(self.web)
         self.note = QLabel()
+        sizes.set_tier(self.note, "S")
+        self.note.setIndent(sizes.SECTION_GAP)
         # 一度きりの知らせは幅が足りないとき先に縮める（状態の項目を切らない。全文はツールチップ）
         self.note.setMinimumWidth(1)
         self.note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -53,7 +61,7 @@ class StatusBar:
     @staticmethod
     def _small(text: str, fn) -> QPushButton:
         b = QPushButton(text)
-        b.setObjectName("small")
+        sizes.set_tier(b, "S")  # 状態バーの部品は小の段（J §4.11・S-01）
         b.clicked.connect(fn)
         b.hide()
         return b

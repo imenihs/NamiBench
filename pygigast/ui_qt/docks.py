@@ -20,17 +20,15 @@ from typing import TYPE_CHECKING, Callable, Optional
 from PySide6.QtCore import QByteArray, QEvent, Qt
 from PySide6.QtWidgets import (
     QDockWidget,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
     QTabWidget,
     QToolTip,
-    QVBoxLayout,
     QWidget,
 )
 
-from . import texts
+from . import sizes, texts
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -78,8 +76,8 @@ class _PartWindow(QWidget):
         super().__init__(None, Qt.WindowType.Window)
         self.setWindowTitle(f"pyGigaSt — {title}")
         self._on_close = on_close
-        self.lay = QVBoxLayout(self)
-        self.lay.setContentsMargins(4, 4, 4, 4)
+        self.lay = sizes.vbox(self, inset=False)
+        sizes.window(self.lay)
 
     def closeEvent(self, e) -> None:
         self._on_close()
@@ -95,19 +93,17 @@ class Detachable:
         self.body = body
         self.title = title
         self.holder = QWidget()
-        lay = QVBoxLayout(self.holder)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay = sizes.vbox(self.holder, inset=False)
         lay.setSpacing(0)
         lay.addWidget(body, 1)
         self.placeholder = QWidget()
-        row = QHBoxLayout(self.placeholder)
-        row.setContentsMargins(8, 8, 8, 8)
+        row = sizes.hbox(self.placeholder)
+        row.setContentsMargins(sizes.INSET, sizes.INSET, sizes.INSET, sizes.INSET)
         lab = QLabel(note)
         lab.setObjectName("dim")
         lab.setWordWrap(True)
         row.addWidget(lab, 1)
         back = QPushButton(texts.LABELS["reattach"])
-        back.setObjectName("small")
         back.clicked.connect(self.attach)
         row.addWidget(back)
         lay.addWidget(self.placeholder)

@@ -7,14 +7,15 @@
   「レベルをこの信号で合わせる」（Q §6.6。計算と保存はコア）
 - 欄は RTL-SDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）。繋いでいる間に
   使えない操作（AGC の間のレベルの校正・利得を合わせるなど）は、消さずに無効にして理由を出す（U-08）
+- 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）。欄に付くボタンは欄の列の下の行に置く
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtWidgets import QComboBox, QFormLayout, QGroupBox, QLabel, QPushButton, QSpinBox
+from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QPushButton, QSpinBox
 
-from . import screen_model, texts, widget_sync
+from . import screen_model, sizes, texts, widget_sync
 from .fields import DbField, FreqField
 from .tab_traces import set_enabled
 
@@ -29,20 +30,20 @@ class RtlPanel(QGroupBox):
         L = texts.RTL_LABELS
         super().__init__(L["group"])
         self.win = win
-        form = QFormLayout(self)
+        form = sizes.form(self)
         self.gain = QComboBox()
         self.gain.setToolTip(L["gain_tip"])
         self.gain.activated.connect(self._gain_chosen)
         form.addRow(L["gain"], self.gain)
         # 「利得を合わせる」（1回押し: 設計Q §6.5）。利得の欄のすぐ下に置く
         self.fit_btn = QPushButton(L["fit_gain"])
-        self.fit_btn.setObjectName("small")
         self.fit_btn.clicked.connect(lambda: win.call("rtlsdr_fit_gain"))
-        form.addRow(self.fit_btn)
+        form.addRow("", sizes.buttons_row(self.fit_btn))
         self.ppm = QSpinBox()
         self.ppm.setRange(-PPM_LIMIT, PPM_LIMIT)
         self.ppm.setKeyboardTracking(False)
         self.ppm.setToolTip(L["ppm_tip"])
+        sizes.set_width(self.ppm, "int")
         self.ppm.valueChanged.connect(lambda v: win.call("rtlsdr_set", field=None, ppm=int(v)))
         form.addRow(L["ppm"], self.ppm)
         self.cal_text = QLabel("")
@@ -57,25 +58,20 @@ class RtlPanel(QGroupBox):
         self.shared_text.setObjectName("warn")
         form.addRow(self.shared_text)
 
-        # ---- 個体の校正（マーカーの読み値から: Q §6.6）
+        # ---- 個体の校正（マーカーの読み値から: Q §6.6）。ボタンは欄の下の行（右のパネルの幅を広げない: J §4.3.3）
         self.marker = QComboBox()
         form.addRow(L["cal_marker"], self.marker)
         self.true_freq = FreqField(L["cal_true_freq"], lambda hz: self.true_freq.set_hz(int(hz)), big=False)
-        self.true_freq.name_label.hide()
         self.ppm_btn = QPushButton(L["cal_ppm_button"])
-        self.ppm_btn.setObjectName("small")
         self.ppm_btn.clicked.connect(self._cal_ppm)
-        # ボタンは欄の下の行に置く（右のパネルの幅を広げない: J §4.3.3）
-        form.addRow(L["cal_true_freq"], self.true_freq)
-        form.addRow(self.ppm_btn)
+        form.addRow(self.true_freq.name, self.true_freq)
+        form.addRow("", sizes.buttons_row(self.ppm_btn))
         self.true_dbm = DbField(L["cal_true_dbm"], "dBm", lambda v: self.true_dbm.set_value(float(v)), big=False)
-        self.true_dbm.name_label.hide()
         self.true_dbm.set_value(-30.0)
         self.level_btn = QPushButton(L["cal_level_button"])
-        self.level_btn.setObjectName("small")
         self.level_btn.clicked.connect(self._cal_level)
-        form.addRow(L["cal_true_dbm"], self.true_dbm)
-        form.addRow(self.level_btn)
+        form.addRow(self.true_dbm.name, self.true_dbm)
+        form.addRow("", sizes.buttons_row(self.level_btn))
         self.result = QLabel("")
         self.result.setWordWrap(True)
         self.result.setObjectName("warn")

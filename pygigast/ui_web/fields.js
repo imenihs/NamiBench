@@ -2,7 +2,8 @@
 // - 単位付きの自由入力。確定は Enter・Tab・欄を離れる のどれでも。Esc は打つ前の値に戻す（J §4.6）
 // - ホイールと ↑↓ はカーソルのある桁を1つ増減（実機のノブの感覚）。wheelExp を決めた欄はホイールだけその桁
 // - choices を渡すと、欄の右に一覧（ドロップダウン）を付ける（REF レベル: J §4.1）
-// - 名前を上、値を下。欄の下に一度きりの知らせを重ねて出し、ボタンを1つ添えられる（設計C §5.11 の 3）
+// - 上段（大の段）では名前を値の上の小さな行に置く（J §4.11・S-05）。標準の段では名前を渡さず、呼ぶ側が欄の左に置く
+// - 欄の下に一度きりの知らせを重ねて出し、ボタンを1つ添えられる（設計C §5.11 の 3）
 (function (root) {
   "use strict";
 
@@ -168,8 +169,8 @@
     },
     template: `
       <div class="field" :class="{big}" :title="title">
-        <div class="field-head" v-if="label || $slots.head"><span class="field-name">{{ label }}</span><slot name="head"></slot></div>
-        <div class="field-line">
+        <div class="field-head" data-tier="S" v-if="label || $slots.head"><span class="field-name">{{ label }}</span><slot name="head"></slot></div>
+        <div class="field-line" :class="{choices: !!choices}">
           <input ref="input" class="field-input" v-steady="editing ? draft : text" :disabled="disabled" spellcheck="false"
                  @input="onInput" @keydown="onKey" @blur="commit" @wheel="onWheel">
           <select v-if="choices" class="field-choices" :disabled="disabled" @change="pick" @wheel="onWheel">
@@ -177,7 +178,7 @@
             <option v-for="c in choices" :key="c.value" :value="c.text">{{ c.text }}</option>
           </select>
         </div>
-        <div v-if="note" class="note-pop" @mouseenter="hovered=true" @mouseleave="hovered=false">
+        <div v-if="note" class="note-pop" data-tier="M" @mouseenter="hovered=true" @mouseleave="hovered=false">
           <span>{{ note.text }}</span>
           <button v-if="note.action" class="note-action" @click="runAction">{{ note.action.label }}</button>
         </div>
@@ -372,9 +373,49 @@
                  :disabled="disabled" :title="title" @commit="onCommit" @step="onStep" @clear-note="note = null"></num-field>`,
   };
 
+  // ---- 同じ列のドロップダウンの幅（J §4.11・S-02。2026-10-03 ユーザー指摘「箱の長さがそろってなくてガタガタ」）
+  // 行を重ねる並び（トレースの表など）の同じ列のドロップダウンは、その列に出うる一番長い選択肢の幅に1つにそろえる。
+  // いま出ている選択肢では決めない（行や動作で選択肢が変わっても幅が変わらない）。幅は標準の段のドロップダウンに
+  // 全部の選択肢を入れてブラウザに測らせ、CSS の変数 --col-<名前> に置く（style.css が列の幅に使う）
+  function selectWidth(texts, doc) {
+    const d = doc || document;
+    const probe = d.createElement("select");
+    probe.style.cssText = "position:absolute;visibility:hidden;left:0;top:0;width:auto;min-width:0;max-width:none;";
+    for (const t of texts) {
+      const o = d.createElement("option");
+      o.textContent = t;
+      probe.appendChild(o);
+    }
+    d.body.appendChild(probe);
+    const w = probe.getBoundingClientRect().width;
+    probe.remove();
+    return Math.ceil(w);
+  }
+  // cols: { 名前: 幅(px) か [選択肢の文字, ...] }
+  function fitColumns(cols, doc) {
+    const d = doc || document;
+    for (const [name, v] of Object.entries(cols)) {
+      const w = Array.isArray(v) ? selectWidth(v, d) : Math.ceil(v);
+      d.documentElement.style.setProperty("--col-" + name, w + "px");
+    }
+  }
+  // 文字の幅（px）。字は画面の本文の字の種類で、大きさだけを決める（上段の欄の幅を測る: J §4.11）
+  let measureCtx = null;
+  function textWidth(text, sizePx, doc) {
+    const d = doc || document;
+    if (!measureCtx) measureCtx = d.createElement("canvas").getContext("2d");
+    measureCtx.font = `${sizePx}px ${getComputedStyle(d.body).fontFamily}`;
+    return measureCtx.measureText(String(text)).width;
+  }
+  // :root の大きさの変数（px の数）
+  function rootPx(name, doc) {
+    const d = doc || document;
+    return parseFloat(getComputedStyle(d.documentElement).getPropertyValue(name)) || 0;
+  }
+
   root.GSFields = {
     NumField, CountField, DbField, Steady, COUNT_CHOICES, COUNT_MAX, countText, parseCount, stepCount,
     BANDWIDTH_CHOICES, FLOOR_CHOICES, REF_CHOICES, DB_RANGES, roundTo, dbText, dbChoiceText, rangeNote, parseDbIn,
-    stepDb, wheelIgnored, inScrollPlace,
+    stepDb, wheelIgnored, inScrollPlace, selectWidth, fitColumns, textWidth, rootPx,
   };
 })(window);

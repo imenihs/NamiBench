@@ -11,27 +11,27 @@ import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QProgressBar, QPushButton, QWidget
 
-from . import texts
+from . import sizes, texts
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
 SHOW_AFTER_S = 1.0
+BAR_MAX_W = 260
 
 
 class _Row(QWidget):
     def __init__(self, panel: "TaskPanel", task_id: str) -> None:
         super().__init__()
         self.task_id = task_id
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay = sizes.hbox(self)
         self.label = QLabel("")
         self.bar = QProgressBar()
-        self.bar.setMaximumWidth(260)
+        # 進み具合の帯は横に伸ばしすぎない（行の文字を押し出さない）
+        self.bar.setMaximumWidth(BAR_MAX_W)
         self.cancel = QPushButton(texts.LABELS["cancel"])
-        self.cancel.setObjectName("small")
         self.cancel.clicked.connect(lambda: panel.win.call("cancel_task", task_id=task_id, quiet_codes=("unknown_task",)))
         lay.addWidget(self.label, 1)
         lay.addWidget(self.bar)
@@ -55,9 +55,7 @@ class TaskPanel(QFrame):
         self.setObjectName("taskPanel")
         self.tasks: dict[str, dict] = {}
         self._rows: dict[str, _Row] = {}
-        self._lay = QVBoxLayout(self)
-        self._lay.setContentsMargins(4, 2, 4, 2)
-        self._lay.setSpacing(2)
+        self._lay = sizes.vbox(self)
         self.hide()
         self._timer = QTimer(self)
         self._timer.setInterval(500)

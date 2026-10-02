@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QWidget
+
+from . import sizes
 
 
 class TopBar(QWidget):
@@ -20,10 +23,11 @@ class TopBar(QWidget):
         self.right = QHBoxLayout(self._right_w)
         for lay in (self.left, self.right):
             lay.setContentsMargins(0, 0, 0, 0)
-            lay.setSpacing(2)
+            lay.setSpacing(sizes.GAP)
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(8)
+        self._grid.setHorizontalSpacing(sizes.SECTION_GAP)
+        self._grid.setVerticalSpacing(sizes.GAP)
         self._two_rows: Optional[bool] = None
         self._place(False)
 
@@ -39,8 +43,19 @@ class TopBar(QWidget):
         else:
             self._grid.addWidget(self._right_w, 0, 1)
 
+    def align_bottom(self) -> None:
+        """上段の部品の下端をそろえる。名前を上に持つ欄と持たないボタンが並ぶので、上端でそろえると欄とボタンが
+        縦にずれる（2026-10-03 ユーザー指摘「高さがガタガタ」。設計J §4.11）。"""
+        for lay in (self.left, self.right):
+            for i in range(lay.count()):
+                w = lay.itemAt(i).widget()
+                if w is not None:
+                    lay.setAlignment(w, Qt.AlignmentFlag.AlignBottom)
+        # 左（モードと周波数）は左から詰める。欄は伸ばさないので、余りは右の端に置く（2段のときに欄の間が開かない）
+        self.left.addStretch(1)
+
     def needed_one_row(self) -> int:
-        return self._left_w.minimumSizeHint().width() + self._right_w.minimumSizeHint().width() + 8
+        return self._left_w.minimumSizeHint().width() + self._right_w.minimumSizeHint().width() + sizes.SECTION_GAP
 
     def minimumSizeHint(self):
         hint = super().minimumSizeHint()

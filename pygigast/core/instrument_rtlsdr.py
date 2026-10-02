@@ -35,7 +35,7 @@ import numpy as np
 from .devices.base import Device
 from .devices.rtlsdr import driver as rtl_driver
 from .devices.rtlsdr import levels as rtl_levels
-from .devices.rtlsdr.dll import READ_BLOCK, find_dll
+from .devices.rtlsdr.dll import READ_BLOCK, dll_bits, find_dll
 from .instrument_common import CommandError
 from .storage import Cancelled
 from .rtltcp import TUNER_R820T
@@ -345,8 +345,14 @@ class RtlSdrMixin:
         self._rtlsdr_shared = 0
         # rtl_tcp の相手がつながっている間のチューナーの中心（Hz）。None は中心を動かしてよい
         self._rtl_tcp_center: Optional[int] = None
-        self._rtlsdr_dll_found = find_dll(self._rtlsdr_cfg["dll_folder"]) is not None
+        self._rtlsdr_find_dll()
         self._rtlsdr_push_dll_folder()
+
+    def _rtlsdr_find_dll(self) -> None:
+        """DLL の場所とビット数（設定の画面が、見つけた場所と使えない理由を出す: 設計J §4.12）。"""
+        path = find_dll(self._rtlsdr_cfg["dll_folder"])
+        self._rtlsdr_dll_path = None if path is None else str(path)
+        self._rtlsdr_dll_bits = dll_bits(path)
 
     def _rtlsdr_push_dll_folder(self) -> None:
         b = self._backends.get("rtlsdr")
@@ -367,7 +373,9 @@ class RtlSdrMixin:
         tgt = self._rtlsdr_fixed_target()
         return {
             "dll_folder": self._rtlsdr_cfg["dll_folder"],
-            "dll_found": self._rtlsdr_dll_found,
+            "dll_found": self._rtlsdr_dll_path is not None,
+            "dll_path": self._rtlsdr_dll_path,
+            "dll_bits": self._rtlsdr_dll_bits,
             "gain_db": self._rtlsdr_cfg["gain_db"],
             "agc": self._rtlsdr_cfg["agc"],
             "connected": dev is not None,
@@ -522,7 +530,7 @@ class RtlSdrMixin:
             self._rtlsdr_device()
         if dll_folder is not _UNSET:
             self._rtlsdr_cfg["dll_folder"] = dll_folder or None
-            self._rtlsdr_dll_found = find_dll(self._rtlsdr_cfg["dll_folder"]) is not None
+            self._rtlsdr_find_dll()
             self._rtlsdr_push_dll_folder()
         if gain_db is not _UNSET or agc is not _UNSET:
             if gain_db is not _UNSET and gain_db is not None:

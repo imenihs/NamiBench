@@ -217,7 +217,7 @@ ERRORS = {
     "device_ambiguous": "同じシリアル番号の機器が複数あります。一覧から番号付きのポートを選んでください",
     "probe_failed": "GigaSt の応答が返りませんでした（別の機器かもしれません）",
     "open_failed": "ポートを開けませんでした",
-    "port_in_use": "ポートを開けません。GS5.exe など別のアプリが使っていないか確かめてください",
+    "port_in_use": "ポートを開けません。GS5.exe など別のアプリケーションが使っていないか確かめてください",
     "legacy_unreadable": "旧校正ファイルが読めません",
     "legacy_calibration_not_for_device": "この機器には旧校正ファイルを使えません",
     "file_unreadable": "ファイルが読めません",
@@ -678,6 +678,19 @@ def source_text(st: dict) -> str:
     if sw["mode"] in ("tg", "s11"):
         return TEMPLATES["source_tg"]
     return ""
+
+
+def sg_state_text(st: dict) -> str:
+    """SG 周波数の欄のそばの状態（Qt・Web 同じ）。出していないときは原因（未接続・モード・止めている）を言う
+    （設計J §4.12: 「出力していません」だけでは、打った値が出ない理由が分からない）。"""
+    text = source_text(st)
+    if text and (st.get("sweep") or {}).get("mode") == "sg":
+        return text
+    if (st.get("connection") or {}).get("state") != "connected":
+        return ERRORS["not_connected"]
+    if (st.get("sweep") or {}).get("mode") != "sg":
+        return LABELS["sg_off_mode"]
+    return LABELS["sg_off_stopped"]
 
 
 def rtltcp_status(r: dict) -> tuple[str, str]:

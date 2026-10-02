@@ -24,11 +24,15 @@ BANNED = (
     "口", "鍵", "トークン", "設計", "§", "PATH", "前置き", "過渡", "正本", "sweep_kind", "fft", "AD 値", "次の回",
     "LAN に開", "LAN に公開", "Q が 0", "IQ を持つ", "既定（PATH", "生の値", "イベント", "スレッド", "キュー",
     "命令", "引数", "Web の口",
+    # 語を略さない（docs/uxui_rule.md U-26。2026-10-03 ユーザー指摘「アプリ設定は省略を使わない UX/UI ルール違反」）
+    "アプリ", "スマホ",
 )
 
 # 使わない語の文字を含むが、計測器・無線の語として使ってよいもの（J §4.9 の「使ってよい」）。
-# 語 → 理由。ここに足すときは理由を書く。いまの表には当てはまる語が無いので空
-ALLOWED_WORDS: dict[str, str] = {}
+# 語 → 理由。ここに足すときは理由を書く
+ALLOWED_WORDS: dict[str, str] = {
+    "アプリケーション": "略さない形（「アプリ」を使わない: U-26）",
+}
 
 # 画面の語ではない表（コード・並び・色の種類）。値は画面に出ない
 STRUCTURAL = {"MENU_LAYOUT", "MENU_NOT_YET", "MENU_MNEMONICS", "DEVICE_STATE_CLS", "RULE_REASONS", "FREQ_FIELDS",
@@ -214,7 +218,8 @@ class ListenShownTest(unittest.TestCase):
         start = html.index('<template v-if="listenView.shown">')
         end = html.index("</template>", start)
         self.assertIn("T('LISTEN_LABELS', 'group')", html[start:end])
-        self.assertIn("F('listen_note')", html[start:end])
+        # 聞く間の動き（チューナーの中心をずらす・掃引が止まる）は画面に書かない（取扱説明書: J §4.12・U-26）
+        self.assertNotIn("listen_note", html[start:end])
 
 
 if __name__ == "__main__":

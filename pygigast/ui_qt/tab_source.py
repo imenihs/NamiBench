@@ -1,9 +1,10 @@
 """右のタブ「信号源」（設計J §4.5・L・E §6）。
 
 - SG: 周波数・周波数を変えたら最大・最小保持を消すか（設計F §8）・出力中の表示（ステップ掃引は次の回）
-- TG・S11 の基準: いまの基準の状態（名前・精度・経過時間・電源の入れ直し前）・一覧と選択・名前・消す・
+- ノーマライズの基準（TG・S11）: いまの基準の状態（名前・精度・経過時間・電源の入れ直し前）・一覧と選択・名前・消す・
   「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 のオープン/ショート
 - NF: 次の回
+- 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）、ボタンは文字の幅で左から詰める（S-03）
 """
 from __future__ import annotations
 
@@ -13,23 +14,19 @@ from typing import TYPE_CHECKING, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QFormLayout,
-    QGridLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
-from . import texts, widget_sync
+from . import sizes, texts, widget_sync
 from .fields import FreqField
-from .tab_traces import scroll, set_enabled
+from .tab_traces import body, outer, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -44,6 +41,8 @@ REASON_NF = texts.NOT_YET["nf"]
 REASON_NO_SELECTION = texts.REASON_TEXTS["select_reference"]
 L = texts.LABELS
 ID_ROLE = Qt.ItemDataRole.UserRole
+# 基準の一覧の高さの下限（数行）
+REF_LIST_MIN_H = 90
 
 
 def _when(ts) -> str:
@@ -57,14 +56,12 @@ class SourceTab(QWidget):
         super().__init__()
         self.win = win
         self._serial: Optional[str] = None
-        inner = QWidget()
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(4, 4, 4, 4)
+        inner, lay = body()
 
         g = QGroupBox(L["sg_group"])
-        form = QFormLayout(g)
+        form = sizes.form(g)
         self.f_sg = FreqField(L["sg_freq"], self._set_sg, big=False)
-        form.addRow(self.f_sg)
+        form.addRow(self.f_sg.name, self.f_sg)
         # SG の周波数を変えたときに最大・最小保持も消すか（設計F §8。コアの設定で Qt と Web が共有）
         self.sg_clear_holds = QCheckBox(L["sg_clear_holds"])
         self.sg_clear_holds.setToolTip(L["sg_clear_holds_tip"])
@@ -77,69 +74,62 @@ class SourceTab(QWidget):
         form.addRow(self.sg_state)
         self.step_sweep = QPushButton(L["step_sweep"])
         set_enabled(self.step_sweep, REASON_STEP)
-        form.addRow(self.step_sweep)
+        form.addRow(sizes.buttons_row(self.step_sweep))
         lay.addWidget(g)
 
-        g = QGroupBox(L["references_long"])
-        v = QVBoxLayout(g)
+        g = QGroupBox(L["references"])
+        v = sizes.vbox(g)
         self.ref_state = QLabel("")
         self.ref_state.setWordWrap(True)
         v.addWidget(self.ref_state)
-        grid = QGridLayout()
-        grid.addWidget(QLabel(L["name"]), 0, 0)
+        form = sizes.form()
         self.take_name = QLineEdit("")
         self.take_name.setPlaceholderText(L["take_name_placeholder"])
-        grid.addWidget(self.take_name, 0, 1, 1, 2)
-        grid.addWidget(QLabel(L["average"]), 1, 0)
+        sizes.set_width(self.take_name, "name")
+        form.addRow(L["name"], self.take_name)
         self.take_avg = QSpinBox()
         self.take_avg.setRange(1, 64)
         self.take_avg.setSuffix(L["times_suffix"])
-        grid.addWidget(self.take_avg, 1, 1)
+        sizes.set_width(self.take_avg, "int")
+        form.addRow(L["average"], self.take_avg)
+        v.addLayout(form)
         self.take_wide = QPushButton(L["take_wide"])
         self.take_fine = QPushButton(L["take_fine"])
         self.take_wide.clicked.connect(lambda: self._take("wide"))
         self.take_fine.clicked.connect(lambda: self._take("fine"))
-        grid.addWidget(self.take_wide, 2, 0, 1, 2)
-        grid.addWidget(self.take_fine, 2, 2)
+        v.addLayout(sizes.buttons_row(self.take_wide, self.take_fine))
         self.s11_open = QPushButton(L["s11_open"])
         self.s11_short = QPushButton(L["s11_short"])
         set_enabled(self.s11_open, REASON_S11)
         set_enabled(self.s11_short, REASON_S11)
-        grid.addWidget(self.s11_open, 3, 0, 1, 2)
-        grid.addWidget(self.s11_short, 3, 2)
-        v.addLayout(grid)
+        v.addLayout(sizes.buttons_row(self.s11_open, self.s11_short))
         self.ref_list = QListWidget()
-        self.ref_list.setMinimumHeight(90)
+        # 一覧は数行が見える高さを下限にする（スクロールの中で潰れて行が見えなくならない）
+        self.ref_list.setMinimumHeight(REF_LIST_MIN_H)
         self.ref_list.currentItemChanged.connect(lambda *_: self._update_buttons())
         self.ref_list.itemDoubleClicked.connect(lambda _it: self._select())
         v.addWidget(self.ref_list)
-        row = QHBoxLayout()
         self.btn_select = QPushButton(L["use"])
         self.btn_unselect = QPushButton(L["not_use"])
         self.btn_rename = QPushButton(L["rename_dots"])
         self.btn_delete = QPushButton(L["erase_dots"])
-        for b in (self.btn_select, self.btn_unselect, self.btn_rename, self.btn_delete):
-            b.setObjectName("small")
-            row.addWidget(b)
         self.btn_select.clicked.connect(self._select)
         self.btn_unselect.clicked.connect(lambda: win.call("reference_select", id=None, on_ok=lambda r: self.refresh()))
         self.btn_rename.clicked.connect(self._rename)
         self.btn_delete.clicked.connect(self._delete)
-        v.addLayout(row)
+        v.addLayout(sizes.buttons_row(self.btn_select, self.btn_unselect, self.btn_rename, self.btn_delete))
         lay.addWidget(g)
 
         g = QGroupBox("NF")
-        v = QVBoxLayout(g)
+        v = sizes.vbox(g)
         self.enr = QLineEdit("")
         self.enr.setPlaceholderText("ENR (dB)")
+        sizes.set_width(self.enr, "value")
         set_enabled(self.enr, REASON_NF)
         v.addWidget(self.enr)
         lay.addWidget(g)
         lay.addStretch(1)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll(inner))
+        outer(self, inner)
         self._refs: list[dict] = []
 
     # ---------------------------------------------------------------- SG
@@ -155,7 +145,7 @@ class SourceTab(QWidget):
         if sw.get("sg_hz") is not None:
             self.f_sg.set_hz(sw["sg_hz"])
         widget_sync.set_checked(self.sg_clear_holds, (st.get("trace_options") or {}).get("sg_clears_holds", True))
-        self.sg_state.setText(self.win.source_text() or L["sg_not_output"])
+        self.sg_state.setText(texts.sg_state_text(self.win.state))
         n = st.get("normalization") or {}
         sel = n.get("selected")
         text = texts.normalization_text(n)

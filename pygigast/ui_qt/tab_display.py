@@ -9,7 +9,8 @@
   - 単位の設定が変わったら（どこから変わっても）欄の下に一度知らせる（J §4.10 の 4。知らせはコアが出す）
   - 電力 → 比に変わったら窓で知らせる。「次から出さない」はこの画面の覚え書き（J §4.10 の 3・設計O §1.1）
 - 配色（J §4.4）: ライト・ダークの初期値にするボタン（変えた色の数を言ってから聞く）と、編集の画面への入口
-- 画像（PNG）のメモ1行（大きさ・配色・保存先は設定の画面の「保存」: 同じ値の入口を2つ作らない U-09）
+- PNG のメモ1行（大きさ・配色・保存先は設定の画面の「保存」: 同じ値の入口を2つ作らない U-09）
+- 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）、ボタンは文字の幅で左から詰める（S-03）
 """
 from __future__ import annotations
 
@@ -21,23 +22,20 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
-    QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QRadioButton,
-    QVBoxLayout,
     QWidget,
 )
 
 from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from ..core.view_units import LEVEL_UNITS
-from . import screen_model, texts, widget_sync
+from . import screen_model, sizes, texts, widget_sync
 from .fields import DbField
-from .tab_traces import scroll, set_enabled
+from .tab_traces import body, outer, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -63,13 +61,11 @@ class DisplayTab(QWidget):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__()
         self.win = win
-        inner = QWidget()
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(4, 4, 4, 4)
+        inner, lay = body()
 
         L = texts.LABELS
         g = QGroupBox(L["view_combo"])
-        v = QVBoxLayout(g)
+        v = sizes.vbox(g)
         self.view_group = QButtonGroup(self)
         self.view_spectrum = QRadioButton(L["spectrum_only"])
         self.view_waterfall = QRadioButton(L["plus_waterfall"])
@@ -83,20 +79,19 @@ class DisplayTab(QWidget):
         lay.addWidget(g)
 
         g = QGroupBox(L["draw_style"])
-        h = QHBoxLayout(g)
+        v = sizes.vbox(g)
         self.style_group = QButtonGroup(self)
         self.style_line = QRadioButton(L["draw_line"])
         self.style_fill = QRadioButton(L["draw_fill"])
         self.style_line.setChecked(True)
         for b in (self.style_line, self.style_fill):
             self.style_group.addButton(b)
-            h.addWidget(b)
-        h.addStretch(1)
+            v.addWidget(b)
         self.style_fill.toggled.connect(self._style_changed)
         lay.addWidget(g)
 
         g = QGroupBox(L["amplitude_detail"])
-        form = QFormLayout(g)
+        form = sizes.form(g)
         self.unit = QComboBox()
         for code, name in LEVEL_UNITS.items():
             self.unit.addItem(name, code)
@@ -117,47 +112,35 @@ class DisplayTab(QWidget):
                            big=False)
         self.ext.setToolTip(V["ext_db_tip"])
         self.ext.edit.setPlaceholderText(V["ext_db_placeholder"])
-        form.addRow(self.ext)
+        form.addRow(self.ext.name, self.ext)
         reset = QPushButton(V["reset_amp"])
-        reset.setObjectName("small")
         reset.clicked.connect(lambda: win.call("set_view", level_unit=None, ext_db=None))
-        form.addRow(reset)
+        form.addRow(sizes.buttons_row(reset))
         lay.addWidget(g)
 
         g = QGroupBox(L["colors"])
-        v = QVBoxLayout(g)
-        row = QHBoxLayout()
+        v = sizes.vbox(g)
         self.reset_light = QPushButton(S["palette_reset_light"])
         self.reset_light.clicked.connect(lambda: win.reset_palette("light"))
         self.reset_dark = QPushButton(S["palette_reset_dark"])
         self.reset_dark.clicked.connect(lambda: win.reset_palette("dark"))
-        row.addWidget(self.reset_light)
-        row.addWidget(self.reset_dark)
-        row.addStretch(1)
-        v.addLayout(row)
-        self.palette_state = QLabel("")
-        self.palette_state.setObjectName("dim")
-        self.palette_state.setWordWrap(True)
-        v.addWidget(self.palette_state)
+        v.addLayout(sizes.buttons_row(self.reset_light, self.reset_dark))
         self.colors = QPushButton(texts.MENU_ITEMS["view_colors"])
         self.colors.clicked.connect(lambda: win.actions["view_colors"].trigger())
-        v.addWidget(self.colors)
         self.bandplan = QPushButton(L["show_bandplan"])
         set_enabled(self.bandplan, REASON_BANDPLAN)
-        v.addWidget(self.bandplan)
+        v.addLayout(sizes.buttons_row(self.colors, self.bandplan))
         lay.addWidget(g)
 
         g = QGroupBox(L["png_group"])
-        form = QFormLayout(g)
+        form = sizes.form(g)
         self.png_note = QLineEdit("")
         self.png_note.setPlaceholderText(L["png_memo_placeholder"])
+        sizes.set_width(self.png_note, "name")
         form.addRow(L["memo"], self.png_note)
         lay.addWidget(g)
         lay.addStretch(1)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll(inner))
+        outer(self, inner)
         # 比の表示に変わったときの窓（開いている間は同じ窓の文を書き直す。試験が中身を見る）
         self.ratio_box: Optional[QMessageBox] = None
 
@@ -227,9 +210,6 @@ class DisplayTab(QWidget):
         widget_sync.set_checked(self.style_fill, v.get("draw_style") == "fill")
         widget_sync.set_checked(self.style_line, v.get("draw_style") != "fill")
         self.ext.set_value(float(v.get("ext_db") or 0.0))  # 打っている間は欄が書き直さない（fields._Edit）
-        from .screen_model import palette_view
-
-        self.palette_state.setText(palette_view(st)["base_text"])
 
     def fill_on(self) -> bool:
         return self.style_fill.isChecked()

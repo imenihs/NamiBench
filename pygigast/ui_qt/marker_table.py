@@ -10,25 +10,24 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QHBoxLayout,
     QHeaderView,
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyledItemDelegate,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
 from ..core.units import ParseError
-from . import marker_rows, menus, texts, widget_sync
+from . import marker_rows, menus, sizes, texts, widget_sync
 from .theme import number_font
 
 if TYPE_CHECKING:
@@ -66,6 +65,15 @@ class _CellEdit(QLineEdit):
             self._on_done(text)
 
 
+class _RowHeight(QStyledItemDelegate):
+    """行の高さを表の行の値にする（中に置く基準のドロップダウンと「操作」が標準の段の高さで収まる: J §4.11）。
+    列の幅には左右に部品の間の余白を足す（右寄せの数の列どうしが詰まって「500 -76.05 dBm」が1つの値に見えた）。"""
+
+    def sizeHint(self, option, index) -> QSize:
+        s = super().sizeHint(option, index)
+        return QSize(s.width() + 2 * sizes.GAP, max(s.height(), sizes.ROW_H))
+
+
 class MarkerPanel(QWidget):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__()
@@ -75,9 +83,7 @@ class MarkerPanel(QWidget):
         self._structure: tuple = ()
         self._ref_combos: dict[str, QComboBox] = {}
 
-        bar = QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        bar.setSpacing(4)
+        bar = sizes.hbox()
         a = win.actions
         L = texts.LABELS
         self.btn_peak = self._button(texts.DIRECTIONS["highest"], a["marker_peak"], L["btn_peak_tip"])
@@ -99,6 +105,7 @@ class MarkerPanel(QWidget):
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(True)
+        self.tree.setItemDelegate(_RowHeight(self.tree))
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context)
@@ -118,15 +125,12 @@ class MarkerPanel(QWidget):
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._num_font = number_font(self.tree.font())
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 2, 0, 0)
-        lay.setSpacing(2)
+        lay = sizes.vbox(self)
         lay.addLayout(bar)
         lay.addWidget(self.tree, 1)
 
     def _button(self, text: str, act, what: str) -> QPushButton:
         b = QPushButton(text)
-        b.setObjectName("small")
         b.clicked.connect(act.trigger)
         b.setToolTip(menus.tooltip_for(act, what))
         return b
@@ -189,7 +193,6 @@ class MarkerPanel(QWidget):
                 self.tree.setItemWidget(it, COL_REF, cb)
                 self._ref_combos[r["id"]] = cb
             ops = QToolButton()
-            ops.setObjectName("small")
             ops.setText(texts.LABELS["row_ops"])
             ops.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             ops.setMenu(self._row_menu(r))

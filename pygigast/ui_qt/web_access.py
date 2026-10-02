@@ -18,21 +18,17 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QGridLayout,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QVBoxLayout,
-    QWidget,
 )
 
 from ..api.web import qr
 from ..api.web.access import KIND_OPERATE, KIND_VIEW
-from . import menus, texts
+from . import menus, sizes, texts
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -228,7 +224,9 @@ def _truthy(v) -> bool:
 
 
 class ConnectWindow(QDialog):
-    """接続のしかた（QR 2つ・URL と［コピー］・6桁の認証番号と残りの秒数）。"""
+    """ブラウザからの接続のしかた（QR 2つ・URL と［コピー］・6桁の認証番号と残りの秒数・暗号化していない注意1行）。
+
+    QR コードの使い方は取扱説明書に書き、画面には書かない（U-26・J §4.12）。"""
 
     def __init__(self, ctl: WebControl, info: dict) -> None:
         super().__init__(ctl.win)
@@ -236,7 +234,8 @@ class ConnectWindow(QDialog):
         self.ctl = ctl
         self.info = info
         self.setWindowTitle(L["connect_title"])
-        lay = QVBoxLayout(self)
+        lay = sizes.vbox(self, inset=False)
+        sizes.window(lay)
         if not info.get("address"):
             lab = QLabel(L["no_address"])
             lab.setObjectName("warn")
@@ -244,6 +243,11 @@ class ConnectWindow(QDialog):
             lay.addWidget(lab)
         else:
             grid = QGridLayout()
+            grid.setHorizontalSpacing(sizes.SECTION_GAP)
+            grid.setVerticalSpacing(sizes.GAP)
+            # URL は QR の下に、名前を左に置いて全部を出す（QR の幅に収めると切れる。読むだけの長い文字: S-02）
+            links = sizes.form()
+            self.urls: dict[str, QLabel] = {}
             for col, (kind, key) in enumerate(((KIND_OPERATE, "connect_operate"), (KIND_VIEW, "connect_view"))):
                 url = info["urls"][kind]
                 title = QLabel(L[key])
@@ -256,26 +260,24 @@ class ConnectWindow(QDialog):
                 img.setPixmap(qr_pixmap(url))
                 img.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 grid.addWidget(img, 1, col)
-                row = QHBoxLayout()
-                edit = QLineEdit(url)
-                edit.setReadOnly(True)
-                edit.setCursorPosition(0)
+                text = QLabel(url)
+                text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                sizes.grow(text)
+                self.urls[kind] = text
                 copy = QPushButton(L["copy"])
-                copy.setObjectName("small")
                 copy.clicked.connect(lambda _=False, u=url: self._copy(u))
-                row.addWidget(edit, 1)
+                row = sizes.hbox()
+                row.addWidget(text, 1)
                 row.addWidget(copy)
-                box = QWidget()
-                box.setLayout(row)
-                grid.addWidget(box, 2, col)
+                links.addRow(L[key], row)
             lay.addLayout(grid)
-            note = QLabel(L["connect_qr_note"])
-            note.setObjectName("dim")
-            note.setWordWrap(True)
-            lay.addWidget(note)
+            lay.addLayout(links)
+            code = sizes.vbox(inset=False)
             how = QLabel(texts.tpl_web("code_label", plain=info.get("plain") or ""))
             how.setWordWrap(True)
-            lay.addWidget(how)
+            how.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            how.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            code.addWidget(how)
             self.code = QLabel(self._spaced(info.get("code") or ""))
             f = QFont(self.code.font())
             f.setPointSizeF(f.pointSizeF() * 3)
@@ -284,19 +286,23 @@ class ConnectWindow(QDialog):
             self.code.setFont(f)
             self.code.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.code.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            lay.addWidget(self.code)
+            code.addWidget(self.code)
             self.left = QLabel("")
             self.left.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lay.addWidget(self.left)
+            code.addWidget(self.left)
             self.copied = QLabel("")
             self.copied.setObjectName("dim")
-            lay.addWidget(self.copied)
+            self.copied.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.copied.hide()  # 空の行を出さない（U-15）。コピーしたら出す
+            code.addWidget(self.copied)
+            lay.addLayout(code)
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._tick)
             self._timer.start(1000)
             self._tick()
-        warn = QLabel(L["note"])
-        warn.setObjectName("dim")
+        # 暗号化していないことは注意の色で1行（設定の「ブラウザから使う」と同じ文: J §4.12）
+        warn = QLabel(L["lan_warn"])
+        warn.setObjectName("warn")
         warn.setWordWrap(True)
         lay.addWidget(warn)
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -325,6 +331,7 @@ class ConnectWindow(QDialog):
     def _copy(self, url: str) -> None:
         QGuiApplication.clipboard().setText(url)
         self.copied.setText(texts.WEB_LABELS["copied"])
+        self.copied.show()
 
 
 class ClientsWindow(QDialog):
@@ -337,29 +344,29 @@ class ClientsWindow(QDialog):
         L = texts.WEB_LABELS
         self.ctl = ctl
         self.setWindowTitle(L["clients_title"])
-        lay = QVBoxLayout(self)
+        lay = sizes.vbox(self, inset=False)
+        sizes.window(lay)
         self.state = QLabel("")
         lay.addWidget(self.state)
+        listing = sizes.vbox(inset=False)
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels([L[c] if c else "" for c in self.COLS])
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
-        lay.addWidget(self.table, 1)
+        listing.addWidget(self.table, 1)
         self.empty = QLabel(L["clients_empty"])
         self.empty.setObjectName("dim")
-        lay.addWidget(self.empty)
-        row = QHBoxLayout()
+        listing.addWidget(self.empty)
+        lay.addLayout(listing, 1)
         regen = QPushButton(L["regenerate"])
         regen.setToolTip(L["regenerate_tip"])
         regen.clicked.connect(ctl.regenerate)
         show = QPushButton(L["show_connect"])
         show.clicked.connect(ctl.show_connect)
-        row.addWidget(regen)
-        row.addWidget(show)
-        row.addStretch(1)
         close = QPushButton(L["close"])
         close.clicked.connect(self.close)
+        row = sizes.buttons_row(regen, show)
         row.addWidget(close)
         lay.addLayout(row)
         self.resize(520, 300)
@@ -376,7 +383,6 @@ class ClientsWindow(QDialog):
                 it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(i, j, it)
             b = QPushButton(texts.WEB_LABELS["disconnect"])
-            b.setObjectName("small")
             b.clicked.connect(lambda _=False, cid=c.conn_id: self.ctl.disconnect(cid))
             self.table.setCellWidget(i, 3, b)
         self.empty.setVisible(not conns)

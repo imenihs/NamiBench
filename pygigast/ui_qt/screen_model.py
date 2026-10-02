@@ -17,7 +17,7 @@ import numpy as np
 
 from ..core.units import format_freq
 from . import marker_rows, texts
-from .texts import RTL_LABELS, TEMPLATES, tpl
+from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
 
 @functools.lru_cache(maxsize=None)
@@ -175,6 +175,10 @@ def rtl_view(st: dict) -> dict:
         else "",
         "dll_text": tpl("rtl_dll", folder=dll) if dll else TEMPLATES["rtl_dll_default"],
         "dll_found": bool(rtl.get("dll_found")),
+        # 設定の画面の rtlsdr.dll の行（設計J §4.12）: 見つけたファイルの場所。無い・32 ビット版なら注意の色で理由
+        "dll_line": rtl.get("dll_path") or SETTINGS_LABELS["rtlsdr_missing"],
+        "dll_reason": SETTINGS_LABELS["rtlsdr_32bit"] if rtl.get("dll_bits") == 32 else "",
+        "dll_warn": not rtl.get("dll_path") or rtl.get("dll_bits") == 32,
         "ppm_reason": reason,
         "level_reason": reason or (RTL_LABELS["needs_manual_gain"] if rtl.get("agc") else None),
         # 「利得を合わせる」（設計Q §6.5）: AGC の間と、合わせている最中は押せない
@@ -320,31 +324,53 @@ def ref_auto_view(st: dict, shown: list[str], unit: str, db_per_div: float,
 # ---------------------------------------------------------------- 配色の編集（設計J §4.4）
 
 def palette_view(st: dict) -> dict:
-    """配色の編集の画面の中身。行ごとの名前・色・初期値・変えた印と、読みにくさの知らせ（止めはしない）。"""
+    """配色の編集の画面の中身。行ごとの名前・色・初期値・変えた印・読みやすさの知らせ（止めはしない）。
+
+    読みやすさの知らせは、組（文字と背景・トレースどうし）のうち**利用者が変えた側の行**に出す。どちらも変えて
+    いなければ両方の行に出す（警告がどの項目の話か見て分かるように: U-25。下にまとめて並べると、変えた色の ● と
+    対応せず意味を成さなかった: 2026-10-03 ユーザー指摘）。行には相手の色の名前を並べ、比の値はツールチップ。
+    """
     from ..core.palette import BASES, DEFAULT_BASE, NAMES
 
     S = texts.SETTINGS_TEXTS
+    name = texts.PALETTE_NAMES.get
     p = st.get("palette") or {}
     base = p.get("base") or DEFAULT_BASE
     colors = p.get("colors") or dict(BASES[base])
     defaults = BASES.get(base, BASES[DEFAULT_BASE])
     changed = set(p.get("changed") or [])
-    rows = [{"name": k, "label": texts.PALETTE_NAMES.get(k, k), "color": colors.get(k, defaults[k]),
-             "default": defaults[k], "changed": k in changed,
-             "tip": S["palette_changed_tip"].replace("{default}", defaults[k]) if k in changed else ""}
-            for k in NAMES]
-    warns = []
+    # 行 → {"contrast": [相手], "similar": [相手], "tips": [文]}
+    hits: dict[str, dict] = {k: {"contrast": [], "similar": [], "tips": []} for k in NAMES}
     for w in p.get("warnings") or []:
         if w.get("code") == "low_contrast":
-            warns.append(S["palette_warn_contrast"].replace("{fg}", texts.PALETTE_NAMES.get(w["fg"], w["fg"]))
-                         .replace("{bg}", texts.PALETTE_NAMES.get(w["bg"], w["bg"])).replace("{ratio}", f"{w['ratio']:.1f}"))
+            a, b, kind = w["fg"], w["bg"], "contrast"
+            tip = S["palette_contrast_tip"].replace("{fg}", name(a, a)).replace("{bg}", name(b, b)) \
+                .replace("{ratio}", f"{w['ratio']:.1f}")
         elif w.get("code") == "similar_traces":
-            warns.append(S["palette_warn_similar"].replace("{a}", texts.PALETTE_NAMES.get(w["a"], w["a"]))
-                         .replace("{b}", texts.PALETTE_NAMES.get(w["b"], w["b"])).replace("{d}", f"{w['delta_e']:.0f}"))
-    base_name = texts.PALETTE_BASES.get(base, base)
-    return {"rows": rows, "base": base, "changed_n": len(changed), "warnings": warns,
-            "base_text": S["palette_base"].replace("{base}", base_name).replace("{n}", str(len(changed))),
-            "ok_text": "" if warns else S["palette_ok"]}
+            a, b, kind = w["a"], w["b"], "similar"
+            tip = S["palette_similar_tip"].replace("{a}", name(a, a)).replace("{b}", name(b, b)) \
+                .replace("{d}", f"{w['delta_e']:.0f}")
+        else:
+            continue
+        sides = [x for x in (a, b) if x in changed] or [a, b]
+        for x in sides:
+            other = b if x == a else a
+            if x in hits and other not in hits[x][kind]:
+                hits[x][kind].append(other)
+                hits[x]["tips"].append(tip)
+    rows = []
+    for k in NAMES:
+        h = hits[k]
+        parts = []
+        if h["contrast"]:
+            parts.append(S["palette_row_contrast"].replace("{names}", "・".join(name(o, o) for o in h["contrast"])))
+        if h["similar"]:
+            parts.append(S["palette_row_similar"].replace("{names}", "・".join(name(o, o) for o in h["similar"])))
+        rows.append({"name": k, "label": name(k, k), "color": colors.get(k, defaults[k]),
+                     "default": defaults[k], "changed": k in changed,
+                     "tip": S["palette_changed_tip"].replace("{default}", defaults[k]) if k in changed else "",
+                     "warn": "  ".join(parts), "warn_tip": "\n".join(h["tips"])})
+    return {"rows": rows, "base": base, "changed_n": len(changed)}
 
 
 def palette_reset_question(st: dict, base: str) -> Optional[str]:
@@ -372,6 +398,33 @@ def preset_rows(presets: list[dict]) -> list[dict]:
 
 # ---------------------------------------------------------------- まとめ（Web の口が state に付ける）
 
+TRACE_COUNTED = ("average", "max_hold", "min_hold")
+
+
+def trace_status(s: dict) -> dict:
+    """トレースの行の2段目の様子（Qt・Web 同じ）。{"text": 1行の文, "tip": 全部の文}。
+
+    動作の名前は隣のドロップダウンが出しているので、文はいまの回数と値の様子だけにする（同じことを2回書かない:
+    U-24）。掃引ごとに長さが変わる文で列の幅や行の高さが動かないよう、画面は1行に収めて切り、全部はツールチップ
+    （設計J §4.11: 同じ列の部品は同じ幅・2026-10-03 ユーザー指摘「ガタガタ」）。
+    """
+    a = s.get("action")
+    name = texts.TRACE_ACTIONS.get(a, a or "")
+    parts = []
+    if a in TRACE_COUNTED:
+        tgt = s.get("count_target")
+        parts.append(f"{s.get('current_count', 0)}" + (f"/{tgt}" if tgt else ""))
+    elif not s.get("has_values"):
+        parts.append(texts.LABELS["no_value"])
+    if s.get("axis_differs"):
+        parts.append(TEMPLATES["axis_differs"])
+    text = "".join(parts)
+    tip = name + (" " + text if text else "")
+    if a in TRACE_COUNTED and not s.get("has_values"):
+        tip += texts.LABELS["no_value_paren"]
+    return {"text": text, "tip": tip}
+
+
 def ui_view(st: dict) -> dict:
     """Web の画面へ state と一緒に送るもの。Qt も同じ関数の部分を使う。"""
     return {
@@ -389,6 +442,8 @@ def ui_view(st: dict) -> dict:
         "ref_quick": ref_quick_view(st),
         "marks": marks_view(st),
         "palette": palette_view(st),
+        "sg_state": texts.sg_state_text(st),  # SG 周波数の欄のそば（J §4.12）
+        "trace_status": {str(t.get("number")): trace_status(t) for t in st.get("traces") or []},
         "level": unit_view(st),  # 単位の欄（J §4.10）
         # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う
         "freq_offset_text": texts.offset_text(texts.freq_offset_of(st)) if texts.freq_offset_of(st) else "",

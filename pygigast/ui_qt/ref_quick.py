@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
 
-from . import screen_model, texts
+from . import screen_model, sizes, texts
 from .texts_devices import REF_QUICK_LABELS as L
 
 if TYPE_CHECKING:
@@ -31,10 +31,10 @@ class RefQuick(QWidget):
         self.win = win
         self._task_id: Optional[str] = None
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setContentsMargins(sizes.GAP, 0, 0, 0)
+        lay.setSpacing(sizes.GAP)
         self.button = QPushButton(L["button"])
-        self.button.setMinimumHeight(44)
+        sizes.set_tier(self.button, "L")  # 上段のボタン（J §4.11）
         self.button.clicked.connect(self.take)
         self.status = QLabel("")
         self.status.setObjectName("dim")
@@ -45,7 +45,7 @@ class RefQuick(QWidget):
         self.bar.setMaximumWidth(80)
         self.bar.setTextVisible(False)
         self.cancel = QPushButton(L["cancel"])
-        self.cancel.setObjectName("small")
+        sizes.set_tier(self.cancel, "L")
         self.cancel.clicked.connect(self._cancel)
         for w in (self.button, self.bar, self.cancel, self.status):
             lay.addWidget(w)

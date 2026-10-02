@@ -42,7 +42,7 @@ class TestWebControl(UiBase):
         self.assertFalse(dlg.web_enable.isChecked())
         self.assertFalse(dlg.web_lan.isEnabled())
         self.assertFalse(dlg.web_show.isEnabled())
-        self.assertIn("暗号化", texts.WEB_LABELS["note"])
+        self.assertIn("暗号化", texts.WEB_LABELS["lan_warn"])
         dlg.close()
 
     def test_lan_on_shows_connect_window_status_and_clients(self):

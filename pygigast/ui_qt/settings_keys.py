@@ -16,7 +16,6 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -26,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import keymap, texts
+from . import keymap, sizes, texts
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -68,14 +67,11 @@ class KeysPage(QWidget):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__()
         self.win = win
-        lay = QVBoxLayout(self)
-        note = QLabel(S["keys_note"] + "\n" + S["keys_shift_note"])
-        note.setObjectName("dim")
-        note.setWordWrap(True)
-        lay.addWidget(note)
+        lay = sizes.vbox(self)
         self.codes = keymap.commands()
-        self.table = QTableWidget(len(self.codes), 3)
-        self.table.setHorizontalHeaderLabels([S["keys_col_command"], S["keys_col_key"], S["keys_col_default"]])
+        self.table = QTableWidget(len(self.codes), 4)
+        self.table.setHorizontalHeaderLabels([S["keys_col_command"], S["keys_col_key"], S["keys_col_default"],
+                                              S["keys_col_where"]])
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -83,9 +79,9 @@ class KeysPage(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.doubleClicked.connect(lambda _i: self.assign())
         lay.addWidget(self.table, 1)
-        row = QHBoxLayout()
         self.btn_assign = QPushButton(S["keys_assign"])
         self.btn_assign.clicked.connect(self.assign)
         self.btn_clear = QPushButton(S["keys_clear"])
@@ -94,11 +90,7 @@ class KeysPage(QWidget):
         self.btn_reset.clicked.connect(self.reset_row)
         self.btn_reset_all = QPushButton(S["keys_reset_all"])
         self.btn_reset_all.clicked.connect(self.reset_all)
-        for b in (self.btn_assign, self.btn_clear, self.btn_reset, self.btn_reset_all):
-            b.setObjectName("small")
-            row.addWidget(b)
-        row.addStretch(1)
-        lay.addLayout(row)
+        lay.addLayout(sizes.buttons_row(self.btn_assign, self.btn_clear, self.btn_reset, self.btn_reset_all))
         self.status = QLabel("")
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
@@ -114,11 +106,12 @@ class KeysPage(QWidget):
         ov = self.overrides()
         km = keymap.effective(ov)
         for i, code in enumerate(self.codes):
+            # グラフだけで効くことは「効く所」の列に出す（U-12・U-24）。Shift で10点動くことは命令の名前（メニューと同じ）が言う
             name = keymap.command_name(code)
-            if code in texts.GRAPH_ONLY_KEYS:
-                name += texts.tpl("paren", text=S["keys_graph_only"])
+            key = keymap.key_text(km[code])
+            where = S["keys_where_graph"] if code in texts.GRAPH_ONLY_KEYS else S["keys_where_any"]
             changed = code in ov
-            items = (name, keymap.key_text(km[code]), keymap.key_text(texts.QT_KEY_DEFAULTS.get(code, "")))
+            items = (name, key, keymap.key_text(texts.QT_KEY_DEFAULTS.get(code, "")), where)
             for col, text in enumerate(items):
                 it = self.table.item(i, col)
                 if it is None:

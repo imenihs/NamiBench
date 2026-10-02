@@ -17,7 +17,10 @@ MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", 
 MARKER_KINDS = {"P": "ピーク", "M": "手動"}
 
 # PNG の配色の選び方（I §3.6）。並びは選ぶ欄の並び（Qt・Web）。"screen" は画面で使っている配色（変えた色を含む）
-PNG_PALETTES = {"screen": "ユーザー指定（画面と同じ色）", "light": "ライト", "dark": "ダーク"}
+PNG_PALETTES = {"screen": "ユーザー指定", "light": "ライト", "dark": "ダーク"}
+# 選択肢の意味（ツールチップ。名前に説明を付けない: U-24）
+PNG_PALETTE_TIPS = {"screen": "画面と同じ色（自分で変えた色を含む）", "light": "ライトの初期値の色",
+                    "dark": "ダークの初期値の色"}
 
 REASON_TEXTS.update({
     "track_p_only": "ピーク追従は P（ピーク）のマーカーだけが持てます（M は周波数を固定）",
@@ -67,13 +70,11 @@ LABELS.update({
     # ---- マーカーのタブ
     "trace_n": "トレース {n}",
     "delta_ref": "デルタの基準",
-    "peak_track_long": "ピーク追従（掃引ごとに近くのピークへ）",
     "to_ref_level": "REF レベルに",
     "erase": "消す",
-    "offsets_long": "オフセット（選んでいるマーカーについて動くカーソル）",
     "offset_value_tip": "周波数は 10M・500k のように単位付き、レベルは dB の数",
     "bad_offset_value": "オフセットの値が読めません（例: 10M・500k・3）",
-    "second_n": "2つ目の N（シェープファクタ）",
+    "second_n": "シェープファクタ",
     "threshold_cross": "しきい値との交点",
     # マーカーの機能の結果をグラフに出す薄い線（G §3.6）
     "function_lines": "交点の線をグラフに出す",
@@ -81,7 +82,6 @@ LABELS.update({
                           "掃引ごとに動く（つまんで動かす XY カーソルとは別）",
     # dB の打てるドロップダウンで範囲の外の値を打ったとき（G §3.6）
     "db_range_note": "{lo}〜{hi} {unit} の値を入れてください",
-    "xy_cursor_long": "XY カーソル（トレースに載らない線）",
     "floor_tip": "ノイズの床よりこれだけ高いピークを並べる",
     "find": "探す",
     "col_freq_mhz": "周波数 (MHz)",
@@ -102,6 +102,7 @@ LABELS.update({
     "default_with": "既定（{type}）",
     "count_n": "回数 N",
     "no_value_paren": "（値なし）",
+    "no_value": "値なし",
     "freq_offset": "周波数オフセット",
     "no_files_open": "開いたファイルはありません",
     "close_file_tip": "このファイルの参照トレースをグラフから外す（ファイルは消さない）",
@@ -114,9 +115,9 @@ LABELS.update({
     "unit_auto": "自動（電力は dBm・比は dB）",
     "unit_tip": "縦軸の単位",
     "ext_corr": "外部補正",
-    "png_group": "画像（PNG）",
+    "png_group": "PNG",
     "png_size": "大きさ",
-    "png_memo_placeholder": "画像の下端に焼き込む1行（空なら出さない）",
+    "png_memo_placeholder": "画像の下端に焼き込む1行",
     "change": "変える…",
     "png_dir": "保存先",
     "png_dir_title": "PNG の保存先",
@@ -124,9 +125,8 @@ LABELS.update({
     "reset_colors": "ライト・ダークの初期値に戻す…",
     "show_bandplan": "バンドプランを表示",
     # ---- 信号源のタブ
-    "sg_group": "SG（信号源）",
+    "sg_group": "SG",
     "step_sweep": "ステップ掃引…",
-    "references_long": "TG・S11 の基準（ノーマライズ）",
     "take_name_placeholder": "空なら「TG 日時」",
     "average": "平均",
     "s11_open": "S11: オープンを測る",
@@ -135,7 +135,9 @@ LABELS.update({
     "not_use": "使わない",
     "rename_dots": "名前…",
     "erase_dots": "消す…",
-    "sg_not_output": "出力していません（SG モードで出力します）",
+    # SG 周波数の欄のそばの状態。出していないときは、なぜ出ていないかを原因ごとに言う（U-08。打った値が出ない理由）
+    "sg_off_mode": "SG モードではないので出力していません",
+    "sg_off_stopped": "掃引を止めているので出力していません",
     "ref_selected": "選んでいる基準: {name}（{when}）",
     "ref_none": "ノーマライズ: 未取得",
     "new_name": "新しい名前",
@@ -147,7 +149,7 @@ LABELS.update({
     "filter_csv": "CSV (*.csv);;すべて (*)",
     "filter_txt": "テキスト (*.txt);;すべて (*)",
     "open_dialog": "開く",
-    "export_dialog": "書き出し（CSV）",
+    "export_dialog": "CSV に書き出す",
     "png_save_failed": "PNG を保存できませんでした: {why}",
     "png_copy_failed": "PNG をコピーできませんでした: {why}",
     "record_started": "記録を始めました",
@@ -170,7 +172,7 @@ LABELS.update({
     "unfinished_unreadable": "・読めない所あり（{why}）",
     "unfinished_finish": "まとめる…",
     "unfinished_discard": "捨てる…",
-    "unfinished_later": "あとで（次の起動でもう一度聞く）",
+    "unfinished_later": "あとで",
     # ---- 旧校正ファイル（D §5.6）
     "legacy_short": "旧校正ファイル",
     "legacy_confirm": "このファイルを、接続中の機器（{serial}）の校正として取り込みますか？",

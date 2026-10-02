@@ -27,23 +27,19 @@ SETTINGS_TEXTS = {
     "reset": "初期値に戻す",
     "reset_tip": "この項目を初期値に戻す",
     # 接続
-    "known_group": "覚えた機器（次の起動で自動で繋ぐ機器）",
-    "known_none": "覚えた機器はありません（一度繋ぐと覚えます）",
+    "known_group": "覚えた機器",
+    "known_none": "覚えた機器はありません",
     "known_last": "前回の機器",
     "forget": "忘れる",
     "forget_title": "機器を忘れる",
     "forget_confirm": "「{name}」を覚えた機器から外します。次に起動したとき、自動では繋ぎません。いま繋いでいる機器は、このまま使えます。",
-    "manual_group": "見つからないときの手動の COM 番号（GigaSt）",
-    "manual_note": "機器の一覧に出ない GigaSt だけに使います。GigaSt かどうか確かめてから繋ぎます",
+    "manual_group": "COM 番号で繋ぐ（GigaSt）",
     "manual_port": "COM 番号",
     "manual_connect": "このポートで繋ぐ",
     "manual_placeholder": "例 COM3",
     "manual_bad": "COM 番号を入れてください（例 COM3）",
-    "open_devices": "機器の一覧を開く…",
+    "open_devices": "機器に接続…",
     # 表示（配色）
-    "palette_group": "配色（Qt とブラウザで同じ色）",
-    "palette_note": "色をクリックして変えます。変えた色には ● が付きます。元に戻す（Ctrl+Z）でも戻せます",
-    "palette_base": "いまの配色は「{base}」の初期値から始めたものです（変えた色 {n} 個）",
     "palette_reset_light": "ライトの初期値にする…",
     "palette_reset_dark": "ダークの初期値にする…",
     "palette_reset_title": "配色を初期値にする",
@@ -52,16 +48,19 @@ SETTINGS_TEXTS = {
     "palette_changed_tip": "初期値（{default}）から変えた色",
     "palette_pick_title": "{name}の色",
     "palette_hex": "色（#rrggbb）",
-    "palette_ok": "読みやすさの問題はありません",
-    "palette_warn_contrast": "{fg}と{bg}のコントラスト比が {ratio} です（7 未満は読みにくい）",
-    "palette_warn_similar": "{a}と{b}の色が近く、見分けにくい（色の差 {d}）",
+    # 読みやすさの知らせは、変えた色の行に出す（U-25）。相手の色の名前を並べる
+    "palette_row_contrast": "⚠ {names}とのコントラスト不足",
+    "palette_row_similar": "⚠ {names}と見分けにくい",
+    "palette_contrast_tip": "{fg}と{bg}のコントラスト比 {ratio}（7 未満は読みにくい）",
+    "palette_similar_tip": "{a}と{b}の色の差 {d}（20 未満は見分けにくい）",
     "palette_row_reset_tip": "この色だけ初期値に戻す",
     # キー操作
-    "keys_group": "キーの割り当て（この画面だけ。ブラウザはブラウザごとに覚えます）",
-    "keys_note": "行を選んで「キーを押して割り当てる」を押し、使いたいキーを押します。Esc でやめます",
     "keys_col_command": "操作",
     "keys_col_key": "いまのキー",
     "keys_col_default": "初期値",
+    "keys_col_where": "効く所",
+    "keys_where_graph": "グラフ",
+    "keys_where_any": "どこでも",
     "keys_assign": "キーを押して割り当てる",
     "keys_waiting": "割り当てるキーを押してください（Esc でやめる）",
     "keys_clear": "キーを外す",
@@ -72,23 +71,18 @@ SETTINGS_TEXTS = {
     "keys_conflict_title": "キーがぶつかります",
     "keys_conflict": "{key} は「{other}」に使われています。「{command}」に付け替えますか？（「{other}」のキーは外れます）",
     "keys_reserved": "{key} は割り当てられません: {why}",
-    "keys_graph_only": "グラフにいるときだけ",
     "keys_none": "（なし）",
     "keys_changed_tip": "初期値から変えた割り当て",
     "keys_assigned": "{command} に {key} を割り当てました",
-    "keys_shift_note": "マーカーを動かすキーは、Shift を付けると10点ずつ動きます",
     # 保存
-    "save_group": "保存",
     "save_dir": "保存・開くの最初のフォルダ",
     "png_dir": "PNG の保存先",
     "png_size": "PNG の大きさ",
     "png_palette": "PNG の配色",
-    "png_palette_note": "ユーザー指定は画面と同じ色（自分で変えた色を含む）で、ライト・ダークは初期値の色で描きます。"
-                        "どれを選んでも画面の配色は変わりません",
     "choose": "選ぶ…",
-    "save_web_note": "ブラウザでは、保存したファイルと PNG はブラウザの保存先へダウンロードします",
+    "save_web_reason": "ブラウザではブラウザの保存先へダウンロードします",
     # ブラウザでは変えられない項目
-    "web_only_pc": "この項目は pyGigaSt の PC の画面で変えます",
+    "web_only_pc": "pyGigaSt の PC の画面で変えます",
 }
 
 # 配色の名前（設計J §4.4 の表の名前）
@@ -127,8 +121,7 @@ VIEW_TEXTS = {
                   "SA・SG に戻すと {unit} で表示します",
     "ratio_status": "基準「{name}」との比（dB）で表示します",
     "dont_show_again": "次から出さない（設定 → 通知 で戻せます）",
-    # 設定の画面の「表示」: 窓で知らせるか（この画面だけの覚え書き）
-    "notify_group": "窓で知らせるもの（この画面だけの設定）",
+    # 設定の画面の「通知」: 窓で知らせるか（この画面だけの覚え書き）
     "notify_ratio": "比の表示に切り替わったら知らせる",
     "notify_ratio_tip": "TG・S11 で基準を使い始めて、電力（dBm など）から基準との比（dB）の表示に変わったときに窓で知らせます",
     "ext_db": "外部補正",
@@ -150,7 +143,6 @@ VIEW_TEXTS = {
 
 PRESET_TEXTS = {
     "title": "プリセット",
-    "note": "掃引条件・モード・振幅・トレースの設定・表示の設定に名前を付けて残します。校正データとノーマライズの基準は入りません",
     "save_new": "いまの状態を新しいプリセットに…",
     "overwrite": "いまの状態で上書き…",
     "overwrite_confirm": "「{name}」の中身を、いまの状態で置き換えます。",

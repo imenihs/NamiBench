@@ -22,6 +22,8 @@
   // 参照トレース（ファイル）の色。J §4.4 に無いので、トレースの色を順に使い点線で描く（設計に無い判断）
   const FILE_COLORS = ["trace2", "trace3", "trace4", "trace1"];
   const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"];
+  // 上段の周波数の欄の幅を決める一番長い値（Qt の sizes.TOP_FREQ_SAMPLE と同じ: 100Hz 単位の最長の形）
+  const TOP_FREQ_SAMPLE = "-12100.0000 MHz";
 
   function nowName() {
     const d = new Date();
@@ -124,6 +126,12 @@
       },
       // 負号は見間違えない字形「−」で出す（J §4.1）。打つときは「-」でも「−」でもよい
       refText() { return `${U.levelText(this.amp.ref)} ${this.axisUnit}`; },
+      // 上段の REF の欄の文字の幅: いまの単位で一番長い値「−120.0 単位」（Qt の DbChoiceField._fit_width と同じ）。
+      // 欄の幅は style.css がこれに左右の余白と ▼ を足す
+      refTextW() {
+        if (!this.textsReady) return 0;
+        return Math.ceil(GSFields.textWidth(`${U.levelText(-120)} ${this.axisUnit}`, GSFields.rootPx("--font-l-value")));
+      },
       // REF レベルの一覧（J §4.1: +20〜−120 を 10dB 刻み。Qt の fields.REF_CHOICES と同じ）
       refChoices() {
         const out = [];
@@ -195,6 +203,7 @@
       this.watchKeyStore();
       this.textsReady = true;
       this.$nextTick(() => this.makeGraph());
+      this.fitColumns();
       this.stream = new GSApi.EventStream({
         onOpen: () => { this.wsOpen = true; },
         onClose: () => { this.wsOpen = false; },
@@ -744,15 +753,10 @@
         if (action === "average" && !t.count) args.count = DEFAULT_AVERAGE_COUNT;
         this.cmd("set_trace", args, { field: "trace" + t.number });
       },
-      // 行の2段目の文（Qt の tab_traces と同じ文）: 動作・いまの回数/目標・値が無いとき・横軸が違うとき。
-      // 狭い枠ではまとまりの切れ目で折り返すよう、まとまりごとに分けて返す
+      // 行の2段目の文（Qt と同じ: screen_model.trace_status が作り、ui.trace_status で届く）。1行に収めて切り、
+      // 全部はツールチップ（掃引ごとに長さが変わっても、列の幅も行の高さも動かさない: 設計J §4.11）
       traceStatus(t) {
-        let head = X.get("TRACE_ACTIONS", t.action, t.action);
-        if (COUNTED.includes(t.action)) head += ` ${t.current_count || 0}` + (t.count_target ? `/${t.count_target}` : "");
-        const parts = [head];
-        if (!t.has_values) parts.push(W("no_value_paren"));
-        if (t.axis_differs) parts.push(X.fmt("axis_differs"));
-        return parts;
+        return ((this.ui && this.ui.trace_status) || {})[String(t.number)] || { text: "", tip: "" };
       },
       traceTip(key, reason) { return W(key) + (reason ? " — " + reason : ""); },
       setPointsAuto(auto) {
@@ -785,7 +789,29 @@
         this.openModal(W("rename_ref_title"), [{ key: "name", label: W("name"), value: r.name }], (v) => this.refAction("reference_rename", { id: r.id, name: v.name }));
       },
 
+      // ------------------------------------------------------------ 列の幅（J §4.11・S-02）
+      // トレースの表の列 A（動作・平均の種類）と列 B（回数・N 回の後）は、その列に出うる一番長い中身の幅に1つにそろえる
+      // （1行目と2行目の両方の選択肢。行や動作で選択肢が変わっても幅を変えない。2026-10-03 ユーザー指摘: 箱の長さが
+      // そろわず、設定を変えるときマウスを大きく動かす）。上段の周波数の欄の幅もここで測る（伸ばさない: S-02）。
+      // 測るのは字が入ってから（system の字なので待つのは一度だけ）
+      async fitColumns() {
+        try { if (document.fonts) await document.fonts.ready; } catch (e) { /* 字を待てなくても測る */ }
+        const F = GSFields;
+        const types = Object.values(X.dict("AVERAGE_TYPES"));
+        const colA = Math.max(F.selectWidth(Object.values(X.dict("TRACE_ACTIONS"))),
+          F.selectWidth([W("default"), ...types.map((t) => W("default_with", { type: t })), ...types]));
+        // 回数の欄は打てる欄＋▼: 一番長い回数の文字＋欄の左右の余白（6px×2）と枠（1px×2）＋▼（22px、欄に 1px 重ねる）
+        const counts = [F.countText(null), ...F.COUNT_CHOICES.map((n) => F.countText(n)), F.countText(F.COUNT_MAX)];
+        const countW = Math.max(...counts.map((t) => F.textWidth(t, F.rootPx("--font-m")))) + 2 * 6 + 2 + 21;
+        const colB = Math.max(F.selectWidth([...Object.values(X.dict("AVERAGE_AFTER")), ...Object.values(X.dict("HOLD_AFTER"))]), countW);
+        // 上段の周波数の欄: 上段の字で一番長い値＋欄の左右の余白（6px×2）と枠（1px×2）（Qt の FreqField と同じ）
+        const freqW = F.textWidth(TOP_FREQ_SAMPLE, F.rootPx("--font-l-value")) + 2 * 6 + 2;
+        F.fitColumns({ a: colA, b: colB });
+        document.documentElement.style.setProperty("--top-freq-w", Math.ceil(freqW) + "px");
+      },
+
       // ------------------------------------------------------------ 入力の窓（ファイルの窓は app_files.js）
+      // fields: [{ key, label, value, width（入力欄の幅のクラス。省くと名前の幅）, placeholder, multiline }]
       openModal(title, fields, ok, note) {
         this.modal = { title, note, fields: fields.map((f) => ({ ...f })), ok };
       },

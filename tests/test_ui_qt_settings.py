@@ -95,9 +95,11 @@ class SettingsDialogTest(UiBase):
         self.wait(lambda: page._rows["trace1"]["mark"].text() == "●", what="変えた印")
         self.assertEqual(self.win.traces.live[1]["curve"].opts["pen"].color().name(), "#00ff00")
         self.assertTrue(page._rows["trace1"]["reset"].isEnabled())
-        # 見分けにくいトレースの知らせ（止めはしない）
+        # 見分けにくいトレースの知らせ（止めはしない）は、変えた色の行に出る（U-25）。変えていない行には出ない
         page._set("trace2", "#00f000")
-        self.wait(lambda: "見分けにくい" in page.warn.text(), what="見分けにくさの知らせ")
+        self.wait(lambda: "見分けにくい" in page.warnings.get("trace2", ""), what="見分けにくさの知らせ")
+        self.assertIn("トレース 1", page.warnings["trace2"])
+        self.assertNotIn("trace3", page.warnings)
         # ライトの初期値: 変えた色の数を言ってから聞く。断れば変えない
         self.confirm_answer = False
         dlg.palette_page.light.click()
@@ -154,7 +156,7 @@ class SettingsDialogTest(UiBase):
         self.assertEqual(self.win.display_tab.png_size_choice(), (1600, 1000))
         # PNG の配色は ユーザー指定・ライト・ダーク の3つ。既定はユーザー指定（I §3.6）
         items = [(dlg.png_palette.itemData(i), dlg.png_palette.itemText(i)) for i in range(dlg.png_palette.count())]
-        self.assertEqual(items, [("screen", "ユーザー指定（画面と同じ色）"), ("light", "ライト"), ("dark", "ダーク")])
+        self.assertEqual(items, [("screen", "ユーザー指定"), ("light", "ライト"), ("dark", "ダーク")])
         self.assertEqual(dlg.png_palette.currentData(), "screen")
         dlg.png_palette.setCurrentIndex(dlg.png_palette.findData("dark"))
         dlg.png_palette.activated.emit(dlg.png_palette.currentIndex())

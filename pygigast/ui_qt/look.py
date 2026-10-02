@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from . import keymap, marker_rows, menus, screen_model, texts
+from PySide6.QtWidgets import QApplication
+
+from . import keymap, marker_rows, menus, screen_model, texts, theme
 from .theme import stylesheet
 
 if TYPE_CHECKING:
@@ -28,6 +30,7 @@ def apply_palette(win: "MainWindow", colors: dict) -> None:
         return
     win.pal.clear()
     win.pal.update(colors)
+    theme.install(QApplication.instance(), win.pal)
     sheet = stylesheet(win.pal)
     win.setStyleSheet(sheet)
     for det in (win.parts.graph, win.parts.peaks):

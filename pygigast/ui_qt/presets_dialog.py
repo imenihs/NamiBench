@@ -3,6 +3,7 @@
 一覧（名前・中身の要約）と、呼び出す・名前を変える・消す・いまの状態を新しく保存・上書き。
 呼び出しは1回の命令でいまの状態を置き換え、元に戻す（Ctrl+Z）で戻せる。中身はコアの presets フォルダ
 （Qt と Web で共有）。一覧の行の文は screen_model.preset_rows（Web と同じ）。
+何が入るか・入らないかは取扱説明書に書き、画面には書かない（U-26・J §4.12）。呼び出しの意味は「呼び出す」のツールチップ。
 """
 from __future__ import annotations
 
@@ -12,16 +13,14 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QVBoxLayout,
 )
 
-from . import screen_model, texts
+from . import screen_model, sizes, texts
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -48,11 +47,10 @@ class PresetsDialog(QDialog):
         super().__init__(win)
         self.win = win
         self.setWindowTitle(P["title"])
-        lay = QVBoxLayout(self)
-        note = QLabel(P["note"])
-        note.setObjectName("dim")
-        note.setWordWrap(True)
-        lay.addWidget(note)
+        lay = sizes.vbox(self, inset=False)
+        sizes.window(lay)
+        # 一覧は空でも出しておく（空のことは一覧のすぐ下に出す。表が消えて窓の形が変わらないように）
+        listing = sizes.vbox(inset=False)
         self.table = QTableWidget(0, 2)
         self.table.horizontalHeader().hide()
         self.table.verticalHeader().hide()
@@ -62,15 +60,15 @@ class PresetsDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.doubleClicked.connect(lambda _i: self.load())
-        lay.addWidget(self.table, 1)
+        listing.addWidget(self.table, 1)
         self.empty = QLabel(P["none"])
         self.empty.setObjectName("dim")
-        lay.addWidget(self.empty)
+        listing.addWidget(self.empty)
         self.broken = QLabel("")
         self.broken.setObjectName("warn")
         self.broken.setWordWrap(True)
-        lay.addWidget(self.broken)
-        row = QHBoxLayout()
+        listing.addWidget(self.broken)
+        lay.addLayout(listing, 1)
         self.btn_load = QPushButton(P["load"])
         self.btn_load.setToolTip(P["load_tip"])
         self.btn_load.clicked.connect(self.load)
@@ -80,13 +78,13 @@ class PresetsDialog(QDialog):
         self.btn_delete.clicked.connect(self.delete)
         self.btn_overwrite = QPushButton(P["overwrite"])
         self.btn_overwrite.clicked.connect(self.overwrite)
-        for b in (self.btn_load, self.btn_rename, self.btn_delete, self.btn_overwrite):
-            row.addWidget(b)
-        row.addStretch(1)
-        lay.addLayout(row)
         self.btn_new = QPushButton(P["save_new"])
         self.btn_new.clicked.connect(lambda: save_new(win, self.reload))
-        lay.addWidget(self.btn_new)
+        # 選んだプリセットへの操作の行と、新しく作る行（どちらも左から詰める: S-03）
+        buttons = sizes.vbox(inset=False)
+        buttons.addLayout(sizes.buttons_row(self.btn_load, self.btn_rename, self.btn_delete, self.btn_overwrite))
+        buttons.addLayout(sizes.buttons_row(self.btn_new))
+        lay.addLayout(buttons)
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.button(QDialogButtonBox.StandardButton.Close).setText(texts.SETTINGS_LABELS["close"])
         btns.rejected.connect(self.close)
@@ -105,7 +103,6 @@ class PresetsDialog(QDialog):
         for i, p in enumerate(self.rows):
             self.table.setItem(i, 0, QTableWidgetItem(p["name"]))
             self.table.setItem(i, 1, QTableWidgetItem(p["summary"]))
-        self.table.setVisible(bool(self.rows))
         self.empty.setVisible(not self.rows)
         n = int(r.get("broken") or 0)
         self.broken.setText(P["broken"].replace("{n}", str(n)) if n else "")

@@ -65,7 +65,9 @@ class WebDevicesTest(unittest.TestCase):
 
     def test_state_ui_status_and_ref_quick(self):
         ui = json.loads(self.get("/api/v1/state")[1])["ui"]
-        self.assertEqual(ui["status"][0]["text"], "● 未接続（機器 → 接続… で選べます）")
+        # 未接続の文は Qt と同じ表の文（メニューの項目の名前が変わっても追いかける）
+        self.assertEqual(ui["status"][0]["text"], texts.TEMPLATES["status_conn_none"])
+        self.assertIn(texts.MENU_ITEMS["connect"], ui["status"][0]["text"])
         self.assertFalse(ui["ref_quick"]["visible"])
         self.post("connect", {"backend": "simulator", "serial": "SIM00001"})
         self.post("set_mode", {"mode": "tg"})

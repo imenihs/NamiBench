@@ -11,7 +11,7 @@ from __future__ import annotations
 # モード（コード・ボタンの文字・名前・使えない理由）。並びが Ctrl+1〜5（Web は Alt+1〜5）の順（J §4.6）
 MODES = (
     ("sa", "SA", "スペクトラムアナライザ", None),
-    ("tg", "TG", "伝送特性（TG 出力を被測定物へ）", None),
+    ("tg", "TG", "伝送特性", None),
     ("s11", "S11", "反射", "反射（方向性結合器）の測定はまだ使えません"),
     ("sg", "SG", "信号源", None),
     ("nf", "NF", "NF 測定", "NF 測定はまだ使えません"),
@@ -58,7 +58,7 @@ MENU_MNEMONICS = {
 MENU_ITEMS = {
     "open": "開く…",
     "save": "保存…",
-    "export": "書き出し（CSV）…",
+    "export": "CSV に書き出す…",
     "png_save": "PNG を保存",
     "png_copy": "PNG をクリップボードへ",
     "record_start": "記録を開始",
@@ -67,7 +67,7 @@ MENU_ITEMS = {
     "quit": "終了",
     "undo": "条件の変更を戻す",
     "redo": "条件の変更をやり直す",
-    "connect": "接続…",
+    "connect": "機器に接続…",
     "disconnect": "切断",
     "self_test": "自己診断の結果",
     "run_cont": "連続",
@@ -98,9 +98,9 @@ MENU_ITEMS = {
     "view_colors": "配色…",
     "view_waterfall": "ウォーターフォール",
     "view_density": "密度表示",
-    "settings": "アプリ設定…",
+    "settings": "設定…",
     "settings_keys": "キー操作…",
-    "web_connect": "ブラウザから使う: 接続のしかたを表示…",
+    "web_connect": "ブラウザからの接続のしかた…",
     "help_keys": "キー操作の一覧",
     "help_about": "pyGigaSt について",
 }
@@ -131,7 +131,7 @@ MENU_NOT_YET = {
 
 # 操作が使えない理由（メニューとボタンで同じ文）
 REASON_TEXTS = {
-    "select_marker": "マーカーを選んでください（表の行・グラフの印・ピークのボタン）",
+    "select_marker": "マーカーを選んでいません",
     "delta_ref": "デルタの基準を選ぶと使えます",
     "no_wave": "波形がまだありません（掃引すると使えます）",
     "no_auto_points": "合わせる点がありません（局発の漏れ・TG の範囲外・掃引の始めの不安定な点・値の無い点は使いません）",
@@ -227,7 +227,6 @@ TEMPLATES = {
     "rtl_fit_done": "利得を {gain} dB に合わせました（前は {before}）",
     "rtl_fit_overload": "。いちばん小さい段でも振り切れています。入力を弱めてください",
     "rtl_fit_reset": "。トレース {traces} の蓄積を捨てました",
-    "listen_note": "チューナーの中心をマーカーから 300kHz ずらして聞きます。聞いている間は掃引が止まり、表示はチューナーの使える幅の中になります",
     "listen_now": "聞いている: {marker}（{freq}）・{mode}",
     "audio_none": "音を出す機器が見つかりません（音は流れていますが鳴らせません）",
     "audio_blocked": "ブラウザが音を止めています。画面のどこかを押すと鳴ります",
@@ -301,7 +300,7 @@ LISTEN_STOP_REASONS = {
     "device_changed": "機器が変わったため",
 }
 LISTEN_LABELS = {
-    "group": "この位置を聞く（信号の正体を確かめる）",
+    "group": "聞く",
     "mode": "方式",
     "start": "この位置を聞く",
     "stop": "やめる",
@@ -313,22 +312,16 @@ LISTEN_LABELS = {
 
 RTLTCP_BINDS = {"local": "この PC からだけ", "lan": "同じネットワークのほかの PC からも"}
 SETTINGS_LABELS = {
-    "title": "アプリ設定",
-    "note": "変えるとすぐ効きます（「適用」はありません）",
-    "rtltcp_group": "rtl_tcp の送出（外のソフトから RTL-SDR として使う）",
+    "title": "設定",
     "rtltcp_enable": "送り出す",
     "rtltcp_port": "ポート番号",
     "rtltcp_bind": "受ける接続",
-    "rtltcp_default": "初期値に戻す",
-    "rtltcp_note": "つながる機器すべてで送れます。GigaSt は信号の強さだけを送ります（音は AM だけ聞けます）。出している間は画面の下端に「rtl_tcp 送出中」を出し、そこから止められます",
     "rtltcp_stop": "止める",
-    "rtlsdr_group": "RTL-SDR の DLL",
-    "rtlsdr_found": "DLL を読めます",
-    "rtlsdr_missing": "DLL が見つかりません",
+    "rtlsdr_dll": "rtlsdr.dll",
+    "rtlsdr_missing": "見つかりません",
+    "rtlsdr_32bit": "32 ビット版のため使えません",
     "rtlsdr_choose": "フォルダを選ぶ…",
-    "rtlsdr_choose_note": "rtlsdr.dll（64 ビット版）が入っているフォルダを選んでください",
-    "rtlsdr_default": "自動で探すに戻す",
-    "other_group": "そのほかの設定",
-    "other_note": "接続・表示・キー操作・保存の設定はまだ使えません",
+    "rtlsdr_choose_title": "rtlsdr.dll（64 ビット版）のあるフォルダ",
+    "rtlsdr_default_tip": "初期値は自動で探す",
     "close": "閉じる",
 }

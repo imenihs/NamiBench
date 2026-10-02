@@ -75,8 +75,8 @@ class WebRtlTest(unittest.TestCase):
     def test_trace_tab_section_order(self):
         # 「トレース・掃引」のタブ: ①掃引 ②トレース ③参照トレース ④機器に固有の欄（RTL-SDR のときだけ: J §4.5）
         html = (UI_WEB / "index.html").read_text(encoding="utf-8")
-        a = html.index("v-show=\"showTab('trace')\"")
-        b = html.index("v-show=\"showTab('marker')\"")
+        a = html.index('data-tab="trace"')
+        b = html.index('data-tab="marker"')
         secs = re.findall(r'<section class="tsec" data-sec="(\w+)"([^>]*)>', html[a:b])
         self.assertEqual([s[0] for s in secs], ["sweep", "traces", "files", "rtlsdr"])
         self.assertIn('v-if="rtlView.shown"', secs[3][1])

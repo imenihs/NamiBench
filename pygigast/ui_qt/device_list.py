@@ -2,9 +2,10 @@
 
 - 自動で開くのは繋がっていないときだけ（起動して前回の機器へ自動で繋げなかった・利用者が切断した）。
   抜けたとき（切断・再接続待ち）は開かない（同じ機器が戻るのを待つ: 設計B §7.3）。いつでもメニュー
-  「機器 → 接続…」から開ける。開いた形は main_window の都合で決めず、ここの open_list に1つにまとめる
-- 1行は「名前／状態／［接続］」。COM 番号・USB ID は「詳細」の中にたたむ。名前は［名前…］で付けられる
-- 挿し抜きで一覧が自動で変わる（コアのイベント `devices`。開いている間は list_devices の watch_s で見続けてもらう）
+  「機器 → 機器に接続…」から開ける。開いた形は main_window の都合で決めず、ここの open_list に1つにまとめる
+- 1行は「名前・［詳細］［名前…］［接続］」の下に状態。COM 番号・USB ID は「詳細」の中にたたむ。名前は［名前…］で付けられる
+- 挿し抜きで一覧が自動で変わる（コアのイベント `devices`。開いている間は list_devices の watch_s で見続けてもらう）。
+  変わることは一覧が変わることで分かるので、文では言わない（J §4.12）
 - 繋いでいる最中は「繋いでいます…」を出し、失敗したら理由と次の手を出す
 - 何も挿していないときは案内と［シミュレータで試す］
 - 文言は texts（texts_devices.py）。Web と同じ関数で行の文を作る
@@ -19,16 +20,14 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
     QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 
-from . import texts
+from . import sizes, texts
 from .texts_devices import DEVICE_LABELS as L
 
 if TYPE_CHECKING:
@@ -49,8 +48,9 @@ class _Row(QFrame):
         self.d = d
         v = d["view"]
         g = QGridLayout(self)
-        g.setContentsMargins(8, 6, 8, 6)
-        g.setHorizontalSpacing(8)
+        g.setContentsMargins(sizes.INSET, sizes.INSET, sizes.INSET, sizes.INSET)
+        g.setHorizontalSpacing(sizes.GAP)
+        g.setVerticalSpacing(sizes.GAP)
         self.name = QLabel(v["name"])
         f = QFont(self.name.font())
         f.setBold(True)
@@ -60,7 +60,6 @@ class _Row(QFrame):
         self.state.setObjectName("warn" if v["state_cls"] == "warn" else "dim")
         self.state.setWordWrap(True)
         self.more = QToolButton()
-        self.more.setObjectName("small")
         self.more.setText(L["details"])
         self.more.setCheckable(True)
         self.more.setChecked(expanded)
@@ -73,20 +72,19 @@ class _Row(QFrame):
         self.details.setVisible(expanded)
         self.more.toggled.connect(self._toggle)
         self.rename = QPushButton(L["rename"])
-        self.rename.setObjectName("small")
         self.rename.setVisible(v["renamable"])
         self.rename.clicked.connect(lambda: owner.rename(d))
         self.action = QPushButton(v["action_label"])
-        self.action.setMinimumWidth(96)
         self.action.setEnabled(v["action_reason"] is None)
         self.action.setToolTip(v["action_reason"] or "")
         self.action.clicked.connect(lambda: owner.act(d))
+        # 1行目: 名前と操作（同じ高さにそろえる）。2行目: 状態。3行目: 詳細
         g.addWidget(self.name, 0, 0)
-        g.addWidget(self.state, 1, 0)
+        g.addWidget(self.more, 0, 1)
+        g.addWidget(self.rename, 0, 2)
+        g.addWidget(self.action, 0, 3)
+        g.addWidget(self.state, 1, 0, 1, 4)
         g.addWidget(self.details, 2, 0, 1, 4)
-        g.addWidget(self.more, 0, 1, 2, 1)
-        g.addWidget(self.rename, 0, 2, 2, 1)
-        g.addWidget(self.action, 0, 3, 2, 1)
         g.setColumnStretch(0, 1)
         self._owner = owner
 
@@ -110,11 +108,8 @@ class DeviceListWindow(QDialog):
         self._key: Optional[list] = None
         self.busy: Optional[dict] = None  # 繋いでいる最中の行
 
-        self.hint = QLabel(L["auto_update"])
-        self.hint.setObjectName("dim")
         self.empty = QWidget()
-        ev = QVBoxLayout(self.empty)
-        ev.setContentsMargins(0, 12, 0, 12)
+        ev = sizes.vbox(self.empty, inset=False)
         self.empty_label = QLabel(L["empty"])
         f = QFont(self.empty_label.font())
         f.setPointSize(f.pointSize() + 2)
@@ -125,14 +120,12 @@ class DeviceListWindow(QDialog):
         self.try_sim.clicked.connect(self._try_sim)
         ev.addStretch(1)
         ev.addWidget(self.empty_label)
-        ev.addSpacing(10)
+        ev.addSpacing(sizes.SECTION_GAP)
         ev.addWidget(self.try_sim, 0, Qt.AlignmentFlag.AlignHCenter)
         ev.addStretch(1)
 
         self.rows_box = QWidget()
-        self.rows = QVBoxLayout(self.rows_box)
-        self.rows.setContentsMargins(0, 0, 0, 0)
-        self.rows.setSpacing(6)
+        self.rows = sizes.vbox(self.rows_box, inset=False)
         self.rows.addStretch(1)
         self.scroll = scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -144,13 +137,12 @@ class DeviceListWindow(QDialog):
         self.status.hide()
         close = QPushButton(L["close"])
         close.clicked.connect(self.close)
-        bottom = QHBoxLayout()
+        bottom = sizes.hbox()
         bottom.addWidget(self.status, 1)
-        bottom.addStretch(0)
         bottom.addWidget(close, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
 
-        lay = QVBoxLayout(self)
-        lay.addWidget(self.hint)
+        lay = sizes.vbox(self, inset=False)
+        sizes.window(lay)
         lay.addWidget(self.empty, 1)
         lay.addWidget(scroll, 1)
         lay.addLayout(bottom)

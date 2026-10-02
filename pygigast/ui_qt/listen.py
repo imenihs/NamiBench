@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QGridLayout, QGroupBox, QLabel, QPushButton, QSlider
+from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QPushButton, QSlider
 
-from . import screen_model, texts, widget_sync
+from . import screen_model, sizes, texts, widget_sync
 from .tab_traces import set_enabled
 
 if TYPE_CHECKING:
@@ -90,7 +90,7 @@ class ListenControl:
         self.player = AudioPlayer()
         L = texts.LISTEN_LABELS
         g = QGroupBox(L["group"])
-        grid = QGridLayout(g)
+        form = sizes.form(g)
         self.mode = QComboBox()
         for code, name in texts.LISTEN_MODES.items():
             self.mode.addItem(name, code)
@@ -106,18 +106,13 @@ class ListenControl:
         self.now = QLabel("")
         self.now.setWordWrap(True)
         self.now.setObjectName("warn")
-        self.note = QLabel(texts.TEMPLATES["listen_note"])
-        self.note.setWordWrap(True)
-        self.note.setObjectName("dim")
-        grid.addWidget(QLabel(L["mode"]), 0, 0)
-        grid.addWidget(self.mode, 0, 1)
-        grid.addWidget(self.start_btn, 0, 2)
-        grid.addWidget(self.stop_btn, 0, 3)
-        grid.addWidget(QLabel(L["volume"]), 1, 0)
-        grid.addWidget(self.volume, 1, 1, 1, 3)
-        grid.addWidget(self.now, 2, 0, 1, 4)
-        grid.addWidget(self.note, 3, 0, 1, 4)
-        grid.setColumnStretch(1, 1)
+        row = sizes.hbox()
+        for w in (self.mode, self.start_btn, self.stop_btn):
+            row.addWidget(w)
+        row.addStretch(1)
+        form.addRow(L["mode"], row)
+        form.addRow(L["volume"], self.volume)
+        form.addRow(self.now)
         self.panel = g
         self._view: dict = {"shown": False, "active": False, "reason": texts.LISTEN_LABELS["not_iq"]}
         g.setVisible(False)

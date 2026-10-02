@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Callable, Optional
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QKeyEvent, QKeySequence, QPainter, QPen, QPixmap, QWheelEvent
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QKeyEvent, QKeySequence, QPainter, QPen, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import MINUS, ParseError, level_text, minus_sign, parse_db, parse_freq_hz
+from . import sizes
 from .texts_labels import LABELS
 
 NOTE_SHOW_MS = 4000
@@ -179,29 +180,42 @@ class _NotePopup(QFrame):
 
 
 class ValueField(QWidget):
-    """名前・値を縦に並べ、一度きりの知らせを欄の下に重ねて出す欄。
+    """値の欄。一度きりの知らせを欄の下に重ねて出す。大きさは段で決まる（設計J §4.11・S-01・S-05）。
 
-    名前の行の右には、欄に付く小さな部品（Span 固定・REF の自動など）を置ける（U-14: 付属するものを離さない）。
+    - 上段（big=True）: 名前を値の上に小さく置き、欄は上段の段（高さ 40px・文字 20px）。名前の行の右には、欄に付く
+      小さな部品（Span 固定・REF の自動など）を置ける（U-14: 付属するものを離さない）
+    - 標準の段（big=False）: 名前は欄の左（呼ぶ側が QFormLayout の名前の列に `field.name` を置く）。欄に付く部品は
+      欄の右に並べる。幅は値の種類で決める（周波数・レベルは「値」の幅）
     """
 
     def __init__(self, name: str, big: bool = True) -> None:
         super().__init__()
+        self.name = name
+        self.big = big
         self.name_label = QLabel(name)
         self.edit = _Edit()
-        f = QFont(self.edit.font())
-        f.setPointSize(15 if big else 11)
-        self.edit.setFont(f)
-        self.edit.setMinimumWidth(128 if big else 84)
         self.header = QHBoxLayout()
         self.header.setContentsMargins(0, 0, 0, 0)
-        self.header.setSpacing(4)
-        self.header.addWidget(self.name_label)
-        self.header.addStretch(1)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 2, 4, 2)
-        lay.setSpacing(1)
-        lay.addLayout(self.header)
-        lay.addWidget(self.edit)
+        self.header.setSpacing(sizes.GAP)
+        if big:
+            # 名前の行は小の段の高さ（見た目の決まりで固定。行に部品を足した欄と足さない欄で、値の欄の位置が変わらない）
+            sizes.set_tier(self.name_label, "S")
+            sizes.set_tier(self.edit, "L")
+            self.header.addWidget(self.name_label)
+            self.header.addStretch(1)
+            lay = QVBoxLayout(self)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(2)
+            lay.addLayout(self.header)
+            lay.addWidget(self.edit)
+        else:
+            self.name_label.hide()
+            sizes.set_width(self.edit, "value")
+            lay = QHBoxLayout(self)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(sizes.GAP)
+            lay.addWidget(self.edit)
+            lay.addLayout(self.header)
         self._popup = _NotePopup(self)
         self.note = self._popup.label
         self.note_action = self._popup.button
@@ -317,9 +331,13 @@ class FreqField(ValueField):
 
     def __init__(self, name: str, on_commit: Callable[[int], None], big: bool = True) -> None:
         super().__init__(name, big)
-        # 値が全部見える幅を取る（J §4.3: 欄が切れて値の一部しか見えないのを作らない）。100Hz 単位の最長の形で測る
-        widest = self.edit.fontMetrics().horizontalAdvance("-12100.0000 MHz")
-        self.edit.setMinimumWidth(widest + 16)
+        # 幅は一番長い値が全部見える幅で止め、伸ばさない（J §4.11 の S-02。上段の幅を分け合って伸ばすと、2段に
+        # 折り返したときに4つの欄が横いっぱいに伸び、RBW 以降が次の行に押し出された: 2026-10-03 ユーザー指摘）。
+        # 上段は上段の字で 100Hz 単位の最長の形を測る（J §4.3）。標準の段は「値」の幅（ValueField が決める）
+        if big:
+            f = QFont(self.edit.font())
+            f.setPixelSize(sizes.FONT_L_VALUE)
+            self.edit.setFixedWidth(QFontMetrics(f).horizontalAdvance(sizes.TOP_FREQ_SAMPLE) + 2 * 6 + 2)
         self._hz = 0
         # 周波数オフセット（設計O）: 欄は「測った周波数 + これ」を出し、打った値からこれを引いて渡す
         self.offset_hz = 0
@@ -374,7 +392,6 @@ class DbField(ValueField):
         self._value = 0.0
         self._unit = unit
         self._on_commit = on_commit
-        self._base_width = self.edit.minimumWidth()
         self.edit.committed.connect(self._commit_text)
         self.edit.stepped.connect(self._stepped)
 
@@ -385,9 +402,7 @@ class DbField(ValueField):
     def set_unit(self, unit: str) -> None:
         if unit != self._unit:
             self._unit = unit
-            # 値と単位が全部見える幅を取る（「dB（未校正）」のような長い単位でも切らない: J §4.3）
-            widest = self.edit.fontMetrics().horizontalAdvance(f"-000.0 {unit}")
-            self.edit.setMinimumWidth(max(self._base_width, widest + 16))
+            # 幅は「値」の幅で、一番長い単位「dB（未校正）」も入る（J §4.11。試験で測る）
             self.set_value(self._value)
 
     def value(self) -> float:
@@ -479,7 +494,10 @@ class DbChoiceField(DbField):
         self.combo.setLineEdit(self.edit)
         self.combo.setCompleter(None)  # 打っている途中に一覧の値で補わない（「+1」が「+10」にならない）
         self.edit.wheel_exp = 0
-        self.combo.setFont(self.edit.font())
+        if big:
+            sizes.set_tier(self.combo, "L")
+        else:
+            sizes.set_width(self.combo, "value")
         self._fit_width()
         self._fill_choices()
         self.combo.activated.connect(self._chosen)
@@ -541,11 +559,13 @@ class DbChoiceField(DbField):
             self._fill_choices()
 
     def _fit_width(self) -> None:
-        # 値と単位が全部見え、一覧の矢印の分も取る（J §4.3: 欄を切らない）
-        fm = self.edit.fontMetrics()
+        # 上段だけ: 値と単位が全部見え、一覧の矢印の分も取る（J §4.3: 欄を切らない）。標準の段は「値」の幅（J §4.11）
+        if not self.big:
+            return
+        fm = self.combo.fontMetrics()
         ends = [x for x in (self.lo, self.hi) if x is not None] or [-120.0]
         widest = max(fm.horizontalAdvance(f"{level_text(x)} {self._unit}") for x in ends)
-        self.combo.setMinimumWidth(max(self.edit.minimumWidth(), widest + 16) + 24)
+        self.combo.setFixedWidth(widest + 2 * sizes.BTN_PAD_X + sizes.CHOICE_ARROW + 2)
 
 
 class LocalDbChoiceField(DbChoiceField):

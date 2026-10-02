@@ -1,6 +1,6 @@
 // 機器の一覧（設計J §4.7。Qt の device_list.py と同じ並び・同じ語）。app.js が読み込んで合わせる。
 // - 一覧を自動で開くのは繋がっていないときだけ（ページを開いた時点・利用者が切断したとき）。抜けたとき
-//   （切断・再接続待ち）は開かない。いつでもメニュー「機器 → 接続…」から開ける
+//   （切断・再接続待ち）は開かない。いつでもメニュー「機器 → 機器に接続…」から開ける
 // - 行の文（名前・状態・詳細・押せるもの）と空のときの案内はサーバーが足す（view.devices_view: Qt と同じ関数）
 // - 挿し抜きで一覧が自動で変わる（イベント devices）。開いている間は list_devices の watch_s で見続けてもらう
 // - 繋いでいる最中と、失敗の理由と次の手を一覧の窓に出す
@@ -67,7 +67,7 @@
       },
       toggleDetails(id) { this.devWin = { ...this.devWin, open: { ...this.devWin.open, [id]: !this.devWin.open[id] } }; },
       renameDevice(d) {
-        this.openModal(this.D("rename_title"), [{ key: "name", label: this.D("rename_label"), value: d.custom_name || d.view.name }],
+        this.openModal(this.D("rename_title"), [{ key: "name", label: this.D("rename_label"), width: "w-name", placeholder: this.D("rename_placeholder"), value: d.custom_name || d.view.name }],
           (v) => this.cmd("rename_device", { kind: d.kind, serial: d.serial, name: String(v.name).trim() || null }));
       },
       chooseDll() {

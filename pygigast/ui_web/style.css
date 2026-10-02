@@ -1,4 +1,7 @@
-/* Web 画面の見た目（設計J §4.3・§4.3.3・§4.4）。色は J §4.4 のダークの初期値（Qt と同じ）。 */
+/* Web 画面の見た目（設計J §4.3・§4.3.3・§4.4・§4.11）。色は J §4.4 のダークの初期値（Qt と同じ）。
+   大きさと余白は J §4.11 の値だけを使う（docs/uxui_rule.md S-01〜S-07）。:root の値は Qt の ui_qt/sizes.py と同じで、
+   試験（tests/test_ui_qt_sizes.py）で一致を確かめる。段は置き場所で決まる: 上段は data-tier="L"、状態バーと上段の
+   名前の行は data-tier="S"、それ以外（右のタブ・マーカー表・別の窓）は標準。画面ごと・欄ごとに大きさを決めない。 */
 :root {
   --graph-bg: #15181d;
   --panel-bg: #1e232b;
@@ -11,153 +14,244 @@
   --running: #18572e;
   --split: 70%;
   --side: 340px;
+  /* 段ごとの部品の高さ（欄・ドロップダウン・ボタンが同じ高さ）と表の行（S-01） */
+  --h-l: 40px;
+  --h-m: 26px;
+  --h-s: 20px;
+  --row-h: 28px;
+  /* 文字の大きさ。標準の 13px は本文と同じ */
+  --font-l-value: 20px;
+  --font-l-button: 16px;
+  --font-run: 17px;
+  --font-m: 13px;
+  --font-s: 12px;
+  /* 連続・単発・停止の最小幅・ボタンの左右の余白と最小幅（S-03） */
+  --run-min-w: 78px;
+  --btn-pad-x: 12px;
+  --btn-min-w: 64px;
+  /* 余白（S-04）: 部品の間・名前と欄の間・まとまりの間・枠の内側・窓の外周 */
+  --gap: 6px;
+  --label-gap: 8px;
+  --section-gap: 12px;
+  --inset: 8px;
+  --window-margin: 12px;
+  /* チェックボックス・ラジオの印（S-06） */
+  --indicator: 14px;
+  /* 入力欄の幅（S-02）: 整数・値（周波数・レベル）・名前・色 */
+  --w-int: 78px;
+  --w-value: 169px;
+  --w-name: 208px;
+  --w-color: 78px;
   color-scheme: dark;
 }
 [v-cloak] { display: none; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--panel-bg); color: var(--text); }
-body { font: 13px/1.4 "Yu Gothic UI", "Meiryo UI", "Meiryo", "Noto Sans JP", system-ui, sans-serif; }
-button, input, select, textarea { font: inherit; color: var(--text); background: var(--graph-bg); border: 1px solid var(--axis); border-radius: 3px; }
-button { padding: 3px 10px; cursor: pointer; }
+body { font: var(--font-m)/1.4 "Yu Gothic UI", "Meiryo UI", "Meiryo", "Noto Sans JP", system-ui, sans-serif; }
+
+/* ---- 部品（標準の段: S-01）。欄・ドロップダウン・ボタンは同じ高さと同じ文字 ---- */
+button, input, select, textarea { font: inherit; font-size: var(--font-m); color: var(--text); background: var(--graph-bg);
+                                  border: 1px solid var(--axis); border-radius: 3px; margin: 0; }
+/* 段の決まりは置き場所（data-tier）の決まりで上書きするので、ここは詳細度を上げない（:where） */
+:where(button, select, input:not([type=checkbox], [type=radio], [type=range])) {
+  height: var(--h-m); font-size: var(--font-m); vertical-align: middle; }
+input, select { padding: 0 6px; }
+/* ドロップダウンは一番長い選択肢の幅（S-02）。並びに押し縮められない・横に伸ばさない */
+select { padding-right: 2px; flex: none; width: auto; max-width: none; }
+/* ボタンは文字の幅＋左右の余白・最小幅はそろえる。横に伸ばさない（S-03） */
+button { padding: 0 var(--btn-pad-x); min-width: var(--btn-min-w); white-space: nowrap; cursor: pointer; flex: none; }
 button:disabled { color: var(--axis); cursor: default; }
-button.small { padding: 0 6px; font-size: 12px; }
 button.primary { background: var(--accent); color: var(--graph-bg); border-color: var(--accent); }
-input, select { padding: 2px 4px; }
-input:disabled, select:disabled { color: var(--axis); }
-h3 { margin: 12px 0 4px; font-size: 13px; color: var(--text-dim); font-weight: 600; }
+input:disabled, select:disabled, textarea:disabled { color: var(--axis); }
+textarea { padding: 4px 6px; }
+/* 数値の欄に ▲▼ を付けない（S-07） */
+input[type=number] { appearance: textfield; -moz-appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+/* チェックボックス・ラジオの印（S-06）: どの配色でも入れた・外したが見える強調の色 */
+input[type=checkbox], input[type=radio] { width: var(--indicator); height: var(--indicator); margin: 0; accent-color: var(--accent);
+                                          vertical-align: middle; flex: none; cursor: pointer; }
+input[type=checkbox]:disabled, input[type=radio]:disabled { cursor: default; }
+/* 色の見本（Qt の色のボタンと同じ大きさ） */
+input[type=color] { width: var(--btn-min-w); padding: 2px; cursor: pointer; }
+
+/* 入力欄の幅は入れる値の種類で決める（S-02）。伸ばしてよいのは読むだけの長い文字（w-grow）だけ */
+.w-int { width: var(--w-int); }
+.w-value { width: var(--w-value); }
+.w-name { width: var(--w-name); }
+.w-color { width: var(--w-color); }
+.w-grow { flex: 1 1 auto; min-width: 0; width: auto; }
+
+h3 { margin: 0; font-size: var(--font-m); color: var(--text-dim); font-weight: 600; }
 .dim { color: var(--text-dim); }
 .warn { color: var(--warn); }
 .ok { color: var(--text); }
 .grow { flex: 1; }
 .nowrap { white-space: nowrap; }
 .r { text-align: right; } /* 数える列は右寄せ（U-17） */
+.pre { white-space: pre-line; }
+
+/* 名前付きのチェックボックス・ラジオ（Qt の QCheckBox と同じ: 標準の段の高さ・印と名前の間は部品の間） */
+label.inline { display: inline-flex; align-items: center; gap: var(--gap); min-height: var(--h-m); cursor: pointer; }
+label.disabled { color: var(--axis); cursor: default; }
+/* 横の並び（行）と縦の並び。部品は伸ばさない */
+.row { display: flex; flex-wrap: wrap; gap: var(--gap); align-items: center; }
+.stack { display: flex; flex-direction: column; gap: var(--gap); align-items: flex-start; }
+/* 名前を左・欄を右（S-05）。名前の列を縦にそろえ、名前は欄の縦の真ん中 */
+.form { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--gap) var(--label-gap); align-items: center;
+        justify-items: start; align-self: stretch; }
+.form > .span { grid-column: 1 / -1; }
+.form > .fill { justify-self: stretch; }
+.row.disabled, .form.disabled { opacity: .6; }
+/* 欄の下の一度きりの知らせ・注意 */
+.fnote { color: var(--warn); font-size: var(--font-s); }
+.swatch { display: inline-block; width: 10px; height: 10px; margin-right: var(--gap); border-radius: 2px; }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
 
-/* ---- 上段 ---- */
-.topbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 14px; padding: 4px 8px; }
-.topgroup { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px; }
-.menu-wrap { position: relative; align-self: stretch; display: flex; align-items: flex-end; }
-.menu-btn { font-size: 20px; min-height: 40px; min-width: 40px; padding: 0 8px; }
+/* ---- 上段（大の段: S-01）。名前は値の上に小さく（S-05）、欄とボタンの下端をそろえる ---- */
+.topbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--gap) var(--section-gap); padding: var(--inset); }
+.topgroup { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--gap); }
+/* 1行目は左から詰め、余りは右の端に置く（周波数の欄は伸ばさない）。右の組は残りの幅で、連続・単発・停止を右へ寄せる */
+.topgroup.tg-freq { flex: 0 1 auto; }
+.topgroup.tg-ctl { flex: 1 1 auto; }
+[data-tier=L] :where(button, select, input:not([type=checkbox], [type=radio], [type=range])) { height: var(--h-l); }
+[data-tier=L] :where(select, input) { font-size: var(--font-l-value); }
+[data-tier=L] :where(button) { font-size: var(--font-l-button); }
+[data-tier=L] .run-btn { font-size: var(--font-run); min-width: var(--run-min-w); }
+/* 小の段（状態バー・上段の名前の行） */
+[data-tier=S] :where(button, select, input:not([type=checkbox], [type=radio], [type=range])) {
+  height: var(--h-s); font-size: var(--font-s); padding: 0 var(--gap); }
+/* 上段の中の一時的な知らせとメニューは標準の段 */
+[data-tier=M] :where(button, select, input:not([type=checkbox], [type=radio], [type=range])) {
+  height: var(--h-m); font-size: var(--font-m); }
+
+.menu-wrap { position: relative; display: flex; align-items: flex-end; }
+.menu-btn { min-width: var(--h-l); padding: 0; }
+[data-tier=L] .menu-btn { font-size: var(--font-l-value); }
 .menu { position: absolute; left: 0; top: 100%; z-index: 30; background: var(--panel-bg); border: 1px solid var(--axis);
         max-height: 80vh; overflow: auto; width: 330px; padding: 4px 0; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
-.menu-title { padding: 4px 10px 2px; color: var(--text-dim); font-size: 12px; }
-.menu-item { display: flex; width: 100%; justify-content: space-between; gap: 12px; border: 0; border-radius: 0;
-             background: transparent; text-align: left; padding: 3px 14px; }
+.menu-title { padding: 4px 10px 2px; color: var(--text-dim); font-size: var(--font-s); }
+.menu .menu-item { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: var(--section-gap);
+                   border: 0; border-radius: 0; background: transparent; text-align: left; padding: 0 14px; min-width: 0; }
 .menu-item:hover:not(.dis) { background: var(--grid); }
 .menu-item.dis { color: var(--axis); cursor: default; }
 .menu-item .keys { color: var(--text-dim); }
 .menu hr { border: 0; border-top: 1px solid var(--grid); margin: 3px 0; }
-.modes { display: flex; gap: 2px; }
-.mode-btn { min-height: 40px; font-size: 16px; padding: 0 12px; } /* 上段のボタンは大きく（J §4.3） */
+.modes, .runbtns, .filebtns { display: flex; gap: var(--gap); }
 .mode-btn.on { background: var(--accent); color: var(--graph-bg); }
-.runbtns { display: flex; gap: 3px; }
-.run-btn { min-height: 44px; min-width: 78px; font-size: 17px; }
 .run-btn.running { background: var(--running); }
-.top-btn { min-height: 40px; font-size: 16px; }
-.filebtns { display: flex; gap: 3px; }
 
-.field { position: relative; display: flex; flex-direction: column; padding: 2px 4px; }
-.field-head { display: flex; align-items: center; gap: 4px; min-height: 20px; }
-.field-name { color: var(--text-dim); font-size: 12px; margin-right: auto; }
-.field-input { width: 11.5em; font-size: 15px; font-variant-numeric: tabular-nums; }
-.field.big .field-input { font-size: 20px; width: 9.4em; } /* 値が全部見える幅（-12100.0000 MHz） */
-.field-select { font-size: 15px; min-width: 7em; }
-/* 上段の RBW・REF・dB/div は同じ字の大きさ・同じ高さにそろえる */
-.field:not(.big) .field-input, .field-select { height: 30px; box-sizing: border-box; }
-/* 選択肢の文字を切らない（設計J §4.3）: ドロップダウンは一番長い選択肢の幅を取り、並びに押し縮められない */
-select { flex-shrink: 0; max-width: none; }
+/* 値の欄（fields.js の num-field）。上段は名前の行（小の段の高さ）＋値。標準の段は欄だけ（名前は左の列） */
+.field { position: relative; display: flex; flex-direction: column; }
+.field-head { display: flex; align-items: center; gap: var(--gap); height: var(--h-s); }
+.field-name { color: var(--text-dim); font-size: var(--font-s); margin-right: auto; white-space: nowrap; }
+.field-line { display: flex; align-items: stretch; }
+.field-input { width: var(--w-value); font-variant-numeric: tabular-nums; }
+/* 打てるドロップダウン（欄＋右の ▼）は、▼ まで入れて「値」の幅（Qt の DbChoiceField と同じ: J §4.11） */
+.field-line.choices .field-input { width: calc(var(--w-value) - 21px); }
+/* 上段の Center・Span・Start・Stop は上段の幅を4つで分け合う（S-02）。値が全部見える幅（-12100.0000 MHz）を下限にする */
+/* 上段の Center・Span・Start・Stop は伸ばさない。上段の字で「-12100.0000 MHz」が入る幅（＋左右の余白と枠）で止める
+   （S-02。Qt の FreqField と同じ。幅は app.js の fitColumns が --top-freq-w に置く） */
+.field.big .field-input { width: var(--top-freq-w, 9.4em); }
+/* 上段の REF レベル: いまの単位で一番長い値（−120.0 単位）＋左右の余白＋▼（Qt の DbChoiceField._fit_width と同じ）。
+   文字の幅は app.js の refTextW が --ref-text-w に置く。▼ は欄に1px 重ねるので、欄＋▼ で 文字＋余白×2＋▼＋枠 になる */
+[data-tier=L] .field.ref .field-input { width: calc(var(--ref-text-w, 6em) + 2 * var(--btn-pad-x) + 3px); }
+/* 欄の右の一覧（打てるドロップダウンの ▼。REF レベル・回数・dB の欄）。欄と同じ高さ */
+.field-choices { width: 22px; min-width: 0; padding: 0; margin-left: -1px; cursor: pointer; }
 .note-pop { position: absolute; top: 100%; left: 0; z-index: 20; background: var(--panel-bg); border: 1px solid var(--warn);
-            color: var(--warn); padding: 3px 6px; white-space: nowrap; display: flex; gap: 8px; align-items: center; }
+            color: var(--warn); padding: 3px 6px; white-space: nowrap; display: flex; gap: var(--label-gap); align-items: center;
+            font-size: var(--font-m); }
 .note-action { color: var(--accent); border-color: var(--accent); background: transparent; }
-.lock { display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; font-size: 12px; background: transparent; color: var(--text-dim); }
+/* Span 固定（名前の行の小さな切り替え。Qt の小の段のツールボタンと同じ） */
+.lock { display: inline-flex; align-items: center; gap: 3px; min-width: 0; background: transparent; color: var(--text-dim); }
 .lock.on { color: var(--accent); border-color: var(--accent); }
 .lock-icon { display: inline-block; }
 
-.cond { color: var(--warn); padding: 0 10px 2px; font-size: 12px; }
+.cond { color: var(--warn); padding: 0 var(--inset) var(--gap); font-size: var(--font-s); }
 
 /* ---- 中央 ---- */
 .main { flex: 1; min-height: 0; display: flex; }
 .left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .graph-box { flex: 0 0 var(--split); min-height: 120px; display: flex; flex-direction: column; background: var(--graph-bg); }
 .partmode .graph-box { flex: 1 1 auto; }
-.part-bar { display: flex; gap: 12px; align-items: center; padding: 2px 6px; font-size: 12px; min-height: 22px; }
-.part-bar .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; }
-.hover-tip { position: fixed; z-index: 45; pointer-events: none; background: var(--panel-bg); color: var(--text); border: 1px solid var(--axis); padding: 3px 7px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
+.part-bar { display: flex; gap: var(--section-gap); align-items: center; padding: var(--gap) var(--inset) 0; font-size: var(--font-s); }
+.part-bar .legend { display: flex; gap: var(--section-gap); flex-wrap: wrap; margin-left: auto; }
+.hover-tip { position: fixed; z-index: 45; pointer-events: none; background: var(--panel-bg); color: var(--text); border: 1px solid var(--axis); padding: 3px 7px; font-size: var(--font-s); font-variant-numeric: tabular-nums; white-space: nowrap; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
 .graph { flex: 1; min-height: 0; position: relative; outline: none; overflow: hidden; }
 .graph .uplot { outline: none; }
 .graph .uplot:focus { box-shadow: inset 0 0 0 1px var(--accent); }
 .hsplit { height: 6px; cursor: row-resize; background: var(--grid); flex: 0 0 auto; }
 .vsplit { width: 6px; cursor: col-resize; background: var(--grid); flex: 0 0 auto; }
 .marker-box { flex: 1 1 0; min-height: 90px; display: flex; flex-direction: column; }
-.marker-tools { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; align-items: center; }
+.marker-tools { display: flex; flex-wrap: wrap; gap: var(--gap); padding: var(--gap) var(--inset); align-items: center; }
 .table-scroll { flex: 1; overflow: auto; min-height: 0; } /* 行が増えたら表の中でスクロールする（J §4.3.2） */
+/* 表の行は標準の部品が収まる高さ（J §4.11）。セルの部品は縦の真ん中 */
 .mtable { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-.mtable th, .mtable td { padding: 2px 6px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+.mtable th, .mtable td { padding: 0 var(--gap); height: var(--row-h); border-bottom: 1px solid var(--grid); white-space: nowrap;
+                         vertical-align: middle; }
 .mtable th { color: var(--text-dim); font-weight: normal; text-align: left; position: sticky; top: 0; background: var(--panel-bg); }
 .mtable th.r { text-align: right; }
 .mtable tr.child td { color: var(--text-dim); }
 .mtable tr.child td:first-child { padding-left: 20px; }
 .mtable tr.sel td { background: rgba(79, 163, 255, .18); }
-.mtable td.ops button { margin-right: 3px; }
-.note-cell { color: var(--warn); font-size: 12px; }
-.detached-bar { padding: 6px 10px; color: var(--text-dim); background: var(--grid); }
+.mtable td.ops { width: 1%; }
+.mtable td.fill { width: 100%; }
+.mtable.wrap td:not(.ops), .mtable.keys td.fill { white-space: normal; }
+.cell-row { display: flex; gap: var(--gap); align-items: center; }
+.note-cell { color: var(--warn); font-size: var(--font-s); }
+.detached-bar { display: flex; align-items: center; gap: var(--label-gap); padding: var(--gap) var(--inset); color: var(--text-dim); background: var(--grid); }
 
-.side { flex: 0 0 var(--side); min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--grid); }
+/* 右のパネル。幅は利用者が決めた幅と、一番広いタブの中身の幅の大きい方（Qt のドックと同じ: 欄を縮めない S-02）。
+   タブの中身は全部同じ場所に重ねて置き、見ていないタブは見えなくするだけ（タブを替えてもパネルの幅が変わらない） */
+.side { flex: 0 0 var(--side); display: flex; flex-direction: column; border-left: 1px solid var(--grid); }
 .partmode .side { flex: 1 1 auto; border: 0; }
-/* タブの並び: 狭ければ折り返す。右端の［別ウィンドウ］は縮めず、いつも枠の中に置く */
-.tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px 6px 0 4px; border-bottom: 1px solid var(--axis); align-items: center; min-width: 0; }
-.tabs button { border-bottom: 0; border-radius: 3px 3px 0 0; white-space: nowrap; flex: 0 0 auto; }
-.tabs button.on { background: var(--accent); color: var(--graph-bg); }
-.tabs button.small { margin-left: auto; }
-.tab-body { flex: 1; overflow: auto; padding: 4px 10px 12px; } /* タブの中身はタブの中でスクロール（J §4.3.3） */
-.form { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 8px; align-items: center; }
-.form label { color: var(--text-dim); }
-.row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 3px 0; }
-.row.disabled, .form.disabled { opacity: .6; }
-.pre { white-space: pre-line; }
-.form button { justify-self: start; }
-.form label.inline { margin-right: 6px; }
-.inline { display: inline-flex; gap: 4px; align-items: center; }
-label.disabled { color: var(--axis); }
-input.num { width: 5em; }
-/* 文字の欄は値・例の文が全部見える広さにする（J §4.3）。枠より広くはしない */
-input.mid { width: 11em; max-width: 100%; }
-@supports (field-sizing: content) { input.mid { width: auto; field-sizing: content; min-width: 11em; } }
-.fnote { color: var(--warn); font-size: 12px; }
-.swatch { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 2px; }
-.file { margin: 4px 0; padding: 4px; border: 1px solid var(--grid); }
-.file-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tab-stack { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(min-content, 1fr); grid-template-rows: minmax(0, 1fr); }
+.tab-stack > .tab-body { grid-area: 1 / 1; }
+.tab-stack > .tab-body.off { visibility: hidden; }
+/* タブの並び: 1行。右端の［別ウィンドウ］は縮めず、いつも枠の中に置く（パネルはタブの並びが入る幅より狭くしない） */
+.tabs { display: flex; gap: 0; padding: var(--gap) var(--inset) 0; border-bottom: 1px solid var(--axis); align-items: flex-end; }
+.tabs .tab { min-width: 0; border-bottom: 0; border-radius: 3px 3px 0 0; margin-right: -1px; }
+.tabs .tab.on { background: var(--accent); color: var(--graph-bg); }
+.tabs .tab-detach { margin-left: auto; }
+/* タブの中身はタブの中でスクロール（J §4.3.3）。見出しのまとまりの間・まとまりの中・枠の内側（S-04） */
+.tab-body { overflow: auto; min-height: 0; padding: var(--inset); display: flex; flex-direction: column; gap: var(--section-gap);
+            scrollbar-gutter: stable; } /* スクロールバーの有無でパネルの幅を変えない */
+.sec, .tsec { display: flex; flex-direction: column; gap: var(--gap); align-items: flex-start; min-width: min-content; }
+.file { display: flex; flex-direction: column; gap: var(--gap); align-self: stretch; padding: var(--inset); border: 1px solid var(--grid); }
+.file-head { display: flex; gap: var(--gap); align-items: center; flex-wrap: wrap; }
 
 /* ---- 下端 ---- */
-.tasks { padding: 3px 8px; border-top: 1px solid var(--grid); }
-.task { display: flex; gap: 8px; align-items: center; }
+.tasks { display: flex; flex-direction: column; gap: var(--gap); padding: var(--gap) var(--inset); border-top: 1px solid var(--grid); }
+.task { display: flex; gap: var(--label-gap); align-items: center; }
 .task progress { flex: 0 0 180px; }
-.statusbar { display: flex; flex-wrap: wrap; gap: 2px 16px; padding: 3px 8px; border-top: 1px solid var(--axis); font-size: 12px; min-height: 24px; }
+.statusbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--section-gap); padding: 0 var(--inset); min-height: var(--row-h);
+             border-top: 1px solid var(--axis); font-size: var(--font-s); }
 .statusbar .rec { color: #ff7a7a; }
-.statusbar button.small { padding: 0 6px; font-size: 11px; }
 .status-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
 
 .ctxmenu { position: fixed; z-index: 40; background: var(--panel-bg); border: 1px solid var(--axis); display: flex; flex-direction: column; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
-.ctxmenu button { border: 0; border-radius: 0; background: transparent; text-align: left; padding: 4px 14px; }
+.ctxmenu button { border: 0; border-radius: 0; background: transparent; text-align: left; padding: 0 14px; min-width: 0; }
 .ctxmenu button:hover:not(:disabled) { background: var(--grid); }
-.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.modal { background: var(--panel-bg); border: 1px solid var(--axis); padding: 12px 16px; width: min(640px, 100%); max-height: 90vh; overflow: auto; }
-.modal h3 { margin-top: 0; color: var(--text); font-size: 15px; }
-.modal-note { color: var(--text-dim); }
-.modal-field { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
-.modal-field input, .modal-field textarea { width: 100%; }
-.modal-btns { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
-.devlist { display: flex; flex-direction: column; gap: 4px; }
 
-/* ---- 狭い画面（J §4.3.3）: 上段の文字を詰める → 連続・単発・停止はアイコンだけ ---- */
-@media (max-width: 1400px) {
-  .field.big .field-input { font-size: 16px; width: 9.6em; }
-  .field-input { width: 9.5em; }
-}
+/* ---- 別の窓（標準の段）。外周は窓の外周、見出しのまとまりの間はまとまりの間（S-04）。閉じるボタンは右下（S-03） ---- */
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 50; display: flex; align-items: center; justify-content: center; padding: var(--window-margin); }
+.modal { background: var(--panel-bg); border: 1px solid var(--axis); padding: var(--window-margin); width: min(640px, 100%); max-height: 90vh; overflow: auto;
+         display: flex; flex-direction: column; gap: var(--section-gap); align-items: flex-start; }
+.modal > * { margin: 0; }
+.modal > table, .modal > .modal-btns, .modal > .stretch { align-self: stretch; }
+.modal h3 { color: var(--text); font-size: 15px; }
+.modal-note { color: var(--text-dim); }
+.modal-btns { display: flex; gap: var(--gap); justify-content: flex-end; }
+.devlist { display: flex; flex-direction: column; gap: var(--gap); }
+/* 窓の中のまとまり（Qt の QGroupBox と同じ: 枠と題） */
+fieldset.group { display: flex; flex-direction: column; gap: var(--gap); align-items: flex-start; align-self: stretch; margin: 0;
+                 padding: var(--inset); border: 1px solid var(--axis); border-radius: 3px; min-width: 0; }
+fieldset.group > legend { padding: 0 4px; color: var(--text); }
+
+/* ---- 狭い画面（J §4.3.3）: 連続・単発・停止はアイコンだけ ---- */
 @media (max-width: 1100px) {
   .run-btn .lbl { display: none; }
-  .run-btn { min-width: 48px; }
+  [data-tier=L] .run-btn { min-width: var(--h-l); }
 }
 /* スマホの幅: グラフが上、設定が下（J §5）。縦に並べてページごとスクロールする */
 @media (max-width: 760px) {
@@ -168,128 +262,118 @@ input.mid { width: 11em; max-width: 100%; }
   .hsplit, .vsplit { display: none; }
   .side { flex: 0 0 auto; border-left: 0; border-top: 1px solid var(--axis); }
   .tab-body { overflow: visible; }
-  .field.big .field-input, .field-input { font-size: 15px; width: 8.6em; }
-  .mode-btn { min-height: 36px; padding: 0 8px; font-size: 14px; }
   .menu { width: calc(100vw - 16px); }
   .statusbar { position: sticky; bottom: 0; background: var(--panel-bg); }
 }
 
-/* ---- 数値の欄の一覧（REF レベル: J §4.1）。欄の右に矢印だけの選択を付ける ---- */
-.field-line { display: flex; align-items: stretch; }
-.field-choices { width: 22px; padding: 0; margin-left: -1px; cursor: pointer; }
-
-/* ---- トレースの表（右のタブ「トレース・掃引」）。トレースごとに 1段目 色と番号・表示・動作・回数・クリア、
-        2段目 いまの様子・平均の種類（動作の下）・N 回の後（回数の下）。Qt の tab_traces と同じ並び ---- */
-.tsec[data-sec="traces"] { container-type: inline-size; }
-/* 動作の一覧は残りの幅に合わせて縮む（狭い右のパネルでもクリアを押し出さない） */
-.tgrid { display: grid; grid-template-columns: minmax(2.2em, max-content) max-content minmax(4.5em, 1fr) max-content max-content;
-         justify-content: start; align-items: center; gap: 3px 8px; font-variant-numeric: tabular-nums; }
-.tgrid .th { color: var(--text-dim); font-size: 12px; }
+/* ---- トレースの表（右のタブ「トレース・掃引」）。Qt の tab_traces と同じ並び（見出しの行は置かない）。
+        トレースごとに2行を同じ列に置く: 1行目 色と番号・表示・動作（列 A）・回数（列 B）・クリア、
+        2行目 いまの様子（はじめの2列）・平均の種類（列 A）・N 回の後（列 B）。
+        列 A・B はその列に出うる一番長い中身の幅に1つにそろえる（1行目と2行目の両方の選択肢: S-02。app.js の
+        fitColumns が --col-a・--col-b に置く）。2行目の選択は1行目の選択の真下に来る ---- */
+.tsec[data-sec="traces"] { align-self: stretch; }
+.tgrid { display: grid; grid-template-columns: max-content max-content var(--col-a, max-content) var(--col-b, max-content) max-content;
+         justify-content: start; justify-items: start; align-items: center; gap: var(--gap); font-variant-numeric: tabular-nums; }
 .tnum { grid-column: 1; white-space: nowrap; }
 .tvis { grid-column: 2; }
-.tact { grid-column: 3; width: 100%; min-width: 0; }
-.tcnt { grid-column: 4; }
-.tclr { grid-column: 5; justify-self: start; }
-/* いまの様子: 狭い枠では1行を使い、選択の段はその下 */
-.tstat { grid-column: 1 / -1; font-size: 12px; line-height: 1.25; }
-.tstat > span { white-space: nowrap; }
-/* 狭い枠ではいまの様子が上の行にあるので、平均の種類は左の空いた列まで使って文字を切らない */
-.tavg { grid-column: 1 / 4; width: 100%; min-width: 0; }
-.taft { grid-column: 4 / 6; justify-self: start; max-width: 100%; }
-.tnote { grid-column: 1 / -1; contain: inline-size; color: var(--warn); font-size: 12px; } /* 表の幅で折り返す */
-.tsep { grid-column: 1 / -1; border-bottom: 1px solid var(--grid); margin: 2px 0; }
-/* 広い枠: いまの様子を色と番号・表示の列に置き、選択と同じ段にする（数が増えても列の幅は動かさない） */
-@container (min-width: 400px) {
-  .tgrid { grid-template-columns: minmax(2.2em, max-content) minmax(6.4em, max-content) minmax(4.5em, 1fr) max-content max-content; }
-  .tstat { grid-column: 1 / 3; contain: inline-size; }
-  .tavg { grid-column: 3; }
-}
-/* 回数の欄: 打てる欄＋一覧の矢印（数値の欄の一覧と同じ形） */
+.tact { grid-column: 3; width: var(--col-a, auto); }
+.tcnt { grid-column: 4; width: var(--col-b, auto); }
+.tclr { grid-column: 5; }
+/* いまの様子: はじめの2列の幅で折り返す（文が変わっても列の幅を動かさない） */
+/* トレースの行の様子（回数と値の様子）。1行に収めて切り、全部はツールチップ（Qt と同じ: 掃引ごとに文が延びても
+   列の幅も行の高さも動かさない） */
+.tstat { grid-column: 1 / 3; contain: inline-size; justify-self: stretch; min-width: 0; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+.tavg { grid-column: 3; width: var(--col-a, auto); }
+.taft { grid-column: 4; width: var(--col-b, auto); }
+.tnote { grid-column: 1 / -1; contain: inline-size; justify-self: stretch; color: var(--warn); font-size: var(--font-s); } /* 表の幅で折り返す */
+/* 回数の欄: 打てる欄＋一覧の矢印（数値の欄の一覧と同じ形）。トレースの表では列 B の幅いっぱい */
 .count-field { display: inline-flex; align-items: stretch; }
-.count-input { width: 5.6em; font-variant-numeric: tabular-nums; }
-/* dB の打てるドロップダウン（G §3.6: マーカーの機能・ピークの一覧）。名前は横の文字で出すので、欄だけの小さい形 */
-.field.field-sm { display: inline-flex; padding: 0; }
-.field.field-sm .field-input { width: 7.2em; font-size: 13px; height: 26px; }
+.count-input { width: var(--w-int); font-variant-numeric: tabular-nums; }
+.tcnt .count-input { flex: 1 1 auto; width: auto; min-width: 0; }
+/* dB の打てるドロップダウン（G §3.6: マーカーの機能・ピークの一覧）。名前は横の文字で出すので、欄だけの形（「値」の幅） */
+.field.field-sm { display: inline-flex; }
 /* 右のパネルの欄なので、知らせは欄の右端から左へ広げ、折り返す（パネルの外へはみ出さない） */
 .field.field-sm .note-pop { left: auto; right: 0; white-space: normal; width: max-content; max-width: 16em; }
-/* マーカーの機能: チェックと名前・dB の欄・（しきい値の）以上／以下。Qt の tab_markers と同じ並び。
-   狭いパネルでは名前の列を折り返して、欄と選択を切らない */
-.fn-grid { display: grid; grid-template-columns: minmax(0, max-content) max-content max-content; gap: 3px 8px;
-           align-items: center; justify-content: start; margin: 3px 0; }
+/* マーカーの機能: チェックと名前・dB の欄・（しきい値の）以上／以下。Qt の tab_markers と同じ並び */
+.fn-grid { display: grid; grid-template-columns: max-content max-content max-content; gap: var(--gap) var(--label-gap);
+           align-items: center; justify-content: start; justify-items: start; }
 .fn-grid.disabled { opacity: .6; }
+/* 置いたオフセットの行: 名前・消す（消すボタンを同じ列にそろえる） */
+.off-list { display: grid; grid-template-columns: max-content max-content; gap: var(--gap) var(--label-gap); align-items: center;
+            justify-items: start; }
+.fn-grid label.inline { white-space: nowrap; }
 
 /* ---- 上段の「直結を 0dB にする」（J §4.2）。TG・S11 のときだけ ---- */
-.refquick { display: flex; gap: 6px; align-items: center; }
-.refquick .run-btn { min-width: 0; font-size: 15px; padding: 0 10px; }
-.refquick-state { max-width: 16em; font-size: 12px; line-height: 1.3; }
+.refquick { display: flex; gap: var(--gap); align-items: center; height: var(--h-l); }
+.refquick-state { max-width: 16em; font-size: var(--font-s); line-height: 1.3; }
 .refquick progress { width: 70px; }
 
 /* ---- 機器の一覧（J §4.7）。名前を変える窓（.modal-back）をこの上に重ねる ---- */
 .devwin-back { z-index: 45; }
-.devwin .dev-empty { text-align: center; padding: 18px 0; font-size: 15px; }
-.devwin .dev-empty button { margin-top: 10px; }
-.dev-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 2px 8px; align-items: center;
-           border: 1px solid var(--axis); padding: 6px 8px; margin: 6px 0; }
+.devwin .dev-empty { align-self: stretch; display: flex; flex-direction: column; align-items: center; gap: var(--section-gap);
+                     padding: var(--section-gap) 0; font-size: 15px; }
+.dev-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 2px var(--label-gap); align-items: center; align-self: stretch;
+           border: 1px solid var(--axis); padding: var(--gap) var(--inset); }
 .dev-name { grid-column: 1; grid-row: 1; font-weight: 600; font-size: 14px; }
-.dev-state { grid-column: 1; grid-row: 2; font-size: 12px; }
+.dev-state { grid-column: 1; grid-row: 2; font-size: var(--font-s); }
 .dev-more { grid-column: 2; grid-row: 1 / span 2; }
 .dev-rename { grid-column: 3; grid-row: 1 / span 2; }
-.dev-act { grid-column: 4; grid-row: 1 / span 2; min-width: 6em; }
-.dev-details { grid-column: 1 / -1; grid-row: 3; font-size: 12px; color: var(--text-dim); user-select: text; }
-.dev-status { margin-top: 8px; }
+.dev-act { grid-column: 4; grid-row: 1 / span 2; }
+.dev-details { grid-column: 1 / -1; grid-row: 3; font-size: var(--font-s); color: var(--text-dim); user-select: text; }
 
 /* ---- 見るだけの接続（A §4.3.2 の 4）: 欄をまとめて無効にする包み。並びには影響させない */
 fieldset.ro { display: contents; border: 0; margin: 0; padding: 0; min-width: 0; }
 
 /* ---- 接続のしかた（A §4.3.2 の 2） */
 .modal.connect { width: min(760px, 96vw); }
-.qr-grid { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
-.qr-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1 1 280px; min-width: 0; }
-.qr-col .row { display: flex; gap: 4px; width: 100%; }
+.qr-grid { display: flex; flex-wrap: wrap; gap: var(--section-gap); justify-content: center; align-self: stretch; }
+.qr-col { display: flex; flex-direction: column; align-items: center; gap: var(--gap); flex: 1 1 280px; min-width: 0; }
+.row.nowrap { flex-wrap: nowrap; }
 .qr-title { font-size: 16px; font-weight: 600; }
 .qr-img svg { display: block; width: 210px; height: 210px; }
+.modal.connect .code-big, .modal.connect .code-left { align-self: stretch; }
 .code-big { text-align: center; font-size: 40px; font-weight: 700; letter-spacing: 6px; font-variant-numeric: tabular-nums; }
 .code-big.expired { color: var(--axis); text-decoration: line-through; }
 .code-left { text-align: center; }
 
-/* ---- 認証の画面（鍵の無い LAN の接続に出す唯一の画面） */
+/* ---- 認証の画面（鍵の無い LAN の接続に出す唯一の画面）。スマートフォンで打ちやすい大きさで、部品の段とは別に決める */
 .auth-body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
 form.auth { display: flex; flex-direction: column; gap: 10px; width: min(420px, 100%); }
 form.auth h1 { margin: 0 0 6px; font-size: 22px; }
 form.auth label { font-size: 15px; }
-form.auth input { font-size: 32px; letter-spacing: 8px; text-align: center; padding: 6px; }
-form.auth button { font-size: 18px; padding: 8px; }
+form.auth input { height: auto; font-size: 32px; letter-spacing: 8px; text-align: center; padding: 6px; }
+form.auth button { height: auto; font-size: 18px; padding: 8px; }
 
-/* ---- アプリ設定・プリセット・確かめる窓（O §1.3・§1.2）。機器の一覧（45）と入力の窓（50）をこの上に重ねる */
+/* ---- 設定・プリセット・確かめる窓（O §1.3・§1.2）。機器の一覧（45）と入力の窓（50）をこの上に重ねる */
 .settings-back { z-index: 44; }
 .confirm-back { z-index: 60; }
-.modal.setwin { width: min(760px, 100%); height: min(620px, 92vh); display: flex; flex-direction: column; overflow: hidden; }
-.setwin-tabs { padding: 0; margin: 4px 0 0; }
-.setwin-tabs button.small { margin-left: 0; }
-.setwin-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 2px 8px; }
-.setwin h4, .presetwin h4 { margin: 12px 0 4px; font-size: 13px; color: var(--text-dim); font-weight: 600; }
-.setwin .mtable td.grow { width: 100%; }
-.setwin-body[data-page=display] { display: flex; flex-direction: column; overflow: hidden; }
-.pal-scroll { flex: 1 1 auto; min-height: 90px; overflow: auto; border: 1px solid var(--grid); margin: 6px 0; }
-.mtable.pal td { padding: 1px 6px; }
+.modal.setwin { width: min(760px, 100%); height: min(620px, 92vh); overflow: hidden; gap: 0; align-items: stretch; }
+.modal.setwin > .modal-btns { margin-top: var(--section-gap); }
+.setwin-tabs { padding: 0; }
+/* ページの中身（Qt のタブの枠と同じ）: 枠の内側・見出しのまとまりの間（S-04） */
+.setwin-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--inset); border: 1px solid var(--axis); border-top: 0;
+               display: flex; flex-direction: column; gap: var(--section-gap); align-items: flex-start; }
+.setwin-body[data-page=display], .setwin-body[data-page=keys] { overflow: hidden; }
+.setwin-body[data-page=connection] > fieldset.group:first-child { flex: 1 1 auto; min-height: 0; }
+.pal-scroll, .keys-scroll, .known-scroll { flex: 1 1 auto; min-height: 90px; overflow: auto; align-self: stretch; border: 1px solid var(--grid); }
 .mtable.pal td.mark { width: 1.2em; color: var(--accent); text-align: center; }
-.mtable.pal input[type=color] { width: 44px; height: 22px; padding: 0 2px; cursor: pointer; }
-.mtable.pal input.hex { width: 6.5em; font-variant-numeric: tabular-nums; }
-.keys-scroll { max-height: 46vh; overflow: auto; border: 1px solid var(--grid); margin: 6px 0; }
+/* 読みやすさの知らせは行の残りの幅で折り返す（横にスクロールさせない） */
+.mtable.pal td.pal-warn { width: 100%; color: var(--warn); white-space: normal; line-height: 1.2; }
 .mtable.keys tbody tr { cursor: pointer; }
-.mtable.keys td { white-space: normal; }
-.keymsg { min-height: 1.4em; }
+.keymsg { min-height: var(--h-m); display: flex; align-items: center; }
 .modal.presetwin { width: min(680px, 100%); }
-.preset-scroll { max-height: 40vh; overflow: auto; border: 1px solid var(--grid); margin: 6px 0; }
+.preset-scroll { max-height: 40vh; overflow: auto; align-self: stretch; border: 1px solid var(--grid); }
 .preset-scroll tbody tr { cursor: pointer; }
 .modal.confirm { width: min(520px, 100%); }
 .modal.confirm p { white-space: pre-line; }
+/* 入力の窓: 名前を左・欄を右（S-05）。欄の幅は種類で決める */
+.modal-form { align-self: stretch; }
 
 /* ---- ピークの一覧（マーカーのタブの中。別ウィンドウにできる: J §4.3.2） */
-.part-head { display: flex; align-items: center; gap: 8px; }
-.part-head button.small { margin-left: auto; }
-.partmode .peaks-part { padding-top: 4px; }
+.part-head { display: flex; align-items: center; gap: var(--label-gap); align-self: stretch; }
+.part-head .tab-detach { margin-left: auto; }
 
-/* マーカー表のセルを直す欄（G §3.7） */
+/* マーカー表のセルを直す欄（G §3.7）: セルの幅に従う（J §4.11） */
 .mtable td.editable { cursor: text; }
-.mtable input.cell-edit { width: 100%; min-width: 7em; box-sizing: border-box; font: inherit; }
+.mtable input.cell-edit { width: 100%; min-width: var(--w-int); }

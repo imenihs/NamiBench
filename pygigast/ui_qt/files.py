@@ -12,25 +12,22 @@ import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtCore import QStandardPaths, Qt
+from PySide6.QtCore import QStandardPaths
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QGridLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QRadioButton,
-    QVBoxLayout,
     QWidget,
 )
 
 from ..core import report_layout
 from ..core.units import format_freq
-from . import png_export, texts
+from . import png_export, sizes, texts
 from .fields import FreqField
 
 if TYPE_CHECKING:
@@ -196,9 +193,10 @@ class ExportDialog(QDialog):
         super().__init__(win)
         self.setWindowTitle(texts.LABELS["export_title"])
         self.win = win
-        lay = QVBoxLayout(self)
+        lay = sizes.vbox(self, inset=False)
+        sizes.window(lay)
         g = QGroupBox(texts.LABELS["traces"])
-        v = QVBoxLayout(g)
+        v = sizes.vbox(g)
         self.trace_checks: list[tuple[QCheckBox, object]] = []
         for s in win.state.get("traces") or []:
             if not s.get("has_values"):
@@ -222,7 +220,7 @@ class ExportDialog(QDialog):
         lay.addWidget(g)
 
         g = QGroupBox(texts.LABELS["export_range"])
-        grid = QGridLayout(g)
+        v = sizes.vbox(g)
         sw = win.state.get("sweep") or {}
         self.range_group = QButtonGroup(self)
         self.r_view = QRadioButton(texts.w("export_view", start=format_freq(sw.get("start_hz", 0)),
@@ -232,8 +230,8 @@ class ExportDialog(QDialog):
         self.r_view.setChecked(True)
         for b in (self.r_view, self.r_custom, self.r_all):
             self.range_group.addButton(b)
-        self.f_start = FreqField("Start", lambda hz: None, big=False)
-        self.f_stop = FreqField("Stop", lambda hz: None, big=False)
+        self.f_start = FreqField(texts.LABELS["export_start"], lambda hz: None, big=False)
+        self.f_stop = FreqField(texts.LABELS["export_stop"], lambda hz: None, big=False)
         self.f_start.set_hz(int(sw.get("start_hz", 0)))
         self.f_stop.set_hz(int(sw.get("stop_hz", 0)))
         # 確定した値をそのまま欄に残す（この欄はコアへ送らない）
@@ -242,15 +240,20 @@ class ExportDialog(QDialog):
         for f in (self.f_start, self.f_stop):
             f.setEnabled(False)
         self.r_custom.toggled.connect(lambda on: (self.f_start.setEnabled(on), self.f_stop.setEnabled(on)))
-        grid.addWidget(self.r_view, 0, 0, 1, 2)
-        grid.addWidget(self.r_custom, 1, 0, 1, 2)
-        grid.addWidget(self.f_start, 2, 0)
-        grid.addWidget(self.f_stop, 2, 1)
-        grid.addWidget(self.r_all, 3, 0, 1, 2)
+        v.addWidget(self.r_view)
+        v.addWidget(self.r_custom)
+        # 数値の欄は「数値で指定」の下に、名前を左に置く（S-05）。名前の列はラジオの文字の頭にそろえる（印の幅と間）
+        form = sizes.form()
+        form.setContentsMargins(sizes.INDICATOR + sizes.GAP, 0, 0, 0)
+        form.addRow(self.f_start.name, self.f_start)
+        form.addRow(self.f_stop.name, self.f_stop)
+        v.addLayout(form)
+        v.addWidget(self.r_all)
         lay.addWidget(g)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText(texts.LABELS["export_ok"])
         buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(self.trace_checks))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(texts.LABELS["cancel"])
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
@@ -274,13 +277,14 @@ class UnfinishedDialog(QDialog):
         L = texts.LABELS
         self.setWindowTitle(L["unfinished_title"])
         self.files = files
-        lay = QVBoxLayout(self)
+        lay = sizes.vbox(self, inset=False)
+        sizes.window(lay)
         lay.addWidget(QLabel(L["unfinished_note"]))
+        box = sizes.vbox(inset=False)
         self.row_widgets: list[QWidget] = []
         for r in rows:
             w = QWidget()
-            h = QHBoxLayout(w)
-            h.setContentsMargins(0, 0, 0, 0)
+            h = sizes.hbox(w)
             started = str(r.get("started_at") or "")
             dur = r.get("duration_s")
             desc = texts.w("unfinished_row", started=started, n=r.get("n_sweeps", 0))
@@ -294,18 +298,17 @@ class UnfinishedDialog(QDialog):
             label.setToolTip(r["path"])
             b_finish = QPushButton(L["unfinished_finish"])
             b_discard = QPushButton(L["unfinished_discard"])
-            b_finish.setObjectName("small")
-            b_discard.setObjectName("small")
             b_finish.clicked.connect(lambda _=False, row=r, ww=w: self._done(ww, files.finish_unfinished(row["path"])))
             b_discard.clicked.connect(lambda _=False, row=r, ww=w: self._done(ww, files.discard_unfinished(row)))
             h.addWidget(label, 1)
             h.addWidget(b_finish)
             h.addWidget(b_discard)
-            lay.addWidget(w)
+            box.addWidget(w)
             self.row_widgets.append(w)
+        lay.addLayout(box)
         later = QPushButton(L["unfinished_later"])
         later.clicked.connect(self.reject)
-        lay.addWidget(later, 0, Qt.AlignmentFlag.AlignRight)
+        lay.addLayout(sizes.buttons_row(later, right=True))
 
     def _done(self, w: QWidget, acted: bool) -> None:
         if acted:

@@ -1,4 +1,4 @@
-// アプリ設定の画面・プリセットの窓・表示の設定（単位・外部補正・周波数オフセット・描き方）・配色・並び（設計O・
+// 設定の画面・プリセットの窓・表示の設定（単位・外部補正・周波数オフセット・描き方）・配色・並び（設計O・
 // J §4.4・§4.6・§4.3.2）。Qt の settings_dialog.py・settings_colors.py・settings_keys.py・presets_dialog.py・
 // tab_display.py・look.py と同じ欄・同じ語・同じ決まり。窓の形（テンプレート）は app_windows.js。
 // - 変えたらすぐ効く（「適用」を置かない）。戻したいときは各項目の「初期値に戻す」
@@ -92,26 +92,44 @@
       traceOpts() { return (this.st && this.st.trace_options) || {}; },
       // 周波数オフセット（Hz）。画面に出す周波数 = 機器の周波数 + これ
       freqOff() { return Number(this.viewOpts.freq_offset_hz || 0); },
-      freqOffText() { return this.viewOpts.freq_offset_hz ? GSUnits.formatFreq(this.viewOpts.freq_offset_hz) : ""; },
+      // 使わないとき（0）は Qt の欄と同じく「0.000 MHz」を出す
+      freqOffText() { return this.viewOpts.freq_offset_hz ? GSUnits.formatFreq(this.viewOpts.freq_offset_hz) : GSUnits.freqFieldText(0); },
       drawFill() { return this.viewOpts.draw_style === "fill"; },
       levelUnits() { return this.viewOpts.level_units || { dBm: "dBm" }; },
       extText() { const v = Number(this.viewOpts.ext_db || 0); return GSUnits.minusSign(String(v)); },
-      paletteView() { return this.ui.palette || { rows: [], warnings: [], changed_n: 0 }; },
+      // 配色の行（読みやすさの知らせは行ごと: U-25。中身はサーバーの screen_model.palette_view で Qt と同じ）
+      paletteView() { return this.ui.palette || { rows: [], changed_n: 0 }; },
       knownDevices() { return (this.st && this.st.known_devices) || []; },
       pngSizes() { return PNG_SIZES.map(([w, h]) => ({ value: `${w}x${h}`, text: `${w}×${h}` })); },
       // 選んでいる PNG の配色。読めない覚え書きは既定（ユーザー指定）
       pngPalette() { return PNG_PALETTE_CHOICES.includes(this.pngPrefs.palette) ? this.pngPrefs.palette : PNG_DEFAULTS.palette; },
       settingsPages() { return Object.entries(X.dict("SETTINGS_PAGES")); },
-      // キー操作のページの行（命令・いまのキー・初期値）。Qt の settings_keys.KeysPage.refresh と同じ中身
-      keyRows() {
+      // キー操作のページの行（操作・いまのキー・初期値・効く所）。Qt の settings_keys.KeysPage.refresh と同じ中身:
+      // グラフにいるときだけ効くことは「効く所」の列に出す（U-12・U-24）。Shift で10点動くことは命令の名前（メニューと同じ）が言う。
+      // 名前は app_menu.js の keyRows（キー操作の一覧の窓の行）と分ける（同じ名前だと後から合わせた方で上書きされ、
+      // 一覧の窓が空になっていた）
+      keyTableRows() {
         const d = X.dict("WEB_KEY_DEFAULTS");
         const graphOnly = X.list("GRAPH_ONLY_KEYS");
         return GSKeys.commands().map((code) => {
-          let name = GSKeys.commandName(code);
-          if (graphOnly.includes(code)) name += X.fmt("paren", { text: S("keys_graph_only") });
           const changed = Object.prototype.hasOwnProperty.call(this.keyOverrides, code) && (d[code] || "") !== this.keyOverrides[code];
-          return { code, name, key: GSKeys.keyLabel(this.keymap[code]), def: GSKeys.keyLabel(d[code] || ""), changed };
+          const key = GSKeys.keyLabel(this.keymap[code]);
+          const where = S(graphOnly.includes(code) ? "keys_where_graph" : "keys_where_any");
+          return { code, name: GSKeys.commandName(code), key, def: GSKeys.keyLabel(d[code] || ""), where, changed };
         });
+      },
+      // 「ブラウザから使う」のページ（Qt と同じ欄。変えるのは pyGigaSt の PC の画面: U-08）。いまこのページを出している
+      // Web の口の様子: 使えている（このブラウザが開いている）・同じネットワークからも使えるか・ポート番号。
+      // 様子の文の URL はこのブラウザが開いている URL。同じネットワークからも使えるのに、このブラウザがこの PC の中の
+      // 宛先（127.0.0.1 など）で開いているときは、ほかの機器が使う URL をここでは知らないので文を出さない
+      // （接続のしかたの窓が出す。知らない URL を書かない）
+      webView() {
+        const WL = (k, kw) => X.fmtText(X.get("WEB_LABELS", k), kw);
+        const lan = !!(this.info && this.info.lan);
+        const url = `${location.protocol}//${location.host}/`;
+        const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+        const text = lan ? (loopback ? "" : WL("state_lan", { url })) : WL("state_local", { url });
+        return { lan, port: location.port || "", text, warn: lan };
       },
     },
     methods: {

@@ -19,8 +19,8 @@ DEVICE_STATES = {
     "available": "使えます",
     "in_use_here": "使用中",
     "known": "前に使った機器",
-    "busy_other_app": "ほかのアプリが使っています",
-    "first_time_needs_probe": "初めての機器（GigaSt かどうか確かめてから繋ぎます）",
+    "busy_other_app": "ほかのアプリケーションが使っています",
+    "first_time_needs_probe": "初めての機器",
     "dll_not_found": "DLL が見つかりません",
 }
 
@@ -34,12 +34,12 @@ DEVICE_LABELS = {
     "connect": "接続",
     "rename": "名前…",
     "rename_title": "機器の名前",
-    "rename_label": "名前（空にすると既定の名前に戻ります）",
+    "rename_label": "名前",
+    "rename_placeholder": "既定の名前",
     "details": "詳細",
     "choose_dll": "DLL のフォルダを選ぶ…",
     "close": "閉じる",
     "in_use_reason": "いま使っている機器です",
-    "auto_update": "USB の挿し抜きで一覧は自動で変わります",
     "dll_folder_title": "RTL-SDR の DLL（rtlsdr.dll）のあるフォルダ",
 }
 
@@ -62,7 +62,7 @@ TEMPLATES.update({
     "device_connect_failed": "{name} に繋げませんでした: {reason}",
     "device_next": "{reason}。{next}",
     "auto_connected": "前回の {name} に繋ぎました",
-    "status_conn_none": "● 未接続（機器 → 接続… で選べます）",
+    "status_conn_none": "● 未接続（機器 → 機器に接続… で選べます）",
     "status_conn_who": " {name}（{port}）",
     "status_conn_who_name": " {name}",
     # 上段の「直結を 0dB にする」（4-3b）

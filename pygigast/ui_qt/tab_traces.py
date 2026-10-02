@@ -5,32 +5,33 @@
 - ② トレース 1〜4: 色・表示するか・動作・回数・平均の種類・N 回の後・いまの回数・一度きりの知らせ（F §3）
 - ③ 参照トレース: 開いたファイルのトレース（表示するか・外す）（F §5.4・H §6）
 - ④ 機器に固有の欄（RTL-SDR の受信: rtl_panel.py）。その機器に繋いでいるときだけ出す（add_device_section）
-- 周波数オフセット（設計O）は次の回。消さずに無効にして理由を出す（U-08）
+- 周波数オフセット（設計O）: 表示する周波数 = 測った周波数 + オフセット
+- 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）、ボタンは文字の幅で左から詰める（S-03）
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFormLayout,
     QGridLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
-    QVBoxLayout,
+    QStyle,
+    QStyleOptionComboBox,
     QWidget,
 )
 
 from ..core.units import format_freq
-from . import screen_model, texts, widget_sync
-from .fields import CountField
+from . import screen_model, sizes, texts, widget_sync
+from .fields import COUNT_CHOICES, COUNT_MAX, CountField
 from .theme import trace_color
 
 if TYPE_CHECKING:
@@ -45,8 +46,21 @@ REASON_AVG_TYPE = texts.REASON_TEXTS["average_type_only"]
 REASON_AFTER = texts.REASON_TEXTS["after_only"]
 # ベクトル平均は位相（複素数の値）を持つ機器だけ
 REASON_VECTOR = texts.REASON_TEXTS["vector_only"]
-# 周波数オフセットは設計O。まだ作っていない
 L = texts.LABELS
+
+
+def body() -> tuple[QWidget, object]:
+    """右のタブの中身（枠の内側の余白・見出しのまとまりの間: S-04）。"""
+    inner = QWidget()
+    lay = sizes.vbox(inner)
+    lay.setSpacing(sizes.SECTION_GAP)
+    return inner, lay
+
+
+def outer(tab: QWidget, inner: QWidget) -> None:
+    """タブにスクロールする中身を置く（タブの外周の余白は中身の側が持つ）。"""
+    v = sizes.vbox(tab, inset=False)
+    v.addWidget(scroll(inner))
 
 
 def scroll(w: QWidget) -> QScrollArea:
@@ -56,9 +70,96 @@ def scroll(w: QWidget) -> QScrollArea:
     sa.setFrameShape(QScrollArea.Shape.NoFrame)
     sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     sa.setWidget(w)
-    # 横は切らずに中身の最小の幅を取る（縦だけスクロール）。分割の境目はこの幅より狭くならない
-    sa.setMinimumWidth(w.minimumSizeHint().width() + sa.verticalScrollBar().sizeHint().width() + 2)
+    # 横は切らずに中身の最小の幅を取る（縦だけスクロール）。分割の境目はこの幅より狭くならない。
+    # 中身の並びが変わったら（見た目の決まりが当たった・機器に固有の欄が出た）測り直す
+    _FitScroll(sa, w)
     return sa
+
+
+class _FitScroll(QObject):
+    """スクロールの最小の幅を、中身の最小の幅に合わせ続ける。"""
+
+    def __init__(self, sa: QScrollArea, inner: QWidget) -> None:
+        super().__init__(sa)
+        self.sa, self.inner = sa, inner
+        inner.installEventFilter(self)
+        self.fit()
+
+    def eventFilter(self, obj, e) -> bool:
+        if e.type() == QEvent.Type.LayoutRequest:
+            self.fit()
+        return False
+
+    def fit(self) -> None:
+        w = self.inner.minimumSizeHint().width() + self.sa.verticalScrollBar().sizeHint().width() + 2
+        if w != self.sa.minimumWidth():
+            self.sa.setMinimumWidth(w)
+
+
+def combo_width(combo: QComboBox, items) -> int:
+    """選択肢 items を全部持ったときのドロップダウンの幅（Qt が中身に合わせて求める幅と同じ求め方: 一番長い文字を
+    中身にして、見た目の決まりで外側の大きさにする）。"""
+    fm = combo.fontMetrics()
+    opt = QStyleOptionComboBox()
+    combo.initStyleOption(opt)
+    inner = QSize(max((fm.horizontalAdvance(t) for t in items), default=0), fm.height())
+    return combo.style().sizeFromContents(QStyle.ContentsType.CT_ComboBox, opt, inner, combo).width()
+
+
+class SameWidth(QObject):
+    """並びの同じ列のドロップダウンを1つの幅にそろえる。幅はその列が出しうる一番長い選択肢の幅で、選択肢が変わっても
+    動かさない（行ごとに幅が違うと列がガタガタし、行を移るたびにマウスを横へ探しに行くことになる: 2026-10-03 ユーザー指摘）。
+
+    見た目の決まり・文字が変わったら測り直す。
+    """
+
+    def __init__(self, combos: list[QComboBox], items) -> None:
+        super().__init__(combos[0])
+        self.combos = list(combos)
+        self.items = list(items)
+        self._pending = False
+        for c in self.combos:
+            c.setProperty("column", True)  # 幅は値の種類ではなく列で決まる（試験の印）
+            c.installEventFilter(self)
+        self.apply()
+
+    def eventFilter(self, obj, e) -> bool:
+        if e.type() in (QEvent.Type.Polish, QEvent.Type.StyleChange, QEvent.Type.FontChange) and not self._pending:
+            # 見た目の決まりは、この知らせを部品が受けた後に当たる。当たってから測る
+            self._pending = True
+            QTimer.singleShot(0, self, self.apply)  # 部品が先に消えたら呼ばない
+        return False
+
+    def apply(self) -> None:
+        self._pending = False
+        w = max(combo_width(c, self.items) for c in self.combos)
+        for c in self.combos:
+            if c.width() != w or c.minimumWidth() != w or c.maximumWidth() != w:
+                c.setFixedWidth(w)
+
+
+class _ElidedLabel(QLabel):
+    """幅に入らない文を「…」で切る1行の文字（幅は並びが決める。文の長さで並びを押し広げない）。"""
+
+    def __init__(self) -> None:
+        super().__init__("")
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+    def set_full_text(self, text: str) -> None:
+        if text != self._full:
+            self._full = text
+            self._elide()
+
+    def full_text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        self._elide()
+
+    def _elide(self) -> None:
+        self.setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, max(0, self.width())))
 
 
 def disable_item(combo: QComboBox, index: int, reason: str) -> None:
@@ -92,21 +193,20 @@ class _TraceRow:
                                 L["times_suffix"])
         self.count.invalid.connect(lambda: self.flash(L["bad_count"]))
         self.clear = QPushButton(L["clear"])
-        self.clear.setObjectName("small")
         self.clear.setToolTip(L["clear_tip"])
         self.clear.clicked.connect(lambda: win.call("clear_trace", number=number))
         self.avg = QComboBox()
         self.avg.addItem(L["default"], None)
         for code, name in texts.AVERAGE_TYPES.items():
             self.avg.addItem(name, code)
-        # 選択肢の文字が切れないよう、欄の幅を中身に合わせる（C-01）
-        self.avg.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         disable_item(self.avg, self.avg.findData("vector"), REASON_VECTOR)
         self.avg.activated.connect(lambda _i: win.call("set_trace", number=number,
                                                        average_type=self.avg.currentData()))
         self.after = QComboBox()
         self.after.activated.connect(self._after_chosen)
-        self.status = QLabel("")
+        # いまの様子（「44/64」）は掃引ごとに長さが変わる。列の幅も行の高さも動かさない（文が延びて欄が右へずれる・
+        # 折り返して行が高くなると、掃引のたびに部品が動く）: 1行目の部品で決まる列の幅に収めて切り、全部はツールチップ
+        self.status = _ElidedLabel()
         self.status.setObjectName("dim")
         self.note = QLabel("")
         self.note.setObjectName("warn")
@@ -117,6 +217,7 @@ class _TraceRow:
         self._note_timer.timeout.connect(lambda: (self.note.setText(""), self.note.hide()))
         self._state: dict = {}
 
+        # 2行とも欄は決まった列に置く（トレースを移るときマウスはまっすぐ縦に動く）。列の幅は TraceTab がそろえる
         grid.addWidget(self.swatch, row, 0)
         grid.addWidget(self.visible, row, 1)
         grid.addWidget(self.action, row, 2)
@@ -124,7 +225,7 @@ class _TraceRow:
         grid.addWidget(self.clear, row, 4)
         grid.addWidget(self.status, row + 1, 0, 1, 2)
         grid.addWidget(self.avg, row + 1, 2)
-        grid.addWidget(self.after, row + 1, 3, 1, 2)
+        grid.addWidget(self.after, row + 1, 3)
         grid.addWidget(self.note, row + 2, 0, 1, 5)
 
     def _action_chosen(self, _i: int) -> None:
@@ -170,15 +271,9 @@ class _TraceRow:
         widget_sync.set_data(self.after, cur)
         counted = a in COUNTED and s.get("count")
         set_enabled(self.after, None if counted else REASON_AFTER, L["after_n"])
-        st = texts.TRACE_ACTIONS.get(a, a)
-        if a in COUNTED:
-            tgt = s.get("count_target")
-            st += f" {s.get('current_count', 0)}" + (f"/{tgt}" if tgt else "")
-        if not s.get("has_values"):
-            st += L["no_value_paren"]
-        if s.get("axis_differs"):
-            st += texts.TEMPLATES["axis_differs"]
-        self.status.setText(st)
+        v = screen_model.trace_status(s)
+        self.status.set_full_text(v["text"])
+        self.status.setToolTip(v["tip"])
 
     def flash(self, text: str) -> None:
         self.note.setText(text)
@@ -190,29 +285,28 @@ class TraceTab(QWidget):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__()
         self.win = win
-        inner = QWidget()
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(4, 4, 4, 4)
+        inner, lay = body()
 
         g_sweep = QGroupBox(L["sweep"])
-        form = QFormLayout(g_sweep)
+        form = sizes.form(g_sweep)
         self.points_auto = QCheckBox(texts.TEMPLATES["points_auto"])
         self.points_auto.setChecked(True)
         self.points_spin = QSpinBox()
         self.points_spin.setRange(2, 12000)
         self.points_spin.setEnabled(False)
         self.points_spin.setKeyboardTracking(False)
+        sizes.set_width(self.points_spin, "int")
         self.points_auto.toggled.connect(self._points_auto_toggled)
         self.points_spin.valueChanged.connect(
             lambda v: None if self.points_auto.isChecked() else win.call("set_sweep", points=v))
-        row = QHBoxLayout()
+        row = sizes.hbox()
+        row.addWidget(self.points_spin)
         row.addWidget(self.points_auto)
-        row.addWidget(self.points_spin, 1)
+        row.addStretch(1)
         form.addRow(L["points"], row)
         self.step_label = QLabel("")
         form.addRow("Step", self.step_label)
         self.est_label = QLabel("")
-        self.est_label.setWordWrap(True)
         form.addRow(L["estimate"], self.est_label)
         self.image_cancel = QCheckBox(L["image_cancel"])
         self.image_cancel.toggled.connect(self._image_cancel_toggled)
@@ -240,19 +334,28 @@ class TraceTab(QWidget):
                                      big=False)
         self.freq_offset.setToolTip(texts.VIEW_TEXTS["freq_offset_tip"])
         self.freq_offset.edit.setPlaceholderText(texts.VIEW_TEXTS["freq_offset_placeholder"])
-        form.addRow(self.freq_offset)
+        form.addRow(self.freq_offset.name, self.freq_offset)
         lay.addWidget(g_sweep)
 
         g_traces = QGroupBox(L["traces"])
         grid = QGridLayout(g_traces)
-        grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(2)
+        grid.setContentsMargins(sizes.INSET, sizes.INSET, sizes.INSET, sizes.INSET)
+        grid.setHorizontalSpacing(sizes.GAP)
+        grid.setVerticalSpacing(sizes.GAP)
         self.rows = {n: _TraceRow(self, n, grid, (n - 1) * 3) for n in (1, 2, 3, 4)}
+        grid.setColumnStretch(5, 1)  # 列は左から詰める（部品を横に伸ばさない: S-02・S-03）
+        # 同じ列の欄は1つの幅（その列が出しうる一番長い選択肢）: 動作と平均の種類／回数と N 回の後
+        rows = list(self.rows.values())
+        kinds = [texts.w("default_with", type=t) for t in texts.AVERAGE_TYPES.values()]
+        self._col_action = SameWidth([r.action for r in rows] + [r.avg for r in rows],
+                                     [*texts.TRACE_ACTIONS.values(), L["default"], *texts.AVERAGE_TYPES.values(), *kinds])
+        counts = [L["no_count"]] + [f"{v}{L['times_suffix']}" for v in (*COUNT_CHOICES, COUNT_MAX)]
+        self._col_count = SameWidth([r.count for r in rows] + [r.after for r in rows],
+                                    [*counts, *texts.AVERAGE_AFTER.values(), *texts.HOLD_AFTER.values()])
         lay.addWidget(g_traces)
 
         g_files = QGroupBox(L["files"])
-        self.files_lay = QVBoxLayout(g_files)
-        self.files_lay.setSpacing(2)
+        self.files_lay = sizes.vbox(g_files)
         self.files_empty = QLabel(L["no_files_open"])
         self.files_empty.setObjectName("dim")
         self.files_lay.addWidget(self.files_empty)
@@ -260,17 +363,13 @@ class TraceTab(QWidget):
         self._file_checks: dict[str, QCheckBox] = {}
         self._files_key: tuple = ()
         open_btn = QPushButton(texts.MENU_ITEMS["open"])
-        open_btn.setObjectName("small")
         open_btn.clicked.connect(win.actions["open"].trigger)
-        self.files_lay.addWidget(open_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        self.files_lay.addLayout(sizes.buttons_row(open_btn))
         lay.addWidget(g_files)
         lay.addStretch(1)
         self._body = lay
         self.g_sweep, self.g_traces, self.g_files = g_sweep, g_traces, g_files
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll(inner))
+        outer(self, inner)
 
     def add_device_section(self, w: QWidget) -> None:
         """機器に固有の欄（④）を一番下（余白の手前）に足す。出し入れは欄の側が決める（J §4.5）。"""
@@ -311,7 +410,7 @@ class TraceTab(QWidget):
         self.points_auto.blockSignals(False)
         widget_sync.set_value(self.points_spin, sw["points"])
         self.step_label.setText(format_freq(sw["step_hz"]) + (L["zero_span_mark"] if sw["step_hz"] == 0 else ""))
-        self.est_label.setText(texts.w("estimate_value", s=f"{sw['estimated_sweep_s']:.2f}", n=sw["preroll_points"]))
+        self.est_label.setText(texts.w("estimate_value", s=f"{sw['estimated_sweep_s']:.2f}"))
         widget_sync.set_checked(self.image_cancel, sw["image_cancel"])
         set_enabled(self.image_cancel, why["image_cancel"], L["image_cancel_short"])
         notes = [w for w in (why["points"], why["zero_span"]) if w]
@@ -332,16 +431,13 @@ class TraceTab(QWidget):
         layer = self.win.traces
         for i, f in enumerate(files):
             w = QWidget()
-            v = QVBoxLayout(w)
-            v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(0)
-            head = QHBoxLayout()
+            v = sizes.vbox(w, inset=False)
+            head = sizes.hbox()
             name = QLabel(f["name"])
             name.setToolTip(f"{f['path']}\n{f.get('created_at') or ''}  {f.get('device_model') or ''} "
                             f"{f.get('device_serial') or ''}\n{f.get('note') or ''}")
             head.addWidget(name, 1)
             close = QPushButton(L["close_file"])
-            close.setObjectName("small")
             close.setToolTip(L["close_file_tip"])
             close.clicked.connect(lambda _=False, fid=f["file_id"]: self.win.call("close_file", file_id=fid))
             head.addWidget(close)

@@ -84,6 +84,31 @@ def find_dll(folder: Optional[Union[str, Path]] = None) -> Optional[Path]:
     return Path(found) if found and Path(found).is_file() else None
 
 
+# Windows の DLL の頭（PE）の機械の種類 → ビット数
+_PE_MACHINE_BITS = {0x8664: 64, 0xAA64: 64, 0x014C: 32}
+
+
+def dll_bits(path: Optional[Union[str, Path]]) -> Optional[int]:
+    """DLL が 32 ビット版か 64 ビット版か（ファイルの頭を読むだけで、読み込まない）。分からなければ None。
+
+    64 ビットの Python は 32 ビット版の DLL を読めない。見つけたことだけで「使える」と言わないために確かめる
+    （設計J §4.12: 設定の画面は見つけた場所と、使えないならその理由を出す）。
+    """
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096)
+    except OSError:
+        return None
+    if len(head) < 0x40 or head[:2] != b"MZ":
+        return None
+    pe = int.from_bytes(head[0x3C:0x40], "little")
+    if pe + 6 > len(head) or head[pe:pe + 4] != b"PE\0\0":
+        return None
+    return _PE_MACHINE_BITS.get(int.from_bytes(head[pe + 4:pe + 6], "little"))
+
+
 _dev_p = C.c_void_p
 
 # (名前, 戻り値の型, 引数の型)。名前は rtlsdr_ を除いたもの

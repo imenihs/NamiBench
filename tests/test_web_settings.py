@@ -154,8 +154,11 @@ class PresetPaletteTest(_Base):
         self.assertEqual(st, 200, r)
         pv = self.state()["ui"]["palette"]
         self.assertEqual(pv["changed_n"], 1)
-        self.assertTrue(next(x for x in pv["rows"] if x["name"] == "trace2")["changed"])
-        self.assertTrue(pv["warnings"])  # トレース 1 と 2 が同じ色
+        row = next(x for x in pv["rows"] if x["name"] == "trace2")
+        self.assertTrue(row["changed"])
+        # トレース 1 と 2 が同じ色。知らせは変えた色（トレース 2）の行に出す（U-25）
+        self.assertTrue(row["warn"])
+        self.assertFalse(next(x for x in pv["rows"] if x["name"] == "trace1")["warn"])
         st, r = self.post("palette_set", {"colors": {"trace2": "red"}})
         self.assertEqual((st, r["error"]["code"]), (400, "bad_color"))
         self.assertEqual(self.post("palette_reset", {"base": "light"})[1]["lost"], 1)
@@ -345,13 +348,16 @@ console.log(JSON.stringify(out));
         # 選ぶ欄の並びと語は表から（Qt と Web が同じ表: J §5）
         table = web.texts_json()["PNG_PALETTES"]
         self.assertEqual(list(table), list(rl.PNG_PALETTE_CHOICES))
-        self.assertEqual(list(table.values()), ["ユーザー指定（画面と同じ色）", "ライト", "ダーク"])
+        self.assertEqual(list(table.values()), ["ユーザー指定", "ライト", "ダーク"])
+        # 選択肢の意味はツールチップ（名前に説明を付けない: U-24）
+        self.assertEqual(list(web.texts_json()["PNG_PALETTE_TIPS"]), list(rl.PNG_PALETTE_CHOICES))
         # PNG を描くときに pngColors() の色を使い、設定の画面の欄は検めた選び方（pngPalette）を映す
         app = (UI_WEB / "app.js").read_text(encoding="utf-8")
         self.assertRegex(app, r"pngBlob\(note\) \{\s*const colors = this\.pngColors\(\);")
         windows = (UI_WEB / "app_windows.js").read_text(encoding="utf-8")
         self.assertIn(":value=\"a.pngPalette\"", windows)
-        self.assertIn("a.S('png_palette_note')", windows)
+        self.assertIn(":title=\"a.T('PNG_PALETTE_TIPS', c)\"", windows)
+        self.assertNotIn("png_palette_note", windows)
         # png.js は渡された配色（ctx.colors）だけで描く: 色の値を直に書いていない
         png = (UI_WEB / "png.js").read_text(encoding="utf-8")
         self.assertIsNone(re.search(r"#[0-9a-fA-F]{3,6}\b", png))

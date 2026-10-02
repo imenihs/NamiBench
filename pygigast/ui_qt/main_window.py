@@ -16,8 +16,9 @@ from typing import Callable, Optional
 
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QCursor, QFont, QGuiApplication
+from PySide6.QtGui import QAction, QColor, QCursor, QGuiApplication
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QColorDialog,
     QComboBox,
@@ -34,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from ..api.local import LocalApi
 from ..core.units import format_freq, level_text
-from . import device_menu, look, marker_rows, menu_table, menus, png_data, screen_model, texts, widget_sync
+from . import device_menu, look, marker_rows, menu_table, menus, png_data, screen_model, sizes, texts, theme, widget_sync
 from .docks import Parts
 from .fields import FreqField, RefLevelField, SpanLockButton, ValueField
 from .files import FileActions
@@ -108,6 +109,8 @@ class MainWindow(QMainWindow):
         self.device_window = None  # 機器の一覧の窓（J §4.7。device_menu.open_list が作る）
         self._presets: Optional[PresetsDialog] = None
 
+        # 描き方・色・大きさの決まり（設計J §4.11）は部品を作る前に入れる（部品が出るときに当たる）
+        theme.install(QApplication.instance(), self.pal)
         self._build_plot()
         self._build_menu()
         self._build_body()
@@ -251,10 +254,7 @@ class MainWindow(QMainWindow):
             b = QPushButton(label)
             b.setCheckable(True)
             b.setEnabled(why is None)
-            b.setMinimumHeight(40)
-            font = QFont(b.font())
-            font.setPointSize(12)
-            b.setFont(font)
+            sizes.set_tier(b, "L")  # 上段は大の段（J §4.11）
             b.clicked.connect(lambda _=False, c=code: self.actions[f"mode_{c}"].trigger())
             self.mode_group.addButton(b)
             self.mode_buttons[code] = b
@@ -267,12 +267,13 @@ class MainWindow(QMainWindow):
         # Span 固定の切り替え（設計C §5.11 の 2）。Span の欄に付けて、状態を欄の上で見せる
         self.span_lock = SpanLockButton(self.pal["accent"], self.pal["text_dim"])
         self.span_lock.setToolTip(texts.LABELS["span_lock_tip"])
+        sizes.set_tier(self.span_lock, "S")
         self.span_lock.clicked.connect(lambda on: self._set_sweep(span_lock=bool(on), field=self.f_span))
         self.f_span.add_header_widget(self.span_lock)
         for w in (self.f_center, self.f_span, self.f_start, self.f_stop):
             top.addWidget(w)
         top = self.topbar.right
-        rbw_box = ValueField("RBW", big=False)
+        rbw_box = ValueField("RBW", big=True)
         self.rbw_combo = QComboBox()
         self._rbw_key: tuple = ()
         self.rbw_combo.activated.connect(self._rbw_chosen)
@@ -281,14 +282,14 @@ class MainWindow(QMainWindow):
         self.rbw_field = rbw_box
         top.addWidget(rbw_box)
         # REF レベル: 打てるドロップダウン（+20〜−120・10dB 刻み）と欄の上のホイール 1dB（J §4.1）
-        self.f_ref = RefLevelField(texts.LABELS["ref_level"], "dBm", self._set_ref, big=False)
+        self.f_ref = RefLevelField(texts.LABELS["ref_level"], "dBm", self._set_ref, big=True)
         # いまの波形の最大値が上から1目盛下に来るよう REF を合わせる（J §4.1）
         self.btn_ref_auto = QPushButton(texts.LABELS["ref_auto"])
-        self.btn_ref_auto.setObjectName("small")
+        sizes.set_tier(self.btn_ref_auto, "S")
         self.btn_ref_auto.clicked.connect(lambda: self.actions["ref_auto"].trigger())
         self.f_ref.add_header_widget(self.btn_ref_auto)
         top.addWidget(self.f_ref)
-        div_box = ValueField("dB/div", big=False)
+        div_box = ValueField("dB/div", big=True)
         self.div_combo = QComboBox()
         for v in DB_PER_DIV_CHOICES:
             self.div_combo.addItem(f"{v:g} dB", v)
@@ -297,24 +298,17 @@ class MainWindow(QMainWindow):
         div_box.layout().replaceWidget(div_box.edit, self.div_combo)
         div_box.edit.hide()
         top.addWidget(div_box)
-        # RBW・REF・dB/div の欄は同じ字の大きさ・同じ高さにそろえ、幅は値が全部見える幅（J §4.3）
-        top_font = self.f_ref.edit.font()
+        # RBW・REF・dB/div の欄も上段の段（周波数の欄と同じ高さと字: J §4.3・§4.11）。幅は値が全部見える幅
         for c in (self.rbw_combo, self.div_combo):
-            c.setFont(top_font)
+            sizes.set_tier(c, "L")
             widget_sync.fit_combo(c)
-        widget_sync.fit_combo(self.f_ref.combo)
-        h = max(c.sizeHint().height() for c in (self.rbw_combo, self.div_combo, self.f_ref.combo))
-        for c in (self.rbw_combo, self.div_combo, self.f_ref.combo):
-            c.setMinimumHeight(h)
         top.addStretch(1)
         self.btn_cont = QPushButton(texts.MENU_ITEMS["run_cont"])
         self.btn_single = QPushButton(texts.MENU_ITEMS["run_single"])
         self.btn_stop = QPushButton(texts.MENU_ITEMS["stop"])
         for b in (self.btn_cont, self.btn_single, self.btn_stop):
-            b.setMinimumSize(78, 44)
-            font = QFont(b.font())
-            font.setPointSize(13)
-            b.setFont(font)
+            b.setProperty("run", True)  # 上段で最も大きいボタン（字と最小幅: J §4.3・§4.11）
+            sizes.set_tier(b, "L")
             top.addWidget(b)
         # ボタンとメニューは同じ項目を呼ぶ（J §4.3.1）
         self.btn_cont.clicked.connect(lambda: self.actions["run_cont"].trigger())
@@ -323,6 +317,7 @@ class MainWindow(QMainWindow):
         # TG・S11 のときだけ「直結を 0dB にする」といまの基準（J §4.2: 基準を取るは1クリックで届く所）
         self.ref_quick = RefQuick(self)
         top.addWidget(self.ref_quick)
+        self.topbar.align_bottom()
         outer.addWidget(self.topbar)
 
         # 使っている RBW が好みと違う理由・信用できない条件（その場で出し続ける: U-02・U-08）

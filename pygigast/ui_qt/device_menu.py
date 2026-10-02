@@ -27,7 +27,8 @@ def show_about(win: "MainWindow") -> None:
 
 
 def open_list(win: "MainWindow") -> DeviceListWindow:
-    """機器の一覧を開く（メニュー「機器 → 接続…」・繋がっていないとき: J §4.7）。窓は1つだけ。"""
+    """機器の一覧を開く（メニュー「機器 → 機器に接続…」・繋がっていないとき: J §4.7）。窓は1つだけ。
+    窓の題は開いたメニューの項目の名前と同じ（U-24）。"""
     w = win.device_window
     if w is None:
         w = DeviceListWindow(win)

@@ -18,7 +18,7 @@ def _add_web_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--port", type=int, default=None,
                    help="ブラウザから使うときのポート番号（既定: 画面では前回の番号、serve では 8080）")
     p.add_argument("--lan", action="store_true",
-                   help="同じネットワークのスマホや PC からも使えるようにする（QR コードか認証番号で入る）")
+                   help="同じネットワークのスマートフォンや PC からも使えるようにする（QR コードか認証番号で入る）")
 
 
 def serve_main(argv: list[str]) -> int:
