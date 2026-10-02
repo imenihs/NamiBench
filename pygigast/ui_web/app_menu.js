@@ -39,17 +39,18 @@
           run_cont: () => this.runCont(), run_single: () => this.runSingle(), stop: () => this.stop(),
           pause: () => this.toggleRun(),
           ref_auto: () => this.refAuto(),
+          marker_polarity: () => this.togglePolarity(),
           marker_peak: () => this.markerPeak("highest"), marker_peak_left: () => this.markerPeak("left"),
           marker_peak_right: () => this.markerPeak("right"), marker_peak_lower: () => this.markerPeak("lower"),
           marker_left: () => this.markerStep(-1), marker_right: () => this.markerStep(1),
           marker_here: () => this.markerHere(),
-          marker_add: async () => { const r = await this.cmd("marker_add", { kind: "M", trace: 1 }); if (r && r.id) this.selectedMarker = r.id; },
+          marker_add: () => this.markerAddPeak(),
           marker_center: () => this.cmd("marker_to", { id: this.selectedMarker, target: "center" }),
           marker_ref: () => this.cmd("marker_to", { id: this.selectedMarker, target: "ref" }),
           marker_span: () => this.cmd("marker_to", { id: this.selectedMarker, target: "span" }),
           marker_listen: () => this.listenStart(), listen_stop: () => this.listenStop(),
           marker_remove: () => { if (!this.removeSelectedRow()) this.cmd("marker_remove", { id: this.selectedMarker }); },
-          marker_clear: () => this.cmd("marker_clear"),
+          marker_clear: () => this.markerClear(),
           marker_copy: () => this.copyMarkerTable(),
           cal_legacy: () => this.legacyDialog(),
           settings: () => this.openSettings("connection"),
@@ -85,8 +86,8 @@
           case "redo": return st.undo && !st.undo.can_redo ? R("no_redo") : null;
           case "run_cont": case "run_single": return this.connected ? null : X.get("ERRORS", "not_connected");
           case "ref_auto": return this.refAutoReason();
-          case "marker_peak_left": case "marker_peak_right": case "marker_peak_lower": case "marker_left":
-          case "marker_right": case "marker_center": case "marker_ref": case "marker_remove": return noMarker;
+          // 次のピーク（左・右・次に高い）はマーカーが無ければ M を作ってから動かす（G §3.5。Qt と同じ）ので理由を持たない
+          case "marker_left": case "marker_right": case "marker_center": case "marker_ref": case "marker_remove": return noMarker;
           case "marker_span": return noMarker || (sel && sel.ref ? null : R("delta_ref"));
           case "marker_listen": return this.listenStartReason;
           case "listen_stop": return this.listenView.stop_reason || null;
@@ -99,7 +100,8 @@
           if (code === null) return null;
           const notYet = X.get("MENU_NOT_YET", code, null);
           const why = notYet ? X.get("NOT_YET", notYet) : this.itemReason(code);
-          return { code, label: X.get("MENU_ITEMS", code), run: notYet ? null : h[code], why, keys: this.keySeqs[code] || [], graphOnly: graphOnly(code) };
+          // 名前は山／谷の選択で変わる項目がある（app_markers.js の menuLabel: G §3.8）
+          return { code, label: this.menuLabel(code), run: notYet ? null : h[code], why, keys: this.keySeqs[code] || [], graphOnly: graphOnly(code) };
         });
         const out = [];
         for (const [sec, codes] of X.list("MENU_LAYOUT")) {

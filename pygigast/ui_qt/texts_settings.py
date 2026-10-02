@@ -217,8 +217,10 @@ KEY_RESERVED_REASONS = {
     "app_menu": "メニューを開くキーです（Alt と文字）",
     "modifier_only": "Ctrl・Shift・Alt だけでは割り当てられません。ほかのキーと一緒に押してください",
 }
-# ブラウザが先に取る・画面が使うキー（Web）。キー → 理由のコード
+# ブラウザが先に取る・画面が使うキー（Web）。キー → 理由のコード。メニューバーのアクセスキー（Alt+文字: Qt と同じ）は
+# メニューを開くのに使う。ただし Alt+D はブラウザが先に取る（アドレス欄）ので、その理由を後ろで上書きする
 WEB_RESERVED_KEYS = {
+    **{f"Alt+{c}": "app_menu" for c in "FEDSMAKCVOH"},
     "Ctrl+W": "browser_close", "Ctrl+Shift+W": "browser_close", "Alt+F4": "browser_close",
     "Ctrl+T": "browser_new", "Ctrl+N": "browser_new", "Ctrl+Shift+N": "browser_new", "Ctrl+Shift+T": "browser_new",
     "F5": "browser_reload", "Ctrl+R": "browser_reload", "Ctrl+Shift+R": "browser_reload", "Ctrl+F5": "browser_reload",

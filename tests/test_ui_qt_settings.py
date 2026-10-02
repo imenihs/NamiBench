@@ -41,6 +41,12 @@ class KeymapTest(unittest.TestCase):
         # Web の初期値はブラウザが先に取るキーを使わない（J §4.6）
         for code, k in texts.WEB_KEY_DEFAULTS.items():
             self.assertNotIn(k, texts.WEB_RESERVED_KEYS, code)
+        # メニューバーのアクセスキー（Alt+文字）は Qt と同じく割り当てられない（Web もメニューバーを Alt+文字で開く）。
+        # Alt+D はブラウザが先に取る（アドレス欄）ので、その理由のまま
+        for sec, c in texts.MENU_MNEMONICS.items():
+            want = "browser_address" if c == "D" else "app_menu"
+            self.assertEqual(texts.WEB_RESERVED_KEYS.get(f"Alt+{c}"), want, sec)
+            self.assertEqual(texts.QT_RESERVED_KEYS.get(f"Alt+{c}"), "app_menu", sec)
 
 
 class ReportLayoutOffsetTest(unittest.TestCase):

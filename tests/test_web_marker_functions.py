@@ -127,9 +127,12 @@ class WebMarkupTest(unittest.TestCase):
         self.assertIn(":unit=\"axisUnit\" signed :choices=\"dbLists.ref\"", sec)
         self.assertIn("setView({function_lines: $event.target.checked}", sec)
         self.assertIn("viewOpts.function_lines !== false", sec)
-        peaks = html[html.index("W('from_floor')"):html.index("W('list_peaks')")]
+        start = html.index("W('peak_list')")
+        peaks = html[start:html.index("W('register_p')", start)]
         self.assertIn("<db-field", peaks)
         self.assertIn(":choices=\"dbLists.floor\"", peaks)
+        # 欄の名前は基準で変わる（ノイズフロアから／最大から: P §9.7。サーバーの peak_view.list_view）
+        self.assertIn("{{ pkView.label }}", peaks)
         app = (UI_WEB / "app.js").read_text(encoding="utf-8")
         self.assertIn('app.component("db-field", GSFields.DbField)', app)
         self.assertIn("setFunctionLines(", app)
@@ -138,7 +141,7 @@ class WebMarkupTest(unittest.TestCase):
     def test_words_reach_the_web(self):
         labels = web.texts_json()["LABELS"]
         for key in ("db_range_note", "function_lines", "function_lines_tip", "second_n", "threshold_cross",
-                    "from_floor", "floor_tip", "bad_value"):
+                    "from_floor", "from_max", "floor_tip", "max_tip_peak", "max_tip_dip", "bad_value"):
             self.assertEqual(labels[key], qt_texts.LABELS[key], key)
 
 

@@ -371,7 +371,7 @@ globalThis.window = globalThis; window.addEventListener = () => {};
 let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() {}, directive() {}, mount() {} }; }, markRaw: (x) => x };
 globalThis.GSUnits = {}; globalThis.GSTexts = { w: (k) => "W:" + k, get: () => "", dict: () => ({}), fmt: (k) => k };
 globalThis.GSApi = { call: async () => ({}) };
-for (const n of ["GSAppMenu", "GSAppFiles", "GSAppRtl", "GSAppDevices"]) globalThis[n] = {};
+for (const n of ["GSAppMenu", "GSAppMarkers", "GSAppFiles", "GSAppRtl", "GSAppDevices"]) globalThis[n] = {};
 globalThis.GSFields = { NumField: {} };
 require(process.argv[1]);
 const out = {};

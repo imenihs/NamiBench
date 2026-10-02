@@ -404,6 +404,8 @@ class MainWindow(QMainWindow):
         for code, _label, name, why in MODES:
             self.mode_buttons[code].setToolTip(
                 menus.tooltip_for(a[f"mode_{code}"], name) + (f" — {why}" if why else ""))
+        if hasattr(self, "marker_panel"):
+            self.marker_panel.apply_polarity()  # 山／谷と探すボタンのツールチップのキー
         self._update_ref_auto()
 
     # ------------------------------------------------------------------ 掃引・元に戻す
@@ -693,7 +695,8 @@ class MainWindow(QMainWindow):
             self.select_marker(r["id"])
 
     def _peak(self, direction: str) -> None:
-        kw = {"direction": direction, "trace": self._first_visible_trace()}
+        # 山／谷はマーカー表の上の切り替え（G §3.8。ピークの一覧と同じ選択）
+        kw = {"direction": direction, "trace": self._first_visible_trace(), "polarity": self.marker_panel.polarity}
         if self.selected_marker:
             kw["id"] = self.selected_marker
         self.call("marker_peak", on_ok=self._select_result, **kw)
@@ -706,14 +709,18 @@ class MainWindow(QMainWindow):
         self.call("marker_set", id=self.selected_marker, step=sign * (10 if shift else 1))
 
     def _marker_add_at(self, x: float, y: float) -> None:
-        """その位置に M を置く。見えているトレースのうち縦に最も近いものに載せる（G §3.2）。"""
+        """その位置に M を置く。見えているトレースのうち縦に最も近いものに載せる（G §3.2）。
+        向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き）。"""
         if self._freq_ops_reason():
             return
         trace = self.traces.nearest_trace(x, y) or self._first_visible_trace()
-        self.call("marker_add", on_ok=self._select_result, kind="M", trace=trace, freq_hz=int(round(x)))
+        self.call("marker_add", on_ok=self._select_result, kind="M", trace=trace, freq_hz=int(round(x)),
+                  polarity=self.marker_panel.polarity)
 
     def _marker_add_peak(self) -> None:
-        self.call("marker_add", on_ok=self._select_result, kind="M", trace=self._first_visible_trace())
+        # マーカー追加: 山は最大の点・谷は一番深い点に新しい M（G §3.8）
+        self.call("marker_add", on_ok=self._select_result, kind="M", trace=self._first_visible_trace(),
+                  polarity=self.marker_panel.polarity)
 
     def _on_graph_clicked(self, x: float, y: float) -> None:
         self._marker_add_at(x, y)
@@ -960,6 +967,7 @@ class MainWindow(QMainWindow):
         self.mark_bands.set_marks(screen_model.marks_view(st))
         self._update_unit()
         self._update_ref_auto()
+        self.marker_tab.apply_peaks()  # ピークの一覧の基準（ノイズフロア・最大）は表示の量で変わる（P §9.7）
         if "markers" in st:
             self._apply_markers(st["markers"])
         self.task_panel.apply_tasks(st.get("tasks") or [])

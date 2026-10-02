@@ -5,7 +5,8 @@
 - マーカーの機能: N dB 帯域幅（N を2つでシェープファクタ）・しきい値との交点。dB の欄は打てるドロップダウン（G §3.6）。
   結果の線をグラフに出すかの切り替え（コアの表示の設定 view.function_lines）
 - XY カーソル: X1・X2（周波数）・Y1・Y2（レベル）。トレースに載らない
-- ピークの一覧と「P に登録」・「上位 N 個に P を置く」
+- ピークの一覧と「P に登録」・「上位 N 個に P を置く」。山／谷はマーカー表の上の切り替えと同じ選択（G §3.8）。
+  基準は電力でノイズフロア・基準との比で最大（P §9.7。欄の名前・差の列・見つけた数の行は peak_view で Web と同じ）
 - 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05。機能と XY カーソルはチェックボックスが名前）
 """
 from __future__ import annotations
@@ -29,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import ParseError, format_freq, parse_db, parse_freq_hz
-from . import sizes, texts, widget_sync
+from . import peak_view, sizes, texts, widget_sync
 from .fields import (BANDWIDTH_CHOICES, BANDWIDTH_RANGE, FLOOR_CHOICES, FLOOR_RANGE, REF_CHOICES, THRESHOLD_RANGE,
                      DbField, FreqField, LocalDbChoiceField)
 from .marker_rows import function_lines_on
@@ -189,12 +190,10 @@ class MarkerTab(QWidget):
         for n in (1, 2, 3, 4):
             self.pk_trace.addItem(texts.w("trace_n", n=n), n)
         form.addRow(L["trace"], self.pk_trace)
-        # 確定した値は欄が持ち、「探す」で使う
+        # 確定した値は欄が持ち、「探す」で使う。名前は基準で変わる（ノイズフロアから／最大から: P §9.7。apply_peaks）
         self.pk_margin = self._db_field(10.0, FLOOR_CHOICES, False, FLOOR_RANGE, lambda: None)
-        self.pk_margin.setToolTip(L["floor_tip"])
-        floor_label = QLabel(L["from_floor"])
-        floor_label.setToolTip(L["floor_tip"])
-        form.addRow(floor_label, self.pk_margin)
+        self.pk_margin_label = QLabel(L["from_floor"])
+        form.addRow(self.pk_margin_label, self.pk_margin)
         v.addLayout(form)
         self.pk_find = QPushButton(L["find"])
         self.pk_find.clicked.connect(self._find_peaks)
@@ -224,7 +223,8 @@ class MarkerTab(QWidget):
         row.addWidget(self.top_n)
         self.top_btn = QPushButton(L["place_p_after"])
         self.top_btn.clicked.connect(
-            lambda: win.call("marker_top_peaks", trace=self.pk_trace.currentData(), n=self.top_n.value()))
+            lambda: win.call("marker_top_peaks", trace=self.pk_trace.currentData(), n=self.top_n.value(),
+                             polarity=self._polarity()))
         row.addWidget(self.top_btn)
         row.addStretch(1)
         v.addLayout(row)
@@ -234,6 +234,7 @@ class MarkerTab(QWidget):
         self._num_font = number_font(self.pk_table.font())
         outer(self, inner)
         self.apply(None, {})
+        self.apply_peaks()
 
     @staticmethod
     def _db_field(value: float, choices: tuple, signed: bool, rng: tuple[float, float], on_commit) -> LocalDbChoiceField:
@@ -391,26 +392,42 @@ class MarkerTab(QWidget):
             v = float(ref - div * (3 if key == "y1" else 7))
         self.win.call("set_xy", **{key: v})
 
+    # ---------------------------------------------------------------- ピークの一覧（P §9.7）
+
+    def _polarity(self) -> str:
+        """探すもの（マーカー表の上の山／谷の切り替えと同じ選択: G §3.8）。"""
+        return self.win.marker_panel.polarity if hasattr(self.win, "marker_panel") else peak_view.PEAK
+
+    def apply_peaks(self) -> None:
+        """一覧の欄を、いまの基準（ノイズフロア・最大）と山／谷の選択に合わせる。電力の谷は探せない（理由: U-08）。"""
+        v = peak_view.list_view(self.win.state, self._polarity())
+        self.pk_margin_label.setText(v["label"])
+        self.pk_margin_label.setToolTip(v["tip"])
+        self.pk_margin.setToolTip(v["tip"])
+        set_enabled(self.pk_find, v["reason"])
+        set_enabled(self.top_btn, v["reason"])
+        if self.pk_table.rowCount() == 0:  # 出している結果があれば、その結果の列の名前のまま
+            self.pk_table.setHorizontalHeaderItem(2, QTableWidgetItem(v["diff_header"]))
+
     def _find_peaks(self) -> None:
         trace = self.pk_trace.currentData()
 
         def show(r: dict) -> None:
-            peaks = r.get("peaks") or []
-            self.pk_table.setRowCount(len(peaks))
-            for i, p in enumerate(peaks):
-                cells = (f"{(p['freq_hz'] + texts.freq_offset_of(self.win.state)) / 1e6:.6f}".rstrip("0").rstrip("."), f"{p['level']:.2f} {r.get('unit', '')}",
-                         f"{p['height_db']:.1f}" if p.get("height_db") is not None else "")
-                for c, text in enumerate(cells):
+            view = peak_view.result_view(r, texts.freq_offset_of(self.win.state))
+            polarity = r.get("polarity") or peak_view.PEAK  # 「P に登録」は一覧の向き（山・谷）の P にする
+            self.pk_table.setHorizontalHeaderItem(2, QTableWidgetItem(view["diff_header"]))
+            self.pk_table.setRowCount(len(view["rows"]))
+            for i, p in enumerate(view["rows"]):
+                for c, text in enumerate((p["freq"], p["level"], p["diff"])):
                     it = QTableWidgetItem(text)
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     it.setFont(self._num_font)
                     self.pk_table.setItem(i, c, it)
                 b = QPushButton(L["register_p"])
                 b.clicked.connect(lambda _=False, f=p["freq_hz"]: self.win.call(
-                    "marker_register_peak", trace=trace, freq_hz=int(f)))
+                    "marker_register_peak", trace=trace, freq_hz=int(f), polarity=polarity))
                 self.pk_table.setCellWidget(i, 3, b)
-            floor = r.get("floor")
-            self.pk_note.setText(texts.w("peaks_found_floor", n=len(peaks), floor=f"{floor:.1f}", unit=r.get("unit", ""))
-                                 if floor is not None else texts.w("peaks_found", n=len(peaks)))
+            self.pk_note.setText(view["found"])
 
-        self.win.call("peak_list", on_ok=show, trace=trace, floor_margin_db=self.pk_margin.value())
+        self.win.call("peak_list", on_ok=show, trace=trace, floor_margin_db=self.pk_margin.value(),
+                      polarity=self._polarity())

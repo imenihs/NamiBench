@@ -168,13 +168,14 @@ class PresetPaletteTest(_Base):
 class StaticFilesTest(_Base):
     def test_new_ui_hooks(self):
         html = self.get("/")[1].decode("utf-8")
-        for f in ("app_keys.js", "app_settings.js", "app_windows.js"):
+        for f in ("app_keys.js", "app_settings.js", "app_windows.js", "app_markers.js"):
             self.assertIn(f'src="{f}"', html)
             self.assertEqual(self.get("/" + f)[0], 200, f)
-        # 窓（設定・プリセット・確かめる）・ピークの一覧の別ウィンドウ・描き方・振幅の詳細・周波数オフセット
+        # 窓（設定・プリセット・確かめる）・ピークの一覧の別ウィンドウ・描き方・振幅の詳細・周波数オフセット。
+        # ピークの一覧の周波数（周波数オフセット込み）はサーバーが Qt と同じ peak_view.result_view で作る
         for hook in ("<gs-settings", "<gs-presets", "<gs-confirm", "detach('peaks')", "part === 'peaks'",
                      "draw_style", "commitOffset", "commitExt", "level_unit", "resetPalette('light')",
-                     "openSettings('display')", "shownHz(p.freq_hz)"):
+                     "openSettings('display')", "peakText().rows"):
             self.assertIn(hook, html, hook)
         # 古い「まだ使えません」の欄と、入力の窓に入れていた設定は消した
         self.assertNotIn("unit_not_yet", html)

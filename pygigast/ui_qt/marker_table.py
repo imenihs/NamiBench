@@ -1,9 +1,12 @@
-"""グラフの下のマーカー表とピーク・マーカーのボタン（設計J §4.3 案B・G §3.3・§3.4・§3.5）。
+"""グラフの下のマーカー表とピーク・マーカーのボタン（設計J §4.3 案B・G §3.3・§3.4・§3.5・§3.8）。
 
+- ボタンの並び: 頭に探すもの「山／谷」の切り替え（G §3.8。ピークの一覧と同じ選択）・ピーク・◀ 次のピーク・次のピーク ▶・
+  次に高い・マーカー追加、右端に全部消す・表をコピー。谷のときはボタンの場所を変えず名前が変わる（谷・次の谷・次に深い）
 - 行: P・M のマーカー（親）と、その下の子の行（オフセットのカーソル・機能の結果）、XY カーソル
 - 表の中でスクロールする（行が見切れたまま隠れない: J §4.3.2）
 - 基準の欄: 行ごとにデルタの相手を選ぶ（なし／他の P・M）
-- 行の「操作」: Center に・REF に・デルタの2点を Start・Stop に・消す（右クリックでも同じメニュー: G §3.4）
+- 行の「操作」: Center に・REF に・デルタの2点を Start・Stop に・消す（右クリックでも同じメニュー: G §3.4。項目は
+  marker_rows.row_ops で Web と同じ）
 - 「コピー」: 表をタブ区切りで（子の行と機能の結果を含む）
 """
 from __future__ import annotations
@@ -14,6 +17,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QComboBox,
     QHeaderView,
     QLineEdit,
@@ -27,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import ParseError
-from . import marker_rows, menus, sizes, texts, widget_sync
+from . import marker_rows, menus, peak_view, sizes, texts, widget_sync
 from .theme import number_font
 
 if TYPE_CHECKING:
@@ -39,7 +43,6 @@ COL_NOTE = COL_OPS - 1
 ID_ROLE = Qt.ItemDataRole.UserRole
 
 
-XY_KEYS = marker_rows.XY_KEYS
 COL_FREQ, COL_VALUE, COL_DFREQ, COL_DVALUE = (marker_rows.COL_FREQ, marker_rows.COL_VALUE, marker_rows.COL_DFREQ,
                                              marker_rows.COL_DVALUE)
 
@@ -86,15 +89,33 @@ class MarkerPanel(QWidget):
         bar = sizes.hbox()
         a = win.actions
         L = texts.LABELS
-        self.btn_peak = self._button(texts.DIRECTIONS["highest"], a["marker_peak"], L["btn_peak_tip"])
-        self.btn_left = self._button(L["btn_left"], a["marker_peak_left"], L["btn_left_tip"])
-        self.btn_right = self._button(L["btn_right"], a["marker_peak_right"], L["btn_right_tip"])
-        self.btn_lower = self._button(L["btn_lower"], a["marker_peak_lower"], L["btn_lower_tip"])
-        self.btn_add = self._button(L["btn_add"], a["marker_add"], L["btn_add_tip"])
+        # 探すもの「山／谷」（G §3.8）。選択は画面の覚え書き（設計O §1.1）。ピークの一覧も同じ選択を使う
+        self.polarity = peak_view.polarity_of(win.prefs.get(peak_view.PREF_KEY))
+        self.pol_group = QButtonGroup(self)
+        self.pol_group.setExclusive(True)
+        self.pol_buttons: dict[str, QPushButton] = {}
+        for code in peak_view.POLARITIES:
+            b = QPushButton(texts.POLARITIES[code])
+            b.setCheckable(True)
+            b.setObjectName(f"polarity_{code}")
+            b.clicked.connect(lambda _=False, c=code: self.set_polarity(c))
+            self.pol_group.addButton(b)
+            self.pol_buttons[code] = b
+            bar.addWidget(b)
+        # 探すボタン（名前とツールチップは選んだほうで変わる: apply_polarity）
+        self.search_buttons: dict[str, QPushButton] = {}
+        for code in peak_view.SEARCH_CODES:
+            b = QPushButton()
+            b.clicked.connect(a[code].trigger)
+            self.search_buttons[code] = b
+            bar.addWidget(b)
+        self.btn_peak = self.search_buttons["marker_peak"]
+        self.btn_left = self.search_buttons["marker_peak_left"]
+        self.btn_right = self.search_buttons["marker_peak_right"]
+        self.btn_lower = self.search_buttons["marker_peak_lower"]
+        self.btn_add = self.search_buttons["marker_add"]
         self.btn_clear = self._button(L["clear_all"], a["marker_clear"], texts.MENU_ITEMS["marker_clear"])
         self.btn_copy = self._button(L["copy_table"], a["marker_copy"], L["btn_copy_tip"])
-        for b in (self.btn_peak, self.btn_left, self.btn_right, self.btn_lower, self.btn_add):
-            bar.addWidget(b)
         bar.addStretch(1)
         bar.addWidget(self.btn_clear)
         bar.addWidget(self.btn_copy)
@@ -131,12 +152,42 @@ class MarkerPanel(QWidget):
         lay = sizes.vbox(self)
         lay.addLayout(bar)
         lay.addWidget(self.tree, 1)
+        self.apply_polarity()
 
     def _button(self, text: str, act, what: str) -> QPushButton:
         b = QPushButton(text)
         b.clicked.connect(act.trigger)
         b.setToolTip(menus.tooltip_for(act, what))
         return b
+
+    # ---------------------------------------------------------------- 山／谷（G §3.8）
+
+    def set_polarity(self, polarity: str) -> None:
+        """探すものを変える。画面の覚え書きに残し、ボタン・メニュー・ピークの一覧を合わせる。置いたマーカーは変えない。"""
+        self.polarity = peak_view.polarity_of(polarity)
+        self.win.prefs.set(peak_view.PREF_KEY, self.polarity)
+        self.apply_polarity()
+
+    def toggle_polarity(self) -> None:
+        """メニューの「山／谷を切り替える」（キーで割り当てられる）。"""
+        self.set_polarity(peak_view.other(self.polarity))
+
+    def apply_polarity(self) -> None:
+        """切り替えの印・探すボタンとメニューの項目の名前（場所は変えない）・ピークの一覧の欄を、いまの選択に合わせる。"""
+        p = self.polarity
+        acts = self.win.actions
+        self.pol_buttons[p].setChecked(True)  # 1つだけ選べる組なので、もう一方は外れる（clicked は出ない）
+        for code, b in self.pol_buttons.items():
+            b.setToolTip(menus.tooltip_for(acts["marker_polarity"], texts.POLARITY_TIPS[code]))
+        for code, b in self.search_buttons.items():
+            b.setText(texts.SEARCH_BUTTONS[p][code])
+            sizes.fit_button(b)  # 幅をいまの名前に合わせる（前の名前の幅のまま伸びて残らない: S-03）
+            acts[code].setText(peak_view.menu_label(code, p))
+            menus.set_reason(acts[code], acts[code].statusTip() or None)  # ツールチップをいまの名前で作り直す
+            b.setToolTip(menus.tooltip_for(acts[code], texts.SEARCH_TIPS[p][code]))
+        tab = getattr(self.win, "marker_tab", None)
+        if tab is not None:
+            tab.apply_peaks()
 
     # ---------------------------------------------------------------- 行
 
@@ -200,10 +251,15 @@ class MarkerPanel(QWidget):
                 cb.activated.connect(lambda _i, mid=r["id"], c=cb: self._set_ref(mid, c.currentData()))
                 self.tree.setItemWidget(it, COL_REF, cb)
                 self._ref_combos[r["id"]] = cb
+            if not marker_rows.row_ops(r, self.win.marker_snap):
+                continue  # 操作の無い行（消せない機能の行）
             ops = QToolButton()
             ops.setText(texts.LABELS["row_ops"])
             ops.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-            ops.setMenu(self._row_menu(r))
+            # メニューは開くときに作る（デルタの基準の有無など、いまの状態の項目にする）
+            menu = QMenu(ops)
+            menu.aboutToShow.connect(lambda mm=menu, rid=r["id"]: self._fill_row_menu(mm, rid))
+            ops.setMenu(menu)
             self.tree.setItemWidget(it, COL_OPS, ops)
         self.tree.blockSignals(False)
         self._fit_ref_column()
@@ -270,26 +326,37 @@ class MarkerPanel(QWidget):
     # ---------------------------------------------------------------- 行の操作（G §3.4）
 
     def _row_menu(self, r: dict) -> QMenu:
+        """行の「操作」と右クリックのメニュー。項目は marker_rows.row_ops（Web の行の「操作」と同じ並び・同じ語）。"""
         m = QMenu(self)
-        rid = r["id"]
-        if r.get("kind") == "marker":
-            for text, target, name in ((texts.LABELS["row_center"], "center", "row_center"),
-                                       (texts.LABELS["row_ref"], "ref", "row_ref"),
-                                       (texts.MENU_ITEMS["marker_span"], "span", "row_span")):
-                act = m.addAction(text)
-                act.setObjectName(name)
-                act.triggered.connect(lambda _=False, t=target: self.win.marker_to(rid, t))
-            m.addSeparator()
-            act = m.addAction(texts.w("row_remove", m=rid))
-            act.setObjectName("row_remove")
-            act.triggered.connect(lambda: self.win.call("marker_remove", id=rid))
-        else:
-            text = (texts.LABELS["row_remove_cursor"] if r.get("offset")
-                    else texts.w("row_unset", m=rid) if rid in XY_KEYS else texts.LABELS["row_remove_function"])
-            act = m.addAction(text)
-            act.setObjectName("row_remove")
-            act.triggered.connect(lambda: self.remove_row(r))
+        self._add_ops(m, r)
         return m
+
+    def _fill_row_menu(self, m: QMenu, rid: str) -> None:
+        """行の「操作」を開くとき、いまの行の状態で項目を作り直す。"""
+        m.clear()
+        row = next((r for r in self.rows if r["id"] == rid), None)
+        if row is not None:
+            self._add_ops(m, row)
+
+    def _add_ops(self, m: QMenu, r: dict) -> None:
+        m.setToolTipsVisible(True)
+        for it in marker_rows.row_ops(r, self.win.marker_snap):
+            if it is None:
+                m.addSeparator()
+                continue
+            act = m.addAction(it["text"])
+            act.setObjectName(it["name"])
+            if it["why"]:
+                act.setEnabled(False)
+                act.setToolTip(it["why"])  # 使えない理由（U-08）
+            act.triggered.connect(lambda _=False, c=it["cmd"], a=it["args"]: self._run_op(c, a))
+
+    def _run_op(self, cmd: str, args: dict) -> None:
+        # Center・REF へは画面の欄の知らせ・縦軸の値の受け取りがある（main_window.marker_to）
+        if cmd == "marker_to":
+            self.win.marker_to(args["id"], args["target"])
+        else:
+            self.win.call(cmd, **args)
 
     def remove_row(self, r: dict) -> None:
         """その行だけを消す（決まりは marker_rows.remove_command: Web と同じ）。"""

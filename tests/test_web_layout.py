@@ -3,7 +3,8 @@
 Qt の tests/qt_layout_check.py と同じ決まりを、ヘッドレスの Edge で開いた Web の画面で数える。見た目の崩れを人の目で
 1つずつ見つけない（2026-10-03 ユーザー指摘「高さがガタガタずれている」）。主画面の右の全部のタブ・設定の全部の
 ページ・プリセットの窓を、決めた解像度（1280×720・1920×1080）で開き、出ている全部の欄・ドロップダウン・ボタンに
-ついて次を数える（Qt の試験と同じく、機器の一覧・CSV に書き出す・保存・ブラウザからの接続のしかたの窓も数える）:
+ついて次を数える（Qt の試験と同じく、機器の一覧・CSV に書き出す・保存・ブラウザからの接続のしかたの窓も数える。
+マーカー表の上の山／谷の切り替えを谷にした主画面と、マーカー表の行の「操作」を開いた一覧も数える）:
 
 - 高さが段の値（上段 40px・標準 26px・状態バーと上段の名前の行 20px）でない
 - 文字の大きさが段の値でない（上段は欄・ボタン・連続/単発/停止、標準、小。値は sizes.py と同じ）
@@ -510,6 +511,17 @@ def views(page: EdgePage, tabs_only: bool = False):
         yield f"主画面 {tab}", ".app"
     if tabs_only:
         return
+    # 探すもの「谷」（G §3.8）: マーカー表の上のボタンの名前が変わる（場所は同じ）。マーカーのタブのピークの一覧も
+    page.ev("gsApp.setPolarity('dip'); gsApp.tab = 'marker'; 1")
+    page.settle()
+    yield "主画面 marker（谷）", ".app"
+    page.ev("gsApp.setPolarity('peak'); 1")
+    # マーカー表の行の「操作」（Qt の行のドロップダウンと同じ項目。開いた一覧）
+    page.ev("(() => { const b = document.querySelector('.mtable .row-ops'); b.click(); return 1; })()")
+    page.wait("!!(gsApp.ctx && document.querySelector('.ctxmenu button'))", "行の「操作」")
+    page.settle()
+    yield "マーカー表の行の操作", ".ctxmenu"
+    page.ev("gsApp.ctx = null; 1")
     for pg in page.ev("Object.keys(GSTexts.dict('SETTINGS_PAGES'))"):
         page.ev(f"gsApp.openSettings('{pg}'); 1")
         page.settle()
@@ -565,7 +577,7 @@ class WebLayoutTest(unittest.TestCase):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
         # 数えた画面が揃っていること（開けずに数えなければ何も守らない）
-        self.assertEqual(len(seen), len(TABS) + 8 + 6, seen)
+        self.assertEqual(len(seen), len(TABS) + 2 + 8 + 6, seen)
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 

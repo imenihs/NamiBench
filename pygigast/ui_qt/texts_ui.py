@@ -49,7 +49,8 @@ MENU_TITLES = {
     "file": "ファイル", "edit": "編集", "device": "機器", "sweep": "掃引", "mode": "モード", "amplitude": "振幅",
     "marker": "マーカー", "calibration": "校正", "view": "表示", "settings": "設定", "help": "ヘルプ",
 }
-# Qt のメニューのアクセスキー（Alt+文字）。Web はブラウザのメニューとぶつかるので使わない
+# メニューのアクセスキー（Alt+文字）。Qt のメニューバーと Web のメニューバーで同じ（Web はブラウザが先に取るキーを除いて
+# 開く: app_menu.js の menuKey）。どちらもキーの割り当てに使えない（QT_RESERVED_KEYS・WEB_RESERVED_KEYS）
 MENU_MNEMONICS = {
     "file": "F", "edit": "E", "device": "D", "sweep": "S", "mode": "M", "amplitude": "A", "marker": "K",
     "calibration": "C", "view": "V", "settings": "O", "help": "H",
@@ -75,6 +76,8 @@ MENU_ITEMS = {
     "stop": "停止",
     "pause": "連続 ⇔ 停止",
     "ref_auto": "REF レベルを波形に合わせる（自動）",
+    # 探すもの（山・谷）の切り替え（G §3.8）。キーの初期値は無い（キー操作の画面で割り当てられる）
+    "marker_polarity": "山／谷を切り替える",
     "marker_peak": "選んでいるマーカーをピークへ",
     "marker_peak_left": "次のピーク（左）",
     "marker_peak_right": "次のピーク（右）",
@@ -114,9 +117,10 @@ MENU_LAYOUT = (
     ("sweep", ("run_cont", "run_single", "stop", "pause")),
     ("mode", ()),
     ("amplitude", ("ref_auto",)),
-    ("marker", ("marker_peak", "marker_peak_left", "marker_peak_right", "marker_peak_lower", "marker_left",
-                "marker_right", "marker_here", "marker_add", None, "marker_center", "marker_ref", "marker_span",
-                None, "marker_listen", "listen_stop", None, "marker_remove", "marker_clear", "marker_copy")),
+    ("marker", ("marker_polarity", "marker_peak", "marker_peak_left", "marker_peak_right", "marker_peak_lower",
+                "marker_left", "marker_right", "marker_here", "marker_add", None, "marker_center", "marker_ref",
+                "marker_span", None, "marker_listen", "listen_stop", None, "marker_remove", "marker_clear",
+                "marker_copy")),
     ("calibration", ("cal_freq", "cal_rbw", "cal_nf", None, "cal_legacy")),
     ("view", ("view_colors", "view_waterfall", "view_density", None, "layout_reset")),
     ("settings", ("settings", "settings_keys", None, "web_connect")),

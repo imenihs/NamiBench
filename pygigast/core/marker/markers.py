@@ -86,6 +86,9 @@ class Marker:
     target_hz は置いた周波数。表示する周波数は、いまの軸で target_hz に最も近い点の周波数。
     ref はデルタの基準のマーカーの番号（"P1" など）。peak_track は P だけが持てる。
     bandwidth_n_db は N dB 帯域幅の N（0〜2個。2個ならシェープファクタも出す）。
+    polarity は置いたときの向き（山 analysis.PEAK・谷 analysis.DIP: 設計G §3.8）。ピーク追従はこの向きで
+    追いかけ、N dB 帯域幅は谷なら N dB 上がる点を探す。置いた後で画面の山／谷の選択を変えても変わらない。
+    手で動かす（←→・周波数を打つ・セルを直す）間は変えず、ピーク・谷を探す操作で動かしたときだけ、その向きにする。
     """
 
     kind: Kind
@@ -98,6 +101,7 @@ class Marker:
     level_offsets: list[LevelOffset] = field(default_factory=list)
     bandwidth_n_db: tuple[float, ...] = ()
     threshold: Optional[ThresholdSetting] = None
+    polarity: str = an.PEAK
 
     @property
     def id(self) -> str:
@@ -227,12 +231,14 @@ class MarkerTable:
                 return n
         return None
 
-    def add(self, kind: Kind, trace: int, freq_hz: int, view: Optional[TraceView] = None) -> OpResult:
+    def add(self, kind: Kind, trace: int, freq_hz: int, view: Optional[TraceView] = None,
+            polarity: str = an.PEAK) -> OpResult:
         """空いている最小の番号でマーカーを作る。view を渡すと最も近い点に載せる（設計G §3.1）。
 
-        範囲の外の周波数には置かない（マーカーは表示範囲の中だけ）。
+        範囲の外の周波数には置かない（マーカーは表示範囲の中だけ）。polarity は置いたときの向き（設計G §3.8）。
         """
         _check_hz("freq_hz", freq_hz)
+        an.check_polarity(polarity)
         n = self._free_number(kind)
         if n is None:
             return OpResult(ST_TABLE_FULL, requested_hz=freq_hz)
@@ -242,7 +248,7 @@ class MarkerTable:
             if idx is None:
                 return OpResult(ST_OUT_OF_RANGE, requested_hz=freq_hz)
             adopted = view.freq_at(idx)
-        m = Marker(kind=kind, number=n, trace=trace, target_hz=adopted)
+        m = Marker(kind=kind, number=n, trace=trace, target_hz=adopted, polarity=polarity)
         self._markers[m.id] = m
         return OpResult(ST_OK, m.id, freq_hz, adopted)
 
@@ -344,59 +350,65 @@ class MarkerTable:
         m.target_hz = view.freq_at(idx)
         return OpResult(ST_OK, marker_id, None, m.target_hz)
 
-    def place_at_click(self, views: Views, freq_hz: int, level: float) -> OpResult:
+    def place_at_click(self, views: Views, freq_hz: int, level: float, polarity: str = an.PEAK) -> OpResult:
         """クリック: 縦方向で最も近いトレースの最も近い点に、空いている番号の M を置く（設計G §3.2・§3.5）。"""
         trace = pick_trace(views, freq_hz, level)
         if trace is None:
             return OpResult(ST_OUT_OF_RANGE, requested_hz=freq_hz)
-        return self.add(Kind.MANUAL, trace, freq_hz, views[trace])
+        return self.add(Kind.MANUAL, trace, freq_hz, views[trace], polarity)
 
-    def peak_search(self, marker_id: Optional[str], view: TraceView) -> OpResult:
+    def peak_search(self, marker_id: Optional[str], view: TraceView, polarity: str = an.PEAK) -> OpResult:
         """「ピーク」: 選んでいる行を表示範囲の最大の点へ動かす。選んでいなければ M を作る（設計G §3.5）。
 
-        選んでいる行があれば view はその行のトレースのもの。
+        谷（設計G §3.8）では一番深い点へ。動かした行はその向きになる。選んでいる行があれば view はその行のトレースのもの。
         """
-        idx = an.highest_index(view)
+        idx = an.extreme_index(view, polarity)
         if idx is None:
             return OpResult(ST_NO_PEAK, marker_id)
         f = view.freq_at(idx)
         if marker_id is None:
-            return self.add(Kind.MANUAL, view.trace, f, view)
-        self._markers[marker_id].target_hz = f
+            return self.add(Kind.MANUAL, view.trace, f, view, polarity)
+        m = self._markers[marker_id]
+        m.target_hz = f
+        m.polarity = polarity
         return OpResult(ST_OK, marker_id, None, f)
 
-    def next_peak(self, marker_id: str, direction: str, view: TraceView) -> OpResult:
-        """「次のピーク ◀ ▶」「次に高い」: 選んでいる行を動かす（設計G §3.2）。無ければ動かさない。"""
+    def next_peak(self, marker_id: str, direction: str, view: TraceView, polarity: str = an.PEAK) -> OpResult:
+        """「次のピーク ◀ ▶」「次に高い」（谷では「次の谷」「次に深い」: 設計G §3.8）: 選んでいる行を動かす
+        （設計G §3.2）。無ければ動かさない（向きも変えない）。"""
         m = self._markers[marker_id]
         idx = view.nearest_index(m.target_hz)
         if idx is None:
             return OpResult(ST_OUT_OF_RANGE, marker_id, m.target_hz)
-        nxt = an.next_peak_index(view, idx, direction, self.excursion_db, self.peak_threshold)
+        nxt = an.next_peak_index(view, idx, direction, self.excursion_db, self.peak_threshold, polarity)
         if nxt is None:
             return OpResult(ST_NO_PEAK, marker_id)
         m.target_hz = view.freq_at(nxt)
+        m.polarity = polarity
         return OpResult(ST_OK, marker_id, None, m.target_hz)
 
-    def register_peak(self, view: TraceView, freq_hz: int) -> OpResult:
-        """ピークの一覧の行の「P に登録」: 空いている番号の P にする（設計G §3.5）。"""
-        return self.add(Kind.PEAK, view.trace, freq_hz, view)
+    def register_peak(self, view: TraceView, freq_hz: int, polarity: str = an.PEAK) -> OpResult:
+        """ピークの一覧の行の「P に登録」: 空いている番号の P にする（設計G §3.5）。谷の一覧からは谷の P（設計P §9.7）。"""
+        return self.add(Kind.PEAK, view.trace, freq_hz, view, polarity)
 
-    def place_top_peaks(self, view: TraceView, n: int) -> list[OpResult]:
-        """「上位 N 個に P を置く」: 高い順に P1〜PN へ置く（設計G §3.5）。
+    def place_top_peaks(self, view: TraceView, n: int, polarity: str = an.PEAK) -> list[OpResult]:
+        """「上位 N 個に P を置く」: 高い順に P1〜PN へ置く（設計G §3.5）。谷は深い順（設計P §9.7）。
 
-        すでにある Pk は周波数とトレースだけを置き換え、他の設定（デルタの基準・オフセット・追従）は残す。
+        すでにある Pk は周波数とトレースと向きだけを置き換え、他の設定（デルタの基準・オフセット・追従）は残す。
         N は MAX_PER_KIND までに収める。見つかったピークが N より少なければ見つかった数だけ置く。
         """
         n = min(max(n, 0), MAX_PER_KIND)
         results = []
-        for k, idx in enumerate(an.top_peaks(view, n, self.excursion_db, self.peak_threshold), start=1):
+        for k, idx in enumerate(an.top_peaks(view, n, self.excursion_db, self.peak_threshold, polarity), start=1):
             f = view.freq_at(idx)
             mid = f"{Kind.PEAK.value}{k}"
             if mid in self._markers:
-                self._markers[mid].target_hz = f
-                self._markers[mid].trace = view.trace
+                m = self._markers[mid]
+                m.target_hz = f
+                m.trace = view.trace
+                m.polarity = polarity
             else:
-                self._markers[mid] = Marker(kind=Kind.PEAK, number=k, trace=view.trace, target_hz=f)
+                self._markers[mid] = Marker(kind=Kind.PEAK, number=k, trace=view.trace, target_hz=f, polarity=polarity)
             results.append(OpResult(ST_OK, mid, None, f))
         return results
 
@@ -469,15 +481,17 @@ class MarkerTable:
 
         近くのピーク = 盛り上がりの判定を満たすピークのうち、いまの周波数に最も近いもの
         （同じ近さなら高い方）。ピークが無ければ動かさない。範囲の外にいる P は動かさない。
+        谷に置いた P（設計G §3.8）は谷を追いかける（同じ近さなら深い方）。
         """
         moved = []
         for m in self.markers():
             if not m.peak_track or m.trace not in views:
                 continue
-            v = views[m.trace]
-            if v.nearest_index(m.target_hz) is None:
+            if views[m.trace].nearest_index(m.target_hz) is None:
                 continue
-            peaks = an.find_peaks(v, self.excursion_db, self.peak_threshold)
+            peaks = an.find_extrema(views[m.trace], self.excursion_db, self.peak_threshold, m.polarity)
+            # 谷は値の上下を返したトレースで比べる（「同じ近さなら高い方」が「深い方」になる）
+            v = an.oriented(views[m.trace], m.polarity)
             if peaks.size == 0:
                 continue
             best = min(
@@ -591,7 +605,7 @@ class MarkerTable:
             if v is None or r["idx"] is None:
                 b = an.Band(r["status"], an.Edge(r["status"]), an.Edge(r["status"]))
             else:
-                b = an.n_db_bandwidth(v, r["idx"], n)
+                b = an.n_db_bandwidth(v, r["idx"], n, m.polarity)  # 谷のマーカーは N dB 上がる点（設計G §3.8）
             results.append(b)
             bws.append({"n_db": n, **self._band_dict(b)})
         shape = None
@@ -631,6 +645,7 @@ class MarkerTable:
                 "unit": r["unit"],
                 "status": r["status"],
                 "notes": r["notes"],
+                "polarity": m.polarity,
                 "peak_track": m.peak_track,
                 "ref": m.ref,
                 "delta": None if m.ref is None else self._delta(r, reads.get(m.ref)),
@@ -724,13 +739,18 @@ def marker_to_def(m: Marker) -> dict:
         "level_offsets": [{"sign": o.sign.value, "delta_db": float(o.delta_db)} for o in m.level_offsets],
         "bandwidth_n_db": [float(x) for x in m.bandwidth_n_db],
         "threshold": None if m.threshold is None else {"level": m.threshold.level, "side": m.threshold.side},
+        "polarity": m.polarity,
     }
 
 
 def marker_from_def(d: dict) -> Marker:
-    """marker_to_def の逆。値の形が違えば KeyError・TypeError・ValueError。"""
+    """marker_to_def の逆。値の形が違えば KeyError・TypeError・ValueError。
+
+    向き（polarity）の無い前の形は山（設計G §3.8 より前のマーカーは山だけ）。
+    """
     th = d.get("threshold")
     return Marker(
+        polarity=an.check_polarity(d.get("polarity") or an.PEAK),
         kind=Kind(d["kind"]),
         number=int(d["number"]),
         trace=int(d["trace"]),

@@ -7,10 +7,16 @@ import unittest
 import numpy as np
 
 from pygigast.core.marker import (
+    BASE_MAX,
+    BASE_NOISE_FLOOR,
+    DIP,
     LEFT,
     LOWER,
     MAX_PER_KIND,
     RIGHT,
+    DipsOnPower,
+    extreme_index,
+    find_extrema,
     SIDE_ABOVE,
     SIDE_BELOW,
     Kind,
@@ -156,8 +162,10 @@ class PeakTest(unittest.TestCase):
         self.assertEqual(next_peak_index(v, 3, RIGHT), 8)
         self.assertIsNone(next_peak_index(v, 8, LEFT))
         self.assertEqual(next_peak_index(v, 3, LOWER), 8)
-        _, rows = peak_list(v, floor_margin_db=3.0)
-        self.assertEqual([r.freq_hz for r in rows], [f(8)])
+        # 比の一覧の基準の「最大」も漏れの帯の点を使わない（最大は 8 の 15dB、15 − 3 以上）
+        pl = peak_list(v, 3.0)
+        self.assertEqual(pl.base_level, 15.0)
+        self.assertEqual([r.freq_hz for r in pl.rows], [f(8)])
         # 漏れの帯の点しか残らなければピークは無い
         only = ratio_view([0, 40, 0], flags={"lo_leak": np.array([True, True, True])})
         self.assertIsNone(highest_index(only))
@@ -173,15 +181,19 @@ class PeakTest(unittest.TestCase):
         self.assertIsNone(next_peak_index(v, 1, LOWER))
 
     def test_peak_list_and_top(self):
+        # 電力（SA）: 基準はノイズフロア（中央値）、ノイズフロア + N 以上の山（設計P §9.7）
         db = [0] * 20
         db[3], db[10], db[15] = 30, 20, 4
-        v = ratio_view(db)
-        floor, rows = peak_list(v, floor_margin_db=6.0)
-        self.assertEqual(floor, 0.0)
-        self.assertEqual([r.freq_hz for r in rows], [f(3), f(10)])
-        self.assertAlmostEqual(rows[1].height_db, 20.0)
+        v = power_view(db)
+        pl = peak_list(v, 6.0)
+        self.assertEqual((pl.base, pl.base_level), (BASE_NOISE_FLOOR, 0.0))
+        self.assertEqual([r.freq_hz for r in pl.rows], [f(3), f(10)])
+        self.assertAlmostEqual(pl.rows[1].diff_db, 20.0)
         self.assertEqual(top_peaks(v, 2), [3, 10])
         self.assertEqual(top_peaks(v, 10), [3, 10, 15])
+        # 電力では一覧の谷を探さない
+        with self.assertRaises(DipsOnPower):
+            peak_list(v, 6.0, polarity=DIP)
 
 
 class BandTest(unittest.TestCase):
@@ -316,7 +328,7 @@ class MarkerTableTest(unittest.TestCase):
         self.assertEqual(self.t.peak_search(None, nov).code, "no_peak")
 
     def test_register_and_top_n(self):
-        _, rows = peak_list(self.v, floor_margin_db=3.0)
+        rows = peak_list(self.v, 3.0).rows
         r = self.t.register_peak(self.v, rows[0].freq_hz)
         self.assertEqual((r.marker_id, r.freq_hz), ("P1", f(3)))
         self.t.add(Kind.MANUAL, 1, f(0), self.v)
