@@ -41,7 +41,7 @@ class ParseFreqTest(unittest.TestCase):
 
 
 class DragRefLevelTest(unittest.TestCase):
-    """縦軸のドラッグの REF（設計J §4.1.1）: 1目盛の整数倍の ±0.15 目盛で吸い付き、量は刻まず 0.1 dB に丸める。"""
+    """縦軸のドラッグの REF（設計J §4.1.1）: REF が1目盛（dB/div）の倍数の ±0.15 目盛で吸い付き、量は刻まず 0.1 dB に丸める。"""
 
     def test_snaps_to_whole_divisions(self):
         # 10dB/div・グラフの高さの 10% で 1目盛（10dB）
@@ -50,10 +50,14 @@ class DragRefLevelTest(unittest.TestCase):
         self.assertEqual(drag_ref_level(0.0, -0.116, 10), -11.6)   # −11.6 → 吸い付かない
         self.assertEqual(drag_ref_level(0.0, 0.2, 5), 10.0)
 
-    def test_not_quantized_and_relative(self):
+    def test_not_quantized_and_absolute(self):
         self.assertEqual(drag_ref_level(0.0, -0.05, 10), -5.0)     # 半目盛は吸い付かない・刻まない
         self.assertEqual(drag_ref_level(0.0, -0.051, 10), -5.1)
-        self.assertEqual(drag_ref_level(-3.7, -0.1, 10), -13.7)    # 動かした量で吸い付く
+        # 吸わせるのは REF そのもの: −3.7 から 10dB 下げると −13.7 → −10 の ±1.5 の外なので −13.7 のまま、
+        # 7dB 下げると −10.7 → −10 に吸い付く
+        self.assertEqual(drag_ref_level(-3.7, -0.1, 10), -13.7)
+        self.assertEqual(drag_ref_level(-3.7, -0.07, 10), -10.0)
+        self.assertEqual(drag_ref_level(-3.7, 0.0, 10), -3.7)      # 動かさなければ変えない（吸い付きの外）
         self.assertEqual(drag_ref_level(0.0, 0.0, 10), 0.0)
 
 

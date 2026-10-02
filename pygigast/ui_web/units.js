@@ -119,14 +119,14 @@
     return idx < dot ? dot - idx - 1 : dot - idx;
   }
 
-  // 縦軸のドラッグの REF（core/units.py の drag_ref_level と同じ: 動かした量が1目盛の整数倍に近ければ吸い付く・
+  // 縦軸のドラッグの REF（core/units.py の drag_ref_level と同じ: REF が1目盛（dB/div）の倍数に近ければ吸い付く・
   // 量は刻まない・0.1 dB に丸める）
   const REF_DRAG_SNAP_DIV = 0.15;
   function dragRefLevel(ref0, frac, dbPerDiv, divisions = 10) {
-    let delta = frac * divisions * dbPerDiv;
-    const k = pyRound(delta / dbPerDiv);
-    if (Math.abs(delta - k * dbPerDiv) <= REF_DRAG_SNAP_DIV * dbPerDiv) delta = k * dbPerDiv;
-    return pyRound((ref0 + delta) * 10) / 10 + 0;
+    let ref = ref0 + frac * divisions * dbPerDiv;
+    const k = pyRound(ref / dbPerDiv);
+    if (Math.abs(ref - k * dbPerDiv) <= REF_DRAG_SNAP_DIV * dbPerDiv) ref = k * dbPerDiv;
+    return pyRound(ref * 10) / 10 + 0;
   }
   // Python の round と同じ（.5 は偶数へ）。Math.round と違い -2.5 → -2・2.5 → 2
   function pyRound(x) {
