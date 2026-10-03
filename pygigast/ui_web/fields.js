@@ -308,7 +308,11 @@
     const k = 10 ** decimals;
     return Math.floor(v * k + 0.5) / k;
   }
-  function dbText(v, unit) { return `${GSUnits.levelText(v)}${unit ? " " + unit : ""}`; }
+  // 小数2桁以上の欄（|Γ|・SWR のしきい値: 設計R §3）はその桁で出す。ほかは 0.1 まで（Qt の DbChoiceField.set_value と同じ）
+  function dbText(v, unit, decimals) {
+    const t = decimals && decimals > 1 ? GSUnits.minusSign(Number(v).toFixed(decimals)) : GSUnits.levelText(v);
+    return `${t}${unit ? " " + unit : ""}`;
+  }
   // 一覧の行の文字（「+20 dBm」「−40 dBm」「3 dB」）。signed はレベル（REF・しきい値）で、正の数にも + を付ける
   function dbChoiceText(v, unit, signed) {
     return GSUnits.minusSign(signed && v > 0 ? `+${v}` : `${v}`) + (unit ? ` ${unit}` : "");
@@ -357,7 +361,7 @@
     data() { return { note: null }; },
     computed: {
       spec() { return { unit: this.unit, lo: this.lo, hi: this.hi, decimals: this.decimals }; },
-      text() { return dbText(this.value, this.unit); },
+      text() { return dbText(this.value, this.unit, this.decimals); },
       items() { return this.choices.map((v) => ({ value: v, text: dbChoiceText(v, this.unit, this.signed) })); },
     },
     methods: {

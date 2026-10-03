@@ -23,7 +23,9 @@ import numpy as np
 
 from .instrument_common import CommandError
 from .instrument_diff import DIFF_TRACE_ID
-from .instrument_display import NORMALIZED_MODES, db_values, unit_for
+from .instrument_display import (NORMALIZED_MODES, display_values, file_trace_format, swr_limit_points,
+                                 unit_for)
+from .trace import TraceAction, formats
 from .report_layout import DIVISIONS
 from .normalize import (
     KIND_FINE,
@@ -43,7 +45,6 @@ from .storage import Cancelled, StorageError, WriterThread
 from .storage import adopted_to_dict as storage_conditions
 from .storage.export import export_traces_csv
 from .display_export import export_display_csv
-from .view_units import shift_values
 from .storage.h5file import FileHeader, H5Record, TraceData, can_store, save_snapshot
 from .storage.recording import (
     WORK_PREFIX,
@@ -55,7 +56,7 @@ from .storage.recording import (
     find_unfinished,
     new_recording_path,
 )
-from .types import Mode, SweepRequest
+from .types import Mode, Quantity, SweepRequest
 
 # 縦軸の既定の dB/div（画面の既定と同じ。振幅に値が無いとき）
 DEFAULT_DB_PER_DIV = 10.0
@@ -209,7 +210,7 @@ class FilesMixin:
     def _task_progress(self, t: _Task, done: int, total: int, elapsed: float) -> None:
         t.done, t.total, t.elapsed_s = int(done), int(total), float(elapsed)
         self._emit("progress", {"kind": "task", "task_id": t.task_id, "task": t.kind, "done": t.done,
-                                "total": t.total, "elapsed_s": t.elapsed_s})
+                                "total": t.total, "elapsed_s": t.elapsed_s, "detail": t.detail})
 
     def _end_task(self, t: _Task, exc: Optional[BaseException], result: Optional[dict] = None) -> None:
         self._tasks.pop(t.task_id, None)
@@ -382,12 +383,67 @@ class FilesMixin:
         if getattr(self, "_cal_job", None) is not None:
             raise self._error("calibration_in_progress")
 
-    def _cmd_reference_take(self, kind: str = KIND_WIDE, name: Optional[str] = None, averages: int = 1,
+    def _s11_open_state(self) -> Optional[dict]:
+        """測ってあるオープン（S11 の基準の1段目: 設計E §6.5）。画面が「次はショート」を示すのに使う。"""
+        o = self._s11_open
+        return None if o is None else {"kind": o["kind"], "taken_at": o["taken_at"]}
+
+    def _s11_open_follow(self, new) -> None:
+        """測ってあるオープンが、いまの条件で測るショートと組めなくなったら捨てて1回知らせる（設計E §6.5）。
+
+        組めない: S11 でなくなった・電源を入れ直した（再接続）・イメージ除去が変わった・「いまの条件で細かく」で
+        周波数軸が変わった（オープンとショートは同じ点・同じ条件で測る）。黙って捨てない（J §4）。
+        """
+        o = self._s11_open
+        if o is None:
+            return
+        why = None
+        if new.mode != Mode.S11:
+            why = "mode"
+        elif o["connected_at"] != self._connected_at:
+            why = "power_cycled"
+        else:
+            # 次に測るショートの条件（「広く」は機種の TG の範囲、「細かく」はいまの条件）とオープンの条件を比べる
+            try:
+                nxt = self._ref_adopted(o["kind"], new)
+            except (ValueError, TypeError, KeyError):
+                nxt = None
+            if nxt is None or nxt.image_reject_used != o["image_reject"] or nxt.rbw_hz != o["rbw_hz"]:
+                why = "conditions"
+            elif nxt.axis != o["axis"]:
+                why = "axis"
+        if why is not None:
+            self._s11_open = None
+            self._notice("s11_open_discarded", {"reason": why})
+            self._changed()
+
+    def _ref_adopted(self, kind: str, base):
+        """基準を取る掃引の条件。wide は機種の TG の範囲を 1MHz 刻み、fine はいまの条件（base）のまま。"""
+        if kind != KIND_WIDE:
+            return base
+        lo, hi, _step = wide_range_hz(self._profile)
+        # 基準の範囲はアプリが決めるもの（利用者のドラッグではない）。Span 固定の規則を通さず、
+        # 送った Start・Stop をそのまま使う（その1回だけの命令。固定 Span も変えない: C §5.12）
+        return self._model.apply(
+            SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"), points=0, one_shot=True), base)
+
+    def _device_standard(self, standard: Optional[str]) -> None:
+        """機器に、いま測る S11 の標準器を伝える（実機は何もしない。シミュレータはそれを繋いだことにする）。"""
+        dev = self._device
+        hook = getattr(dev, "on_reference_standard", None)
+        if hook is not None:
+            try:
+                hook(standard)
+            except Exception:  # noqa: BLE001 — 伝えられなくても基準を取るのは続ける
+                pass
+
+    def _cmd_reference_take(self, kind: Optional[str] = None, name: Optional[str] = None, averages: int = 1,
                             standard: Optional[str] = None, show_zero: bool = False) -> dict:
         """基準を取る（設計E §6.2）。TG・S11 モードで、いまの条件とは別に掃引して区間を作る。
 
-        kind: wide（機種の TG の範囲を 1MHz 刻み）/ fine（いまの Start・Stop・Step）。
-        S11 は standard に open → short の順で2回呼ぶ（設計E §6.5）。
+        kind: wide（機種の TG の範囲を 1MHz 刻み）/ fine（いまの Start・Stop・Step）。省いたら wide。
+        S11 は standard に open → short の順で2回呼ぶ（設計E §6.5）。ショートはオープンと同じ点・同じ条件で測るので、
+        kind を省いたらオープンを測ったときの kind（違う kind を渡したら s11_open_missing）。
         show_zero: 取り終えたとき 0dB が縦軸の外なら、0dB が上から1目盛下に来る REF レベルにする（変えたら
         終わりの知らせの結果に ref_level を入れて知らせる: J §4 の「黙って変えない」）。
         """
@@ -399,6 +455,8 @@ class FilesMixin:
         mode = self._adopted.mode
         if mode not in NORMALIZED_MODES:
             raise self._error("mode_not_normalizable", "mode", {"mode": mode.value})
+        if kind is None:
+            kind = self._s11_open["kind"] if mode == Mode.S11 and standard == "short" and self._s11_open else KIND_WIDE
         if kind not in (KIND_WIDE, KIND_FINE):
             raise self._error("bad_reference_kind", "kind", {"kind": kind})
         if isinstance(averages, bool) or not isinstance(averages, int) or averages < 1:
@@ -406,28 +464,35 @@ class FilesMixin:
         if mode == Mode.S11:
             if standard not in ("open", "short"):
                 raise self._error("s11_standard_required", "standard")
+            self._s11_open_follow(self._adopted)
             if standard == "short" and (self._s11_open is None or self._s11_open["kind"] != kind):
                 raise self._error("s11_open_missing", "standard")
-        if kind == KIND_WIDE:
-            lo, hi, _step = wide_range_hz(self._profile)
-            # 基準の範囲はアプリが決めるもの（利用者のドラッグではない）。Span 固定の規則を通さず、
-            # 送った Start・Stop をそのまま使う（その1回だけの命令。固定 Span も変えない: C §5.12）
-            adopted = self._model.apply(
-                SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"), points=0, one_shot=True),
-                self._adopted)
-        else:
-            adopted = self._adopted
+        adopted = self._ref_adopted(kind, self._adopted)
         task = self._new_task("reference_take", total=averages,
                               detail={"kind": kind, "mode": mode.value, "standard": standard})
         self._ref_job = _RefJob(task, adopted, averages, kind, name, standard, self._run, show_zero=show_zero)
+        self._device_standard(standard if mode == Mode.S11 else None)
         self._run = "reference"
         self._push_job()
         self._task_progress(task, 0, averages, 0.0)
         self._changed()
         return {"task_id": task.task_id}
 
+    def _ref_axis_is_db(self, mode: Mode) -> bool:
+        """基準を当てた後の縦軸が dB か（REF と 0dB を持つ縦軸か）。縦軸は表示している一番番号の小さいトレースで決まり、
+        その表示の形式が |Γ|・SWR なら下端の決まった縦軸で、REF も 0dB の線も無い（設計R §3・設計J §4.7 の末尾）。
+        値を固定したトレースは、いま持っている値の形式のまま。"""
+        for t in self._traces:
+            if not t.visible:
+                continue
+            if t.action == TraceAction.FIXED and t.values is not None:
+                return t.effective_format == formats.DB
+            return formats.effective(t.format, mode, Quantity.RATIO) == formats.DB
+        return True
+
     def _show_zero_level(self) -> dict:
-        """0dB が縦軸の中（一番上の線より下・一番下の線より上）に無ければ、上から1目盛下に置く REF レベルにする。"""
+        """0dB が縦軸の中（一番上の線より下・一番下の線より上）に無ければ、上から1目盛下に置く REF レベルにする。
+        dB の縦軸のときだけ呼ぶ（_ref_axis_is_db）。"""
         amp = self._amplitude
         ref = 0.0 if amp.get("ref_level") is None else float(amp["ref_level"])
         div = float(amp.get("db_per_div") or DEFAULT_DB_PER_DIV)
@@ -447,6 +512,7 @@ class FilesMixin:
     def _end_ref_sweeps(self, job: _RefJob) -> None:
         """基準の掃引を終え、取る前の動作に戻す。"""
         self._ref_job = None
+        self._device_standard(None)
         self._run = job.prev_run if job.prev_run in ("continuous", "single") else "stopped"
         self._push_job()
 
@@ -466,8 +532,13 @@ class FilesMixin:
         now = time.time()
         try:
             if mode == Mode.S11 and job.standard == "open":
-                self._s11_open = {"kind": job.kind, "frames": job.frames}
-                self._end_task(job.task, None, {"standard": "open", "next": "short"})
+                a = job.adopted
+                # ショートと組めるかを確かめる条件も持つ（_s11_open_follow）
+                self._s11_open = {"kind": job.kind, "frames": job.frames, "taken_at": now,
+                                  "connected_at": self._connected_at, "axis": a.axis,
+                                  "image_reject": a.image_reject_used, "rbw_hz": a.rbw_hz}
+                self._end_task(job.task, None, {"standard": "open", "next": "short", "kind": job.kind})
+                self._changed()
                 return
             if mode == Mode.S11:
                 seg = s11_segment_from_frames(self._s11_open["frames"], job.frames,
@@ -499,7 +570,8 @@ class FilesMixin:
                     self._end_task(job.task, exc)
                     return
                 self._set_reference(target)
-                extra = self._show_zero_level() if job.show_zero else {}
+                # 0dB が見える REF にするのは dB の縦軸だけ（|Γ|・SWR の縦軸は REF を持たず、黙って REF の数字を変えない）
+                extra = self._show_zero_level() if job.show_zero and self._ref_axis_is_db(mode) else {}
                 self._end_task(job.task, None, {"reference_id": target.ref_id, "name": target.name, **extra})
                 if prev_run not in ("continuous", "single") and self._conn == "connected":
                     # 取った基準ですぐ測って 0dB 付近になることを示す（設計E §6.2）
@@ -547,7 +619,9 @@ class FilesMixin:
             info={"action": t.action.value, "visible": t.visible, "count": t.count,
                   "current_count": t.current_count, "average_type": None if eff is None else eff.value,
                   "average_after": t.average_after.value, "hold_after": t.hold_after.value,
-                  "last_update_time": t.last_update_time, "unit": unit_for(t.quantity, t.profile)},
+                  "last_update_time": t.last_update_time, "unit": unit_for(t.quantity, t.profile),
+                  # 表示の形式と測ったモード（設計R §3。開いたとき同じ形式で重ねる・書き出す）
+                  "format": t.effective_format, "measurement": None if t.mode is None else t.mode.value},
             flags={k: np.array(v, dtype=bool) for k, v in t.flags.items()},
             profile=copy.deepcopy(t.profile),
         )
@@ -642,7 +716,7 @@ class FilesMixin:
         for tid, td in e["traces"].items():
             f = td.freqs()
             rows.append({"id": tid, "number": td.number, "quantity": td.quantity.value,
-                         "unit": self._level_shift(td.quantity, td.profile)[1], "points": int(f.size),
+                         "unit": self._shown(td.quantity, td.profile, file_trace_format(td))[1], "points": int(f.size),
                          "start_hz": int(f[0]) if f.size else None, "stop_hz": int(f[-1]) if f.size else None,
                          "info": td.info})
         out["traces"] = rows
@@ -668,8 +742,11 @@ class FilesMixin:
         else:
             axis = {"freqs_hz": f.astype(np.int64), "points": int(f.size)}
         pts = {k: np.asarray(v, dtype=bool) for k, v in td.flags.items()}
-        # 表示の単位・外部補正の分だけずらす（測定中のトレースと同じ: core/view_units.py）
-        shift, unit = self._level_shift(td.quantity, td.profile)
+        # 表示の単位・外部補正の分だけずらす（測定中のトレースと同じ: core/view_units.py）。表示の形式は保存したときのもの
+        shift, unit, fmt = self._shown(td.quantity, td.profile, file_trace_format(td))
+        lim = swr_limit_points(td.values, td.quantity, fmt)
+        if lim is not None and lim.any():
+            pts["swr_limit"] = lim
         return {
             "trace": tid,
             "source": "file",
@@ -680,7 +757,8 @@ class FilesMixin:
                         "tail_gap": False},
             "quantity": td.quantity.value,
             "unit": unit,
-            "values": shift_values(db_values(td.values, td.quantity), shift),
+            "format": fmt,
+            "values": display_values(td.values, td.quantity, shift, fmt),
             "action": td.info.get("action"),
             "average_type": td.info.get("average_type"),
             "count": td.info.get("current_count"),
@@ -707,16 +785,20 @@ class FilesMixin:
             # ゼロスパン: 横軸は時間（推定）。表示している範囲を時間付きで書く（設計N §1・instrument_zerospan.py）
             return self._zs_export_csv(path, sel)
         tds = []
+        fmts = []  # トレースごとの表示の形式（設計R §3: 画面と同じ形式で書く）
         for tid in sel:
             if isinstance(tid, int) and not isinstance(tid, bool):
                 t = self._trace_of(tid)
                 if t.values is None:
                     raise self._error("no_trace_data", "traces", {"trace": tid})
                 tds.append(self._live_trace_data(t))
+                fmts.append(t.effective_format)
             elif tid == DIFF_TRACE_ID:
                 tds.append(self._diff_trace_data())  # トレース間の差（設計F §5.4。dB の比）
+                fmts.append(formats.DB)
             else:
                 tds.append(self._find_file_trace(str(tid)))
+                fmts.append(file_trace_format(tds[-1]))
         if not tds:
             raise self._error("no_data", "traces")
         ident = self._identity or {}
@@ -728,14 +810,16 @@ class FilesMixin:
             "exported_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
 
-        shifts = [self._level_shift(td.quantity, td.profile) for td in tds]
+        shown = [self._shown(td.quantity, td.profile, f) for td, f in zip(tds, fmts)]
         offset = int(self._view_opts.get("freq_offset_hz") or 0)
-        if unit is None and (offset or any(s for s, _u in shifts)):
-            # 表示の単位・外部補正・周波数オフセットを当てて書く（画面と同じ数: 設計O。core/display_export.py）
+        if unit is None and (offset or any(s for s, _u, _f in shown) or any(f != formats.DB for f in fmts)):
+            # 表示の単位・外部補正・周波数オフセット・表示の形式を当てて書く（画面と同じ数: 設計O・設計R §3。
+            # core/display_export.py）
             def submit(progress, cancel):
-                return self._writer.submit(export_display_csv, path, tds, meta=meta, shifts=[s for s, _u in shifts],
-                                           unit_label=shifts[0][1] or "dB", freq_offset_hz=offset,
-                                           f_range_hz=(start_hz, stop_hz), progress=progress, cancel=cancel)
+                return self._writer.submit(export_display_csv, path, tds, meta=meta, shifts=[s for s, _u, _f in shown],
+                                           unit_label=shown[0][1] or "dB", freq_offset_hz=offset,
+                                           f_range_hz=(start_hz, stop_hz), progress=progress, cancel=cancel,
+                                           fmts=fmts, unit_labels=[u or "dB" for _s, u, _f in shown])
         else:
             def submit(progress, cancel):
                 return self._writer.submit(export_traces_csv, path, tds, meta=meta, unit=unit,

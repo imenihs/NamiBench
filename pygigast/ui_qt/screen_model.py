@@ -17,7 +17,7 @@ import numpy as np
 
 from ..core import zero_span as zs
 from ..core.units import format_freq, format_time_us, time_axis_unit
-from . import marker_rows, texts
+from . import marker_rows, screen_s11, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
 
@@ -270,7 +270,8 @@ def rtltcp_view(st: dict) -> dict:
 # ---------------------------------------------------------------- 上段の「基準を取る」（設計J §4.2・E §6.2）
 
 def ref_quick_view(st: dict) -> dict:
-    """TG・S11 のときだけ上段に出す。ボタンの使えない理由・取っている間の進み具合・いまの基準の状態。"""
+    """TG・S11 のときだけ上段に出す。ボタンの名前・使えない理由・押したときに送る中身・取っている間の進み具合・
+    いまの基準の状態。TG は「基準を取る」、S11 は次の1段（オープンを測る → ショートを測る: 設計E §6.5）。"""
     from .texts_devices import REF_QUICK_LABELS, hhmm
 
     sw = st.get("sweep") or {}
@@ -278,12 +279,17 @@ def ref_quick_view(st: dict) -> dict:
     task = next((t for t in st.get("tasks") or [] if t.get("kind") == "reference_take"), None)
     if (st.get("connection") or {}).get("state") != "connected":
         reason = texts.ERRORS["not_connected"]
-    elif sw.get("mode") == "s11":
-        reason = REF_QUICK_LABELS["s11_reason"]
     elif task is not None:
         reason = REF_QUICK_LABELS["taking_reason"]
     else:
         reason = None
+    if sw.get("mode") == "s11":
+        q = screen_s11.s11_quick(st)
+        label, button_tip, take = q["label"], q["tip"], q["take"]
+    else:
+        label, button_tip, take = REF_QUICK_LABELS["button"], REF_QUICK_LABELS["tip"], \
+            {"standard": None, "kind": "wide", "show_zero": True}
+        q = {"open_text": ""}
     n = st.get("normalization") or {}
     sel = n.get("selected")
     tip = ""
@@ -298,7 +304,11 @@ def ref_quick_view(st: dict) -> dict:
         text = TEMPLATES["ref_quick_none"]
         if sel and n.get("reason"):
             tip = texts.NORM_REASONS.get(n["reason"], n["reason"])
+    if q["open_text"]:
+        # S11 でオープンを測ってある間は、次はショートであることを状態の文でも示す（1段ずつ: 設計E §6.5）
+        text, tip = q["open_text"], ""
     return {"visible": visible, "reason": reason, "text": text, "tip": tip,
+            "label": label, "button_tip": button_tip + (f" — {reason}" if reason else ""), "take": take,
             "taking": task is not None, "task_id": task.get("task_id") if task else None,
             "cancelling": bool(task and task.get("cancelling")),
             "progress_text": texts.task_label({**task, "task": task.get("kind")}) if task else ""}
@@ -543,6 +553,24 @@ def x_text(st: dict, x: float) -> str:
     return format_freq(int(round(x)) + texts.freq_offset_of(st))
 
 
+def s11_ui(st: dict) -> dict:
+    """反射（S11）の手順・トレースの表示の形式・縦軸（Qt と Web が同じものを使う: screen_s11.py）。
+
+    axis: 縦軸の単位と決め方、trace_format: トレースごとの表示の形式の欄、trace_drawn: 縦軸と単位が違って描かない
+    トレースの理由、s11: 信号源のタブの手順、tg_take_reason: TG の基準のボタンの使えない理由。
+    """
+    unit = screen_s11.axis_unit(st)
+    traces = st.get("traces") or []
+    return {
+        "axis": screen_s11.axis_view(st, unit),
+        "trace_format": {str(t.get("number")): screen_s11.trace_format_view(t, st) for t in traces},
+        "trace_drawn": {str(t.get("number")): screen_s11.trace_drawn_reason(t, unit) for t in traces},
+        "s11": screen_s11.s11_view(st),
+        "tg_take_reason": screen_s11.tg_take_reason(st),
+        "ref_state": screen_s11.ref_state_text(st),
+    }
+
+
 def ui_view(st: dict) -> dict:
     """Web の画面へ state と一緒に送るもの。Qt も同じ関数の部分を使う。"""
     return {
@@ -566,6 +594,8 @@ def ui_view(st: dict) -> dict:
         "sg_state": texts.sg_state_text(st),  # SG 周波数の欄のそば（J §4.12）
         "trace_status": {str(t.get("number")): trace_status(t) for t in st.get("traces") or []},
         "level": unit_view(st),  # 単位の欄（J §4.10）
+        # 反射（S11）の手順・表示の形式・縦軸（設計E §6.5・設計R §3。screen_s11.py）
+        **s11_ui(st),
         # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う
         "freq_offset_text": texts.offset_text(texts.freq_offset_of(st)) if texts.freq_offset_of(st) else "",
     }
@@ -657,7 +687,7 @@ def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = Fa
     zero = zero_span or p["axis"].get("kind") == "time"
     pos = int(round(float(trace_x(p)[i])))
     codes = point_note_codes(p, i)
-    value_text = f"{level:.2f} {unit}" if level is not None else texts.MARKER_STATUS["no_value"]
+    value_text = screen_s11.value_text(level, unit) if level is not None else texts.MARKER_STATUS["no_value"]
     lines = [format_time_us(pos) if zero else format_freq(pos + off),
              tpl("trace_note", n=p.get("trace"), text=value_text), *marker_rows.note_texts(codes)]
     return {"trace": p.get("trace"), "freq_hz": None if zero else pos, "time_us": pos if zero else None,

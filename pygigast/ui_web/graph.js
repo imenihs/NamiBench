@@ -47,8 +47,13 @@
     return a >= 1e9 ? [1e9, "GHz"] : a >= 1e6 ? [1e6, "MHz"] : a >= 1e3 ? [1e3, "kHz"] : [1, "Hz"];
   }
 
-  // 目盛の数字は REF の欄と同じ形（units.js の levelText）
-  function fmtLevel(v) { return root.GSUnits.levelText(v); }
+  // 目盛の数字は REF の欄と同じ形（units.js の levelText）。|Γ|・SWR は1目盛を書き分けられる桁（設計R §3。Qt と同じ
+  // screen_s11.tick_text）
+  function fmtTick(v, decimals) {
+    if (!decimals || decimals <= 1) return root.GSUnits.levelText(v);
+    const s = Number(v).toFixed(decimals);
+    return root.GSUnits.minusSign(Number(s) === 0 ? Number(0).toFixed(decimals) : s);
+  }
 
   class Graph {
     constructor(el, opts) {
@@ -64,6 +69,8 @@
       this.ref = 0;
       this.div = 10;
       this.unit = "dBm";
+      this.linear = false; // |Γ|・SWR の縦軸（下端が決まっている: 設計R §3）
+      this.decimals = 1; // 目盛の数字の小数の桁
       this.traces = [];
       this.bands = [];
       this.markers = [];
@@ -128,7 +135,7 @@
               for (let i = DIVISIONS; i >= 0; i--) out.push(self.ref - i * self.div);
               return out;
             },
-            values: (u, splits) => splits.map(fmtLevel),
+            values: (u, splits) => splits.map((v) => fmtTick(v, self.decimals)),
           },
         ],
         series: [{}, { stroke: "transparent", points: { show: false } }],
@@ -156,7 +163,8 @@
       if (this.timeAxis) this.u.axes[0].label = this.timeAxis.label;
       else if (this.xOffset) this.u.axes[0].label = X.fmtText(X.get("VIEW_TEXTS", "axis_freq_offset"), { off: this.xOffsetText }) + ` (${unit})`;
       else this.u.axes[0].label = X.w("axis_freq", { unit });
-      this.u.axes[1].label = X.w("axis_level", { unit: this.unit });
+      // |Γ|・SWR はレベルではないので名前だけ（Qt と同じ）
+      this.u.axes[1].label = this.linear ? this.unit : X.w("axis_level", { unit: this.unit });
     }
 
     setSize(w, h) {
@@ -193,10 +201,13 @@
       this.u.redraw(false, true);
     }
 
-    setY(ref, div, unit) {
+    // linear・decimals は |Γ|・SWR の縦軸（ref は一番上 = 下端 + 10 目盛）と目盛の数字の桁（設計R §3）
+    setY(ref, div, unit, linear, decimals) {
       this.ref = ref;
       this.div = div;
       this.unit = unit || this.unit;
+      this.linear = !!linear;
+      this.decimals = decimals || 1;
       this.zeroLine = this.unit === "dB";
       this._applyLabels();
       this.u.setScale("y", { min: ref - DIVISIONS * div, max: ref });
@@ -251,6 +262,8 @@
       this.cursorRows = (rows || []).filter((r) => (r.kind === "freq_cursor" || r.kind === "level_cursor") && !XY_NAMES[r.id]);
       this.u.redraw(false);
     }
+    // 縦軸と単位の違う（描いていない）トレースのマーカー・カーソル・機能の線は描かない（設計R §3。Qt の MarkerLayer と同じ）
+    _onAxis(r) { return !r.unit || r.unit === this.unit; }
 
     // ---- 描く
 
@@ -417,6 +430,7 @@
       const ctx = u.ctx;
       ctx.globalAlpha = FUNCTION_LINE_ALPHA;
       for (const r of this.functionRows) {
+        if (!this._onAxis(r)) continue;
         const color = r.parent != null && r.parent === this.selectedMarker ? c.accent : c.marker;
         this._hline(u, r.line.level, color, FUNCTION_LINE_DASH, 1);
         for (const f of r.line.freqs_hz || []) this._vline(u, f, color, FUNCTION_LINE_DASH);
@@ -429,6 +443,7 @@
       const labels = [];
       let nv = 0;
       for (const r of this.cursorRows) {
+        if (!this._onAxis(r)) continue;
         const color = r.parent != null && r.parent === this.selectedMarker ? c.accent : c.marker;
         const name = String(r.name || "").trim();
         if (r.kind === "freq_cursor" && r.freq_hz != null) {
@@ -502,7 +517,7 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
       for (const m of this.markers) {
-        if (m.freq_hz == null || m.level == null) continue;
+        if (m.freq_hz == null || m.level == null || !this._onAxis(m)) continue;
         const px = u.valToPos(m.freq_hz, "x", true);
         const py = u.valToPos(m.level, "y", true);
         const sel = m.id === this.selectedMarker;

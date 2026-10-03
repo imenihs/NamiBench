@@ -424,7 +424,8 @@ class _Painter:
         line_col = QColor(mcol)
         line_col.setAlpha(89)
         self.p.setPen(QPen(line_col, 1, Qt.PenStyle.DotLine))
-        for m in self.data.get("markers") or []:
+        shown = [m for m in self.data.get("markers") or [] if not m.get("hidden")]  # 描いていないトレースのものは除く
+        for m in shown:
             ln = m.get("line") if m.get("kind") == "function" else None
             if not ln or ln.get("level") is None:
                 continue
@@ -440,7 +441,7 @@ class _Painter:
         # 色の実線。名前の位置も画面と同じ割合と側（_line_label）
         names = []
         n_vline = 0
-        for m in self.data.get("markers") or []:
+        for m in shown:
             kind = m.get("kind", "marker")
             f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", "")).strip()
             xy = m.get("id") in pl.XY_IDS
@@ -468,7 +469,7 @@ class _Painter:
                 names.append(("h", y, pl.XY_LABEL_H if xy else pl.CURSOR_LABEL_H, name, col, fill))
         for n in names:
             self._line_label(plot, *n)
-        for m in self.data.get("markers") or []:
+        for m in shown:
             kind = m.get("kind", "marker")
             f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
             if kind in ("freq_cursor", "level_cursor", "interval"):

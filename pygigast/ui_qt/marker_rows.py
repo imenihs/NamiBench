@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..core.units import format_freq
+from ..core.trace.formats import delta_cell, value_cell
 from . import texts
 from .texts_zerospan import ZERO_SPAN_TEXTS as ZT
 from ..core.report_layout import freq_decimals as _freq_decimals
@@ -161,12 +162,15 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
         level = m.get("level") if status == "ok" else None
         for b in m.get("bandwidth") or []:
             n_db = float(b["n_db"])
+            # 横線の高さはコアが表示の形式の値で出す（|Γ|・SWR でも探した dB の高さ: 設計R §3）。無ければ値 ∓ N
+            line_level = b["line_level"] if "line_level" in b else (
+                None if level is None else level + (n_db if dip else -n_db))
             rows.append({
                 "id": f"{mid}.bw{b['n_db']:g}", "parent": mid, "name": texts.w("row_bw", m=mid, n=f"{b['n_db']:g}"),
                 "kind": "function", "trace": m.get("trace"), "freq_hz": None, "value": None,
                 "unit": m.get("unit"), "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": _band_note(b), "status": b.get("status"),
-                "line": function_line(None if level is None else level + (n_db if dip else -n_db), b),
+                "line": function_line(None if level is None else line_level, b),
             })
         if m.get("shape_factor") is not None:
             rows.append({
@@ -232,14 +236,15 @@ def format_rows(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int
     for r in rows:
         f, v, df, dv = r.get("freq_hz"), r.get("value"), r.get("delta_freq_hz"), r.get("delta_value")
         unit = r.get("unit") or default_unit
+        # 値の桁と Δ値の書き方は単位で決める（|Γ| は小数3桁・|Γ|・SWR の差は単位を添える: 設計R §3。PNG の表と同じ関数）
         out.append([
             ("  " if r.get("child") else "") + str(r.get("name", "")),
             str(r["trace"]) if r.get("trace") is not None else "",
             f"{f / scale:.{d}f}" if f is not None else "",
-            f"{v:.2f} {unit}" if v is not None else "",
+            value_cell(v, unit),
             str(r.get("ref") or ""),
             f"{df / scale:+.{d}f}" if df is not None else "",
-            f"{dv:+.2f}" if dv is not None else "",
+            delta_cell(dv, unit, db_offset=r.get("kind") == "level_cursor" and bool(r.get("child"))),
             str(r.get("note") or ""),
         ])
     return out
@@ -254,11 +259,17 @@ def to_tsv(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int = 0)
     return "\n".join(lines) + "\n"
 
 
-def png_rows(rows: list[dict], lines: bool = True) -> list[dict]:
-    """PNG に渡す行。lines は機能の線（G §3.6）を描くか（画面で出していないなら PNG にも描かない）。"""
+def png_rows(rows: list[dict], lines: bool = True, axis_unit: Optional[str] = None) -> list[dict]:
+    """PNG に渡す行。lines は機能の線（G §3.6）を描くか（画面で出していないなら PNG にも描かない）。
+
+    axis_unit を渡すと、縦軸と単位の違う（描いていない）トレースの行に hidden を付ける（表には出し、グラフには
+    描かない: 画面と同じ。設計R §3）。
+    """
     keys = ("id", "name", "kind", "trace", "freq_hz", "value", "unit", "ref", "delta_freq_hz", "delta_value", "child",
             "note", "x_kind")
-    return [{k: r.get(k) for k in keys} | {"line": r.get("line") if lines else None} for r in rows]
+    return [{k: r.get(k) for k in keys} | {"line": r.get("line") if lines else None,
+                                           "hidden": bool(axis_unit and r.get("unit") and r["unit"] != axis_unit)}
+            for r in rows]
 
 
 # ------------------------------------------------------------------ 行を消す・セルを直す（G §3.7。Qt と Web で同じ決まり）

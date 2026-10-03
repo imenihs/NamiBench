@@ -31,6 +31,9 @@ from .types import Mode, Quantity, SweepRequest
 
 _UNSET = object()
 
+# プリセットに入れる縦軸（設計J §4.1）。|Γ|・SWR の縦軸の1目盛も入れる（設計R §3。前の版のプリセットに無ければ初期値）
+PRESET_AMPLITUDE_KEYS = ("ref_level", "db_per_div", "unit", "swr_per_div", "gamma_per_div")
+
 
 class ViewMixin:
     """表示の設定・配色・プリセット・覚えた機器（Instrument に混ぜる）。"""
@@ -88,6 +91,7 @@ class ViewMixin:
             # 縦軸の単位を決めてあれば（マーカーから REF に・など）、電力の単位を新しい単位の名前にする
             self._amplitude["unit"] = view_units.level_shift(unit_for(Quantity.POWER, self._profile), new)[1]
         if delta and self._last_quantity == Quantity.POWER:
+            # 縦軸に付いた値（REF・XY カーソルの Y・ピークのしきい値）は、いまの縦軸が電力のときだけずらす
             if shift_levels:
                 ref = self._amplitude.get("ref_level")
                 self._amplitude["ref_level"] = round((0.0 if ref is None else float(ref)) + delta, 2)
@@ -97,11 +101,15 @@ class ViewMixin:
                 for k in ("y1", "y2"):
                     if getattr(xy, k) is not None:
                         setattr(xy, k, round(getattr(xy, k) + delta, 2))
-                for m in table.markers():
-                    if m.threshold is not None:
-                        m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
                 if table.peak_threshold is not None:
                     table.peak_threshold = round(table.peak_threshold + delta, 2)
+        if delta:
+            # マーカーのしきい値は、それぞれの単位に従う: 電力のトレースで決めたものだけを同じだけずらす。比の dB・|Γ|・
+            # SWR で決めたものは電力の単位に関係しない（いまの縦軸が電力でもずらさない: 設計R §3・設計書 O §1.4）
+            for table in self._marker_tables.values():
+                for m in table.markers():
+                    if m.threshold is not None and m.threshold.power:
+                        m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
         # 値の単位が変わるので、トレース・マーカー・REF の自動を出し直す
         self._emit_visible_traces()
         for e in self._files.values():
@@ -284,7 +292,7 @@ class ViewMixin:
                       "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
                       "image_reject": a.image_reject, "sg_hz": a.sg_hz, "span_lock_hz": a.span_lock_hz},
             "traces": [trace_settings(t) for t in self._traces],
-            "amplitude": {k: self._amplitude.get(k) for k in ("ref_level", "db_per_div", "unit")},
+            "amplitude": {k: self._amplitude.get(k) for k in PRESET_AMPLITUDE_KEYS},
             "view": dict(self._view_opts),
         }
 
@@ -359,7 +367,7 @@ class ViewMixin:
         before = self._undo_snapshot(("sweep", "view", "amplitude"))
         self._set_view_opts(view_units.restore(c.get("view")), shift_levels=False)
         amp = c.get("amplitude") or {}
-        for k in ("ref_level", "db_per_div", "unit"):
+        for k in PRESET_AMPLITUDE_KEYS:
             self._amplitude[k] = amp.get(k)
         for td in c.get("traces") or []:
             try:

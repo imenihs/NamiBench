@@ -577,6 +577,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         self._worker.start()
         self._load_calibration(ident.serial)
         self._load_saved_reference()
+        self._s11_open_follow(self._adopted)  # 電源を入れ直す前に測ったオープンはショートと組まない（設計E §6.5）
         self._conn = "connected"
         self._cal_refresh()  # 校正の画面が開いていれば、つないだ機器の校正を「前の値」にする（つないだ後に見る）
         self._rtltcp_update_header()
@@ -749,6 +750,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         self._last_estimate = new.estimated_sweep_s
         if changed:
             self._on_sweep_condition(old, new, step_sweep=step_sweep)
+            self._s11_open_follow(new)  # 測ってあるオープンとショートが組めなくなったら捨てて知らせる（設計E §6.5）
             if self._run == "single":
                 self._single_done = 0
             self._push_job()

@@ -16,17 +16,10 @@ from ...ui_qt import cal_view, marker_rows, peak_view, screen_model, texts
 
 
 def default_unit(st: Optional[dict]) -> str:
-    """マーカー表で単位を持たない行（Y カーソル）に使う単位。Qt の display_unit と同じ順で決める。"""
-    st = st or {}
-    amp = st.get("amplitude") or {}
-    # 電力の単位は表示の設定で dBm・dBμV・dBmV になる（設計O）。Qt の display_unit と同じく、いまの単位の名前だけ使う
-    if amp.get("unit") == "dB" or (amp.get("unit") and amp.get("unit") == (st.get("view") or {}).get("level_unit_label",
-                                                                                                    "dBm")):
-        return amp["unit"]
-    for t in st.get("traces") or []:
-        if t.get("visible") and t.get("unit"):
-            return t["unit"]
-    return "dBm"
+    """マーカー表で単位を持たない行（Y カーソル）に使う単位 = 縦軸の単位（Qt の display_unit と同じ screen_s11.axis_unit）。"""
+    from ...ui_qt.screen_s11 import axis_unit
+
+    return axis_unit(st or {})
 
 
 def state_view(st: dict) -> dict:
@@ -65,6 +58,7 @@ def markers_view(snap: dict, unit: str = "dBm", freq_offset_hz: int = 0) -> dict
         out.append({"id": r["id"], "parent": r.get("parent"), "kind": r.get("kind"), "child": bool(r.get("child")),
                     "name": r.get("name"), "freq_hz": r.get("freq_hz"), "value": r.get("value"),
                     "ref": r.get("ref") if not r.get("child") else None, "cells": c, "line": r.get("line"),
+                    "unit": r.get("unit"),  # 縦軸と単位の違うトレースの機能の線は描かない（設計R §3）
                     "remove": {"cmd": rm[0], "args": rm[1]} if rm else None, "edits": edits,
                     "ops": marker_rows.row_ops(r, snap)})
     return {**snap, "rows": out, "columns": list(marker_rows.columns(snap.get("x_kind") or "freq")),
@@ -151,16 +145,21 @@ def png_layout(st: dict, req: dict) -> dict:
     マーカー表は Qt と同じ行、注意は上段の注意と同じ文。
     """
     sw = st.get("sweep") or {}
-    # 凡例の線の見本はトレースの線（設計F §9）。参照トレースは画面と同じ参照トレースの線
+    from ...ui_qt.screen_s11 import trace_drawn_reason
+
+    unit = str(req.get("unit") or "dBm")
+    # 凡例の線の見本はトレースの線（設計F §9）。参照トレースは画面と同じ参照トレースの線。縦軸と単位の違う（描いて
+    # いない）トレースは入れない（設計R §3）
     traces = [{**texts.legend_parts(t), "color": f"trace{t['number']}", "visible": True, "line": t.get("line")}
-              for t in st.get("traces") or [] if t.get("visible") and t.get("has_values")]
+              for t in st.get("traces") or []
+              if t.get("visible") and t.get("has_values") and not trace_drawn_reason(t, unit)]
     traces += [{"number": "", "action": "", "count": None, "label": str(f.get("label", "")),
                 "color": f.get("color") or "trace1", "visible": True, "line": rl.REFERENCE_LINE}
                for f in req.get("files") or []]
     rows = marker_rows.png_rows(marker_rows.rows_from_snapshot(st.get("markers") or {}),
-                                lines=marker_rows.function_lines_on(st))
+                                lines=marker_rows.function_lines_on(st), axis_unit=unit)
     data = rl.build_data(st, ref_level=float(req.get("ref_level", 0.0)), db_per_div=float(req.get("db_per_div", 10.0)),
-                         unit=str(req.get("unit") or "dBm"),
+                         unit=unit,
                          mode_name=texts.MODE_NAMES.get(sw.get("mode"), sw.get("mode")), traces=traces,
                          markers=rows, warnings=screen_model.png_warnings(st), app_version=__version__,
                          norm_reasons=texts.NORM_REASONS)
