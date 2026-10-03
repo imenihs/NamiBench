@@ -333,7 +333,7 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
             justify-items: start; }
 .fn-grid label.inline { white-space: nowrap; }
 
-/* ---- 上段の「直結を 0dB にする」（J §4.2）。TG・S11 のときだけ ---- */
+/* ---- 上段の「基準を取る」（J §4.2）。TG・S11 のときだけ ---- */
 .refquick { display: flex; gap: var(--gap); align-items: center; height: var(--h-l); }
 /* いまの基準の文: 小の段の字で2行まで（上段の高さに入る）。それより長い分は … にし、全文はツールチップ */
 .refquick-state { max-width: 150px; font-size: var(--font-s); line-height: 1.3; display: -webkit-box; -webkit-box-orient: vertical;

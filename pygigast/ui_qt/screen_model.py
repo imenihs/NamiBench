@@ -267,7 +267,7 @@ def rtltcp_view(st: dict) -> dict:
             "bind": r.get("bind"), "text": text, "error_text": err_text, "dropped_text": dropped}
 
 
-# ---------------------------------------------------------------- 上段の「直結を 0dB にする」（設計J §4.2・E §6.2）
+# ---------------------------------------------------------------- 上段の「基準を取る」（設計J §4.2・E §6.2）
 
 def ref_quick_view(st: dict) -> dict:
     """TG・S11 のときだけ上段に出す。ボタンの使えない理由・取っている間の進み具合・いまの基準の状態。"""
@@ -289,7 +289,7 @@ def ref_quick_view(st: dict) -> dict:
     tip = ""
     if sel and (n.get("applied") or not n.get("used")):
         name, when = sel.get("name", ""), hhmm(sel.get("taken_at"))
-        # 既定の名前（「直結 12:24」）は時刻を含むので、同じ時刻を重ねて出さない
+        # 既定の名前（「TG 12:24」）は時刻を含むので、同じ時刻を重ねて出さない
         text = tpl("ref_quick_name", name=name) if when and when in name else             tpl("ref_quick_now", name=name, time=when)
         if n.get("power_cycled"):
             text += "・" + TEMPLATES["ref_quick_power_cycled"]

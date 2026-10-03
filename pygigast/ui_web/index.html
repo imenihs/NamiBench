@@ -129,7 +129,7 @@
         <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
                 :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
       </div>
-      <!-- TG・S11 のとき「直結を 0dB にする」といまの基準（J §4.2: 基準を取るは1クリックで届く所に） -->
+      <!-- TG・S11 のとき「基準を取る」といまの基準（J §4.2: 基準を取るは1クリックで届く所に） -->
       <div class="refquick" v-if="refQuick.visible">
         <button :disabled="!!refQuick.reason" @click="takeDirect"
                 :title="T('REF_QUICK_LABELS', 'tip') + (refQuick.reason ? ' — ' + refQuick.reason : '')">{{ T('REF_QUICK_LABELS', 'button') }}</button>

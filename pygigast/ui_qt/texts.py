@@ -17,7 +17,7 @@ from .texts_ui import *  # noqa: F401,F403 — 画面の部品の語の表（メ
 from .texts_ui import DISPLAY_MARKS, TEMPLATES
 from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタンの語（LABELS）。Web へも同じ表で配る
 from .texts_labels import LABELS
-from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「直結を 0dB にする」の語（J §4.7・§4.2）
+from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「基準を取る」の語（J §4.7・§4.2）
 from .texts_devices import device_name, port_shown
 from .texts_web import *  # noqa: F401,F403 — ブラウザから使うときの語（A §4.3.2）
 from .texts_web import WEB_ERRORS
@@ -858,7 +858,7 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
             text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
                                                                                          name=res.get("name", ""))
             if res.get("ref_level") is not None:
-                # 0dB が見えるよう REF レベルを動かした（「直結を 0dB にする」: 黙って変えない J §4）
+                # 0dB が見えるよう REF レベルを動かした（上段の「基準を取る」: 黙って変えない J §4）
                 text += tpl("ref_zero_shown", ref=f"{res['ref_level']:+g}".replace("-", "−"))
         return text, path
     if code == "task_cancelled":

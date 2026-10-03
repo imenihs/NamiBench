@@ -430,7 +430,7 @@ class DisplayMixin:
         self._last_quantity = frame.quantity
         shown_before, self._shown_quantity = self._shown_quantity, frame.quantity
         if shown_before == Quantity.POWER and frame.quantity == Quantity.RATIO:
-            # 電力 → 基準との比に変わった（基準を選んだ TG・S11 へ移った・基準を選んだ・直結を 0dB にした）。
+            # 電力 → 基準との比に変わった（基準を選んだ TG・S11 へ移った・基準を選んだ・上段で基準を取った）。
             # 単位が黙って変わったと思わせないよう、画面が一度知らせる（J §4.10 の 3）
             self._notice("ratio_display", {"name": self._ref.name if self._ref is not None else "",
                                            "unit": self._view_opts.get("level_unit")})

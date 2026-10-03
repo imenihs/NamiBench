@@ -104,7 +104,7 @@ class _RefJob:
     standard: Optional[str]
     prev_run: str
     frames: list = field(default_factory=list)
-    # 取ったら 0dB が見える REF レベルにする（上段の「直結を 0dB にする」: 設計E §6.2 の「すぐ 0dB を示す」）
+    # 取ったら 0dB が見える REF レベルにする（上段の「基準を取る」: 設計E §6.2 の「すぐ 0dB を示す」）
     show_zero: bool = False
 
 

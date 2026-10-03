@@ -285,7 +285,7 @@ if __name__ == "__main__":
 
 
 class TopBarOneRowTest(UiBase):
-    """上段は SA の 1600 幅・TG（直結を 0dB にするとその基準の文が出る）の 1920 幅で1段に収まる（RBW 以降を2行目へ
+    """上段は SA の 1600 幅・TG（基準を取るとその基準の文が出る）の 1920 幅で1段に収まる（RBW 以降を2行目へ
     追い出さない: 2026-10-03 ユーザー指摘・設計の PDCA 2巡目）。上段の周波数の欄は一番長い値でも切れない。"""
 
     def one_row(self) -> bool:
@@ -303,7 +303,7 @@ class TopBarOneRowTest(UiBase):
         self.win.resize(1920, 1080)
         self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
         self.api.call("set_mode", mode="tg").result(5)
-        self.wait(lambda: self.win.ref_quick.isVisible(), what="直結を 0dB にする")
+        self.wait(lambda: self.win.ref_quick.isVisible(), what="基準を取る")
         self.assertTrue(self.one_row(), self.win.topbar.needed_one_row())
 
     def test_widest_top_frequency_fits(self):

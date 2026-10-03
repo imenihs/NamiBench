@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
         self.btn_cont.clicked.connect(lambda: self.actions["run_cont"].trigger())
         self.btn_single.clicked.connect(lambda: self.actions["run_single"].trigger())
         self.btn_stop.clicked.connect(lambda: self.actions["stop"].trigger())
-        # TG・S11 のときだけ「直結を 0dB にする」といまの基準（J §4.2: 基準を取るは1クリックで届く所）
+        # TG・S11 のときだけ「基準を取る」といまの基準（J §4.2: 基準を取るは1クリックで届く所）
         self.ref_quick = RefQuick(self)
         top.addWidget(self.ref_quick)
         self.topbar.align_bottom()

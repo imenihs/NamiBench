@@ -147,7 +147,7 @@
         for (let v = 20; v >= -120; v -= 10) out.push({ value: v, text: U.minusSign(v > 0 ? `+${v}` : `${v}`) + " " + this.axisUnit });
         return out;
       },
-      // 上段の「直結を 0dB にする」（J §4.2。出すか・理由・文はサーバーの screen_model.ref_quick_view）
+      // 上段の「基準を取る」（J §4.2。出すか・理由・文はサーバーの screen_model.ref_quick_view）
       refQuick() { return this.ui.ref_quick || { visible: false }; },
       spanLockText() {
         const s = this.sw;

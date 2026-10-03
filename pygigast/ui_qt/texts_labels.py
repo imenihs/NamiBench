@@ -132,7 +132,7 @@ LABELS = {
     "references": "ノーマライズの基準",
     "ref_name_placeholder": "空なら「TG 日時」",
     "take_wide": "広く取る",
-    "take_wide_tip": "TG の範囲を 1MHz 刻みで取る（TG 出力と SP 入力を直結してから）",
+    "take_wide_tip": "TG の範囲を 1MHz 刻みで取る",
     "take_fine": "いまの条件で細かく取る",
     "take_fine_tip": "いまの Start・Stop・Step でその範囲だけ取り、いまの基準へ上書き合成する",
     "reload": "一覧を読み直す",

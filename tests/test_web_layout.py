@@ -690,7 +690,7 @@ class WebLayoutTest(unittest.TestCase):
         self.assertEqual(over, [])
 
     def test_top_bar_one_row(self):
-        """上段が1行に収まる幅では1行（RBW が Center と同じ行）: SA の 1600×900 と 1920×1080、TG（直結を 0dB にすると
+        """上段が1行に収まる幅では1行（RBW が Center と同じ行）: SA の 1600×900 と 1920×1080、TG（基準を取ると
         いまの基準の文を出す）の 1920×1080。どれも数えた問題は 0。上段は Qt と同じ部品だけ（ユーザーの決定 2026-10-03:
         「Qt と違う UI を採用している時点でおかしい」）。"""
         same_row = ("(() => { const c = document.querySelector('[data-tier=L] .field.big .field-input').getBoundingClientRect();"
@@ -702,7 +702,7 @@ class WebLayoutTest(unittest.TestCase):
                 self.app.call("set_mode", mode=mode)
                 open_app(self.page, self.app, w, h)
                 if mode == "tg":
-                    self.page.wait("!!(gsApp.refQuick.visible && document.querySelector('.refquick-state'))", "直結を 0dB にする")
+                    self.page.wait("!!(gsApp.refQuick.visible && document.querySelector('.refquick-state'))", "基準を取る")
                 c_top, r_top = self.page.ev(same_row)
                 self.assertAlmostEqual(c_top, r_top, delta=0.5, msg=f"{mode} {w}×{h}: 上段が2行になった")
                 self.page.ev("gsApp.tab = 'trace'; 1")
