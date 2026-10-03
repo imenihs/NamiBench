@@ -27,6 +27,16 @@ from .theme import trace_color
 LIVE_TRACES = (1, 2, 3, 4)
 # マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Web の graph.js と同じ）
 FUNCTION_LINE_ALPHA = 89
+# カーソルの名前の位置（グラフの高さ・幅に対する割合。縦線は下から、横線は左から）。オフセットのカーソルの縦線は、
+# 近い線の名前が重ならないよう1本ごとに高さをずらす。名前の背景の濃さ。PNG（png_export）と Web の graph.js も同じ値
+CURSOR_LABEL_V = 0.92
+CURSOR_LABEL_STAGGER = 0.06
+CURSOR_LABEL_H = 0.08
+XY_LABEL_V = 0.95
+XY_LABEL_H = 0.05
+CURSOR_LABEL_FILL = 180
+XY_LABEL_FILL = 200
+XY_IDS = ("X1", "X2", "Y1", "Y2")
 
 
 def x_of(payload: dict) -> np.ndarray:
@@ -397,8 +407,9 @@ class MarkerLayer:
             label = name[:2].upper()
             line = pg.InfiniteLine(angle=angle, movable=True, pen=pg.mkPen(pal["accent"], width=1),
                                    hoverPen=pg.mkPen(pal["accent"], width=3),
-                                   label=label, labelOpts={"position": 0.95 if angle == 90 else 0.05,
-                                                           "color": pal["accent"], "fill": _alpha(pal["graph_bg"], 200)})
+                                   label=label, labelOpts={"position": XY_LABEL_V if angle == 90 else XY_LABEL_H,
+                                                           "color": pal["accent"],
+                                                           "fill": _alpha(pal["graph_bg"], XY_LABEL_FILL)})
             line.setZValue(35)
             line.hide()
             line.sigPositionChangeFinished.connect(lambda ln, k=name: on_xy_moved(k, ln.value()))
@@ -437,7 +448,7 @@ class MarkerLayer:
         def make() -> pg.InfiniteLine:
             ln = pg.InfiniteLine(angle=angle, movable=False, label=name,
                                  labelOpts={"position": label_pos, "color": col,
-                                            "fill": _alpha(self.pal["graph_bg"], 180)})
+                                            "fill": _alpha(self.pal["graph_bg"], CURSOR_LABEL_FILL)})
             ln.setZValue(30)
             return ln
 
@@ -446,7 +457,7 @@ class MarkerLayer:
         ln.setPen(pg.mkPen(col, width=1, style=Qt.PenStyle.DashLine))
         ln.label.setFormat(name)
         ln.label.setColor(col)
-        ln.label.fill = pg.mkBrush(_alpha(self.pal["graph_bg"], 180))
+        ln.label.fill = pg.mkBrush(_alpha(self.pal["graph_bg"], CURSOR_LABEL_FILL))
         ln.label.setPosition(label_pos)
 
     def _function_lines(self, r: dict, col: str) -> None:
@@ -487,7 +498,7 @@ class MarkerLayer:
             n_vline = 0
             for r in rows:
                 kind = r.get("kind")
-                if r.get("id") in ("X1", "X2", "Y1", "Y2"):
+                if r.get("id") in XY_IDS:
                     continue
                 sel = r.get("id") == selected or r.get("parent") == selected and selected is not None
                 col = scol if sel else mcol
@@ -505,11 +516,11 @@ class MarkerLayer:
                     lab.setPos(float(r["freq_hz"]), float(r["value"]))
                 elif kind == "freq_cursor" and r.get("freq_hz") is not None:
                     # 近い縦線の名前が重ならないよう、名前の高さを1本ごとにずらす
-                    pos = 0.92 - 0.06 * (n_vline % 3)
+                    pos = CURSOR_LABEL_V - CURSOR_LABEL_STAGGER * (n_vline % 3)
                     n_vline += 1
                     self._cursor_line("vlines", 90, float(r["freq_hz"]), col, r["name"].strip(), pos)
                 elif kind == "level_cursor" and r.get("value") is not None:
-                    self._cursor_line("hlines", 0, float(r["value"]), col, r["name"].strip(), 0.08)
+                    self._cursor_line("hlines", 0, float(r["value"]), col, r["name"].strip(), CURSOR_LABEL_H)
                 elif kind == "function" and self.function_lines:
                     self._function_lines(r, col)
         self._hide_unused()

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from ..api.local import LocalApi
 from ..core.units import drag_ref_level, format_freq, level_text
@@ -103,8 +104,10 @@ class MainWindow(QMainWindow):
         self._requested: set = set()
         self._had_trace = False
         self._bridge = _Bridge()
-        self._bridge.event.connect(self._on_event, Qt.ConnectionType.QueuedConnection)
-        self._bridge.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
+        # 窓を壊した後に届いた知らせ・命令の応答は捨てる（部品はもう無い。窓を閉じる間際に返ってきた応答で起きる）
+        self._bridge.event.connect(lambda kind, payload: isValid(self) and self._on_event(kind, payload),
+                                   Qt.ConnectionType.QueuedConnection)
+        self._bridge.call.connect(lambda fn: isValid(self) and fn(), Qt.ConnectionType.QueuedConnection)
         self.files = FileActions(self)
         self.device_window = None  # 機器の一覧の窓（J §4.7。device_menu.open_list が作る）
         self.cal_window = None  # 校正の画面（設計K。cal_dialog.open_calibration が作る）

@@ -116,6 +116,25 @@ class WebFunctionLinesServerTest(unittest.TestCase):
         self.post("set_view", {"function_lines": False})
         self.assertIs(self.get_state()["view"]["function_lines"], False)
 
+    def test_cursor_rows_carry_position_and_name(self):
+        # グラフはカーソルの線と名前を表の行から描く（Qt の plot_layers と同じ）。行に位置と表と同じ名前が要る
+        self.post("connect", {"backend": "simulator", "serial": "SIM00001"})
+        self.post("set_sweep", {"start_hz": 1400 * MHZ, "stop_hz": 1600 * MHZ})
+        self.sweep_once()
+        self.post("marker_add", {"kind": "M", "trace": 1, "freq_hz": 1500 * MHZ})
+        self.post("marker_offset_add", {"id": "M1", "type": "freq", "sign": "+", "delta": MHZ})
+        self.post("marker_offset_add", {"id": "M1", "type": "level", "sign": "-", "delta": 3.0})
+        self.post("set_xy", {"x1_hz": 1450 * MHZ, "y1": -50.0})
+        st = self.sweep_once()
+        rows = [r for r in st["markers"]["rows"] if r["kind"] in ("freq_cursor", "level_cursor")]
+        by_name = {r["name"].strip(): r for r in rows}
+        self.assertEqual(set(by_name), {"M1 +1 MHz", "M1 −3 dB", "X1", "Y1"})
+        self.assertIsNotNone(by_name["M1 +1 MHz"]["freq_hz"])
+        self.assertEqual(by_name["M1 +1 MHz"]["parent"], "M1")
+        self.assertIsNotNone(by_name["M1 −3 dB"]["value"])
+        self.assertEqual(by_name["X1"]["freq_hz"], 1450 * MHZ)
+        self.assertEqual(by_name["Y1"]["value"], -50.0)
+
 
 class WebMarkupTest(unittest.TestCase):
     def test_db_fields_and_toggle_in_markup(self):

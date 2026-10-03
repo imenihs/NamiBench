@@ -34,6 +34,7 @@ from PySide6.QtGui import (
 
 from .. import __version__ as APP_VERSION
 from ..core import report_layout as rl
+from . import plot_layers as pl
 
 # 規則は report_layout にある。前からこの名前で使っている呼び出し元（画面・試験）のために同じ名前で見せる
 META_KEY = rl.META_KEY
@@ -438,24 +439,43 @@ class _Painter:
                 if start <= f <= stop:
                     x = fx(f)
                     self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+        # カーソルは画面（plot_layers.MarkerLayer）と同じ: オフセットのカーソルはマーカーの色の破線、XY カーソルは強調の
+        # 色の実線。名前の位置も画面と同じ割合と側（_line_label）
+        names = []
+        n_vline = 0
         for m in self.data.get("markers") or []:
             kind = m.get("kind", "marker")
-            f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
+            f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", "")).strip()
+            xy = m.get("id") in pl.XY_IDS
+            col = self.c("accent") if xy else mcol
+            pen = QPen(col, 1, Qt.PenStyle.SolidLine if xy else Qt.PenStyle.DashLine)
+            fill = pl.XY_LABEL_FILL if xy else pl.CURSOR_LABEL_FILL
             if kind == "freq_cursor":
                 if f is None or not (start <= f <= stop):
                     continue
                 x = fx(f)
-                self.p.setPen(QPen(mcol, 1, Qt.PenStyle.DashLine))
+                self.p.setPen(pen)
                 self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
-                self._label(name.strip(), QPointF(x + 3, plot.top() + self.fms.ascent() + 2), plot)
+                if xy:
+                    pos = pl.XY_LABEL_V
+                else:
+                    pos = pl.CURSOR_LABEL_V - pl.CURSOR_LABEL_STAGGER * (n_vline % 3)
+                    n_vline += 1
+                names.append(("v", x, pos, name, col, fill))
             elif kind == "level_cursor":
                 if v is None or not (bottom <= v <= top):
                     continue
                 y = fy(v)
-                self.p.setPen(QPen(mcol, 1, Qt.PenStyle.DashLine))
+                self.p.setPen(pen)
                 self.p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
-                tw = self.fms.horizontalAdvance(name.strip())
-                self._label(name.strip(), QPointF(plot.right() - tw - 3, y - 3), plot)
+                names.append(("h", y, pl.XY_LABEL_H if xy else pl.CURSOR_LABEL_H, name, col, fill))
+        for n in names:
+            self._line_label(plot, *n)
+        for m in self.data.get("markers") or []:
+            kind = m.get("kind", "marker")
+            f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
+            if kind in ("freq_cursor", "level_cursor"):
+                continue
             else:
                 if f is None or v is None or not (start <= f <= stop):
                     continue
@@ -471,6 +491,27 @@ class _Painter:
                 if ly - self.fms.ascent() < plot.top():
                     ly = y + self.fms.ascent() + 3  # 上に余地が無ければ点の下へ
                 self._label(name, QPointF(x - tw / 2, ly), plot)
+
+    def _line_label(self, plot: QRectF, direction: str, at: float, pos: float, text: str, col: QColor, fill: int) -> None:
+        """線の脇の名前（背景を敷く）。縦線は高さが下からの割合 pos、横線は横が左からの割合 pos。名前は線から見てグラフの
+        真ん中の側に置く（画面のグラフの部品 pyqtgraph と同じ: 端の近くの線でも名前が枠の外へ出ない）。縦線は真ん中より左の線なら
+        右、そうでなければ左。横線は真ん中より上の線なら下、そうでなければ上。"""
+        if not text:
+            return
+        pad = 2.0
+        w = self.fms.horizontalAdvance(text) + 2 * pad
+        h = self.fms.height() + 2.0
+        if direction == "v":
+            x = at + pad if at < plot.center().x() else at - pad - w
+            y = plot.top() + plot.height() * (1 - pos) - h / 2
+        else:
+            x = max(plot.left(), plot.left() + plot.width() * pos - w / 2)
+            y = at + pad if at < plot.center().y() else at - pad - h
+        bg = self.c("graph_bg")
+        bg.setAlpha(fill)
+        self.p.fillRect(QRectF(x, y, w, h), bg)
+        self.p.setPen(col)
+        self.p.drawText(QPointF(x + pad, y + 1 + self.fms.ascent()), text)
 
     def _label(self, text: str, at: QPointF, plot: QRectF) -> None:
         """グラフの上の文字。背景を敷いてトレースと重なっても読めるようにし、枠からはみ出させない。"""

@@ -14,6 +14,19 @@
   // マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Qt の plot_layers.FUNCTION_LINE_ALPHA と同じ）
   const FUNCTION_LINE_ALPHA = 89 / 255;
   const FUNCTION_LINE_DASH = [2, 3];
+  // カーソルの線と名前（Qt の plot_layers.MarkerLayer と同じ）: オフセットのカーソルはマーカーの色の破線、XY カーソルは
+  // 強調の色の実線。名前の位置はグラフの高さ・幅に対する割合（縦線は下から、横線は左から）。近い縦線の名前が重ならないよう、
+  // オフセットのカーソルの縦線は1本ごとに高さをずらす。名前の背景の濃さも Qt と同じ
+  const CURSOR_DASH = [4, 2];
+  const CURSOR_LABEL_V = 0.92;
+  const CURSOR_LABEL_STAGGER = 0.06;
+  const CURSOR_LABEL_H = 0.08;
+  const XY_LABEL_V = 0.95;
+  const XY_LABEL_H = 0.05;
+  const CURSOR_LABEL_FILL = 180 / 255;
+  const XY_LABEL_FILL = 200 / 255;
+  const MARKER_LABEL_FILL = 180 / 255;
+  const XY_NAMES = { X1: 1, X2: 1, Y1: 1, Y2: 1 };
   // 画面の線の基準の幅（px。設計F §9 の実線 = 今までの線）。PNG は opts.lineBase で渡す
   const SCREEN_LINE_BASE = 1.25;
   // 凡例の線の見本の長さと行の高さ（px。Qt の pyqtgraph の凡例の見本と同じ 20px）
@@ -54,6 +67,7 @@
       this.markers = [];
       this.selectedMarker = null;
       this.functionRows = []; // マーカーの機能の線（マーカー表の機能の行の line: G §3.6）
+      this.cursorRows = []; // オフセットのカーソル（マーカー表の freq_cursor・level_cursor の行。XY は this.xy）
       this.xy = null;
       this.zeroLine = false;
       this.mouse = null; // グラフの上のマウスの位置（M キー用）
@@ -228,6 +242,11 @@
     setXY(xy) { this.xy = xy; this.u.redraw(false); }
     // マーカーの機能の線（G §3.6）: マーカー表の行のうち line を持つもの。出さないときは空を渡す
     setFunctionLines(rows) { this.functionRows = (rows || []).filter((r) => r.line); this.u.redraw(false); }
+    // オフセットのカーソルの線と名前: マーカー表の行を渡す（名前は表と同じ文字）
+    setCursorRows(rows) {
+      this.cursorRows = (rows || []).filter((r) => (r.kind === "freq_cursor" || r.kind === "level_cursor") && !XY_NAMES[r.id]);
+      this.u.redraw(false);
+    }
 
     // ---- 描く
 
@@ -243,7 +262,7 @@
       if (this.zeroLine) this._hline(u, 0, this.colors.zero_db, [], 1.5);
       for (const t of this.traces) this._drawTrace(u, t);
       if (!this.zeroSpan) this._drawFunctionLines(u);
-      this._drawCursors(u);
+      this._drawCursors(u, dpr || 1);
       this._drawMarkers(u, dpr || 1);
       ctx.restore();
     }
@@ -401,16 +420,74 @@
       ctx.globalAlpha = 1;
     }
 
-    _drawCursors(u) {
+    _drawCursors(u, dpr) {
       const c = this.colors;
-      for (const m of this.markers) {
-        for (const r of m.freq_offsets || []) if (r.freq_hz != null) this._vline(u, r.freq_hz, c.marker, [4, 4]);
-        for (const r of m.level_offsets || []) if (r.level != null) this._hline(u, r.level, c.marker, [4, 4]);
+      const labels = [];
+      let nv = 0;
+      for (const r of this.cursorRows) {
+        const color = r.parent != null && r.parent === this.selectedMarker ? c.accent : c.marker;
+        const name = String(r.name || "").trim();
+        if (r.kind === "freq_cursor" && r.freq_hz != null) {
+          this._vline(u, r.freq_hz, color, CURSOR_DASH);
+          labels.push(["v", r.freq_hz, CURSOR_LABEL_V - CURSOR_LABEL_STAGGER * (nv++ % 3), name, color, CURSOR_LABEL_FILL]);
+        } else if (r.kind === "level_cursor" && r.value != null) {
+          this._hline(u, r.value, color, CURSOR_DASH);
+          labels.push(["h", r.value, CURSOR_LABEL_H, name, color, CURSOR_LABEL_FILL]);
+        }
       }
-      const xy = this.xy;
-      if (!xy) return;
-      for (const k of ["x1_hz", "x2_hz"]) if (xy[k] != null) this._vline(u, xy[k], c.accent, [2, 3]);
-      for (const k of ["y1", "y2"]) if (xy[k] != null) this._hline(u, xy[k], c.accent, [2, 3]);
+      const xy = this.xy || {};
+      for (const [k, n] of [["x1_hz", "X1"], ["x2_hz", "X2"]]) {
+        if (xy[k] == null) continue;
+        this._vline(u, xy[k], c.accent, []);
+        labels.push(["v", xy[k], XY_LABEL_V, n, c.accent, XY_LABEL_FILL]);
+      }
+      for (const [k, n] of [["y1", "Y1"], ["y2", "Y2"]]) {
+        if (xy[k] == null) continue;
+        this._hline(u, xy[k], c.accent, []);
+        labels.push(["h", xy[k], XY_LABEL_H, n, c.accent, XY_LABEL_FILL]);
+      }
+      // 名前は線を全部描いてから（ほかの線の下に隠れないように）
+      for (const l of labels) this._lineLabel(u, dpr, ...l);
+    }
+
+    // 線の脇の名前（背景を敷く）。名前は線から見てグラフの真ん中の側に置く（Qt の画面のグラフの部品 pyqtgraph と同じ:
+    // 端の近くの線でも名前が枠の外へ出ない）。縦線は真ん中より左の線なら右、そうでなければ左。横線は真ん中より上の線なら下、
+    // そうでなければ上
+    _lineLabel(u, dpr, dir, val, pos, text, color, fill) {
+      if (!text) return;
+      const ctx = u.ctx;
+      const b = u.bbox;
+      const s = Math.max(1, dpr);
+      ctx.font = `${Math.round(12 * s)}px sans-serif`;
+      const pad = 2 * s;
+      const w = ctx.measureText(text).width + 2 * pad;
+      const h = 15 * s;
+      let x;
+      let y;
+      if (dir === "v") {
+        const px = u.valToPos(val, "x", true);
+        if (px < b.left - 1 || px > b.left + b.width + 1) return;
+        x = px < b.left + b.width / 2 ? px + pad : px - pad - w;
+        y = b.top + b.height * (1 - pos) - h / 2;
+      } else {
+        const py = u.valToPos(val, "y", true);
+        if (py < b.top - 1 || py > b.top + b.height + 1) return;
+        x = Math.max(b.left, b.left + b.width * pos - w / 2);
+        y = py < b.top + b.height / 2 ? py + pad : py - pad - h;
+      }
+      this._labelBox(ctx, x, y, w, h, fill);
+      ctx.fillStyle = color;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, x + pad, y + h / 2);
+    }
+
+    // 名前の背景（グラフの背景の色を薄く敷く。Qt の名前の fill と同じ）
+    _labelBox(ctx, x, y, w, h, fill) {
+      ctx.globalAlpha = fill;
+      ctx.fillStyle = this.colors.graph_bg;
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
     }
 
     _drawMarkers(u, dpr) {
@@ -432,7 +509,12 @@
         ctx.lineTo(px + 5 * s, py - 11 * s);
         ctx.closePath();
         ctx.fill();
-        ctx.fillText(m.kind + m.number, px, py - 12 * s);
+        // 名前は背景を敷いて、トレースと重なっても読めるようにする（Qt の名前と同じ）
+        const name = m.kind + m.number;
+        const tw = ctx.measureText(name).width + 4 * s;
+        this._labelBox(ctx, px - tw / 2, py - 12 * s - 14 * s, tw, 14 * s, MARKER_LABEL_FILL);
+        ctx.fillStyle = sel ? c.accent : c.marker;
+        ctx.fillText(name, px, py - 12 * s);
       }
     }
 

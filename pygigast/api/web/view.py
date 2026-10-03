@@ -61,7 +61,9 @@ def markers_view(snap: dict, unit: str = "dBm", freq_offset_hz: int = 0) -> dict
         edits = {str(i): e for i in cols if (e := marker_rows.edit_spec(r, i, rows, snap)) is not None}
         # 行だけを消す命令と、ダブルクリックで直せるセルの決まり（G §3.7。Qt と同じ marker_rows の決まり）
         # 行の「操作」の項目（Qt の行のドロップダウンと同じ marker_rows.row_ops。None は区切り線）
+        # name・freq_hz・value はグラフのカーソルの線と名前（Qt の plot_layers と同じく表の行から描く）
         out.append({"id": r["id"], "parent": r.get("parent"), "kind": r.get("kind"), "child": bool(r.get("child")),
+                    "name": r.get("name"), "freq_hz": r.get("freq_hz"), "value": r.get("value"),
                     "ref": r.get("ref") if not r.get("child") else None, "cells": c, "line": r.get("line"),
                     "remove": {"cmd": rm[0], "args": rm[1]} if rm else None, "edits": edits,
                     "ops": marker_rows.row_ops(r, snap)})

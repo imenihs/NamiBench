@@ -565,6 +565,7 @@
         if (!this.$graph) return;
         this.$graph.setMarkers(this.markers.markers || [], this.selectedMarker);
         this.$graph.setXY(this.markers.xy);
+        this.$graph.setCursorRows(this.markerRows);
         // マーカーの機能の線（G §3.6）。出すかはコアの表示の設定 view.function_lines（Qt と共有。無ければ出す）
         this.$graph.setFunctionLines(this.viewOpts.function_lines === false ? [] : this.markerRows);
       },

@@ -209,7 +209,8 @@ def to_tsv(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int = 0)
 
 def png_rows(rows: list[dict], lines: bool = True) -> list[dict]:
     """PNG に渡す行。lines は機能の線（G §3.6）を描くか（画面で出していないなら PNG にも描かない）。"""
-    keys = ("name", "kind", "trace", "freq_hz", "value", "unit", "ref", "delta_freq_hz", "delta_value", "child", "note")
+    keys = ("id", "name", "kind", "trace", "freq_hz", "value", "unit", "ref", "delta_freq_hz", "delta_value", "child",
+            "note")
     return [{k: r.get(k) for k in keys} | {"line": r.get("line") if lines else None} for r in rows]
 
 
