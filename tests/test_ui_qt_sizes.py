@@ -120,6 +120,7 @@ class LayoutTest(UiBase):
         self.win.parts.graph.attach()
         self.win.parts.peaks.attach()
         found += self.dialogs()
+        found += self.cal_pages()
         self.assertEqual(sorted(set(found)), [])
 
     def test_checker_finds_broken_layout(self):
@@ -137,6 +138,51 @@ class LayoutTest(UiBase):
         self.assertTrue(any("並びの 2 列目" in p for p in found), found)
         self.assertTrue(any("クリア" in p and "伸びている" in p for p in found), found)
         self.assertTrue(any("100px が値の種類の幅" in p for p in found), found)
+
+    def cal_pages(self) -> list[str]:
+        """校正の画面（設計K）の手順: 準備・測る（周波数特性・RBW・NF の増幅度）・確かめる（周波数特性・旧校正ファイル）。
+        測った点と結果がある形で数える（Web の test_web_layout.cal_views と同じ手順）。"""
+        from pygigast.ui_qt.cal_dialog import CHECK, MEASURE
+        from tests.test_level import build_legacy_bytes
+
+        found = []
+        dev = self.api._inst._device
+        self.win.open_calibration("freq")
+        d = self.win.cal_window
+        self.wait(lambda: d.v is not None, what="校正の画面")
+        self.assertEqual(d.windowTitle(), texts.MENU_ITEMS["cal_freq"].rstrip("…"))
+        found += self.check(d, "校正 準備")
+
+        def measure(**kw):
+            self.api.call("cal_measure", **kw).result(10)
+            self.wait(lambda: not self.api.get_state().result(5)["tasks"], timeout=30, what="校正の測定")
+            self.pump(0.3)
+
+        dev.config.signals = [(10_000_000, -10.0)]
+        measure()
+        d.show_page(MEASURE)
+        found += self.check(d, "校正 測る（周波数特性）")
+        d.show_page(CHECK)
+        found += self.check(d, "校正 確かめる（周波数特性）")
+        self.api.call("cal_set_kind", kind="rbw", discard=True).result(5)
+        measure()
+        d.show_page(MEASURE)
+        found += self.check(d, "校正 測る（RBW）")
+        self.api.call("cal_set_kind", kind="nf", discard=True).result(5)
+        self.pump(0.3)
+        d.show_page(MEASURE)
+        found += self.check(d, "校正 測る（NF の増幅度）")
+        self.api.call("cal_set_kind", kind="legacy", discard=True).result(5)
+        p = self.root / "gigast.txt"
+        p.write_bytes(build_legacy_bytes())
+        self.api.call("cal_legacy_load", path=str(p)).result(10)
+        self.pump(0.3)
+        d.show_page(CHECK)
+        found += self.check(d, "校正 確かめる（旧校正ファイル）")
+        d.ask_close = lambda: "discard"
+        d.close()
+        dev.config.signals = []
+        return found
 
     def dialogs(self) -> list[str]:
         found = []

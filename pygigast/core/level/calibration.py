@@ -55,9 +55,13 @@ class CalibrationSource:
 
 @dataclass(frozen=True)
 class NfCalibration:
-    """NF 用の値（設計M で使う）。amp_raw は旧アプリの値のまま（倍率 10^(値/200)）。"""
+    """NF 用の値（設計M で使う）。amp_raw は旧アプリの値のまま（倍率 10^(値/200)）。
 
-    enr_db: float
+    enr_db は旧ファイルから取り込んだときだけ入る。校正作業で増幅度だけを測り、前の校正に NF の値が無かったときは
+    None（ENR は測らないので、値を作らない: 設計K §4.4）。
+    """
+
+    enr_db: Optional[float]
     amp_raw: float
 
 
@@ -76,6 +80,9 @@ class Calibration:
     bands: tuple[FreqBand, ...]
     nf: Optional[NfCalibration] = None
     version: int = VERSION
+    # 校正作業の記録（設計K §2: 前後の値・日時を履歴に残す）。中身は cal_work.py が決める JSON の値。旧ファイルの
+    # 取り込みを校正の画面から行ったときも、前の校正のファイルを残す
+    work: Optional[dict] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.freq_step_hz, int) or self.freq_step_hz <= 0:
@@ -121,6 +128,8 @@ class Calibration:
             d["source"]["sha256"] = self.source.sha256
         if self.nf is not None:
             d["nf"] = {"enr_db": self.nf.enr_db, "amp_raw": self.nf.amp_raw}
+        if self.work is not None:
+            d["work"] = self.work
         return d
 
     @classmethod
@@ -147,8 +156,10 @@ class Calibration:
                 FreqBand(start_hz=_as_int_hz(b["start_hz"]), values=tuple(b["values"]))
                 for b in fr["bands"]
             ),
-            nf=None if nf is None else NfCalibration(enr_db=float(nf["enr_db"]), amp_raw=float(nf["amp_raw"])),
+            nf=None if nf is None else NfCalibration(
+                enr_db=None if nf.get("enr_db") is None else float(nf["enr_db"]), amp_raw=float(nf["amp_raw"])),
             version=int(d["version"]),
+            work=d.get("work") if isinstance(d.get("work"), dict) else None,
         )
 
     # ---- 旧ファイルからの取り込み ----

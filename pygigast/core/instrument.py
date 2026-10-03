@@ -5,6 +5,7 @@
 機器との送受信は機器スレッドが行い、結果を制御スレッドの待ち行列へ戻す。
 ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
+校正作業（設計K）は instrument_cal.py。
 rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
 機能は instrument_listen.py。
 機種のプロファイルと掃引条件モデルは、つないだ機器に合わせて切り替える（設計Q §2.1・§6.4: GigaSt と
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .devices.base import Device, load_profile
+from .instrument_cal import CalMixin
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
 from .instrument_devices import DevicesMixin
 from .instrument_diff import DiffMixin
@@ -165,7 +167,8 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin):
+class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin,
+                 ViewMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -227,6 +230,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         # 表示の設定・配色・プリセット（設計O・J §4.4）。トレースの値を出す前に要る
         self._init_view(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
+        self._init_cal()
         self._init_diff(saved if isinstance(saved, dict) else None)  # トレースと参照トレースの後（2本を探すため）
         self._init_rtltcp()
         self._init_rtlsdr()
@@ -373,6 +377,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             self._on_disconnected(item[1])
         elif kind == "invalid":
             self._notice("invalid_sweep", {"message": item[2]})
+            if self._cal_job is not None:
+                self._cal_abort(CommandError("invalid_sweep", None, {"message": item[2]}))
             if self._ref_job is not None:
                 self._abort_ref_job(CommandError("invalid_sweep", None, {"message": item[2]}))
             self._set_run("stopped", reason="invalid_sweep")
@@ -433,6 +439,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                 "last_stop_reason": self._last_stop_reason,
             },
             "calibration": cal,
+            # 校正の画面の作業（設計K §4.1。開いていなければ None）
+            "calibration_work": self._cal_state(),
             "source": self._source_state(),
             **self._display_snapshot(),
             "files": self._files_state(),
@@ -453,7 +461,10 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         出しているとみなすのは、つないでいて掃引を機器へ渡している間（連続・単発・止まる途中・基準を取る間）だけ。
         掃引を止めた後も機器が出し続けるかは設計に書かれていないので、止めたら出していないとして出す。"""
         job = self._ref_job
-        if job is not None:
+        cal = self._cal_source()
+        if cal is not None:
+            adopted, sweeping = cal, True  # 校正の掃引（RBW の校正は SG で 500MHz を出す: 設計K §4.3）
+        elif job is not None:
             adopted, sweeping = job.adopted, True
         else:
             adopted, sweeping = self._adopted, self._run in ("continuous", "single", "stopping")
@@ -484,6 +495,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         if self._worker is None:
             return
         busy = self._worker.busy_since
+        if self._cal_push_job():
+            return  # 校正の間は、いまの条件とは別の条件で決めた回数だけ測る（設計K §4.1）
         job = self._ref_job
         if job is not None:
             # 基準を取っている間は、いまの条件とは別の条件で決めた回数だけ測る（設計E §6.2）
@@ -513,6 +526,10 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         if gen != self._gen:
             return  # 条件が変わる前の掃引（設計B §7.2.1: 結果は捨てる）
         self._last_sweep_s = raw.duration_s
+        if self._cal_job is not None:
+            # 校正のための掃引。トレース・記録には入れない（設計K §4.1）
+            self._cal_on_sweep(raw)
+            return
         if self._ref_job is not None:
             # 基準を取るための掃引。トレース・記録には入れない（設計E §6.2）
             self._on_ref_sweep(raw)
@@ -558,6 +575,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         self._load_calibration(ident.serial)
         self._load_saved_reference()
         self._conn = "connected"
+        self._cal_refresh()  # 校正の画面が開いていれば、つないだ機器の校正を「前の値」にする（つないだ後に見る）
         self._rtltcp_update_header()
         self._rtlsdr_on_clients()  # rtl_tcp の相手が先につながっていれば、中心を動かさない動きにする
         self._push_job()
@@ -642,6 +660,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         return new, adj
 
     def _drop_device(self) -> None:
+        if self._cal_job is not None:
+            self._cal_abort(CommandError("disconnected"))
         self._listen_end("device_lost")
         self._rtlsdr_on_drop()
         if self._worker is not None:
@@ -854,5 +874,6 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             self._converter = LevelConverter(self._profile, cal)
             self._on_condition(ConditionChange.CALIBRATION)  # 校正が変わると値の意味が変わる（設計F §5.3）
             self._push_job()
+        self._cal_refresh()
         self._changed()
         return {"summary": cal.to_dict()}

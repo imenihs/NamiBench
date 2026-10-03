@@ -6,6 +6,7 @@
 
 - 再生: ref/capture の実機の応答を、要求（32バイト）が一致するものから返す。一致が無ければ合成に落ちる
 - 合成: ノイズフロア（AD 90〜130）＋指定した信号＋0Hz の局発の漏れ＋プロファイルの内部スプリアス。
+  受信の周波数特性と RBW ごとの利得の差を持たせられる（校正作業の試験用: 設計K。既定は差なし）。
   掃引ごとに位置の変わる山（T16）を、決めた帯の中に足す設定を持つ（既定は出さない。イメージ除去の試験用:
   正確の帯の中の4回・帯の外の2回・スピードの2回。設計F §7）
   時間は設計B §7.2 の見積もりの式で流す（speed で縮められる）
@@ -69,6 +70,11 @@ class SynthConfig:
     burst_width_hz: int = 20_000
     burst_db: float = 10.0
     burst_bands_hz: tuple[tuple[int, int], ...] = ((0, 1_000_000_000),)
+    # 受信の周波数特性（校正作業の試験用: 設計K §4.2）。(周波数 Hz, dB) の点を直線で結び、入力の信号・SG・TG の
+    # レベルに足す（両端の外は端の値）。空は差なし
+    freq_gain_db: tuple[tuple[int, float], ...] = ()
+    # RBW ごとの利得の差（設計K §4.3）。RBW の Hz → dB を信号に足す。無い RBW は 0
+    rbw_gain_db: dict = field(default_factory=dict)
 
 
 class Synth:
@@ -88,6 +94,7 @@ class Synth:
         if ds.mode_bits & protocol.MODE_B2:
             ad += c.nf_hot_db * AD_PER_DB
         b3 = bool(ds.mode_bits & protocol.MODE_B3)
+        rbw_gain = float(c.rbw_gain_db.get(ds.rbw_hz, 0.0))
         # 1点は [f, f + Sample × 増加周波数) を max で集約する（T3 の推定）
         width = ds.sample * ds.sample_inc_units * protocol.UNIT_HZ
         tones: list[tuple[int, float]] = [(0, c.lo_leak_dbm)]
@@ -101,15 +108,31 @@ class Synth:
             for off in self.profile["internal_spurs_hz"]["sg_offset"]:
                 tones.append((ds.sg_hz + off, c.spur_dbm))
         for fs, lv in tones:
+            if fs != 0:
+                lv = lv + self._gain_at(fs) + rbw_gain  # 局発の漏れは入力の経路を通らない
             df = np.where(f > fs, f - fs, np.maximum(0, fs - (f + width)))
             shape_db = -3.0 * (df / (ds.rbw_hz / 2)) ** 2
             ad = np.maximum(ad, dbm_to_ad(lv + np.maximum(shape_db, -120.0)))
         if c.bursts_per_sweep > 0:
             ad = self._add_bursts(ad, f)
         if ds.mode_bits & protocol.MODE_TG:
-            ad = np.maximum(ad, dbm_to_ad(c.sg_dbm + (c.b3_level_db if b3 else 0.0))
+            ad = np.maximum(ad, dbm_to_ad(c.sg_dbm + (c.b3_level_db if b3 else 0.0)) + self._gain_ad(f)
                             + self.rng.normal(0, 3, size=n))
         return np.clip(np.rint(ad), 0, AD_MAX).astype("<u2")
+
+    def _gain_at(self, freq_hz: int) -> float:
+        pts = self.config.freq_gain_db
+        if not pts:
+            return 0.0
+        xs = [float(p[0]) for p in pts]
+        ys = [float(p[1]) for p in pts]
+        return float(np.interp(float(freq_hz), xs, ys))
+
+    def _gain_ad(self, f: np.ndarray) -> np.ndarray:
+        pts = self.config.freq_gain_db
+        if not pts:
+            return np.zeros(f.shape)
+        return np.interp(f.astype(np.float64), [float(p[0]) for p in pts], [float(p[1]) for p in pts]) * AD_PER_DB
 
 
     def _add_bursts(self, ad: np.ndarray, f: np.ndarray) -> np.ndarray:

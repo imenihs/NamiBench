@@ -509,8 +509,61 @@ def open_app(page: EdgePage, app: App, w: int, h: int) -> None:
     page.settle()
 
 
-def views(page: EdgePage, tabs_only: bool = False):
-    """数える画面を順に開き、(どこ, 数える範囲) を返す。tabs_only は主画面の右のタブだけ。"""
+def cal_views(page: EdgePage, app: "App"):
+    """校正の画面（設計K）の手順を開く: 準備・測る（周波数特性・RBW・NF の増幅度）・確かめる（周波数特性・旧校正ファイル）。
+    測った点と結果がある形で数える（Qt の LayoutTest.cal_pages と同じ手順）。"""
+    from tests.test_level import build_legacy_bytes
+
+    dev = app.api._inst._device
+
+    def wait_idle():
+        end = time.monotonic() + 30
+        while app.call("get_state")["tasks"]:
+            if time.monotonic() > end:
+                raise AssertionError("校正の測定が終わらない")
+            time.sleep(0.05)
+
+    page.ev("gsApp.openCal('freq'); 1")
+    page.wait("!!document.querySelector('.calwin')", "校正の画面")
+    page.settle()
+    yield "校正 準備", ".modal.calwin"
+    dev.config.signals = [(10_000_000, -10.0)]
+    app.call("cal_measure")
+    wait_idle()
+    page.ev("gsApp.calWin.page = 1; 1")
+    page.settle()
+    yield "校正 測る（周波数特性）", ".modal.calwin"
+    page.ev("gsApp.calWin.page = 2; 1")
+    page.settle()
+    yield "校正 確かめる（周波数特性）", ".modal.calwin"
+    app.call("cal_set_kind", kind="rbw", discard=True)
+    app.call("cal_measure")
+    wait_idle()
+    page.ev("gsApp.calWin.page = 1; 1")
+    page.settle()
+    yield "校正 測る（RBW）", ".modal.calwin"
+    app.call("cal_set_kind", kind="nf", discard=True)
+    page.ev("gsApp.calWin.page = 1; 1")
+    page.settle()
+    yield "校正 測る（NF の増幅度）", ".modal.calwin"
+    app.call("cal_set_kind", kind="legacy", discard=True)
+    p = Path(app.tmp.name) / "gigast.txt"
+    p.write_bytes(build_legacy_bytes())
+    app.call("cal_legacy_load", path=str(p))
+    page.ev("gsApp.calWin.page = 2; 1")
+    page.settle()
+    yield "校正 確かめる（旧校正ファイル）", ".modal.calwin"
+    app.call("cal_close")
+    dev.config.signals = []
+    page.wait("!gsApp.calWin", "校正の画面を閉じる")
+
+
+# 校正の画面で数える手順の数（cal_views）
+CAL_VIEWS = 6
+
+
+def views(page: EdgePage, tabs_only: bool = False, app: "App" = None):
+    """数える画面を順に開き、(どこ, 数える範囲) を返す。tabs_only は主画面の右のタブだけ。app を渡すと校正の画面も。"""
     for tab in TABS:
         page.ev(f"gsApp.closeSettings(); gsApp.closePresets(); gsApp.tab = '{tab}'; 1")
         page.settle()
@@ -555,6 +608,8 @@ def views(page: EdgePage, tabs_only: bool = False):
     page.settle()
     yield "ブラウザからの接続のしかた", ".modal.connect"
     page.ev("gsApp.closeConnect(); 1")
+    if app is not None:
+        yield from cal_views(page, app)
 
 
 @unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
@@ -579,11 +634,11 @@ class WebLayoutTest(unittest.TestCase):
         open_app(self.page, self.app, w, h)
         found: list[str] = []
         seen: list[str] = []
-        for where, root in views(self.page):
+        for where, root in views(self.page, app=self.app):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
         # 数えた画面が揃っていること（開けずに数えなければ何も守らない）
-        self.assertEqual(len(seen), len(TABS) + 2 + 8 + 6, seen)
+        self.assertEqual(len(seen), len(TABS) + 2 + 8 + 6 + CAL_VIEWS, seen)
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 

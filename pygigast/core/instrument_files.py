@@ -270,6 +270,8 @@ class FilesMixin:
         t.cancel.set()
         if self._ref_job is not None and self._ref_job.task is t:
             self._abort_ref_job(Cancelled())
+        elif getattr(self, "_cal_job", None) is not None and self._cal_job.task is t:
+            self._cal_abort(Cancelled())  # 校正の測定（設計K）。測りかけの値は入れない
         else:
             self._changed()
         return {"task_id": task_id, "cancelling": True}
@@ -374,8 +376,11 @@ class FilesMixin:
         wf.add_done_callback(done)
 
     def _check_not_taking_reference(self) -> None:
+        """いまの条件とは別の条件で測っている間（基準を取る・校正の測定）は、条件と動作を変えない。"""
         if self._ref_job is not None:
             raise self._error("reference_in_progress")
+        if getattr(self, "_cal_job", None) is not None:
+            raise self._error("calibration_in_progress")
 
     def _cmd_reference_take(self, kind: str = KIND_WIDE, name: Optional[str] = None, averages: int = 1,
                             standard: Optional[str] = None, show_zero: bool = False) -> dict:

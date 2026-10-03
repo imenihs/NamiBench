@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from ... import __version__
 from ...core import report_layout as rl
-from ...ui_qt import marker_rows, peak_view, screen_model, texts
+from ...ui_qt import cal_view, marker_rows, peak_view, screen_model, texts
 
 
 def default_unit(st: Optional[dict]) -> str:
@@ -39,6 +39,8 @@ def state_view(st: dict) -> dict:
     ui["unit"] = default_unit(st)
     # ピークの一覧の欄（P §9.7）。山／谷の選択はブラウザが持つので両方（Qt と同じ peak_view.list_view）
     ui["peaks"] = peak_view.list_views(st)
+    # 校正の画面（設計K）。開いているときだけ（Qt の cal_dialog と同じ cal_view.view）
+    ui["cal"] = cal_view.view(st) if st.get("calibration_work") else None
     out = {**st, "ui": ui}
     if isinstance(st.get("markers"), dict):
         out["markers"] = markers_view(st["markers"], ui["unit"], texts.freq_offset_of(st))

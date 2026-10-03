@@ -405,6 +405,42 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
 .part-head { display: flex; align-items: center; gap: var(--label-gap); align-self: stretch; }
 .part-head .tab-detach { margin-left: auto; }
 
+/* ---- 校正の画面（設計K。Qt の cal_dialog と同じ並び）: 手順の並び・中身（手順ごと）・戻る・次へ（左）と閉じる（右） ---- */
+.modal.calwin { width: min(1100px, 100%); height: min(820px, 92vh); overflow: hidden; gap: var(--gap); align-items: stretch; }
+.calwin-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--gap); }
+.calwin-body > .form { align-self: flex-start; }
+.cal-steps { gap: var(--gap); }
+.cal-step-on { font-weight: bold; color: var(--text); }
+.form > .cal-top { align-self: start; line-height: var(--h-m); }
+.cal-kinds { gap: 0; }
+.cal-diagram { display: flex; align-items: center; }
+.cal-box { display: inline-flex; align-items: center; height: var(--h-m); padding: 0 var(--btn-pad-x); white-space: nowrap;
+           border: 1px solid var(--accent); border-radius: 3px; background: var(--graph-bg); }
+.cal-arrow { color: var(--text-dim); flex: none; }
+.cal-freq { flex: 1 1 auto; min-height: 0; display: flex; gap: var(--gap); }
+.cal-points { flex: 2 1 0; min-width: 330px; overflow: auto; border: 1px solid var(--axis); }
+.cal-points tbody tr { cursor: pointer; }
+.cal-side { flex: 3 1 0; min-width: 0; }
+.cal-instruction { font-weight: bold; }
+.cal-progress progress { flex: 0 0 180px; }
+.cal-fill { flex: 1 1 auto; min-height: 0; }
+.cal-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; align-self: stretch; border: 1px solid var(--axis); }
+.mtable.cal-rbw { width: auto; }
+.mtable tr.cal-used td { font-weight: bold; }
+.cal-nf { display: grid; grid-template-columns: max-content max-content max-content; gap: var(--gap) var(--label-gap); align-items: center; }
+.mtable.cal-items { align-self: stretch; }
+.cal-graph-wrap { flex: 2 1 0; min-height: 120px; align-self: stretch; position: relative; display: flex; flex-direction: column;
+                  background: var(--graph-bg); border: 1px solid var(--axis); }
+.cal-graph { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.cal-legend { position: absolute; left: 70px; top: 12px; z-index: 2; display: flex; flex-direction: column; gap: 2px;
+              color: var(--text-dim); font-size: var(--font-s); pointer-events: none; }
+.cal-legend > span::before { content: ""; display: inline-block; width: 20px; margin-right: var(--gap); vertical-align: middle; }
+.cal-leg-before::before { border-top: 2px dashed var(--text-dim); }
+.cal-leg-after::before { border-top: 2px solid var(--accent); }
+.cal-check-points { flex: 3 1 0; }
+.modal-btns.cal-btns { justify-content: flex-start; }
+.cal-btns .cal-close { margin-left: auto; }
+
 /* マーカー表のセルを直す欄（G §3.7）: セルの幅に従う（J §4.11） */
 .mtable td.editable { cursor: text; }
 .mtable input.cell-edit { width: 100%; min-width: var(--w-int); }

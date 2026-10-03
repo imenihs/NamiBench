@@ -1,4 +1,4 @@
-// ファイル（保存・開く・書き出し・記録のまとめ・旧校正ファイル）と、Web の口の認証・見るだけ・接続のしかた（設計A §4.3.2）。
+// ファイル（保存・開く・書き出し・記録のまとめ・旧校正ファイルを選んで送る）と、Web の口の認証・見るだけ・接続のしかた（設計A §4.3.2）。
 // Web の口はサーバーの PC のパスを受け取らない: 作るファイルは名前だけ渡してサーバーのアプリのデータのフォルダに
 // 作らせ、終わったら file_id でダウンロードする。開くファイルはブラウザからアップロードして upload_id で渡す。
 // 文言はここに書かない（texts の表とサーバーの error.text だけ）。app.js が読み込んで合わせる。
@@ -148,18 +148,15 @@
           await this.cmd("open", { uploads: ids });
         } catch (e) { this.note(null, e.text || X.get("ERRORS", e.code, e.code)); }
       },
-      async legacyDialog() {
-        if (this.readOnlyBlocks("import_legacy_calibration")) return;
-        const serial = (this.conn.identity || {}).serial;
-        if (!serial) { this.note(null, W("legacy_need_device")); return; }
-        this.openModal(W("legacy_title"), [], async () => {
-          const files = await pickFiles(false);
-          if (!files.length) return;
-          try {
-            const [id] = await this.uploadAll(files);
-            await this.cmd("import_legacy_calibration", { upload_id: id, serial }, { ok: () => this.note(null, W("legacy_done")) });
-          } catch (e) { this.note(null, e.text || X.get("ERRORS", e.code, e.code)); }
-        }, W("legacy_note", { serial }));
+      // ファイルを1つ選んで送り、upload_id を返す（旧校正ファイル: 校正の画面 app_cal.js）。選ばなければ null
+      async pickUpload() {
+        if (this.readOnlyBlocks("cal_legacy_load")) return null;
+        const files = await pickFiles(false);
+        if (!files.length) return null;
+        try {
+          const [id] = await this.uploadAll(files);
+          return id;
+        } catch (e) { this.note(null, e.text || X.get("ERRORS", e.code, e.code)); return null; }
       },
       // ---- 接続のしかた（操作できる接続のブラウザから: A §4.3.2 の 2）
       connectReason() {

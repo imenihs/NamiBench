@@ -136,8 +136,10 @@
       S, P, V,
       // ------------------------------------------------------------ 確かめる窓（何が失われるかを言ってから聞く: U-18）
       // ok は押したら何が起きるかの語（省くと「続ける」。「OK」にしない）
-      askConfirm(title, text, ok) {
-        return new Promise((resolve) => { this.confirmBox = { title, text, ok, resolve }; });
+      // extra: { alt: 3つ目のボタンの語（押すと "alt" で返す）, okDisabled: 押す語のボタンを使えなくする }（校正の画面を
+      // 閉じるとき: U-18。Qt の cal_dialog.ask_close と同じ3つ）
+      askConfirm(title, text, ok, extra) {
+        return new Promise((resolve) => { this.confirmBox = { title, text, ok, resolve, ...(extra || {}) }; });
       },
       // 知らせるだけの窓（［閉じる］と「次から出さない」）。閉じたら { checked } で返す
       showInfo(title, text, check, key) {
