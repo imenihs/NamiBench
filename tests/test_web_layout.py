@@ -458,6 +458,12 @@ class App:
         self.call("set_xy", x1_hz=84_500_000 if rtl else 450_000_000, y1=-50.0)
         self.call("set_trace", number=2, action="average", count=16)
         self.call("preset_save", name="FM")
+        # 保存した配色（J §4.4.1）: いまの配色と、読みにくい組のある取り込んだ配色（一覧の行の知らせも数える）
+        pal = self.call("palette_save", name="夜の観測")
+        d = json.loads(self.call("palette_export", id=pal["id"])["text"])
+        d["content"]["colors"]["text_dim"] = d["content"]["colors"]["panel_bg"]
+        d["name"] = "読みにくい配色"
+        self.call("palette_import", text=json.dumps(d))
         self.srv = _Serve(web.create_app(self.api, lan=lan))
 
     def call(self, command: str, **kw):
@@ -530,6 +536,9 @@ def views(page: EdgePage, tabs_only: bool = False):
     page.ev("gsApp.ctx = null; 1")
     for pg in page.ev("Object.keys(GSTexts.dict('SETTINGS_PAGES'))"):
         page.ev(f"gsApp.openSettings('{pg}'); 1")
+        if pg == "display":
+            # 保存した配色の一覧（J §4.4.1）は開いてから読む。行（読みにくい組の知らせの行を含む）が出るまで待つ
+            page.wait("gsApp.palStore.ready && gsApp.palStore.rows.length >= 2", "保存した配色の一覧")
         page.settle()
         yield f"設定 {pg}", ".modal.setwin"
     page.ev("gsApp.closeSettings(); gsApp.openPresets(); 1")

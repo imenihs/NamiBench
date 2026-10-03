@@ -6,6 +6,7 @@
 - 文字と背景のコントラスト比 7 未満・見分けにくいトレースの組は、変えた色の行に出す（止めはしない: U-25）
 - 使い方の説明は画面に書かない（U-24・U-26）
 - 中身（行・知らせの文）は screen_model.palette_view（Web と同じ）
+- 上に「保存した配色」の一覧（名前を付けて保存・読み込み・書き出し・取り込み: J §4.4.1。settings_palettes.py）
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import screen_model, sizes, texts, widget_sync
+from .settings_palettes import SavedPalettes
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -35,7 +37,12 @@ class PalettePage(QWidget):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__()
         self.win = win
-        lay = sizes.vbox(self)
+        page = sizes.vbox(self)
+        page.setSpacing(sizes.SECTION_GAP)  # 保存した配色と、いまの配色の編集は別のまとまり（S-04）
+        self.saved = SavedPalettes(win)
+        page.addWidget(self.saved)
+        lay = sizes.vbox(inset=False)
+        page.addLayout(lay, 1)
         self.light = QPushButton(S["palette_reset_light"])
         self.light.clicked.connect(lambda: win.reset_palette("light"))
         self.dark = QPushButton(S["palette_reset_dark"])
@@ -79,6 +86,7 @@ class PalettePage(QWidget):
             self._rows[name] = {"mark": mark, "swatch": swatch, "edit": edit, "reset": reset, "warn": warn}
 
     def apply(self, st: dict) -> None:
+        self.saved.apply(st)
         v = screen_model.palette_view(st)
         key = tuple(r["name"] for r in v["rows"])
         if key != self._key:

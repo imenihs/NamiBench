@@ -305,7 +305,7 @@
           <div class="file" v-for="f in files" :key="f.file_id">
             <div class="file-head"><b>{{ f.name }}</b><span class="dim">{{ f.created_at }} {{ f.device_model }} {{ f.device_serial }}</span>
               <button @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
-            <label class="inline" v-for="tr in f.traces" :key="tr.id"><input type="checkbox" :checked="!fileHidden[tr.id]" @change="toggleFileTrace(tr.id)">{{ W('file_trace_row', {id: tr.id, number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
+            <label class="inline" v-for="tr in f.traces" :key="tr.id" :class="{disabled: !!fileUnitReason(tr.id)}" :title="fileUnitReason(tr.id) || undefined"><input type="checkbox" :checked="!fileHidden[tr.id]" :disabled="!!fileUnitReason(tr.id)" @change="toggleFileTrace(tr.id)">{{ W('file_trace_check', {number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
           </div>
           <!-- 開く（Qt の参照トレースのまとまりの［開く…］と同じ: メニュー「ファイル → 開く…」と同じ項目を呼ぶ） -->
           <div class="row"><button data-act="open" :title="T('MENU_ITEMS', 'open') + keyHint('open')" @click="trigger('open')">{{ T('MENU_ITEMS', 'open') }}</button></div>

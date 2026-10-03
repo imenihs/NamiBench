@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -99,10 +100,18 @@ class LayoutTest(UiBase):
         self.win.show_part("tab-marker")
         found += self.check(self.win, "主画面 tab-marker（谷）")
         self.win.marker_panel.set_polarity("peak")
+        # 保存した配色（J §4.4.1）: いまの配色と、読みにくい組のある取り込んだ配色（一覧の行の知らせも数える）
+        pal = self.api.call("palette_save", name="夜の観測").result(5)
+        d = json.loads(self.api.call("palette_export", id=pal["id"]).result(5)["text"])
+        d["content"]["colors"]["text_dim"] = d["content"]["colors"]["panel_bg"]
+        d["name"] = "読みにくい配色"
+        self.api.call("palette_import", text=json.dumps(d)).result(5)
         self.win._settings_dialog()
         dlg = self.win._settings
         for key in list(dlg._page_index):
             dlg.open_page(key)
+            if key == "display":
+                self.wait(lambda: len(dlg.palette_page.saved.rows) == 2, what="保存した配色の一覧")
             found += self.check(dlg, f"設定 {key}")
         dlg.close()
         self.win.open_presets()

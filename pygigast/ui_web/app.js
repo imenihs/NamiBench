@@ -110,13 +110,17 @@
         const pick = (k, d) => (l[k] !== undefined ? l[k] : a[k] != null ? a[k] : d);
         return { ref: pick("ref_level", 0), div: pick("db_per_div", 10), unit: a.unit };
       },
+      // 縦軸の単位。Qt の main_window.display_unit と同じ順: 縦軸の単位が決まっていればそれ（比の dB か、いまの電力の
+      // 単位の名前）、無ければ見えているトレースの単位（参照トレースを重ねるかもこれで決まる: E §6.4）
       axisUnit() {
         void this.traceVersion;
+        const a = this.amp.unit;
+        if (a === "dB" || (a && a === this.viewOpts.level_unit_label)) return a;
         for (const n of [1, 2, 3, 4]) {
           const t = this.$traces && this.$traces.get(String(n));
           if (t && this.traceShown(n)) return t.unit;
         }
-        return this.amp.unit || this.ui.unit || "dBm";
+        return this.ui.unit || "dBm";
       },
       // Center・Start・Stop は周波数オフセットを足して出す（設計O。Span は幅、SG は機器が出す周波数なので足さない）
       freqText() {
@@ -242,7 +246,8 @@
       },
       clearNote(field) { const n = { ...this.notes }; delete n[field]; this.notes = n; },
       showAdjustments(t, alt) {
-        const fields = { start_hz: "start", stop_hz: "stop", center_hz: "center", span_hz: "span", rbw_hz: "rbw", sg_hz: "sg", points: "points" };
+        // Span 固定を外した知らせは Span の欄に出す（固定の切り替えは Span の欄にある: 設計C §5.13。Qt と同じ）
+        const fields = { start_hz: "start", stop_hz: "stop", center_hz: "center", span_hz: "span", span_lock: "span", rbw_hz: "rbw", sg_hz: "sg", points: "points" };
         for (const a of t.adjustments) {
           const f = fields[a.field];
           let action = null;
@@ -397,6 +402,7 @@
           this.onStateRtl(p);
           this.onStateDevices(p);
           this.applyLook();
+          this.watchPaletteOrigin();
           this.applyX();
           this.applyY();
           this.redraw();
@@ -474,17 +480,25 @@
       },
       shownFiles(colors) {
         // 重ねている参照トレース（見えているもの）と色。凡例の文字は Qt と同じ（サーバーの ui.file_legend）。PNG の凡例にも
-        // 同じものを渡す
+        // 同じものを渡す。単位が縦軸と違うものは重ねない（色の順は変えない: Qt の plot_layers.file_drawn と同じ）
         const out = [];
         const names = this.ui.file_legend || {};
         let i = 0;
         for (const f of this.files) {
           for (const tr of f.traces) {
             const color = FILE_COLORS[i++ % FILE_COLORS.length];
-            if (!this.fileHidden[tr.id]) out.push({ id: tr.id, colorKey: color, color: colors[color], label: names[tr.id] || X.fmt("file_trace_label", { name: f.name, number: tr.number }) });
+            if (!this.fileHidden[tr.id] && !this.fileUnitReason(tr.id)) out.push({ id: tr.id, colorKey: color, color: colors[color], label: names[tr.id] || X.fmt("file_trace_label", { name: f.name, number: tr.number }) });
           }
         }
         return out;
+      },
+      // 1つの目盛りに比（dB）と電力（dBm など）を混ぜない（E §6.4）。単位が縦軸と違う参照トレースは重ねず、チェックを
+      // 無効にして理由を出す（U-08。Qt の tab_traces.update_file_checks と同じ語）。値がまだ届いていないものは null
+      fileUnitReason(id) {
+        void this.traceVersion;
+        const t = this.$traces && this.$traces.get(id);
+        if (!t || !t.unit || t.unit === this.axisUnit) return null;
+        return W("file_unit_differs", { axis: this.axisUnit, unit: t.unit });
       },
       // 線の名前（設計F §9: 状態の traces[].line・参照トレースは reference）から描き方（core/report_layout.LINE_STYLES）
       lineStyle(code) {
@@ -882,7 +896,6 @@
           // 描く順と線（設計F §9）は画面と同じ。線の幅は PNG の基準の幅（png.js が lineBase で渡す）
           traces: (c) => this.graphTraces(c), markers: this.markers,
           files: this.shownFiles(colors).map((f) => ({ label: f.label, color: f.colorKey })), note,
-          offset: { hz: this.freqOff, text: this.ui.freq_offset_text || "" },
         }, this.pngSizeWH());
       },
       // 画像を作る前にメモ（1行）を打てる（I §3.2 の 5）

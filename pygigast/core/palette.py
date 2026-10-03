@@ -5,6 +5,9 @@
   違う色として数える（ライト・ダークのボタンの確認の「変えた色 N 個」と、編集の画面の印）
 - 読めない配色を作らせない: 文字と背景のコントラスト比 7 未満・トレースどうしの色の差が小さいときは知らせる
   （止めはしない）。どちらもコードで返し、文言は画面の表（U-22）
+- 独自の配色の保存と読み込み（設計J §4.4.1）: 名前を付けた配色をアプリのデータの palettes フォルダに1つ1ファイルで持つ
+  （PaletteStore。プリセットと同じ仕組み: core/presets.NamedStore）。いまの配色が保存・読み込みしたどの配色から
+  始めたか（origin）を持ち、そこから変えた色を「保存していない変更」と数える（読み込む前の確認: U-18）
 
 Qt を import しない（Web の口も同じものを使う）。
 """
@@ -13,8 +16,10 @@ from __future__ import annotations
 import itertools
 import math
 import re
+from pathlib import Path
 from typing import Optional
 
+from .presets import NamedStore
 from .report_layout import DARK_DEFAULT, LIGHT_DEFAULT
 
 BASES = {"dark": DARK_DEFAULT, "light": LIGHT_DEFAULT}
@@ -92,31 +97,67 @@ def delta_e(a: str, b: str) -> float:
     return math.dist(_lab(a), _lab(b))
 
 
-class Palette:
-    """ユーザー設定の配色（1つ）。"""
+def _full_colors(base: str, colors) -> dict[str, str]:
+    """base の初期値に、読める色だけを重ねた全部の名前の色の組。"""
+    out = dict(BASES[base if base in BASES else DEFAULT_BASE])
+    for k, v in (colors.items() if isinstance(colors, dict) else ()):
+        c = normalize_color(v)
+        if k in out and c:
+            out[k] = c
+    return out
 
-    def __init__(self, base: str = DEFAULT_BASE, colors: Optional[dict] = None) -> None:
+
+class Palette:
+    """ユーザー設定の配色（1つ）。
+
+    origin: いまの配色を始めた保存した配色 {"id", "name", "colors"}（保存・読み込みで決まり、ライト・ダークの初期値に
+    したら無くなる）。保存していない変更は origin の色から変えた色、origin が無ければ初期値から変えた色。
+    """
+
+    def __init__(self, base: str = DEFAULT_BASE, colors: Optional[dict] = None, origin: Optional[dict] = None) -> None:
         self.base = base if base in BASES else DEFAULT_BASE
-        self.colors = dict(BASES[self.base])
-        for k, v in (colors or {}).items():
-            c = normalize_color(v)
-            if k in self.colors and c:
-                self.colors[k] = c
+        self.colors = _full_colors(self.base, colors)
+        self.origin: Optional[dict] = None
+        if isinstance(origin, dict) and isinstance(origin.get("id"), str) and isinstance(origin.get("name"), str):
+            self.set_origin(origin["id"], origin["name"], origin.get("colors"))
 
     @classmethod
     def from_saved(cls, d) -> "Palette":
         """設定に書いた形から作る。読めない色は初期値のまま。"""
         if not isinstance(d, dict):
             return cls()
-        return cls(str(d.get("base") or DEFAULT_BASE), d.get("colors") if isinstance(d.get("colors"), dict) else None)
+        return cls(str(d.get("base") or DEFAULT_BASE), d.get("colors") if isinstance(d.get("colors"), dict) else None,
+                   d.get("origin"))
 
     def to_saved(self) -> dict:
+        out = {"base": self.base, "colors": dict(self.colors)}
+        if self.origin is not None:
+            out["origin"] = {"id": self.origin["id"], "name": self.origin["name"], "colors": dict(self.origin["colors"])}
+        return out
+
+    def content(self) -> dict:
+        """保存する配色の中身（PaletteStore の content）。どの配色から始めたかは入れない。"""
         return {"base": self.base, "colors": dict(self.colors)}
+
+    def set_origin(self, pid: Optional[str], name: str = "", colors: Optional[dict] = None) -> None:
+        """いまの配色を始めた保存した配色。colors を省くといまの色（保存した直後・読み込んだ直後）。None で外す。"""
+        if pid is None:
+            self.origin = None
+            return
+        self.origin = {"id": pid, "name": name,
+                       "colors": dict(self.colors) if colors is None else _full_colors(self.base, colors)}
 
     def changed(self) -> list[str]:
         """初期値（base）から変えた色の名前（並びは NAMES の順）。"""
         d = BASES[self.base]
         return [k for k in NAMES if self.colors[k] != d[k]]
+
+    def unsaved(self) -> list[str]:
+        """保存していない変更（origin の色から変えた色。origin が無ければ初期値から変えた色）の名前。"""
+        if self.origin is None:
+            return self.changed()
+        ref = self.origin["colors"]
+        return [k for k in NAMES if self.colors[k] != ref.get(k)]
 
     def warnings(self) -> list[dict]:
         """読みにくい組（止めはしない）。コントラスト比 7 未満の文字と背景・見分けにくいトレースの組。"""
@@ -132,5 +173,44 @@ class Palette:
         return out
 
     def state(self) -> dict:
+        origin = None if self.origin is None else {"id": self.origin["id"], "name": self.origin["name"]}
         return {"base": self.base, "colors": dict(self.colors), "changed": self.changed(),
-                "warnings": self.warnings(), "defaults": {k: dict(v) for k, v in BASES.items()}}
+                "warnings": self.warnings(), "defaults": {k: dict(v) for k, v in BASES.items()},
+                "origin": origin, "unsaved": self.unsaved()}
+
+
+# ---------------------------------------------------------------- 独自の配色の保存と読み込み（設計J §4.4.1）
+
+PALETTE_FORMAT = "pygigast-palette"
+PALETTE_VERSION = 1
+# 取り込むファイルの大きさの上限（文字数）。配色のファイルは 1KB ほど。これを超えるものは配色のファイルではない
+IMPORT_MAX_CHARS = 200_000
+# 書き出すファイルの名前に使えない字（Windows のファイル名）
+_BAD_FILE_CHARS = frozenset('\\/:*?"<>|')
+
+
+class PaletteStore(NamedStore):
+    """名前を付けた配色の一覧（アプリのデータの palettes フォルダ。1つ1ファイル）。中身は {"base", "colors"}。
+
+    書き出しのファイルは保存のファイルと同じ形（別の PC・人に渡して、そのまま取り込める）。
+    """
+
+    def __init__(self, folder: Path) -> None:
+        super().__init__(folder, "palette", PALETTE_FORMAT, PALETTE_VERSION)
+
+    def parse(self, d) -> Optional[dict]:
+        d = super().parse(d)
+        if d is None or not isinstance(d["content"].get("colors"), dict):
+            return None
+        return d
+
+    @staticmethod
+    def palette_of(d: dict) -> Palette:
+        """保存した1つ（get の戻り値）の配色。読めない色は初期値のまま。"""
+        return Palette.from_saved(d.get("content") or {})
+
+    @staticmethod
+    def file_name(name: str) -> str:
+        """書き出すファイルの既定の名前（配色の名前 + .json。ファイル名に使えない字は _）。"""
+        stem = "".join("_" if ch in _BAD_FILE_CHARS or ord(ch) < 0x20 else ch for ch in str(name)).strip(" .")
+        return (stem or "palette") + ".json"

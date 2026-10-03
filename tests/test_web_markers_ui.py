@@ -150,6 +150,24 @@ class WebMarkerToolsTest(unittest.TestCase):
             self.assertLess(time.monotonic(), end, "Center にならない")
             time.sleep(0.05)
 
+    def test_marker_span_releases_lock_and_notes(self):
+        """Span 固定 ON でメニューの「デルタの2点を Start・Stop に」: 固定を外して2点を Start・Stop にし、Span の欄に
+        1回知らせる（設計C §5.13。Qt と同じ文: texts.adjustment_text）。"""
+        a = self.app
+        a.call("marker_add", kind="M", trace=1, freq_hz=550 * MHZ)
+        a.call("marker_set", id="M2", ref="M1")
+        a.call("set_sweep", span_lock=True)
+        self.page.wait("gsApp.sw && gsApp.sw.span_lock_hz === 200000000", "Span 固定 ON")
+        marks = {m["id"]: m["freq_hz"] for m in a.call("get_state")["markers"]["markers"]}
+        self.ev("gsApp.selectedMarker = 'M2'; gsApp.trigger('marker_span'); 1")
+        self.page.wait("gsApp.sw && gsApp.sw.span_lock_hz == null", "Span 固定が外れる")
+        sw = a.call("get_state")["sweep"]
+        self.assertEqual((sw["start_hz"], sw["stop_hz"]), tuple(sorted((marks["M1"], marks["M2"]))))
+        self.page.wait("!!gsApp.notes.span", "Span の欄の知らせ")
+        self.assertEqual(self.ev("gsApp.notes.span.text"), L["span_lock_released"])
+        self.assertEqual(L["span_lock_released"], "Span 固定を外しました")
+        self.assertIsNone(self.ev("gsApp.notes.span.action"))
+
     def test_peak_list_sa_then_tg_dips(self):
         # SA の 50〜200MHz（100MHz の信号がノイズフロアより高い山）
         self.app.call("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)

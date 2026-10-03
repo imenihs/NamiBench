@@ -165,6 +165,35 @@ class PresetPaletteTest(_Base):
         self.assertEqual(self.state()["palette"]["base"], "light")
 
 
+    def test_saved_palettes_rows_and_import_text(self):
+        """保存した配色（J §4.4.1）: 一覧に行の文（Qt と同じ screen_model.palette_rows）、取り込みに知らせの文（読みにくい
+        組はその場で）。書き出し・取り込みは中身の文字でやりとりし、パスを受け取らない（A §4.3.2）。"""
+        st, a = self.post("palette_save", {"name": "夜の観測"})
+        self.assertEqual(st, 200, a)
+        self.assertEqual(self.state()["ui"]["palette"]["origin_id"], a["id"])
+        self.post("palette_set", {"colors": {"trace2": "#ffd24a"}})  # トレース 1 と同じ色（見分けにくい）
+        self.assertEqual(self.state()["ui"]["palette"]["unsaved_n"], 1)
+        st, out = self.post("palette_export", {"id": a["id"]})
+        self.assertEqual((st, out["file_name"]), (200, "夜の観測.json"))
+        d = json.loads(out["text"])
+        d["content"]["colors"]["trace2"] = "#ffd24a"
+        st, r = self.post("palette_import", {"text": json.dumps(d), "file_name": "a.json"})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["name"], "夜の観測 (2)")
+        self.assertTrue(r["texts"]["done"].startswith("配色「夜の観測 (2)」を取り込みました（⚠ 読みにくい組 1"))
+        st, r = self.post("palette_list", {})
+        self.assertEqual([x["name"] for x in r["rows"]], ["夜の観測", "夜の観測 (2)"])
+        self.assertEqual([bool(x["warn"]) for x in r["rows"]], [False, True])
+        self.assertIn("トレース 1", r["rows"][1]["warn_tip"])
+        self.assertEqual([x["origin"] for x in r["rows"]], [True, False])
+        st, r = self.post("palette_import", {"text": "{"})
+        self.assertEqual((st, r["error"]["code"]), (400, "palette_file_unreadable"))
+        self.assertEqual(r["error"]["text"], qt_texts.ERRORS["palette_file_unreadable"])
+        # パスは受け取らない（Web の口の決まり）
+        st, r = self.post("palette_import", {"text": out["text"], "path": "C:/x.json"})
+        self.assertEqual((st, r["error"]["code"]), (400, "path_not_allowed"))
+
+
 class StaticFilesTest(_Base):
     def test_new_ui_hooks(self):
         html = self.get("/")[1].decode("utf-8")

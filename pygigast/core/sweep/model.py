@@ -41,6 +41,10 @@ RULE_KEEP_SPAN = "keep_span"
 RULE_KEEP_TYPED = "keep_typed"
 # Span 固定のために、打っていない欄（Start を打ったときの Stop など）を動かした理由のコード（設計C §5.12）
 REASON_SPAN_LOCK = "span_lock"
+# 範囲を変える命令が Span 固定を一緒に外したときの調整の欄と理由のコード（設計C §5.13: マーカーの「デルタの2点を
+# Start・Stop に」）。固定が外れたことを Span の欄に一度知らせる（黙って設定を変えない: J §4.10）
+SPAN_LOCK = "span_lock"
+REASON_SPAN_LOCK_RELEASED = "span_lock_released"
 
 # 信用できない条件の知らせ（設計C §5.3 の2）のプロファイルのキー。コードは rbw{kHz}k_narrow_span
 # （Span が狭い）・rbw{kHz}k_fine_step（Step が細かい）・rbw{kHz}k_unstable（常に）
@@ -225,6 +229,11 @@ class SweepModel:
         min_span = self._min_span(points_setting)
         edited = self._edited(request)
         alternative = None
+        if current.span_lock_hz is not None and request.span_lock is False and edited and not request.one_shot:
+            # 範囲を変える命令が固定を外した（設計C §5.13）。固定を外したうえで送った範囲をそのまま使うので、固定 ON の
+            # ドラッグの規則（真ん中を Center・幅は固定 Span: §5.12）は通らない。外したことは Span の欄に一度知らせる。
+            # 切り替えのボタン（欄を触らない）とプリセットの呼び出し（その1回だけの命令）は利用者が状態を選んだので知らせない
+            adj.add(SPAN_LOCK, current.span_lock_hz, None, REASON_SPAN_LOCK_RELEASED)
         if lock_hz is not None and not request.one_shot and set(edited) & {START, STOP}:
             # Span 固定中に Start・Stop・ドラッグで変えた: 固定 Span を守る（設計C §5.12 の表）。
             # その1回だけの命令はこの規則を通さず、送った Start・Stop をそのまま使う（範囲だけ守る）

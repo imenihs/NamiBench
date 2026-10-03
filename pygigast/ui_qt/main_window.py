@@ -897,8 +897,10 @@ class MainWindow(QMainWindow):
         self.status_note(texts.tpl("trace_note", n=number, text=text) if number else text)
 
     def _show_adjustments(self, adjustments: list[dict], alternative: Optional[dict] = None) -> None:
+        # Span 固定を外した知らせは Span の欄に出す（固定の切り替えは Span の欄にある: 設計C §5.13）
         fields = {"start_hz": self.f_start, "stop_hz": self.f_stop, "center_hz": self.f_center,
-                  "span_hz": self.f_span, "rbw_hz": self.rbw_field, "sg_hz": self.source_tab.f_sg}
+                  "span_hz": self.f_span, "span_lock": self.f_span, "rbw_hz": self.rbw_field,
+                  "sg_hz": self.source_tab.f_sg}
         for adj in adjustments:
             w = fields.get(adj.get("field"))
             text = texts.adjustment_text(adj, texts.freq_offset_of(self.state))

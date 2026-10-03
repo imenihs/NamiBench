@@ -103,12 +103,16 @@ def result_view(command: str, args: dict, result: Any, freq_offset_hz: int = 0) 
     """命令の戻り値に、画面がそのまま出す文を `texts` として足す（調整の知らせ・反対の規則・校正の結果）。
 
     freq_offset_hz は表示の周波数オフセット（設計O）。調整の知らせの周波数を欄と同じ換算後の値で出す。
-    プリセットの一覧には行の文（名前と中身の要約。Qt の窓と同じ screen_model.preset_rows）を `rows` で足す。
+    プリセットの一覧には行の文（名前と中身の要約。Qt の窓と同じ screen_model.preset_rows）を、保存した配色の一覧にも
+    行の文（screen_model.palette_rows）を `rows` で足す。
     """
     if not isinstance(result, dict):
         return result
     if command == "preset_list" and "presets" in result:
         return {**result, "rows": screen_model.preset_rows(result.get("presets") or [])}
+    if command == "palette_list" and "palettes" in result:
+        # 保存した配色の一覧の行（名前・読みやすさの知らせ。Qt の設定の画面と同じ screen_model.palette_rows: J §4.4.1）
+        return {**result, "rows": screen_model.palette_rows(result)}
     t: dict = {}
     if result.get("adjustments"):
         t["adjustments"] = [{"field": a.get("field"), "text": texts.adjustment_text(a, freq_offset_hz),
@@ -124,6 +128,9 @@ def result_view(command: str, args: dict, result: Any, freq_offset_hz: int = 0) 
     if command == "peak_list" and "peaks" in result:
         # 見つけた数の行・差の列の名前・行の文字（Qt のピークの一覧と同じ peak_view.result_view: P §9.7）
         t["peak_list"] = peak_view.result_view(result, freq_offset_hz)
+    if command == "palette_import" and "name" in result:
+        # 取り込んだ知らせ（読みにくい組があればその場で言う: J §4.4.1。Qt と同じ文）
+        t["done"] = screen_model.palette_import_text(result)
     if command == "rtlsdr_calibrate_ppm" and "ppm" in result:
         t["done"] = screen_model.ppm_done_text(result)
     elif command == "rtlsdr_calibrate_level" and "level_offset_db" in result:
