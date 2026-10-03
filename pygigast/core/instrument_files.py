@@ -547,6 +547,14 @@ class FilesMixin:
             profile=copy.deepcopy(t.profile),
         )
 
+    def _marker_defs_to_save(self) -> list[dict]:
+        """保存ファイルの /markers（設計H §7.1）。ゼロスパンのマーカーの位置はマイクロ秒の時間なので、
+        行に x_kind "time" を付けて周波数と取り違えないようにする（設計N §1）。"""
+        defs = self._markers.to_defs()["markers"]
+        if self._adopted.axis.step_hz == 0:
+            defs = [{**d, "x_kind": "time"} for d in defs]
+        return defs
+
     def _live_traces_data(self) -> list[TraceData]:
         """保存ファイルの /traces に入れるトレース。保存したときに表示していたもの（設計H §4・§7.1）だけで、
         非表示のトレースは値があっても入れない。参照トレース（開いたファイル）は元のファイルにあるので入れない。"""
@@ -563,7 +571,7 @@ class FilesMixin:
             # GigaSt・RTL-SDR はどちらも生の値を持つ（設計Q §6.1: RTL-SDR も GigaSt と同じ保存）
             raw = None
         traces = self._live_traces_data()
-        markers = self._markers.to_defs()["markers"]
+        markers = self._marker_defs_to_save()
         quantity = self._last_quantity
         norm = self._normalization_record()
         if raw is None and not traces:
@@ -690,6 +698,9 @@ class FilesMixin:
             if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
                 raise self._error("not_integer", n)
         sel = traces if traces is not None else [t.number for t in self._traces if t.visible and t.values is not None]
+        if self._adopted.axis.step_hz == 0:
+            # ゼロスパン: 横軸は時間（推定）。表示している範囲を時間付きで書く（設計N §1・instrument_zerospan.py）
+            return self._zs_export_csv(path, sel)
         tds = []
         for tid in sel:
             if isinstance(tid, int) and not isinstance(tid, bool):
@@ -813,7 +824,7 @@ class FilesMixin:
         if not path:
             raise self._error("path_required", "path")
         traces = self._live_traces_data()
-        markers = self._markers.to_defs()["markers"]
+        markers = self._marker_defs_to_save()
         work = str(rec.path)
 
         def then(out) -> dict:

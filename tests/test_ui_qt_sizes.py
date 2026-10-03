@@ -122,6 +122,24 @@ class LayoutTest(UiBase):
         found += self.dialogs()
         self.assertEqual(sorted(set(found)), [])
 
+    def test_zero_span_tabs(self):
+        """ゼロスパン（設計N §1）: 時間の欄（マーカー・X1・X2）・区間の行・表示する長さの欄も同じ決まりで数える。"""
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_view", zero_span_s=10).result(5)
+        self.api.call("set_sweep", center_hz=100_000_000, span_hz=0).result(5)
+        self.api.call("run", mode="single").result(5)
+        self.wait(lambda: (self.win.state.get("run") or {}).get("state") == "stopped"
+                  and (self.win.traces.live_payload(1) or {}).get("x_kind") == "time", what="ゼロスパンの1回の掃引")
+        r = self.api.call("marker_add", kind="M", trace=1).result(5)
+        self.pump(0.2)
+        self.win.select_marker(r["id"])
+        self.api.call("set_xy", x1_hz=-8_000_000, x2_hz=-1_000_000).result(5)
+        found = []
+        for key in ("tab-trace", "tab-marker", "tab-view"):
+            self.win.show_part(key)
+            found += self.check(self.win, f"ゼロスパン {key}")
+        self.assertEqual(sorted(set(found)), [])
+
     def test_checker_finds_broken_layout(self):
         # 検査そのものが働くこと（本物の画面をわざと崩して見つかるか）
         self.win.show_part("tab-trace")

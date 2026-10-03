@@ -49,11 +49,14 @@ def list_view(st: Optional[dict], polarity: str) -> dict:
     形: {"base": "noise_floor" | "max", "label", "tip", "diff_header", "reason": None | 理由}
     """
     L = texts.LABELS
+    # ゼロスパンは横軸が時間なので、周波数のピークの一覧は使わない（設計N §1。理由: U-08）
+    zero = ((st or {}).get("sweep") or {}).get("step_hz") == 0
+    freq_only = texts.ZERO_SPAN_TEXTS["freq_only"] if zero else None
     if ratio_shown(st):
         return {"base": "max", "label": L["from_max"], "tip": L["max_tip_dip" if polarity == DIP else "max_tip_peak"],
-                "diff_header": L["col_below_max_db"], "reason": None}
+                "diff_header": L["col_below_max_db"], "reason": freq_only}
     return {"base": "noise_floor", "label": L["from_floor"], "tip": L["floor_tip"], "diff_header": L["col_height_db"],
-            "reason": texts.REASON_TEXTS["dips_on_power"] if polarity == DIP else None}
+            "reason": freq_only or (texts.REASON_TEXTS["dips_on_power"] if polarity == DIP else None)}
 
 
 def list_views(st: Optional[dict]) -> dict:

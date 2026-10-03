@@ -123,6 +123,7 @@ class MarkerPanel(QWidget):
         self.tree = QTreeWidget()
         self.tree.setColumnCount(len(marker_rows.COLUMNS) + 1)
         self.tree.setHeaderLabels(list(marker_rows.COLUMNS) + [texts.LABELS["row_ops"]])
+        self._x_kind = "freq"  # 位置の列の名前（ゼロスパンは時間: 設計N §1）
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(True)
@@ -193,6 +194,11 @@ class MarkerPanel(QWidget):
 
     def set_rows(self, rows: list[dict], selected: Optional[str]) -> None:
         self.rows = rows
+        xk = (getattr(self.win, "marker_snap", None) or {}).get("x_kind") or "freq"
+        if xk != self._x_kind:
+            # ゼロスパンに入った・抜けた: 位置の列の名前を時間・周波数にする（設計N §1）
+            self._x_kind = xk
+            self.tree.setHeaderLabels(list(marker_rows.columns(xk)) + [texts.LABELS["row_ops"]])
         structure = tuple((r["id"], r.get("parent")) for r in rows)
         ids = [r["id"] for r in rows if r.get("kind") == "marker"]
         if structure != self._structure:

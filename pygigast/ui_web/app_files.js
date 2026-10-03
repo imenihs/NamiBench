@@ -107,17 +107,20 @@
       },
       // 範囲の欄は上段の Start・Stop と同じく換算後の周波数（周波数オフセット: 設計O）で出し、機器の周波数へ戻して送る。
       // 空なら全部（空の見本で示す）。欄の幅は値の種類（ファイル名は名前・周波数は値: J §4.11）
+      // ゼロスパンは表示している時間の範囲を書くので、周波数の範囲の欄は理由付きで使えない（設計N §1・U-08。Qt と同じ）
       exportDialog() {
         const U = root.GSUnits;
         const s = this.sw || {};
+        const zero = this.zsView.freq_only;
         this.openModal(W("export_title"), [
           { key: "name", label: W("file_name"), value: nowName() + ".csv" },
-          { key: "start", label: W("export_start"), width: "w-value", placeholder: W("export_all_placeholder"),
-            value: s.start_hz != null ? U.freqFieldText(this.shownHz(s.start_hz)) : "" },
-          { key: "stop", label: W("export_stop"), width: "w-value", placeholder: W("export_all_placeholder"),
-            value: s.stop_hz != null ? U.freqFieldText(this.shownHz(s.stop_hz)) : "" },
+          { key: "start", label: W("export_start"), width: "w-value", placeholder: W("export_all_placeholder"), disabled: zero,
+            value: s.start_hz != null && !zero ? U.freqFieldText(this.shownHz(s.start_hz)) : "" },
+          { key: "stop", label: W("export_stop"), width: "w-value", placeholder: W("export_all_placeholder"), disabled: zero,
+            value: s.stop_hz != null && !zero ? U.freqFieldText(this.shownHz(s.stop_hz)) : "" },
         ], (v) => {
           const args = { name: v.name };
+          if (zero) { this.makeFile("export_csv", args); return; }
           try {
             if (v.start.trim()) args.start_hz = this.deviceHz(U.parseFreqHz(v.start));
             if (v.stop.trim()) args.stop_hz = this.deviceHz(U.parseFreqHz(v.stop));

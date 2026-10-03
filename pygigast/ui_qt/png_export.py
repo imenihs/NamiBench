@@ -232,8 +232,10 @@ class _Painter:
         pad = self.fm.horizontalAdvance("あ")
         col_gap = pad * 2
         block_w = (rect.width() - col_gap * (cols - 1)) / cols
+        # 列の名前は配置のもの（ゼロスパンは位置の列が時間: 設計N §1。Web の PNG と同じ report_layout の見出し）
+        header = list(self.lay["table"].get("header") or MARKER_COLUMNS)
         # 列の幅は中身の最大幅（全ブロックで共通にして縦に揃える）
-        widths = [max(self.fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+        widths = [max(self.fm.horizontalAdvance(r[i]) for r in rows + [header]) for i in range(len(header))]
         need = sum(widths) + pad * (len(widths) - 1)
         scale_font = need > block_w
         if scale_font:
@@ -243,7 +245,7 @@ class _Painter:
             self.p.setFont(f)
             fm = QFontMetricsF(f)
             pad = fm.horizontalAdvance("あ")
-            widths = [max(fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+            widths = [max(fm.horizontalAdvance(r[i]) for r in rows + [header]) for i in range(len(header))]
         else:
             fm = self.fm
         for b in range(cols):
@@ -251,7 +253,7 @@ class _Painter:
             if not chunk:
                 continue
             x0 = rect.left() + b * (block_w + col_gap)
-            self._draw_table_block([list(MARKER_COLUMNS)] + chunk, widths, pad, x0, rect.top(), fm)
+            self._draw_table_block([header] + chunk, widths, pad, x0, rect.top(), fm)
 
     def _draw_table_block(self, rows, widths, pad, x0, y0, fm: QFontMetricsF) -> None:
         y = y0
@@ -279,6 +281,10 @@ class _Painter:
         bottom = ref - DIVISIONS * div
         start = float(c.get("start_hz", 0.0))
         stop = float(c.get("stop_hz", start + 1.0))
+        xa = c.get("x_axis") or {}
+        if xa.get("kind") == "time":
+            # ゼロスパン: 横軸は時間（μs。設計N §1）。トレース・マーカーの位置も μs
+            start, stop = float(xa["x0"]), float(xa["x1"])
         if stop <= start:
             stop = start + 1.0
 
@@ -438,6 +444,8 @@ class _Painter:
         for m in self.data.get("markers") or []:
             kind = m.get("kind", "marker")
             f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
+            if kind == "interval":
+                continue  # 区間の最大・最小・平均は表の行だけ（画面のグラフにも描かない: 設計N §1）
             if kind == "freq_cursor":
                 if f is None or not (start <= f <= stop):
                     continue

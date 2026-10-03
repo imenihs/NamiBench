@@ -628,7 +628,8 @@ class SweepModel:
             elif cond == "step_below_hz" and 0 < step < int(value):
                 w.append(f"rbw{k}k_fine_step")
             elif cond == "always" and value:
-                w.append(f"rbw{k}k_unstable")
+                # ゼロスパンでは時間方向に落ち込みが散発する（D4。設計N §1）。平均を勧める知らせとは別の知らせにする
+                w.append(f"rbw{k}k_zero_span" if span == 0 else f"rbw{k}k_unstable")
         return tuple(w)
 
     def _preroll(self, start: int, step: int, points: int, per_point_s: float) -> tuple[int, int]:
@@ -705,6 +706,7 @@ class SweepModel:
             segments=segs,
             image_reject_estimates=tuple((c, plans[c][1]) for c in ir.CHOICES),
             accurate_segments=plans[ir.ACCURATE][0],
+            point_time_s=float(per_point_s),
         )
 
     def _check_device(self, axis: FreqAxis, segments: tuple[SweepSegment, ...]) -> None:

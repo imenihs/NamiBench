@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pygigast.api.local import LocalApi, _SimulatorBackend  # noqa: E402
 from pygigast.core.devices.base import load_profile  # noqa: E402
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
-from pygigast.core.units import format_freq  # noqa: E402
+from pygigast.core.units import format_freq, format_time_us  # noqa: E402
 from pygigast.ui_qt import screen_model, texts  # noqa: E402
 
 MHZ = 1_000_000
@@ -73,11 +73,14 @@ class SharedReadingTest(unittest.TestCase):
         r = screen_model.mouse_reading([], 123_456_789.4, -40.0)
         self.assertEqual(r["lines"], [format_freq(123_456_789)])
         self.assertIsNone(r["trace"])
+        # ゼロスパンの横軸は時間（推定。位置はマイクロ秒: 設計N §1）。読み値の位置は ms
         z = payload(1, [-50, -40, -30], start=100 * MHZ, step=0)
-        r = screen_model.mouse_reading([z], 1.2, -40.0, zero_span=True)
-        self.assertEqual(r["lines"][0], texts.tpl("mouse_point", n=1))
+        z["axis"] = {"kind": "time", "start_us": 0.0, "step_us": 140.0, "points": 3}
+        r = screen_model.mouse_reading([z], 150.0, -40.0, zero_span=True)
+        self.assertEqual(r["lines"][0], format_time_us(140))
+        self.assertEqual((r["time_us"], r["level"]), (140, -40.0))
         self.assertIsNone(r["freq_hz"])
-        self.assertEqual(screen_model.mouse_reading([], 2.0, 0.0, zero_span=True)["lines"], [texts.tpl("mouse_point", n=2)])
+        self.assertEqual(screen_model.mouse_reading([], -2500.0, 0.0, zero_span=True)["lines"], ["-2.500 ms"])
 
 
 def _single(api, start=-100 * MHZ, stop=100 * MHZ):

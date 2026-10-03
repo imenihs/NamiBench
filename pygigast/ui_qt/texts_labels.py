@@ -44,7 +44,6 @@ LABELS = {
     "side_split_tip": "ドラッグで右のパネルの幅を変える",
     # ---- グラフ
     "graph_tip": "グラフの中を横にドラッグ: その範囲を Start/Stop に\nホイール: カーソルの位置を中心に拡大・縮小\nクリック: マーカーを置く\n右クリック: この位置への操作\n左の目盛の上でホイール: REF を1目盛（Ctrl で dB/div）・ドラッグ: REF を連続で",
-    "axis_zero_span": "点（ゼロスパン）",
     "axis_freq": "周波数 ({unit})",
     "axis_level": "レベル ({unit})",
     "ctx_center": "ここを Center に",

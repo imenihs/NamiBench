@@ -35,6 +35,7 @@ from .instrument_listen import ListenMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_view import ViewMixin
+from .instrument_zerospan import ZeroSpanMixin, zero_span_request
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
 from .settings import Settings
@@ -165,7 +166,8 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin):
+class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin,
+                 ViewMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -223,6 +225,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         self._last_stop_reason: Optional[str] = None
 
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
+        self._init_zero_span()  # ゼロスパンの流す表示（設計N §1）
         self._init_display(saved if isinstance(saved, dict) else None)
         # 表示の設定・配色・プリセット（設計O・J §4.4）。トレースの値を出す前に要る
         self._init_view(saved if isinstance(saved, dict) else None)
@@ -257,6 +260,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                 # 前回の値。前の版の覚え書きの image_cancel は読み替え、どちらも無ければ機種の初期値（設計F §7.3）
                 image_reject=ir.read_choice(st),
             )
+            req = zero_span_request(req)
             try:
                 restored = self._model.apply(req, base)
             except ValueError:
@@ -729,6 +733,10 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             if self._run == "single":
                 self._single_done = 0
             self._push_job()
+        if (old.axis.step_hz == 0) != (new.axis.step_hz == 0):
+            # 横軸が周波数 ⇔ 時間（ゼロスパン）に変わった: マーカー表を切り替えて出し直す（設計N §1）
+            self._rebuild_views()
+            self._refresh_markers()
         self._changed()
 
     def _apply(self, request: SweepRequest) -> dict:
