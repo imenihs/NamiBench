@@ -77,11 +77,14 @@ class ThresholdSetting:
 
     fmt はしきい値を決めたときのトレースの表示の形式（設計R §3: db・gamma・swr）。形式を変えたら、同じ反射の大きさを
     いまの形式の値に直して探す・出す（SWR 2 で決めたしきい値は |Γ| では 0.33。数字のまま別の意味にしない）。
+    power は電力のトレース（dBm・dBμV など）で決めたしきい値か。電力の単位・外部補正を替えたときに同じだけずらすのは
+    これだけ（設計書 O §1.4。比の dB・|Γ|・SWR のしきい値は電力の単位に関係しない）。
     """
 
     level: float
     side: str
     fmt: str = an.formats.DB
+    power: bool = False
 
     def level_in(self, fmt: str) -> float:
         """fmt の形式で言ったしきい値。"""
@@ -766,7 +769,7 @@ def marker_to_def(m: Marker) -> dict:
         "level_offsets": [{"sign": o.sign.value, "delta_db": float(o.delta_db)} for o in m.level_offsets],
         "bandwidth_n_db": [float(x) for x in m.bandwidth_n_db],
         "threshold": None if m.threshold is None else {"level": m.threshold.level, "side": m.threshold.side,
-                                                       "format": m.threshold.fmt},
+                                                       "format": m.threshold.fmt, "power": m.threshold.power},
         "polarity": m.polarity,
     }
 
@@ -788,7 +791,13 @@ def marker_from_def(d: dict) -> Marker:
         freq_offsets=[FreqOffset(Sign(o["sign"]), int(o["delta_hz"])) for o in d.get("freq_offsets", [])],
         level_offsets=[LevelOffset(Sign(o["sign"]), float(o["delta_db"])) for o in d.get("level_offsets", [])],
         bandwidth_n_db=tuple(float(x) for x in d.get("bandwidth_n_db", [])),
-        threshold=None if th is None else ThresholdSetting(
-            float(th["level"]), str(th["side"]),
-            th.get("format") if an.formats.is_format(th.get("format")) else an.formats.DB),
+        threshold=None if th is None else _threshold_from_def(th),
     )
+
+
+def _threshold_from_def(th: dict) -> ThresholdSetting:
+    """しきい値の置き方を戻す。形式の無い前の版は dB、電力かどうかの無い前の版は dB の形式なら電力として扱う
+    （前の版は電力の単位を替えると、しきい値を電力として同じだけずらしていた）。"""
+    fmt = th.get("format") if an.formats.is_format(th.get("format")) else an.formats.DB
+    power = th["power"] if isinstance(th.get("power"), bool) else fmt == an.formats.DB
+    return ThresholdSetting(float(th["level"]), str(th["side"]), fmt, power)

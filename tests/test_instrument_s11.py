@@ -217,5 +217,88 @@ class FormatTest(S11Case):
         self.assertEqual((ft["unit"], ft["format"]), ("SWR", "swr"))
 
 
+def db_to_swr(db: float) -> float:
+    g = 10 ** (db / 20)
+    return (1 + g) / (1 - g)
+
+
+class UnitFollowTest(S11Case):
+    """表示の単位で持つ値は、その値の単位だけに従って直す（設計書 O §1.4・設計R §3）。dB の縦軸を前提にした操作
+    （REF を動かす）は |Γ|・SWR の縦軸では行わない（設計J §4.7 の末尾）。"""
+
+    def test_xy_y_follows_the_axis_format(self):
+        """縦軸の形式が dB → SWR → |Γ| → dB と替わっても、Y カーソルは同じ反射の大きさのまま（数字だけ単位が替わる）。"""
+        self.s11_reference()
+        self.ratio_trace()
+        self.call("set_xy", y1=-3.0, y2=-10.0)
+        self.call("set_trace", number=1, format="swr")
+        xy = self.call("get_state")["markers"]["xy"]
+        self.assertAlmostEqual(xy["y1"], db_to_swr(-3.0), places=6)
+        self.assertAlmostEqual(xy["y2"], db_to_swr(-10.0), places=6)
+        self.assertAlmostEqual(xy["dy"], db_to_swr(-10.0) - db_to_swr(-3.0), places=6)
+        self.call("set_trace", number=1, format="gamma")
+        xy = self.call("get_state")["markers"]["xy"]
+        self.assertAlmostEqual(xy["y1"], 10 ** (-3.0 / 20), places=6)
+        self.call("set_trace", number=1, format="db")
+        xy = self.call("get_state")["markers"]["xy"]
+        self.assertAlmostEqual(xy["y1"], -3.0, places=6)
+        self.assertAlmostEqual(xy["y2"], -10.0, places=6)
+        # 縦軸が SWR のトレースのままなら、ほかのトレースの形式を替えても Y カーソルは動かない
+        self.call("set_trace", number=1, format="swr")
+        y1 = self.call("get_state")["markers"]["xy"]["y1"]
+        self.call("set_trace", number=2, format="gamma")
+        self.assertAlmostEqual(self.call("get_state")["markers"]["xy"]["y1"], y1, places=9)
+        # 元に戻す（Ctrl+Z）で形式が dB に戻っても、Y カーソルは同じ反射の大きさの dB に戻る
+        self.call("undo")
+        self.call("undo")
+        self.assertAlmostEqual(self.call("get_state")["markers"]["xy"]["y1"], -3.0, places=6)
+
+    def test_show_zero_only_on_a_db_axis(self):
+        """縦軸が SWR（基準を取る前に選んでおいた）なら、ショートで基準を取っても REF を動かさず知らせもしない。"""
+        self.connect(100 * MHZ, 200 * MHZ)
+        self.call("set_mode", mode="s11")
+        self.call("set_trace", number=1, format="swr")
+        self.call("set_amplitude", ref_level=-60.0)
+        r = self.call("reference_take", kind="fine", standard="open")
+        self.wait_task(r["task_id"])
+        r = self.call("reference_take", standard="short", show_zero=True)
+        n = self.wait_task(r["task_id"])
+        self.assertEqual(n["code"], "task_done", n)
+        self.assertNotIn("ref_level", n["detail"]["result"])
+        self.assertEqual(self.call("get_state")["amplitude"]["ref_level"], -60.0)
+        # dB の縦軸なら、0dB が見えるよう REF を動かす（J §4.7 の末尾のまま）
+        self.call("set_trace", number=1, format="db")
+        r = self.call("reference_take", kind="fine", standard="open")
+        self.wait_task(r["task_id"])
+        r = self.call("reference_take", standard="short", show_zero=True)
+        n = self.wait_task(r["task_id"])
+        self.assertEqual(n["detail"]["result"].get("ref_level"), 10.0)
+
+    def test_power_unit_change_does_not_shift_swr_threshold(self):
+        """SWR で決めたしきい値は、電力の単位・外部補正を替えてもずらさない。電力で決めたしきい値は今までどおりずらす。"""
+        self.s11_reference()
+        self.ratio_trace()
+        self.call("set_trace", number=1, format="swr")
+        r = self.call("marker_peak", polarity="dip", trace=1)
+        self.call("marker_function", id=r["id"], threshold={"level": 2.0, "side": "below"})
+        before = self.call("get_state")["markers"]["markers"][0]["threshold"]
+        self.call("set_mode", mode="sa")
+        self.single()
+        m = self.call("marker_add", kind="M", trace=1, freq_hz=150 * MHZ)
+        self.call("marker_function", id=m["id"], threshold={"level": -50.0, "side": "above"})
+        self.call("set_view", level_unit="dBuV")
+        self.call("set_view", ext_db=5.0)
+        p = next(x for x in self.call("get_state")["markers"]["markers"] if x["id"] == m["id"])
+        self.assertAlmostEqual(p["threshold"]["level"], -50.0 + 106.99 + 5.0, places=2)
+        self.call("set_mode", mode="s11")
+        self.single()
+        after = next(x for x in self.call("get_state")["markers"]["markers"] if x["id"] == r["id"])["threshold"]
+        self.assertEqual(after["level"], 2.0)
+        # 同じしきい値の交点（掃引ごとの雑音の分だけ揺れる）。ずらされた 113.99 SWR なら表示範囲の端まで交点が無い
+        self.assertEqual(after["status"], "ok")
+        self.assertAlmostEqual(after["left_hz"], before["left_hz"], delta=2 * MHZ)
+        self.assertAlmostEqual(after["right_hz"], before["right_hz"], delta=2 * MHZ)
+
+
 if __name__ == "__main__":
     unittest.main()

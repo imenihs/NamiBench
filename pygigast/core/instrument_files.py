@@ -25,7 +25,7 @@ from .instrument_common import CommandError
 from .instrument_diff import DIFF_TRACE_ID
 from .instrument_display import (NORMALIZED_MODES, display_values, file_trace_format, swr_limit_points,
                                  unit_for)
-from .trace import formats
+from .trace import TraceAction, formats
 from .report_layout import DIVISIONS
 from .normalize import (
     KIND_FINE,
@@ -56,7 +56,7 @@ from .storage.recording import (
     find_unfinished,
     new_recording_path,
 )
-from .types import Mode, SweepRequest
+from .types import Mode, Quantity, SweepRequest
 
 # 縦軸の既定の dB/div（画面の既定と同じ。振幅に値が無いとき）
 DEFAULT_DB_PER_DIV = 10.0
@@ -473,8 +473,21 @@ class FilesMixin:
         self._changed()
         return {"task_id": task.task_id}
 
+    def _ref_axis_is_db(self, mode: Mode) -> bool:
+        """基準を当てた後の縦軸が dB か（REF と 0dB を持つ縦軸か）。縦軸は表示している一番番号の小さいトレースで決まり、
+        その表示の形式が |Γ|・SWR なら下端の決まった縦軸で、REF も 0dB の線も無い（設計R §3・設計J §4.7 の末尾）。
+        値を固定したトレースは、いま持っている値の形式のまま。"""
+        for t in self._traces:
+            if not t.visible:
+                continue
+            if t.action == TraceAction.FIXED and t.values is not None:
+                return t.effective_format == formats.DB
+            return formats.effective(t.format, mode, Quantity.RATIO) == formats.DB
+        return True
+
     def _show_zero_level(self) -> dict:
-        """0dB が縦軸の中（一番上の線より下・一番下の線より上）に無ければ、上から1目盛下に置く REF レベルにする。"""
+        """0dB が縦軸の中（一番上の線より下・一番下の線より上）に無ければ、上から1目盛下に置く REF レベルにする。
+        dB の縦軸のときだけ呼ぶ（_ref_axis_is_db）。"""
         amp = self._amplitude
         ref = 0.0 if amp.get("ref_level") is None else float(amp["ref_level"])
         div = float(amp.get("db_per_div") or DEFAULT_DB_PER_DIV)
@@ -552,7 +565,8 @@ class FilesMixin:
                     self._end_task(job.task, exc)
                     return
                 self._set_reference(target)
-                extra = self._show_zero_level() if job.show_zero else {}
+                # 0dB が見える REF にするのは dB の縦軸だけ（|Γ|・SWR の縦軸は REF を持たず、黙って REF の数字を変えない）
+                extra = self._show_zero_level() if job.show_zero and self._ref_axis_is_db(mode) else {}
                 self._end_task(job.task, None, {"reference_id": target.ref_id, "name": target.name, **extra})
                 if prev_run not in ("continuous", "single") and self._conn == "connected":
                     # 取った基準ですぐ測って 0dB 付近になることを示す（設計E §6.2）

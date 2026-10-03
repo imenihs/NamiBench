@@ -40,6 +40,9 @@ DB_PER_DIV_CHOICES = (1, 2, 5, 10)
 
 UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB"}
 
+# 比の縦軸の単位 → 表示の形式（XY カーソルの Y を直す相手: _follow_axis_format）
+_RATIO_AXIS_FORMATS = {"dB": formats.DB, formats.UNIT_GAMMA: formats.GAMMA, formats.UNIT_SWR: formats.SWR}
+
 # 生の値の形（機種のプロファイルの raw.encoding）が RTL-SDR のもの（instrument_rtlsdr.py で換算する）
 _RTLSDR_ENCODING = "rtlsdr_power_w"
 # マーカーの読み値の注意のコード: Hann 窓の FFT で測ったトレース（_trace_own_notes）
@@ -189,6 +192,9 @@ class DisplayMixin:
         # 変わったときだけ知らせる。起動して最初の掃引は「変わった」にしない）
         self._shown_quantity: Optional[Quantity] = None
         self._ref_auto_file_cache: dict = {}  # REF の自動の参照トレースの最大値（_ref_auto_state）
+        # 最後の比の縦軸の単位（dB・|Γ|・SWR。縦軸は表示している一番番号の小さいトレースの単位: 画面の
+        # screen_s11.axis_unit と同じ決まり）。替わったら XY カーソルの Y を同じ反射の大きさの値に直す（_follow_axis_format）
+        self._xy_axis_unit: Optional[str] = None
         st = st or {}
         self._trace_opts = restore_trace_options(st.get("trace_options"))
         # 前回終了時のトレースの設定・マーカーの置き方を戻す（設計O §1.2）。読めないものは既定のまま
@@ -430,6 +436,30 @@ class DisplayMixin:
                 v = dataclasses.replace(v, unit=unit)
             views[t.number] = v
         self._views = views
+        self._follow_axis_format()
+
+    def _follow_axis_format(self) -> None:
+        """縦軸の形式が比の dB・|Γ|・SWR の間で替わったら、XY カーソルの Y（縦軸の単位の値）を同じ反射の大きさの
+        新しい形式の値に直す（設計R §3・設計書 O §1.4: 絵の意味はそのまま、数字の単位だけが替わる）。
+
+        縦軸の単位は、表示していて値のある一番番号の小さいトレースの単位（画面の screen_s11.axis_unit と同じ）。値の
+        あるトレースが無い間は前のままにする（掃引を捨てた直後の間に、単位を行き来させない）。電力の縦軸（dBm など）の
+        間は比の形式を覚えたままにし、比の縦軸に戻ったときに、最後の比の形式から直す（電力の単位の替え方は
+        _set_view_opts）。
+        """
+        unit = next((self._trace_display(t)[1] for t in self._traces
+                     if t.visible and t.values is not None and t.quantity is not None), None)
+        fn = _RATIO_AXIS_FORMATS.get(unit)
+        if fn is None:
+            return
+        fp, self._xy_axis_unit = _RATIO_AXIS_FORMATS.get(self._xy_axis_unit), unit
+        if fp is None or fp == fn:
+            return
+        xy = self._markers.xy
+        for k in ("y1", "y2"):
+            v = getattr(xy, k)
+            if v is not None:
+                setattr(xy, k, formats.convert_value(v, fp, fn))
 
     def _refresh_markers(self, emit: bool = True) -> None:
         self._marker_snap = self._markers.snapshot(self._views)
@@ -954,11 +984,13 @@ class DisplayMixin:
             if bandwidth_db is not _UNSET:
                 self._markers.set_bandwidth(m.id, tuple(bandwidth_db or ()))
             if threshold is not _UNSET:
-                # しきい値はいまのトレースの表示の形式の値で受け、その形式を覚える（設計R §3: SWR 2 以下など）
+                # しきい値はいまのトレースの表示の形式の値で受け、その形式と電力のしきい値かを覚える（設計R §3: SWR 2
+                # 以下など。電力のしきい値だけが電力の単位・外部補正に従ってずれる: 設計書 O §1.4）
                 v = self._views.get(m.trace)
                 self._markers.set_threshold(
                     m.id, None if threshold is None else ThresholdSetting(
-                        float(threshold["level"]), str(threshold["side"]), v.fmt if v is not None else formats.DB))
+                        float(threshold["level"]), str(threshold["side"]), v.fmt if v is not None else formats.DB,
+                        power=(v.quantity == Quantity.POWER) if v is not None else self._last_quantity == Quantity.POWER))
         except (ValueError, TypeError, KeyError) as e:
             raise self._error("bad_marker_function", None, {"message": str(e)}) from e
         self._markers_changed()

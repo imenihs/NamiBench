@@ -84,6 +84,7 @@ class ViewMixin:
             # 縦軸の単位を決めてあれば（マーカーから REF に・など）、電力の単位を新しい単位の名前にする
             self._amplitude["unit"] = view_units.level_shift(unit_for(Quantity.POWER, self._profile), new)[1]
         if delta and self._last_quantity == Quantity.POWER:
+            # 縦軸に付いた値（REF・XY カーソルの Y・ピークのしきい値）は、いまの縦軸が電力のときだけずらす
             if shift_levels:
                 ref = self._amplitude.get("ref_level")
                 self._amplitude["ref_level"] = round((0.0 if ref is None else float(ref)) + delta, 2)
@@ -91,11 +92,14 @@ class ViewMixin:
             for k in ("y1", "y2"):
                 if getattr(xy, k) is not None:
                     setattr(xy, k, round(getattr(xy, k) + delta, 2))
-            for m in self._markers.markers():
-                if m.threshold is not None:
-                    m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
             if self._markers.peak_threshold is not None:
                 self._markers.peak_threshold = round(self._markers.peak_threshold + delta, 2)
+        if delta:
+            # マーカーのしきい値は、それぞれの単位に従う: 電力のトレースで決めたものだけを同じだけずらす。比の dB・|Γ|・
+            # SWR で決めたものは電力の単位に関係しない（いまの縦軸が電力でもずらさない: 設計R §3・設計書 O §1.4）
+            for m in self._markers.markers():
+                if m.threshold is not None and m.threshold.power:
+                    m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
         # 値の単位が変わるので、トレース・マーカー・REF の自動を出し直す
         self._emit_visible_traces()
         for e in self._files.values():

@@ -179,11 +179,14 @@ class MarkerFormatTest(unittest.TestCase):
         mid = tbl.markers()[0].id
         tbl.set_threshold(mid, ThresholdSetting(2.0, an.SIDE_BELOW, formats.SWR))
         d = marker_to_def(tbl.get(mid))
-        self.assertEqual(d["threshold"], {"level": 2.0, "side": "below", "format": "swr"})
-        self.assertEqual(marker_from_def(d).threshold.fmt, formats.SWR)
-        # 形式の無い前の版のしきい値は dB
+        self.assertEqual(d["threshold"], {"level": 2.0, "side": "below", "format": "swr", "power": False})
+        back = marker_from_def(d).threshold
+        self.assertEqual((back.fmt, back.power), (formats.SWR, False))
+        # 形式・電力の印の無い前の版のしきい値は dB の電力（前の版は電力の単位を替えるとずらしていた）
         del d["threshold"]["format"]
-        self.assertEqual(marker_from_def(d).threshold.fmt, formats.DB)
+        del d["threshold"]["power"]
+        back = marker_from_def(d).threshold
+        self.assertEqual((back.fmt, back.power), (formats.DB, True))
 
 
 if __name__ == "__main__":
