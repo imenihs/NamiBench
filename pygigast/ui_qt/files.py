@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from ..core import report_layout
 from ..core.units import format_freq
-from . import png_export, sizes, texts
+from . import png_export, screen_model, sizes, texts
 from .fields import FreqField
 
 if TYPE_CHECKING:
@@ -250,6 +250,17 @@ class ExportDialog(QDialog):
         v.addLayout(form)
         v.addWidget(self.r_all)
         lay.addWidget(g)
+        # ゼロスパン（設計N §1）: 表示している時間の範囲を測定中のトレースだけ書く。周波数の範囲と参照トレースは理由付きで
+        # 使えない（U-08。Web の書き出しの窓と同じ）
+        self.zero_span = screen_model.is_zero_span(win.state)
+        if self.zero_span:
+            g.setEnabled(False)
+            g.setToolTip(texts.ZERO_SPAN_TEXTS["freq_only"])
+            for cb, tid in self.trace_checks:
+                if not isinstance(tid, int):
+                    cb.setChecked(False)
+                    cb.setEnabled(False)
+                    cb.setToolTip(texts.ERRORS["zero_span_csv_live_only"])
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText(texts.LABELS["export_ok"])
         buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(self.trace_checks))
@@ -260,7 +271,7 @@ class ExportDialog(QDialog):
 
     def choice(self) -> tuple[list, Optional[int], Optional[int]]:
         traces = [tid for cb, tid in self.trace_checks if cb.isChecked()]
-        if self.r_all.isChecked():
+        if self.r_all.isChecked() or self.zero_span:
             return traces, None, None
         if self.r_custom.isChecked():
             lo, hi = sorted((self.f_start.hz(), self.f_stop.hz()))

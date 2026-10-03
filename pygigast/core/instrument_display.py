@@ -145,9 +145,15 @@ class DisplayMixin:
 
     # ------------------------------------------------------------------ 初期化・状態の保存
 
+    @property
+    def _markers(self) -> MarkerTable:
+        """いまの横軸のマーカー表。ゼロスパンの間は時間軸の表（位置はマイクロ秒: 設計N §1）、ほかは周波数軸の表。"""
+        return self._marker_tables["time" if self._adopted.axis.step_hz == 0 else "freq"]
+
     def _init_display(self, st: Optional[dict]) -> None:
         self._traces = TraceSet()
-        self._markers = MarkerTable()
+        # 周波数軸と時間軸（ゼロスパン）のマーカー表を別に持つ（周波数のマーカーを時間の位置として読まない: 設計N §1）
+        self._marker_tables = {"freq": MarkerTable(), "time": MarkerTable()}
         self._views: dict[int, TraceView] = {}
         self._marker_snap: dict = self._markers.snapshot({})
         self._undo: list[dict] = []
@@ -172,18 +178,22 @@ class DisplayMixin:
                 apply_trace_settings(self._traces[int(d["number"])], d)
             except (KeyError, TypeError, ValueError):
                 pass
-        # 読めない行・読めない XY は飛ばす（MarkerTable.from_defs）
-        self._markers.from_defs({"markers": st.get("markers") or [], "xy": st.get("xy") or {}})
+        # 読めない行・読めない XY は飛ばす（MarkerTable.from_defs）。時間軸の表は time_markers・time_xy
+        self._marker_tables["freq"].from_defs({"markers": st.get("markers") or [], "xy": st.get("xy") or {}})
+        self._marker_tables["time"].from_defs({"markers": st.get("time_markers") or [], "xy": st.get("time_xy") or {}})
         amp = st.get("amplitude") or {}
         for k in self._amplitude:
             if k in amp:
                 self._amplitude[k] = amp[k]
         self._marker_snap = self._markers.snapshot({})
+        # 起動したときの横軸（前回がゼロスパンなら時間: 設計N §1）。画面はマーカー表の列の名前に使う
+        self._marker_snap["x_kind"] = self._x_kind()
 
     def _display_state_to_save(self) -> dict:
         return {
             "traces": [trace_settings(t) for t in self._traces],
-            **{k: v for k, v in self._markers.to_defs().items() if k in ("markers", "xy")},
+            **{k: v for k, v in self._marker_tables["freq"].to_defs().items() if k in ("markers", "xy")},
+            **{"time_" + k: v for k, v in self._marker_tables["time"].to_defs().items() if k in ("markers", "xy")},
             "amplitude": dict(self._amplitude),
             "trace_options": dict(self._trace_opts),
         }
@@ -249,9 +259,12 @@ class DisplayMixin:
             if shift and peaks[tid]["max"] is not None:
                 peaks[tid]["max"] = peaks[tid]["max"] + shift
 
-        for t in self._traces:
-            if t.visible and t.values is not None and t.axis is not None and t.quantity is not None:
-                put_shifted(str(t.number), t.values, t.quantity, t.axis.freqs(), t.flags, t.profile)
+        if a.axis.step_hz == 0:
+            peaks.update(self._zs_ref_peaks())  # ゼロスパン: 表示している範囲の全部の点（設計N §1）
+        else:
+            for t in self._traces:
+                if t.visible and t.values is not None and t.axis is not None and t.quantity is not None:
+                    put_shifted(str(t.number), t.values, t.quantity, t.axis.freqs(), t.flags, t.profile)
         cache = self._ref_auto_file_cache
         new_cache = {}
         for e in self._files.values():
@@ -367,6 +380,19 @@ class DisplayMixin:
 
     def _rebuild_views(self) -> None:
         notes = self._trace_notes()
+        if self._adopted.axis.step_hz == 0:
+            # ゼロスパン: 横軸は時間（推定。位置はマイクロ秒: 設計N §1）
+            views = self._zs_views(notes)
+            for n, v in list(views.items()):
+                t = self._traces[n]
+                shift, unit = self._level_shift(t.quantity, t.profile)
+                if shift:
+                    v = dataclasses.replace(v, level_db=v.level_db + shift)
+                if unit != v.unit:
+                    v = dataclasses.replace(v, unit=unit)
+                views[n] = v
+            self._views = views
+            return
         views = {}
         for t in self._traces:
             if t.values is None or t.axis is None or t.quantity is None:
@@ -388,6 +414,11 @@ class DisplayMixin:
 
     def _refresh_markers(self, emit: bool = True) -> None:
         self._marker_snap = self._markers.snapshot(self._views)
+        # 横軸の種類（"freq"・"time"）。時間軸では位置（freq_hz・x1_hz など）はマイクロ秒（設計N §1）。
+        # 時間軸では区間の最大・最小・平均も出す
+        self._marker_snap["x_kind"] = self._x_kind()
+        if self._marker_snap["x_kind"] == "time":
+            self._marker_snap["interval"] = self._zs_interval()
         self._listen_follow_marker()  # 聞いているマーカーを動かしたら、聞く位置も動かす（設計Q §6.8）
         if emit:
             self._emit("markers", {"sweep_no": self._sweep_count, **self._marker_snap})
@@ -414,6 +445,7 @@ class DisplayMixin:
                 why, mode = self._norm_state.get("reason") or "", a.mode.value
             self._notice("power_display", {"reason": why, "mode": mode, "unit": self._view_opts.get("level_unit")})
         updates = self._traces.apply(frame)
+        self._zs_append(frame)  # ゼロスパンの流す表示のために時刻付きで持つ（設計N §1）
         for u in updates:
             if u.notices:
                 self._notice("trace", {"trace": u.number, "codes": list(u.notices)})
@@ -444,7 +476,7 @@ class DisplayMixin:
         n = t.axis.points
         eff = t.effective_average_type()
         shift, unit = self._level_shift(t.quantity, t.profile)
-        return {
+        payload = {
             "trace": t.number,
             "source": "live",
             "sweep_no": self._sweep_count,
@@ -470,6 +502,9 @@ class DisplayMixin:
                 "points": pts,
             },
         }
+        if self._adopted.axis.step_hz == 0 and t.axis.step_hz == 0:
+            return self._zs_payload(t, payload)  # 横軸は時間（設計N §1）
+        return payload
 
     # ------------------------------------------------------------------ 条件の変更
 
@@ -481,6 +516,7 @@ class DisplayMixin:
         原因を分けて見せたいときに渡す。holds は最大・最小保持を残すか（設計F §8）。
         """
         resets = self._traces.on_condition_change(kind, holds)
+        self._zs.clear()  # 流す表示の古い掃引は、値の意味が違うので捨てる（設計N §1）
         self._diff_refresh()
         if resets:
             self._notice("trace_reset", {"traces": sorted(resets), "cause": cause or kind.value,
@@ -628,6 +664,8 @@ class DisplayMixin:
         except ValueError as e:
             raise self._error("bad_trace_setting", None, {"message": str(e)}) from e
         self._record_undo(before)
+        if set(kw) - {"visible", "line"}:
+            self._zs.clear(t.number)  # 動作・回数を変えたら、流す表示の前の値は別の動作のもの（設計N §1）
         for code in notices:
             self._notice(code, {"trace": t.number})
         self._rebuild_views()
@@ -641,6 +679,7 @@ class DisplayMixin:
     def _cmd_clear_trace(self, number) -> dict:
         t = self._trace_of(number)
         t.discard()
+        self._zs.clear(t.number)
         self._rebuild_views()
         self._refresh_markers()
         self._diff_refresh()
@@ -815,6 +854,7 @@ class DisplayMixin:
         if isinstance(n, bool) or not isinstance(n, int):
             raise self._error("not_integer", "n")
         polarity = self._polarity(polarity)
+        self._zs_check_freq_op()  # ピークの一覧の欄の操作は周波数のピーク（設計P §9.7）
         v = self._view(trace)
         self._no_dips_on_power(v, polarity)
         rs = self._markers.place_top_peaks(v, n, polarity)
@@ -827,6 +867,8 @@ class DisplayMixin:
 
     def _cmd_marker_offset_add(self, id, type: str, sign: str, delta) -> dict:  # noqa: A002
         m = self._marker(id)
+        if type == "freq":
+            self._zs_check_freq_op("type")  # ゼロスパンの横軸は周波数ではない（設計N §1）
         try:
             s = Sign("-" if sign in ("−", "-") else sign)
             if type == "freq":
@@ -871,6 +913,8 @@ class DisplayMixin:
 
     def _cmd_marker_function(self, id, bandwidth_db=_UNSET, threshold=_UNSET) -> dict:  # noqa: A002
         m = self._marker(id)
+        if (bandwidth_db is not _UNSET and bandwidth_db) or (threshold is not _UNSET and threshold is not None):
+            self._zs_check_freq_op()  # N dB 帯域幅・しきい値の交点は周波数の幅を求める（ゼロスパンでは使わない）
         try:
             if bandwidth_db is not _UNSET:
                 self._markers.set_bandwidth(m.id, tuple(bandwidth_db or ()))
@@ -900,6 +944,7 @@ class DisplayMixin:
         戻り値: base（"noise_floor" | "max"）・base_level（その値）・polarity・peaks（周波数・レベル・基準からの差 diff_db）。
         """
         polarity = self._polarity(polarity)
+        self._zs_check_freq_op()
         v = self._view(trace)
         self._no_dips_on_power(v, polarity)
         pl = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db, polarity)
@@ -909,6 +954,8 @@ class DisplayMixin:
     def _cmd_marker_to(self, id, target: str) -> dict:  # noqa: A002
         """マーカーから条件を変える（設計G §3.4）。Center・Span は設計C §5.11 の規則を通る。"""
         m = self._marker(id)
+        if target in ("center", "span"):
+            self._zs_check_freq_op("target")  # 時間の位置は周波数の条件にできない（設計N §1）
         if target == "center":
             cmd = self._markers.center_command(m.id, self._views)
         elif target == "span":

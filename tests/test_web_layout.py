@@ -418,7 +418,7 @@ class App:
     rtl=True は偽物の DLL の RTL-SDR に繋ぐ（受信・聞くの欄が出る: Qt の LayoutRtlTest と同じ）。
     """
 
-    def __init__(self, lan: bool = True, rtl: bool = False) -> None:
+    def __init__(self, lan: bool = True, rtl: bool = False, zero_span: bool = False) -> None:
         from pygigast.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
         from pygigast.api.web import server as web
         from pygigast.core.devices.base import load_profile
@@ -464,6 +464,19 @@ class App:
         d["content"]["colors"]["text_dim"] = d["content"]["colors"]["panel_bg"]
         d["name"] = "読みにくい配色"
         self.call("palette_import", text=json.dumps(d))
+        if zero_span:
+            # ゼロスパン（設計N §1）: 流す表示に時間のマーカー（ピーク）と X1・X2 を置く
+            self.call("set_view", zero_span_s=10)
+            self.call("set_sweep", center_hz=100_000_000, span_hz=0)
+            n0 = self.call("get_state")["run"]["sweep_count"]
+            self.call("run", mode="single")
+            end = time.monotonic() + 30
+            while self.call("get_state")["run"]["sweep_count"] <= n0 or self.call("get_state")["run"]["state"] != "stopped":
+                if time.monotonic() > end:
+                    raise RuntimeError("掃引が終わらない")
+                time.sleep(0.05)
+            self.call("marker_add", kind="M", trace=1)
+            self.call("set_xy", x1_hz=-8_000_000, x2_hz=-1_000_000)
         self.srv = _Serve(web.create_app(self.api, lan=lan))
 
     def call(self, command: str, **kw):
@@ -871,6 +884,39 @@ class WebLayoutTest(unittest.TestCase):
         self.assertTrue(any("伸びている" in p for p in found), found)
         self.assertTrue(any("の文字 12px（段の値 13px）" in p for p in found), found)
         self.assertEqual(self.page.problems(".app", "戻した後"), [])
+
+
+class WebLayoutZeroSpanTest(unittest.TestCase):
+    """ゼロスパン（設計N §1）の主画面の右のタブ: 時間の欄（X1・X2）・区間の行・表示する長さの欄も同じ決まりで数える。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App(lan=False, zero_span=True)
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def check_size(self, w: int, h: int) -> None:
+        open_app(self.page, self.app, w, h)
+        found: list[str] = []
+        for where, root in views(self.page, tabs_only=True):
+            found += self.page.problems(root, f"{w}×{h} ゼロスパン {where}")
+        self.assertEqual(self.page.ev("gsApp.ui.x_axis.kind"), "time")
+        self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_1280x720(self):
+        self.check_size(*SIZES[0])
+
+    def test_1920x1080(self):
+        self.check_size(*SIZES[1])
 
 
 class TopFreqSampleTest(unittest.TestCase):

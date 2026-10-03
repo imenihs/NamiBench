@@ -67,7 +67,8 @@ def markers_view(snap: dict, unit: str = "dBm", freq_offset_hz: int = 0) -> dict
                     "ref": r.get("ref") if not r.get("child") else None, "cells": c, "line": r.get("line"),
                     "remove": {"cmd": rm[0], "args": rm[1]} if rm else None, "edits": edits,
                     "ops": marker_rows.row_ops(r, snap)})
-    return {**snap, "rows": out, "columns": list(marker_rows.COLUMNS), "right": list(marker_rows.RIGHT)}
+    return {**snap, "rows": out, "columns": list(marker_rows.columns(snap.get("x_kind") or "freq")),
+            "right": list(marker_rows.RIGHT)}
 
 
 def devices_view(p: dict) -> dict:

@@ -27,6 +27,8 @@ from .texts_settings import SETTINGS_ERRORS, VIEW_TEXTS
 from .texts_web_settings import *  # noqa: F401,F403 — ブラウザだけの設定の画面・キーの割り当ての語
 from .texts_cal import *  # noqa: F401,F403 — 校正の画面の語（設計K）
 from .texts_cal import CAL_ERRORS, CAL_TASK_CANCELLED, CAL_TASK_DONE, CAL_TASK_FAILED, CAL_TASK_NAMES
+from .texts_zerospan import *  # noqa: F401,F403 — ゼロスパンの時間軸と流す表示の語（設計N §1）
+from .texts_zerospan import ZERO_SPAN_ERRORS
 
 
 def tpl(key: str, **kw) -> str:
@@ -141,6 +143,8 @@ WARNINGS = {
     "rbw180k_narrow_span": "RBW 180kHz で Span 0.3MHz 未満: 平らな上面しか見えません（レベルは正しい）",
     "rbw30k_fine_step": "RBW 30kHz で Step 2kHz 未満: 形が狭く出ます（レベルは正しい）",
     "rbw15k_unstable": "RBW 15kHz は1回の掃引ではレベルと形が揺れます。平均を使ってください",
+    # ゼロスパンで RBW 15kHz（設計N §1・C §5.3。D4: 15〜30dB の落ち込みが散発する）
+    "rbw15k_zero_span": "RBW 15kHz のゼロスパンは 15〜30dB の落ち込みが散発します（RBW 180kHz なら安定）",
 }
 
 
@@ -469,6 +473,7 @@ MARKER_NOTES = {
     "reference_coarse": "基準が粗い（±0.5dB 程度）",
     "reference_power_cycled": "電源の入れ直し前の基準",
     "rbw15k_unstable": "RBW 15kHz の1回の掃引",
+    "rbw15k_zero_span": "RBW 15kHz のゼロスパン（落ち込みが散発）",
     "rbw180k_narrow_span": "RBW 180kHz で狭い Span",
     "rbw30k_fine_step": "RBW 30kHz で細かい Step",
     "no_value": "値なし",
@@ -640,6 +645,7 @@ def task_label(t: dict) -> str:
     return text
 
 
+ERRORS.update(ZERO_SPAN_ERRORS)
 ERRORS.update({
     "no_trace_data": "そのトレースにまだ値がありません",
     "table_full": "マーカーはそれぞれ 8 本までです",

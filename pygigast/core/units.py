@@ -85,6 +85,41 @@ def format_freq(hz: int, unit_exp: Optional[int] = None) -> str:
     return f"{s} {unit}"
 
 
+# ゼロスパンの時間（設計N §1）。横軸・マーカー・XY カーソルの位置はマイクロ秒の整数で持つ（周波数と同じく整数で
+# 持ち、マーカーの仕組みをそのまま使う）。欄に打つときの単位は s・ms・μs（省いたら ms）
+_TIME_EXP = {"s": 6, "ms": 3, "us": 0, "µs": 0, "μs": 0}
+_TIME_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(s|ms|us|µs|μs)?\s*$")
+TIME_UNIT = "ms"  # 欄・マーカー表・マウスの位置の読み値の時間の単位（全部同じ単位で桁をそろえる: U-17）
+
+
+def parse_time_us(text: str, default_unit: str = TIME_UNIT) -> int:
+    """時間の文字列をマイクロ秒の int にする（例 '12.5' → 12500、'-1.2 s' → -1200000）。負号は「-」と「−」。"""
+    m = _TIME_RE.match(text.replace(MINUS, "-"))
+    if not m:
+        raise ParseError(text)
+    try:
+        value = Decimal(m.group(1)).scaleb(_TIME_EXP[m.group(2) or default_unit])
+    except InvalidOperation as e:
+        raise ParseError(text) from e
+    return int(value.quantize(Decimal(1), rounding=ROUND_HALF_EVEN))
+
+
+def format_time_us(us: float) -> str:
+    """マイクロ秒を ms の小数3桁で書く（例 -5234123 → '-5234.123 ms'）。端数のマイクロ秒は偶数丸め。"""
+    v = Decimal(int(round(us))).scaleb(-3)
+    return f"{format(v, '.3f')} {TIME_UNIT}"
+
+
+def time_axis_unit(span_us: float) -> tuple[float, str]:
+    """時間軸の目盛の単位（1単位が何マイクロ秒か, 単位の名前）。幅が 2 s 以上は s、2 ms 以上は ms、それより狭いと μs。"""
+    a = abs(float(span_us))
+    if a >= 2e6:
+        return 1e6, "s"
+    if a >= 2e3:
+        return 1e3, "ms"
+    return 1.0, "μs"
+
+
 def parse_db(text: str) -> float:
     """dB・dBm の欄。単位の文字は読み飛ばす。マイナスは「-」と「−」（U+2212。表示に使う字形）の両方を読む。"""
     t = text.strip().replace(MINUS, "-")

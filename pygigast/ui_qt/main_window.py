@@ -57,6 +57,7 @@ from .tab_source import SourceTab
 from .tab_traces import TraceTab, disable_item
 from .tasks import TaskPanel
 from .theme import DARK, stylesheet
+from .time_axis import apply_x_axis
 from .presets_dialog import PresetsDialog, save_new
 from .ref_quick import RefQuick
 from .topbar import TopBar
@@ -648,17 +649,18 @@ class MainWindow(QMainWindow):
         m.setToolTipsVisible(True)
         why = self._freq_ops_reason()
         hz = int(round(x))
-        shown = format_freq(hz + texts.freq_offset_of(self.state))  # 換算後の周波数（設計O）
-        act = m.addAction(texts.LABELS["ctx_center"] + ("" if why else texts.tpl("paren", text=shown)))
+        # 換算後の周波数（設計O）。ゼロスパンは時間（設計N §1）
+        shown = texts.tpl("paren", text=screen_model.x_text(self.state, x)) if self.state.get("sweep") else ""
+        act = m.addAction(texts.LABELS["ctx_center"] + ("" if why else shown))
         act.setObjectName("ctx_center")
         act.triggered.connect(lambda: self._set_sweep(center_hz=hz, field=self.f_center))
-        act2 = m.addAction(texts.LABELS["ctx_marker"] + ("" if why else texts.tpl("paren", text=shown)))
+        act2 = m.addAction(texts.LABELS["ctx_marker"] + shown)
         act2.setObjectName("ctx_marker")
         act2.triggered.connect(lambda: self._marker_add_at(x, y))
-        for a in (act, act2):
-            if why:
+        for a, reason in ((act, why), (act2, self._marker_reason())):
+            if reason:
                 a.setEnabled(False)
-                a.setToolTip(why)
+                a.setToolTip(reason)
         level = round(y, 1)
         act = m.addAction(texts.LABELS["ctx_ref"].replace("{level}", f"{level:.1f}").replace("{unit}", self.display_unit()))
         act.setObjectName("ctx_ref")
@@ -666,10 +668,14 @@ class MainWindow(QMainWindow):
         sel = self.selected_marker
         if sel:
             m.addSeparator()
+            freq_only = screen_model.zero_span_view(self.state)["freq_only"]
             for target, name in (("center", "ctx_m_center"), ("ref", "ctx_m_ref"), ("span", "ctx_m_span")):
                 a = m.addAction(texts.LABELS[name].replace("{m}", sel))
                 a.setObjectName(name)
                 a.triggered.connect(lambda _=False, t=target: self.marker_to(sel, t))
+                if freq_only and target != "ref":
+                    a.setEnabled(False)  # 時間の位置は周波数の条件にできない（設計N §1）
+                    a.setToolTip(freq_only)
             # マーカーの位置を聞く（設計Q §6.8）。使えないときは理由を出す（U-08）
             a = m.addAction(texts.LABELS["ctx_m_listen"].replace("{m}", sel).replace("{start}", texts.LISTEN_LABELS["start"]))
             a.setObjectName("ctx_m_listen")
@@ -712,10 +718,14 @@ class MainWindow(QMainWindow):
         shift = bool(QGuiApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
         self.call("marker_set", id=self.selected_marker, step=sign * (10 if shift else 1))
 
+    def _marker_reason(self) -> Optional[str]:
+        """マーカーを置けない理由。ゼロスパンでも時間の位置に置ける（設計N §1）。"""
+        return None if self.state.get("sweep") else texts.REASON_TEXTS["no_sweep"]
+
     def _marker_add_at(self, x: float, y: float) -> None:
         """その位置に M を置く。見えているトレースのうち縦に最も近いものに載せる（G §3.2）。
-        向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き）。"""
-        if self._freq_ops_reason():
+        向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き）。ゼロスパンの x は時間（μs）。"""
+        if self._marker_reason():
             return
         trace = self.traces.nearest_trace(x, y) or self._first_visible_trace()
         self.call("marker_add", on_ok=self._select_result, kind="M", trace=trace, freq_hz=int(round(x)),
@@ -732,7 +742,7 @@ class MainWindow(QMainWindow):
     def _marker_at_mouse(self) -> None:
         vb = self.plot.getPlotItem().getViewBox()
         scene = self.plot.mapToScene(self.plot.mapFromGlobal(QCursor.pos()))
-        if not vb.sceneBoundingRect().contains(scene) or self._freq_ops_reason():
+        if not vb.sceneBoundingRect().contains(scene) or self._marker_reason():
             return
         p = vb.mapSceneToView(scene)
         self._marker_add_at(p.x(), p.y())
@@ -774,7 +784,9 @@ class MainWindow(QMainWindow):
         self.call("set_xy", **{key: int(round(value)) if key.endswith("_hz") else round(float(value), 2)})
 
     def _apply_markers(self, snap: dict) -> None:
-        self.marker_snap = {"markers": snap.get("markers", []), "xy": snap.get("xy") or {}}
+        # 横軸の種類と、ゼロスパンの区間の最大・最小・平均も持つ（マーカー表の列と行: 設計N §1）
+        self.marker_snap = {"markers": snap.get("markers", []), "xy": snap.get("xy") or {},
+                            "x_kind": snap.get("x_kind") or "freq", "interval": snap.get("interval")}
         ids = {m["id"] for m in self.marker_snap["markers"]}
         if self.selected_marker not in ids:
             self.selected_marker = None
@@ -784,14 +796,17 @@ class MainWindow(QMainWindow):
         self.marker_row_list = marker_rows.rows_from_snapshot(self.marker_snap)
         self.marker_panel.set_rows(self.marker_row_list, self.selected_marker)
         self.marker_tab.apply(self._selected_row(), self.marker_snap)
-        self.marker_layer.enabled = self._freq_ops_reason() is None
+        self.marker_layer.enabled = self._marker_reason() is None
         self.marker_layer.update(self.marker_row_list, self.selected_marker, self.marker_snap["xy"])
         why = None if self.selected_marker else texts.REASON_TEXTS["select_marker"]
-        for code in ("marker_left", "marker_right", "marker_center", "marker_ref", "marker_remove"):
+        for code in ("marker_left", "marker_right", "marker_ref", "marker_remove"):
             menus.set_reason(self.actions[code], why)
+        # ゼロスパンの位置は時間なので、周波数の条件（Center・Start/Stop）にはできない（設計N §1）
+        freq_only = screen_model.zero_span_view(self.state)["freq_only"]
+        menus.set_reason(self.actions["marker_center"], why or freq_only)
         sel = self._selected_row()
         menus.set_reason(self.actions["marker_span"],
-                         why or (None if sel and sel.get("ref") else texts.REASON_TEXTS["delta_ref"]))
+                         why or freq_only or (None if sel and sel.get("ref") else texts.REASON_TEXTS["delta_ref"]))
         if hasattr(self, "listen"):
             self.listen.refresh()
             self.rtl_panel.refresh_markers()
@@ -958,7 +973,6 @@ class MainWindow(QMainWindow):
                          + (f" — {why}" if why else ""))
             menus.set_reason(self.actions[f"mode_{code}"], why)
         self.span_lock.show_lock(sw.get("span_lock_hz"), sw["span_hz"], format_freq)
-        self.plot.getPlotItem().getViewBox().freq_ops_enabled = self._freq_ops_reason() is None
         if self._amp_pending == 0:
             self._take_amplitude(st.get("amplitude") or {})
         self._update_x_axis()
@@ -1022,17 +1036,8 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(running or run["state"] == "stopping")
 
     def _update_x_axis(self) -> None:
-        sw = self.state.get("sweep")
-        if not sw:
-            return
-        if sw["step_hz"] == 0:
-            # ゼロスパンの時間軸は設計N（⑥）。いまは点の番号で出す
-            self.plot.getPlotItem().setLabel("bottom", texts.LABELS["axis_zero_span"], units="")
-            self.plot.setXRange(0, max(1, sw["points"] - 1), padding=0)
-        else:
-            # 周波数オフセットで換算中なら、軸の名前で示す（設計O）
-            self.plot.getPlotItem().setLabel("bottom", look.freq_axis_label(self.state), units="Hz")
-            self.plot.setXRange(sw["start_hz"], sw["stop_hz"], padding=0)
+        # 周波数軸、ゼロスパンは時間（推定）の軸（設計N §1。範囲・名前は screen_model.x_axis_view: Web と同じ）
+        apply_x_axis(self)
 
     # ------------------------------------------------------------------ 知らせ・ドラッグ＆ドロップ・閉じる
 

@@ -233,8 +233,10 @@ class _Painter:
         pad = self.fm.horizontalAdvance("あ")
         col_gap = pad * 2
         block_w = (rect.width() - col_gap * (cols - 1)) / cols
+        # 列の名前は配置のもの（ゼロスパンは位置の列が時間: 設計N §1。Web の PNG と同じ report_layout の見出し）
+        header = list(self.lay["table"].get("header") or MARKER_COLUMNS)
         # 列の幅は中身の最大幅（全ブロックで共通にして縦に揃える）
-        widths = [max(self.fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+        widths = [max(self.fm.horizontalAdvance(r[i]) for r in rows + [header]) for i in range(len(header))]
         need = sum(widths) + pad * (len(widths) - 1)
         scale_font = need > block_w
         if scale_font:
@@ -244,7 +246,7 @@ class _Painter:
             self.p.setFont(f)
             fm = QFontMetricsF(f)
             pad = fm.horizontalAdvance("あ")
-            widths = [max(fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+            widths = [max(fm.horizontalAdvance(r[i]) for r in rows + [header]) for i in range(len(header))]
         else:
             fm = self.fm
         for b in range(cols):
@@ -252,7 +254,7 @@ class _Painter:
             if not chunk:
                 continue
             x0 = rect.left() + b * (block_w + col_gap)
-            self._draw_table_block([list(MARKER_COLUMNS)] + chunk, widths, pad, x0, rect.top(), fm)
+            self._draw_table_block([header] + chunk, widths, pad, x0, rect.top(), fm)
 
     def _draw_table_block(self, rows, widths, pad, x0, y0, fm: QFontMetricsF) -> None:
         y = y0
@@ -278,13 +280,12 @@ class _Painter:
         ref = float(c.get("ref_level", 0.0))
         div = float(c.get("db_per_div", 10.0))
         bottom = ref - DIVISIONS * div
-        zero_span = c.get("step_hz") == 0
-        if zero_span:
-            # ゼロスパン: 横軸は点の番号（画面と同じ: 設計N）
-            start, stop = 0.0, float(max(1, int(c.get("points") or 2) - 1))
-        else:
-            start = float(c.get("start_hz", 0.0))
-            stop = float(c.get("stop_hz", start + 1.0))
+        start = float(c.get("start_hz", 0.0))
+        stop = float(c.get("stop_hz", start + 1.0))
+        xa = c.get("x_axis") or {}
+        if xa.get("kind") == "time":
+            # ゼロスパン: 横軸は時間（μs。設計N §1）。トレース・マーカーの位置も μs
+            start, stop = float(xa["x0"]), float(xa["x1"])
         if stop <= start:
             stop = start + 1.0
 
@@ -336,7 +337,7 @@ class _Painter:
         self.p.setClipRect(plot)
         shown = [tr for tr in self.data.get("traces") or [] if tr.get("visible", True)]
         for tr in sorted(shown, key=lambda t: rl.draw_order_key(t.get("line"), t.get("number"))):
-            self._draw_trace(tr, fx, fy, start, stop, index=zero_span)
+            self._draw_trace(tr, fx, fy, start, stop)
         self.p.restore()
         self._draw_markers(plot, fx, fy, start, stop, ref, bottom)
 
@@ -376,19 +377,15 @@ class _Painter:
             self.p.drawText(QPointF(x + sw, rect.top() + self.base), s)
             x += sw + self.fm.horizontalAdvance(s) + self.fm.horizontalAdvance("あ") * 2
 
-    def _draw_trace(self, tr: dict, fx, fy, start: float, stop: float, index: bool = False) -> None:
-        """index は横軸が点の番号（ゼロスパン）のとき。"""
+    def _draw_trace(self, tr: dict, fx, fy, start: float, stop: float) -> None:
         vals = tr.get("values_db")
         if vals is None:
             return
         vals = [float(v) for v in (vals.tolist() if hasattr(vals, "tolist") else vals)]
         n = int(tr.get("points") or len(vals))
         n = min(n, len(vals))
-        if index:
-            f0, st = 0.0, 1.0
-        else:
-            f0 = float(tr.get("start_hz", start))
-            st = float(tr.get("step_hz", (stop - start) / max(1, n - 1)))
+        f0 = float(tr.get("start_hz", start))
+        st = float(tr.get("step_hz", (stop - start) / max(1, n - 1)))
         flags = tr.get("flags")
         flags = list(flags.tolist() if hasattr(flags, "tolist") else flags) if flags is not None else None
         col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")
@@ -474,8 +471,8 @@ class _Painter:
         for m in self.data.get("markers") or []:
             kind = m.get("kind", "marker")
             f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
-            if kind in ("freq_cursor", "level_cursor"):
-                continue
+            if kind in ("freq_cursor", "level_cursor", "interval"):
+                continue  # カーソルは上で描いた。区間の最大・最小・平均は表の行だけ（画面のグラフにも描かない: 設計N §1）
             else:
                 if f is None or v is None or not (start <= f <= stop):
                     continue

@@ -19,7 +19,9 @@ I §3.1 の「配置（帯の項目・順・文字の大きさ）はコアのデ
       "mode": "スペクトラムアナライザ",
       "conditions": {"start_hz", "stop_hz", "rbw_hz", "points", "step_hz",
                      "image_reject" ("accurate"・"fast"・"off"。実際に使ったもの。None なら出さない),
-                     "ref_level", "db_per_div", "unit"},
+                     "ref_level", "db_per_div", "unit",
+                     "x_axis" (ゼロスパンだけ: {"kind": "time", "x0", "x1"（μs）, "factor", "unit", "length_s",
+                               "point_time_s"}。横軸・トレース・マーカーの位置は μs: 設計N §1)},
       "calibration": {"source": "...", "at": "..."} | None,      # None は「校正データ: なし」
       "normalization": {"name", "at", "applied", "before_power_cycle", "reason"} | None,
       "traces": [{"number", "action", "average", "count", "count_target", "label", "color", "visible",
@@ -37,7 +39,8 @@ import datetime as _dt
 import math
 from typing import Any, Iterable, Optional, Union
 
-from .units import format_freq, level_text
+from . import zero_span as zs
+from .units import format_freq, level_text, time_axis_unit
 
 META_KEY = "pygigast"
 
@@ -164,7 +167,9 @@ MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", 
 # 数える列は右寄せ（U-17）
 MARKER_RIGHT = (False, True, True, True, False, True, True, False)
 X_AXIS_TITLE = "周波数 (MHz)"
-X_AXIS_TITLE_ZERO_SPAN = "点（ゼロスパン）"
+# ゼロスパンの横軸（設計N §1。機器は時刻を返さないので推定）とマーカー表の位置の列
+X_AXIS_TITLE_TIME = "時間（推定） ({unit})"
+MARKER_COLUMNS_TIME = ("番号", "トレース", "時間 (ms)", "値", "基準", "Δ時間 (ms)", "Δ値 (dB)", "")
 X_AXIS_TITLE_OFFSET = "周波数 (MHz)・換算後（測った周波数に {off} を足した値）"
 
 
@@ -277,6 +282,12 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
         cond.append(s)
     if c.get("image_reject") is not None:
         cond.append("イメージ除去 " + IMAGE_REJECT_WORDS.get(c["image_reject"], str(c["image_reject"])))
+    xa = c.get("x_axis") or {}
+    if xa.get("kind") == "time":
+        # ゼロスパンの表示する長さと、時間の推定に使った1点あたりの時間（設計N §1）
+        length = float(xa.get("length_s") or 0)
+        shown = "掃引1回" if not length else f"表示 {length:g} 秒（掃引の間は空白）"
+        cond.append(f"ゼロスパン {shown}・1点 {float(xa.get('point_time_s') or 0) * 1e3:.3f} ms（推定）")
     if c.get("ref_level") is not None:
         cond.append(f"REF {level_text(c['ref_level'])} {unit}")
     if c.get("db_per_div") is not None:
@@ -346,10 +357,13 @@ def freq_decimals(values_hz: Iterable[Optional[float]]) -> int:
 def marker_table_rows(data: dict) -> list[list[str]]:
     """マーカー表の行の文字（列は MARKER_COLUMNS）。コピー用の表と同じ中身。"""
     ms = data.get("markers") or []
-    off = int((data.get("conditions") or {}).get("freq_offset_hz") or 0)
+    time = is_time_axis(data)
+    off = 0 if time else int((data.get("conditions") or {}).get("freq_offset_hz") or 0)
     ms = [{**m, "freq_hz": m["freq_hz"] + off} if m.get("freq_hz") is not None and off else m for m in ms]
     freqs = [m.get("freq_hz") for m in ms] + [m.get("delta_freq_hz") for m in ms]
     d = freq_decimals(f for f in freqs if f is not None)
+    # 位置の列: 周波数は MHz、ゼロスパンの時間は ms の小数3桁（画面のマーカー表と同じ: 設計N §1）
+    scale, d = (1e3, 3) if time else (1e6, d)
     unit = (data.get("conditions") or {}).get("unit", "dBm")
     out = []
     for m in ms:
@@ -361,10 +375,10 @@ def marker_table_rows(data: dict) -> list[list[str]]:
         out.append([
             name,
             str(m["trace"]) if m.get("trace") is not None else "",
-            f"{f / 1e6:.{d}f}" if f is not None else "",
+            f"{f / scale:.{d}f}" if f is not None else "",
             f"{v:.2f} {m.get('unit') or unit}" if v is not None else "",
             str(m.get("ref") or ""),
-            f"{df / 1e6:+.{d}f}" if df is not None else "",
+            f"{df / scale:+.{d}f}" if df is not None else "",
             f"{dv:+.2f}" if dv is not None else "",
             str(m.get("note") or ""),
         ])
@@ -404,12 +418,16 @@ def x_labels(start: float, stop: float) -> list[str]:
     return [f"{t / 1e6:.{d}f}" for t in ticks]
 
 
-def index_labels(points: int) -> list[str]:
-    """ゼロスパンの横軸の数字（点の番号 0〜points−1 を 10 区画。画面の横軸と同じく点の番号: 設計N）。
-    全部の目盛で桁をそろえ、番号を落とさない最小の桁（最大 2 桁）。"""
-    last = max(1, int(points) - 1)
-    ticks = [last * i / DIVISIONS for i in range(DIVISIONS + 1)]
-    d = next((d for d in range(3) if all(abs(round(t, d) - t) < 1e-9 for t in ticks)), 2)
+def is_time_axis(data: dict) -> bool:
+    return ((data.get("conditions") or {}).get("x_axis") or {}).get("kind") == "time"
+
+
+def time_x_labels(x0: float, x1: float, factor: float) -> list[str]:
+    """ゼロスパンの横軸の数字（目盛の単位で。全部の目盛で桁をそろえる）。"""
+    ticks = [(x0 + (x1 - x0) * i / DIVISIONS) / factor for i in range(DIVISIONS + 1)]
+    for d in range(7):
+        if all(abs(round(t, d) - t) < 1e-9 for t in ticks):
+            break
     return [f"{t:.{d}f}" for t in ticks]
 
 
@@ -516,6 +534,8 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
     lh = line_px(px)
     c = data.get("conditions") or {}
     rows, cols, per_col = fit_table(marker_table_rows(data), h, lh)
+    xa = c.get("x_axis") or {}
+    time = xa.get("kind") == "time"
     start = float(c.get("start_hz") or 0.0)
     stop = float(c.get("stop_hz") or start + 1.0)
     if stop <= start:
@@ -523,9 +543,10 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
     off = int(c.get("freq_offset_hz") or 0)
     ylabels = y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0)))
     unit = c.get("unit", "dBm")
-    if c.get("step_hz") == 0:
-        # ゼロスパン: 横軸は点の番号（画面と同じ: 設計N）。周波数オフセットは横軸に出さない（設計O）
-        xlabels, xtitle = index_labels(int(c.get("points") or 2)), X_AXIS_TITLE_ZERO_SPAN
+    if time:
+        # ゼロスパン: 横軸は時間（推定。画面と同じ: 設計N §1）。周波数オフセットは横軸に出さない（設計O）
+        xlabels = time_x_labels(float(xa["x0"]), float(xa["x1"]), float(xa["factor"]))
+        xtitle = X_AXIS_TITLE_TIME.replace("{unit}", str(xa.get("unit")))
     else:
         # 横軸の数字は換算後の周波数、見出しに換算中であることを書く（設計O: 軸の名前で示す）
         xlabels = x_labels(start + off, stop + off)
@@ -539,8 +560,8 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
         "item_gap": LAYOUT["item_gap"],
         "fonts": list(JP_FONT_FALLBACKS),
         "band": [[color, items] for color, items in band_rows(data, note, app_version)],
-        "table": {"header": list(MARKER_COLUMNS), "right": list(MARKER_RIGHT), "rows": rows,
-                  "cols": cols, "rows_per_col": per_col},
+        "table": {"header": list(MARKER_COLUMNS_TIME if time else MARKER_COLUMNS), "right": list(MARKER_RIGHT),
+                  "rows": rows, "cols": cols, "rows_per_col": per_col},
         # 凡例の線の見本は、そのトレースの線（設計F §9）。stroke は見本の太さと切れ目（画素）
         "legend": [{"number": t.get("number"), "color": t.get("color") or f"trace{t.get('number', 1)}",
                     "text": legend_text(t), "line": t.get("line") or TRACE_LINE_DEFAULT,
@@ -607,6 +628,16 @@ def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, m
     conn = state.get("connection") or {}
     ident = conn.get("identity") or {}
     view = state.get("view") or {}
+    x_axis = None
+    if sw.get("step_hz") == 0:
+        # ゼロスパン: 横軸は時間（推定）。範囲と目盛の単位は画面と同じ決め方（core/zero_span.py・units）
+        length = float(view.get("zero_span_s", 10) or 0)
+        pt = float(sw.get("point_time_s") or 0.0)
+        x0, x1 = zs.x_range_us(length, int(sw.get("points") or 1), pt)
+        x1 = max(x1, x0 + 1)
+        factor, tunit = time_axis_unit(x1 - x0)
+        x_axis = {"kind": "time", "x0": x0, "x1": x1, "factor": factor, "unit": tunit, "length_s": length,
+                  "point_time_s": pt}
     if measured_at is None:
         latest = max((t.get("last_update_time") or 0 for t in state.get("traces") or []
                       if t.get("visible") and t.get("has_values")), default=0)
@@ -625,7 +656,8 @@ def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, m
                        "ref_level": ref_level, "db_per_div": db_per_div, "unit": unit,
                        # 表示の設定（設計O）: 周波数オフセット・外部補正。帯と横軸に出す
                        "freq_offset_hz": int(view.get("freq_offset_hz") or 0),
-                       "ext_db": float(view.get("ext_db") or 0.0)},
+                       "ext_db": float(view.get("ext_db") or 0.0),
+                       **({"x_axis": x_axis} if x_axis else {})},
         "calibration": calibration_of(state),
         "normalization": normalization_of(state, norm_reasons),
         "traces": traces,

@@ -51,6 +51,8 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
         "tail_gap": a.tail_gap,
         "warnings": list(a.warnings),
         "span_lock_hz": a.span_lock_hz,
+        # 1点あたりの時間の見積もり（秒）。ゼロスパンの時間軸（設計N §1）
+        "point_time_s": a.point_time_s,
     }
 
 

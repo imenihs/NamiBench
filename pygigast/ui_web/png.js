@@ -240,7 +240,11 @@
       // トレースの線の基準の幅は Qt の PNG と同じ（report_layout.png_line_base: 文字の大きさから）
       const g = new GSGraph(host, { colors: c, static: true, bare: true, width: graphW, height: graphH, lineBase: lay.line_base_px });
       const s = (ctx.st || {}).sweep || {};
-      if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true); else g.setX(s.start_hz, s.stop_hz, false);
+      // 横軸は画面と同じ（ゼロスパンは時間: サーバーの ui.x_axis。設計N §1）
+      const xa = ((ctx.st || {}).ui || {}).x_axis;
+      if (xa && xa.kind === "time") g.setX(xa.x0, xa.x1, xa); else g.setX(s.start_hz, s.stop_hz, null);
+      // 周波数オフセット（設計O）: 目盛の数字と軸の名前は画面と同じく換算後
+      if (s.step_hz !== 0 && ctx.offset && ctx.offset.hz) g.setXOffset(ctx.offset.hz, ctx.offset.text);
       g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit);
       g.setTraces(ctx.traces(c));
       g.setMarkers((ctx.markers || {}).markers || [], null);

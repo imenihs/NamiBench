@@ -26,7 +26,9 @@ def build(win: "MainWindow") -> dict:
         ax = p["axis"]
         if "freqs_hz" in ax:
             continue  # 不等間隔の軸は画像の描き方（Start・Step）に載らない
-        item = {"start_hz": ax["start_hz"], "step_hz": ax["step_hz"], "points": ax["points"],
+        # ゼロスパンの時間軸は始まりと幅が μs（設計N §1。画像は横軸の位置として同じに描く）
+        x0, step = (ax["start_us"], ax["step_us"]) if ax.get("kind") == "time" else (ax["start_hz"], ax["step_hz"])
+        item = {"start_hz": x0, "step_hz": step, "points": ax["points"],
                 "values_db": np.asarray(p["values"], dtype=np.float64), "visible": True,
                 "flags": None}
         if p.get("source") == "file":

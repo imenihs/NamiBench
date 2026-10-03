@@ -28,6 +28,7 @@
 <script src="app_rtl.js"></script>
 <script src="app_devices.js"></script>
 <script src="app_files.js"></script>
+<script src="app_zerospan.js"></script>
 <script src="app.js"></script>
 </head>
 <body>
@@ -392,9 +393,9 @@
           <h3>{{ W('offsets') }}</h3>
           <!-- 種類・符号・量・追加を1行に（Qt と同じ） -->
           <div class="row nowrap" :class="{disabled: !selMarker}">
-            <select v-model="off.type" :disabled="!selMarker"><option value="freq">{{ W('freq') }}</option><option value="level">{{ W('level') }}</option></select>
+            <select :value="offType()" :disabled="!selMarker" @change="off.type = $event.target.value"><option value="freq" :disabled="!!zsView.freq_only" :title="zsView.freq_only || ''">{{ W('freq') }}</option><option value="level">{{ W('level') }}</option></select>
             <select v-model="off.sign" :disabled="!selMarker"><option value="+">+</option><option value="-">−</option><option value="±">±</option></select>
-            <input class="w-value" v-model="off.delta" :disabled="!selMarker" :placeholder="off.type === 'freq' ? W('eg_freq') : W('eg_db')" @keydown.enter="addOffset">
+            <input class="w-value" v-model="off.delta" :disabled="!selMarker" :placeholder="offType() === 'freq' ? W('eg_freq') : W('eg_db')" @keydown.enter="addOffset">
             <button :disabled="!selMarker" @click="addOffset">{{ W('add') }}</button>
           </div>
           <div class="fnote" v-if="notes.offset">{{ notes.offset.text }}</div>
@@ -409,19 +410,21 @@
         <section class="sec">
           <h3>{{ W('functions') }}</h3>
           <!-- Qt の tab_markers と同じ並び。dB の欄は REF レベルと同じ打てるドロップダウン（G §3.6: fields.js の db-field） -->
-          <div class="fn-grid" data-repeat :class="{disabled: !selMarker}" :title="selMarker ? '' : T('REASON_TEXTS', 'select_marker')">
-            <label class="inline"><input type="checkbox" :checked="fnView().on1" :disabled="!selMarker" @change="setBandwidth(0, $event.target.checked, null)">{{ W('n_db_bw') }}</label>
-            <db-field :value="fnView().n1" :choices="dbLists.bw" :lo="dbRanges.bw[0]" :hi="dbRanges.bw[1]" :disabled="!selMarker" @commit="setBandwidth(0, null, $event)"></db-field>
+          <!-- ゼロスパンでは使わない（周波数の幅を求める機能: 設計N §1）。理由は Qt と同じ（ui.zero_span.freq_only） -->
+          <div class="fn-grid" data-repeat :class="{disabled: !selMarker || zsView.freq_only}" :title="zsView.freq_only || (selMarker ? '' : T('REASON_TEXTS', 'select_marker'))">
+            <label class="inline"><input type="checkbox" :checked="fnView().on1" :disabled="!selMarker || !!zsView.freq_only" @change="setBandwidth(0, $event.target.checked, null)">{{ W('n_db_bw') }}</label>
+            <db-field :value="fnView().n1" :choices="dbLists.bw" :lo="dbRanges.bw[0]" :hi="dbRanges.bw[1]" :disabled="!selMarker || !!zsView.freq_only" @commit="setBandwidth(0, null, $event)"></db-field>
             <span></span>
-            <label class="inline"><input type="checkbox" :checked="fnView().on2" :disabled="!selMarker" @change="setBandwidth(1, $event.target.checked, null)">{{ W('second_n') }}</label>
-            <db-field :value="fnView().n2" :choices="dbLists.bw" :lo="dbRanges.bw[0]" :hi="dbRanges.bw[1]" :disabled="!selMarker" @commit="setBandwidth(1, null, $event)"></db-field>
+            <label class="inline"><input type="checkbox" :checked="fnView().on2" :disabled="!selMarker || !!zsView.freq_only" @change="setBandwidth(1, $event.target.checked, null)">{{ W('second_n') }}</label>
+            <db-field :value="fnView().n2" :choices="dbLists.bw" :lo="dbRanges.bw[0]" :hi="dbRanges.bw[1]" :disabled="!selMarker || !!zsView.freq_only" @commit="setBandwidth(1, null, $event)"></db-field>
             <span></span>
-            <label class="inline"><input type="checkbox" :checked="fnView().thOn" :disabled="!selMarker" @change="setThreshold({on: $event.target.checked})">{{ W('threshold_cross') }}</label>
-            <db-field :value="fnView().thr" :unit="axisUnit" signed :choices="dbLists.ref" :lo="dbRanges.th[0]" :hi="dbRanges.th[1]" :disabled="!selMarker" @commit="setThreshold({level: $event})"></db-field>
-            <select :value="fnView().side" :disabled="!selMarker" @change="setThreshold({side: $event.target.value})"><option v-for="(l, c) in Td('THRESHOLD_SIDES')" :key="c" :value="c">{{ l }}</option></select>
+            <label class="inline"><input type="checkbox" :checked="fnView().thOn" :disabled="!selMarker || !!zsView.freq_only" @change="setThreshold({on: $event.target.checked})">{{ W('threshold_cross') }}</label>
+            <db-field :value="fnView().thr" :unit="axisUnit" signed :choices="dbLists.ref" :lo="dbRanges.th[0]" :hi="dbRanges.th[1]" :disabled="!selMarker || !!zsView.freq_only" @commit="setThreshold({level: $event})"></db-field>
+            <select :value="fnView().side" :disabled="!selMarker || !!zsView.freq_only" @change="setThreshold({side: $event.target.value})"><option v-for="(l, c) in Td('THRESHOLD_SIDES')" :key="c" :value="c">{{ l }}</option></select>
           </div>
           <!-- 結果の線を出すかは表示の設定（全部のマーカーに効く。マーカーを選んでいなくても切り替えられる） -->
           <label class="inline" :title="W('function_lines_tip')"><input type="checkbox" :checked="viewOpts.function_lines !== false" @change="setView({function_lines: $event.target.checked}, 'function')">{{ W('function_lines') }}</label>
+          <div class="dim" v-if="zsView.freq_only">{{ zsView.freq_only }}</div>
           <div class="fnote" v-if="notes.function">{{ notes.function.text }}</div>
         </section>
 
@@ -432,7 +435,7 @@
               <label>{{ k.replace('_hz', '').toUpperCase() }}</label>
               <input class="w-value" v-steady="xyText(k)" :placeholder="W('empty_to_remove')" @change="commitXY(k, $event.target.value)">
             </template>
-            <label>ΔX</label><div>{{ markers.xy && markers.xy.dx_hz != null ? fmtFreq(markers.xy.dx_hz) : '—' }}</div>
+            <label>ΔX</label><div>{{ markers.xy && markers.xy.dx_hz != null ? fmtX(markers.xy.dx_hz) : '—' }}</div>
             <label>ΔY</label><div>{{ markers.xy && markers.xy.dy != null ? markers.xy.dy.toFixed(2) + ' dB' : '—' }}</div>
           </div>
           <div class="fnote" v-if="notes.xy">{{ notes.xy.text }}</div>
@@ -485,6 +488,19 @@
           <h3>{{ W('draw_style') }}</h3>
           <div class="row"><label class="inline" v-for="d in ['line', 'fill']" :key="d">
             <input type="radio" name="draw_style" :value="d" :checked="(viewOpts.draw_style || 'line') === d" @change="setView({draw_style: d})">{{ W('draw_' + d) }}</label></div>
+        </section>
+        <!-- ゼロスパン（設計N §1）: 表示する長さ（掃引1回・秒）。ゼロスパンでない間は理由付きで選べない（U-08。
+             中身は Qt と同じ ui.zero_span: screen_model.zero_span_view） -->
+        <section class="sec">
+          <h3>{{ T('ZERO_SPAN_TEXTS', 'group') }}</h3>
+          <div class="form">
+            <label>{{ T('ZERO_SPAN_TEXTS', 'length') }}</label>
+            <select data-field="zero_span_length" :value="zsView.value" :disabled="!!zsView.reason"
+                    :title="T('ZERO_SPAN_TEXTS', 'length_tip') + (zsView.reason ? ' — ' + zsView.reason : '')"
+                    @change="setZeroSpanLength($event.target.value)">
+              <option v-for="o in zsView.items" :key="o.value" :value="o.value">{{ o.text }}</option></select>
+          </div>
+          <div class="fnote" v-if="notes.view_zero">{{ notes.view_zero.text }}</div>
         </section>
         <!-- 振幅の詳細（設計O）: 単位と外部補正。換算はコア（グラフ・マーカー・CSV・PNG・REF が同じ単位）。
              単位の欄は実際に使っている単位を出し、いま選べない単位は理由付きで選べない（J §4.10。中身は ui.level） -->
@@ -660,7 +676,7 @@
         <template v-for="f in modal.fields" :key="f.key">
           <label>{{ f.label }}</label>
           <textarea v-if="f.multiline" class="w-name" v-model="f.value" rows="4"></textarea>
-          <input v-else :class="f.width || 'w-name'" v-model="f.value" :placeholder="f.placeholder || ''" @keydown.enter="modalOk">
+          <input v-else :class="f.width || 'w-name'" v-model="f.value" :placeholder="f.placeholder || ''" :disabled="!!f.disabled" :title="f.disabled || ''" @keydown.enter="modalOk">
         </template>
       </div>
       <div class="modal-btns">

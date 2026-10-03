@@ -15,7 +15,8 @@ from typing import Optional
 
 import numpy as np
 
-from ..core.units import format_freq
+from ..core import zero_span as zs
+from ..core.units import format_freq, format_time_us, time_axis_unit
 from . import marker_rows, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
@@ -494,9 +495,59 @@ def trace_status(s: dict) -> dict:
     return {"text": text, "tip": tip}
 
 
+# ---------------------------------------------------------------- 横軸（周波数・ゼロスパンの時間: 設計N §1）
+
+def is_zero_span(st: dict) -> bool:
+    return ((st or {}).get("sweep") or {}).get("step_hz") == 0
+
+
+def x_axis_view(st: dict) -> dict:
+    """横軸の範囲と名前。周波数は Hz、ゼロスパンは時間（位置はマイクロ秒）。
+
+    形: {"kind": "freq" | "time", "x0", "x1"} に、時間なら目盛の単位 {"factor": 1単位の μs, "unit", "label"}・
+    表示する長さ length_s（0 は1回の掃引）。1回の掃引は 0〜最後の点、流す表示は −長さ〜0（core/zero_span.py）。
+    """
+    sw = (st or {}).get("sweep") or {}
+    if sw.get("step_hz") != 0:
+        return {"kind": "freq", "x0": sw.get("start_hz", 0), "x1": sw.get("stop_hz", 1)}
+    length = zero_span_length(st)
+    x0, x1 = zs.x_range_us(length, int(sw.get("points") or 1), float(sw.get("point_time_s") or 0.0))
+    if x1 <= x0:
+        x1 = x0 + 1
+    factor, unit = time_axis_unit(x1 - x0)
+    return {"kind": "time", "x0": x0, "x1": x1, "factor": factor, "unit": unit,
+            "label": texts.ZERO_SPAN_TEXTS["axis_time"].replace("{unit}", unit), "length_s": length}
+
+
+def zero_span_length(st: dict) -> float:
+    return float(((st or {}).get("view") or {}).get("zero_span_s", 10) or 0)
+
+
+def zero_span_view(st: dict) -> dict:
+    """ゼロスパンの欄（右のタブ「表示」の表示する長さ）と、時間軸で使わない欄の理由（U-08）。
+
+    形: {"time": ゼロスパンか, "items": [{"value": 秒, "text"}], "value": 選んでいる秒, "reason": 長さを選べない理由,
+         "freq_only": 周波数を前提にする欄（Center へ・N dB 帯域幅・しきい値・周波数のオフセット）の理由}
+    """
+    zero = is_zero_span(st)
+    items = [{"value": int(k), "text": v} for k, v in texts.ZERO_SPAN_LENGTHS.items()]
+    return {"time": zero, "items": items, "value": int(zero_span_length(st)),
+            "reason": None if zero else texts.ZERO_SPAN_TEXTS["not_zero_span"],
+            "freq_only": texts.ZERO_SPAN_TEXTS["freq_only"] if zero else None}
+
+
+def x_text(st: dict, x: float) -> str:
+    """横軸の位置の文字（周波数は換算後の周波数: 設計O、時間は ms）。"""
+    if is_zero_span(st):
+        return format_time_us(x)
+    return format_freq(int(round(x)) + texts.freq_offset_of(st))
+
+
 def ui_view(st: dict) -> dict:
     """Web の画面へ state と一緒に送るもの。Qt も同じ関数の部分を使う。"""
     return {
+        "x_axis": x_axis_view(st),  # 横軸の範囲と名前（ゼロスパンは時間: 設計N §1）
+        "zero_span": zero_span_view(st),
         "status": texts.status_items(st),
         "cond": texts.condition_lines(st),
         "rbw": rbw_groups(st),
@@ -523,8 +574,11 @@ def ui_view(st: dict) -> dict:
 # ---------------------------------------------------------------- マウスの位置の読み値（設計G §2・§3.3）
 
 def trace_x(payload: dict) -> np.ndarray:
-    """トレースの横軸（float）。ゼロスパンは点の番号。周波数の正本は Hz の整数のまま（描くときと読むときの共通）。"""
+    """トレースの横軸（float）。ゼロスパンの時間軸（axis.kind = "time"）はマイクロ秒（設計N §1）。周波数の正本は
+    Hz の整数のまま（描くときと読むときの共通）。"""
     ax = payload["axis"]
+    if ax.get("kind") == "time":
+        return float(ax["start_us"]) + float(ax["step_us"]) * np.arange(int(ax["points"]), dtype=np.float64)
     if "freqs_hz" in ax:
         return np.asarray(ax["freqs_hz"], dtype=np.float64)
     n = int(ax["points"])
@@ -591,20 +645,20 @@ def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = Fa
     hit = nearest_point(payloads, x, y)
     if hit is None:
         pos = int(round(x))
-        lines = [tpl("mouse_point", n=pos) if zero_span else format_freq(pos + off)]
-        return {"trace": None, "freq_hz": None if zero_span else pos, "point": pos if zero_span else None,
+        lines = [format_time_us(pos) if zero_span else format_freq(pos + off)]
+        return {"trace": None, "freq_hz": None if zero_span else pos, "time_us": pos if zero_span else None,
                 "level": None, "unit": None, "notes": [], "lines": lines, "text": "\n".join(lines)}
     k, i = hit
     p = payloads[k]
     v = float(np.asarray(p["values"])[i])
     level = v if np.isfinite(v) else None
     unit = p.get("unit") or "dBm"
-    ax = p["axis"]
-    zero = zero_span or ("freqs_hz" not in ax and ax.get("step_hz", 0) == 0)
-    freq = None if zero else int(round(float(trace_x(p)[i])))
+    # ゼロスパンの横軸は時間（推定。設計N §1）: 位置はその点の時間
+    zero = zero_span or p["axis"].get("kind") == "time"
+    pos = int(round(float(trace_x(p)[i])))
     codes = point_note_codes(p, i)
     value_text = f"{level:.2f} {unit}" if level is not None else texts.MARKER_STATUS["no_value"]
-    lines = [tpl("mouse_point", n=i) if zero else format_freq(freq + off),
+    lines = [format_time_us(pos) if zero else format_freq(pos + off),
              tpl("trace_note", n=p.get("trace"), text=value_text), *marker_rows.note_texts(codes)]
-    return {"trace": p.get("trace"), "freq_hz": freq, "point": i if zero else None, "level": level, "unit": unit,
-            "notes": codes, "lines": lines, "text": "\n".join(lines)}
+    return {"trace": p.get("trace"), "freq_hz": None if zero else pos, "time_us": pos if zero else None,
+            "level": level, "unit": unit, "notes": codes, "lines": lines, "text": "\n".join(lines)}

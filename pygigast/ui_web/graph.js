@@ -4,7 +4,8 @@
 // - 周波数軸（グラフの中）でホイール → カーソルの位置を中心に拡大・縮小
 // - レベル軸の上でホイール → REF を1目盛（Ctrl で dB/div を1段）、ドラッグ → REF を連続で
 // - クリック → マーカーを置く、右クリック → 名前の付いた操作のメニュー
-// 横軸の位置は機器の周波数のまま。周波数オフセット（設計O）は目盛の数字と軸の名前だけに足す
+// 横軸の位置は機器の周波数のまま。周波数オフセット（設計O）は目盛の数字と軸の名前だけに足す。
+// ゼロスパン（設計N §1）の横軸は時間（推定）で、位置はマイクロ秒。目盛の数字は軸の単位（ms・s）で出す
 (function (root) {
   "use strict";
 
@@ -57,6 +58,7 @@
       this.x0 = 0;
       this.x1 = 1;
       this.zeroSpan = false;
+      this.timeAxis = null; // ゼロスパンの時間軸 {factor（1単位の μs）, unit, label}（サーバーの ui.x_axis）
       this.xOffset = 0; // 周波数オフセット（Hz）と、その文字（+10 GHz）。目盛と軸の名前に使う
       this.xOffsetText = "";
       this.ref = 0;
@@ -105,7 +107,7 @@
             font: "12px sans-serif",
             labelFont: "12px sans-serif",
             values: (u, splits) => {
-              if (self.zeroSpan) return splits.map((v) => String(Math.round(v)));
+              if (self.timeAxis) return splits.map((v) => String(+(v / self.timeAxis.factor).toPrecision(10)));
               const [k] = xUnit(self.x1 - self.x0);
               return splits.map((v) => String(+((v + self.xOffset) / k).toPrecision(10)));
             },
@@ -151,7 +153,7 @@
       // 軸の名前は texts の表（Qt と同じ語）
       const X = root.GSTexts;
       // 換算中は軸の名前で示す（設計O）。単位の付け方は換算しない軸の名前（axis_freq）と同じ形
-      if (this.zeroSpan) this.u.axes[0].label = X.w("axis_zero_span");
+      if (this.timeAxis) this.u.axes[0].label = this.timeAxis.label;
       else if (this.xOffset) this.u.axes[0].label = X.fmtText(X.get("VIEW_TEXTS", "axis_freq_offset"), { off: this.xOffsetText }) + ` (${unit})`;
       else this.u.axes[0].label = X.w("axis_freq", { unit });
       this.u.axes[1].label = X.w("axis_level", { unit: this.unit });
@@ -161,10 +163,12 @@
       if (w > 0 && h > 0) this.u.setSize({ width: w, height: h });
     }
 
-    setX(start, stop, zeroSpan) {
+    // timeAxis はゼロスパンの時間軸（サーバーの ui.x_axis。周波数軸は null）
+    setX(start, stop, timeAxis) {
       this.x0 = start;
       this.x1 = stop > start ? stop : start + 1;
-      this.zeroSpan = !!zeroSpan;
+      this.timeAxis = timeAxis && timeAxis.kind === "time" ? timeAxis : null;
+      this.zeroSpan = !!this.timeAxis;
       this._applyLabels();
       this.u.setScale("x", { min: this.x0, max: this.x1 });
     }

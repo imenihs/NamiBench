@@ -126,6 +126,29 @@ class TraceView:
         )
 
     @classmethod
+    def from_levels(cls, trace: int, xs: np.ndarray, level_db: np.ndarray, quantity: Quantity, start: int, stop: int,
+                    flags: Optional[dict] = None, notes: tuple[str, ...] = ()) -> "TraceView":
+        """横軸の位置（int64・昇順）と dB の値から作る。ゼロスパンの時間軸（設計N §1: 位置はマイクロ秒）に使う。
+
+        値なしの点は NaN で渡す。印・表示範囲・探してよい点の決め方は build と同じ。
+        """
+        xs = np.asarray(xs, dtype=np.int64)
+        level = np.asarray(level_db, dtype=np.float64)
+        level = np.where(np.isfinite(level), level, np.nan)
+        flags = {k: np.asarray(v, dtype=bool) for k, v in (flags or {}).items() if np.shape(v) == xs.shape}
+        exclude = np.zeros(xs.size, dtype=bool)
+        for name in EXCLUDE_FLAGS:
+            if name in flags:
+                exclude |= flags[name]
+        lo = int(np.searchsorted(xs, int(start), side="left"))
+        hi = int(np.searchsorted(xs, int(stop), side="right"))
+        return cls(
+            trace=trace, freqs=xs, level_db=level, unit=UNIT_DBM if quantity == Quantity.POWER else UNIT_DB,
+            quantity=quantity, start_hz=int(start), stop_hz=int(stop), lo=lo, hi=max(lo, hi),
+            searchable=np.isfinite(level) & ~exclude, flags=flags, notes=tuple(notes),
+        )
+
+    @classmethod
     def from_frame(cls, trace: int, frame: Frame, notes: tuple[str, ...] = ()) -> "TraceView":
         """1掃引分の値（Frame）から作る。表示範囲は Frame の display_start_hz〜display_stop_hz。"""
         return cls.build(

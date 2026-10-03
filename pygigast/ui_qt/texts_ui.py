@@ -242,7 +242,6 @@ TEMPLATES = {
     "saved": "保存しました: {name}",
     "trace_note": "トレース {n}: {text}",
     # グラフの上のマウスの位置の読み値（G §2）。ゼロスパンの横軸は点の番号
-    "mouse_point": "点 {n}",
     "task_done_path": "{done}: {name}",
     "open_done": "開きました: {n} ファイル",
     "open_errors": "・開けなかったもの: {list}",

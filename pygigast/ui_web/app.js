@@ -161,6 +161,8 @@
         if (s.step_hz === 0) return X.get("REASON_TEXTS", "zero_span_axis");
         return null;
       },
+      // マーカーを置けない理由（ゼロスパンでも時間の位置に置ける: 設計N §1）
+      markerReason() { return this.sw ? null : X.get("REASON_TEXTS", "no_sweep"); },
       statusItems() {
         const items = this.ui.status ? [...this.ui.status] : [];
         if (!this.wsOpen && this.textsReady) items.push({ key: "ws", text: X.fmt("status_ws_down"), cls: "warn" });
@@ -470,8 +472,10 @@
         const g = this.$graph;
         const s = this.sw;
         if (!g || !s) return;
-        if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true);
-        else g.setX(s.start_hz, s.stop_hz, false);
+        // ゼロスパンは時間（推定）の軸（範囲・名前はサーバーの ui.x_axis: Qt と同じ screen_model.x_axis_view）
+        const xa = this.ui.x_axis;
+        if (xa && xa.kind === "time") g.setX(xa.x0, xa.x1, xa);
+        else g.setX(s.start_hz, s.stop_hz, null);
         g.setXOffset(s.step_hz === 0 ? 0 : this.freqOff, this.ui.freq_offset_text || "");
       },
       applyY() { if (this.$graph) this.$graph.setY(this.amp.ref, this.amp.div, this.axisUnit); },
@@ -528,11 +532,8 @@
         return out.concat(live.map((x) => x[2]));
       },
       graphTrace(t, color, colors, isFile, style) {
-        const ax = t.axis;
-        const x = ax.freqs_hz ? (i) => ax.freqs_hz[i] : (i) => ax.start_hz + ax.step_hz * i;
-        const zero = this.sw && this.sw.step_hz === 0 && !isFile;
         return {
-          x: zero ? (i) => i : x, y: t.values, color, minHold: t.action === "min_hold",
+          x: GSZeroSpan.traceX(t.axis), y: t.values, color, minHold: t.action === "min_hold",
           head: isFile ? 0 : (t.flags && t.flags.transient_head_points) || 0, fill: !isFile && this.drawFill,
           dimColor: colors.text_dim, style,
         };
@@ -607,16 +608,16 @@
         let best = null;
         for (const n of [1, 2, 3, 4]) {
           const t = this.$traces.get(String(n));
-          if (!t || !this.traceShown(n) || !t.axis.step_hz) continue;
-          const i = Math.round((x - t.axis.start_hz) / t.axis.step_hz);
-          if (i < 0 || i >= t.values.length || !Number.isFinite(t.values[i])) continue;
+          if (!t || !this.traceShown(n)) continue;
+          const i = GSZeroSpan.indexAt(t.axis, x);
+          if (i === null || i < 0 || i >= t.values.length || !Number.isFinite(t.values[i])) continue;
           const d = Math.abs(t.values[i] - y);
           if (best === null || d < best[1]) best = [n, d];
         }
         return best ? best[0] : null;
       },
       async markerAdd(x, y) {
-        if (this.freqOpsReason) return;
+        if (this.markerReason) return;
         const trace = this.nearestTrace(x, y);
         if (trace === null) { this.note(null, X.get("ERRORS", "no_trace_data")); return; }
         // 向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き。Qt と同じ）
@@ -626,21 +627,23 @@
       onGraphClick(x, y) { this.markerAdd(x, y); },
       onGraphContext(x, y, cx, cy) {
         const why = this.freqOpsReason;
+        const mwhy = this.markerReason;
         const hz = Math.round(x);
         const level = Math.round(y * 10) / 10;
-        const at = why ? "" : X.fmt("paren", { text: U.formatFreq(this.shownHz(hz)) });
+        // 位置の文字: 換算後の周波数（設計O）、ゼロスパンは時間（設計N §1）
+        const at = this.sw ? X.fmt("paren", { text: this.xText(x) }) : "";
         const items = [
-          { label: W("ctx_center") + at, why, run: () => this.sweep({ center_hz: hz }, "center") },
-          { label: W("ctx_marker") + at, why, run: () => this.markerAdd(x, y) },
+          { label: W("ctx_center") + (why ? "" : at), why, run: () => this.sweep({ center_hz: hz }, "center") },
+          { label: W("ctx_marker") + at, why: mwhy, run: () => this.markerAdd(x, y) },
           { label: W("ctx_ref", { level: level.toFixed(1), unit: this.axisUnit }), run: () => this.setAmp({ ref_level: level }) },
-          { label: W("ctx_x1"), why, run: () => this.cmd("set_xy", { x1_hz: hz }) },
-          { label: W("ctx_x2"), why, run: () => this.cmd("set_xy", { x2_hz: hz }) },
+          { label: W("ctx_x1"), why: mwhy, run: () => this.cmd("set_xy", { x1_hz: hz }) },
+          { label: W("ctx_x2"), why: mwhy, run: () => this.cmd("set_xy", { x2_hz: hz }) },
         ];
         const sel = this.selectedMarker;
         if (sel) {
-          // 選んでいるマーカーへの操作（Qt の右クリックと同じ: G §3.4・設計Q §6.8）
+          // 選んでいるマーカーへの操作（Qt の右クリックと同じ: G §3.4・設計Q §6.8）。ゼロスパンの位置は Center にできない
           items.push(
-            { label: W("ctx_m_center", { m: sel }), run: () => this.cmd("marker_to", { id: sel, target: "center" }) },
+            { label: W("ctx_m_center", { m: sel }), why: this.zsView.freq_only, run: () => this.cmd("marker_to", { id: sel, target: "center" }) },
             { label: W("ctx_m_ref", { m: sel }), run: () => this.cmd("marker_to", { id: sel, target: "ref" }) },
             { label: W("ctx_m_listen", { m: sel, start: X.get("LISTEN_LABELS", "start") }), why: this.listenStartReason, run: () => this.listenStart() },
           );
@@ -695,9 +698,12 @@
         const spec = r && r.edits && r.edits[String(ec.col)];
         if (!spec) return;
         let v;
-        try { v = spec.parse === "freq" ? U.parseFreqHz(text) : U.parseDb(text); } catch (e) { this.note(null, W("bad_value")); return; }
-        // marker_rows.edit_command と同じ計算（表の周波数は周波数オフセット込みなので差し引く）
+        try {
+          v = spec.parse === "freq" ? U.parseFreqHz(text) : spec.parse === "time" ? U.parseTimeUs(text) : U.parseDb(text);
+        } catch (e) { this.note(null, W("bad_value")); return; }
+        // marker_rows.edit_command と同じ計算（表の周波数は周波数オフセット込みなので差し引く。時間はそのまま: 設計N §1）
         if (spec.parse === "freq") v = Math.round(spec.base + v - (spec.minus_offset ? (this.freqOff || 0) : 0));
+        else if (spec.parse === "time") v = Math.round(spec.base + v);
         else v = spec.base + v;
         this.cmd(spec.cmd, { ...spec.args, [spec.arg]: v });
       },
@@ -730,8 +736,9 @@
         const m = this.selMarker;
         if (!m) return;
         let delta;
-        try { delta = this.off.type === "freq" ? U.parseFreqHz(this.off.delta) : U.parseDb(this.off.delta); } catch (e) { this.note("offset", W("bad_value")); return; }
-        const r = await this.cmd("marker_offset_add", { id: m.id, type: this.off.type, sign: this.off.sign, delta }, { field: "offset" });
+        const type = this.offType();  // ゼロスパンでは周波数のオフセットは選べない（設計N §1。Qt と同じくレベルにする）
+        try { delta = type === "freq" ? U.parseFreqHz(this.off.delta) : U.parseDb(this.off.delta); } catch (e) { this.note("offset", W("bad_value")); return; }
+        const r = await this.cmd("marker_offset_add", { id: m.id, type, sign: this.off.sign, delta }, { field: "offset" });
         if (r) this.off.delta = "";
       },
       // マーカーの機能（G §3.5・§3.6。Qt の tab_markers と同じ: チェックで入れる・切る、dB の欄で N・しきい値を変える）。
@@ -787,13 +794,16 @@
       commitXY(key, text) {
         if (String(text).trim() === "") { this.cmd("set_xy", { [key]: null }); return; }
         try {
-          const v = key.endsWith("_hz") ? this.deviceHz(U.parseFreqHz(text)) : U.parseDb(text);
+          // X はゼロスパンでは時間（ms で打つ: 設計N §1）
+          const xv = () => (this.zsView.time ? U.parseTimeUs(text) : this.deviceHz(U.parseFreqHz(text)));
+          const v = key.endsWith("_hz") ? xv() : U.parseDb(text);
           this.cmd("set_xy", { [key]: v }, { field: "xy" });
         } catch (e) { this.note("xy", W("bad_value")); }
       },
       xyText(key) {
         const v = (this.markers.xy || {})[key];
         if (v == null) return "";
+        if (key.endsWith("_hz") && this.zsView.time) return U.formatTimeUs(v);
         return key.endsWith("_hz") ? U.freqFieldText(this.shownHz(v)) : `${v.toFixed(2)}`;
       },
       // ------------------------------------------------------------ トレース
@@ -1013,6 +1023,7 @@
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
   merge(base, window.GSAppCal || {});  // 校正の画面（app_cal.js）
+  merge(base, window.GSAppZeroSpan || {});  // ゼロスパンの時間軸（app_zerospan.js: 設計N §1）
   // キーの割り当て（app_keys.js）と設定の画面・プリセット・表示の設定（app_settings.js）
   merge(base, window.GSAppKeys || {});
   merge(base, window.GSAppSettings || {});

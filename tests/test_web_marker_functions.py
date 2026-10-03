@@ -285,7 +285,7 @@ g.setMarkers([], "M1");
 g.setFunctionLines(JSON.parse(process.argv[2]));
 const out = {};
 g._draw(g.u); out.drawn = strokes.splice(0);
-g.setX(0, 100, true); g._draw(g.u); out.zeroSpan = strokes.splice(0);
+g.setX(0, 100, { kind: "time", factor: 1, unit: "us", label: "t" }); g._draw(g.u); out.zeroSpan = strokes.splice(0);
 g.setX(1400e6, 1600e6, false); g.setFunctionLines([]); g._draw(g.u); out.hidden = strokes.splice(0);
 console.log(JSON.stringify(out));
 """
@@ -311,7 +311,7 @@ console.log(JSON.stringify(out));
             ("#m", a, dash, [[0, 200], [1000, 200]]),
             ("#m", a, dash, [[500, 0], [500, 400]]),
         ])
-        self.assertEqual(got["zeroSpan"], [])  # ゼロスパン（横軸が点の番号）では描かない
+        self.assertEqual(got["zeroSpan"], [])  # ゼロスパン（横軸が時間: 設計N §1）では描かない
         self.assertEqual(got["hidden"], [])    # 切り替えで出さないとき（空を渡す）
 
 

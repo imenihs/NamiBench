@@ -23,6 +23,7 @@ from pathlib import PurePath
 
 from . import view_units
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict
+from .instrument_zerospan import zero_span_request
 from .palette import BASES, IMPORT_MAX_CHARS, Palette, PaletteStore, normalize_color
 from .presets import PresetError, PresetStore
 from .sweep import image_reject as ir
@@ -90,15 +91,17 @@ class ViewMixin:
             if shift_levels:
                 ref = self._amplitude.get("ref_level")
                 self._amplitude["ref_level"] = round((0.0 if ref is None else float(ref)) + delta, 2)
-            xy = self._markers.xy
-            for k in ("y1", "y2"):
-                if getattr(xy, k) is not None:
-                    setattr(xy, k, round(getattr(xy, k) + delta, 2))
-            for m in self._markers.markers():
-                if m.threshold is not None:
-                    m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
-            if self._markers.peak_threshold is not None:
-                self._markers.peak_threshold = round(self._markers.peak_threshold + delta, 2)
+            # 周波数軸と時間軸（ゼロスパン: 設計N §1）のマーカー表の両方
+            for table in self._marker_tables.values():
+                xy = table.xy
+                for k in ("y1", "y2"):
+                    if getattr(xy, k) is not None:
+                        setattr(xy, k, round(getattr(xy, k) + delta, 2))
+                for m in table.markers():
+                    if m.threshold is not None:
+                        m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
+                if table.peak_threshold is not None:
+                    table.peak_threshold = round(table.peak_threshold + delta, 2)
         # 値の単位が変わるので、トレース・マーカー・REF の自動を出し直す
         self._emit_visible_traces()
         for e in self._files.values():
@@ -113,9 +116,11 @@ class ViewMixin:
             self._notice("level_unit_changed", {"unit": new.get("level_unit"), "previous": old.get("level_unit")})
 
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
-                      layout=_UNSET, function_lines=_UNSET) -> dict:
+                      layout=_UNSET, function_lines=_UNSET, zero_span_s=_UNSET) -> dict:
+        """zero_span_s はゼロスパンの表示する長さ（秒。0 は1回の掃引: 設計N §1）。"""
         kw = {k: v for k, v in (("level_unit", level_unit), ("ext_db", ext_db), ("freq_offset_hz", freq_offset_hz),
-                                ("draw_style", draw_style), ("layout", layout), ("function_lines", function_lines))
+                                ("draw_style", draw_style), ("layout", layout), ("function_lines", function_lines),
+                                ("zero_span_s", zero_span_s))
               if v is not _UNSET}
         for k in view_units.DEFAULTS:
             if k in kw and kw[k] is None:
@@ -325,6 +330,7 @@ class ViewMixin:
             image_reject=ir.read_choice(sw),
             span_lock=bool(sw.get("span_lock_hz")), one_shot=True,
         )
+        req = zero_span_request(req)  # ゼロスパンで残したプリセットはゼロスパンで戻す（設計N §1）
         try:
             new = self._model.apply(req, base)
         except ValueError:
