@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
         self._bridge.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
         self.files = FileActions(self)
         self.device_window = None  # 機器の一覧の窓（J §4.7。device_menu.open_list が作る）
+        self.cal_window = None  # 校正の画面（設計K。cal_dialog.open_calibration が作る）
         self._presets: Optional[PresetsDialog] = None
 
         # 描き方・色・大きさの決まり（設計J §4.11）は部品を作る前に入れる（部品が出るときに当たる）
@@ -840,8 +841,11 @@ class MainWindow(QMainWindow):
     def apply_keymap(self) -> None:
         look.apply_keymap(self)
 
-    def _import_legacy(self) -> None:
-        device_menu.import_legacy(self)
+    def open_calibration(self, kind: str) -> None:
+        """メニュー「校正」の項目（設計K §4.1。旧校正ファイルの取り込みも同じ画面: K §4.5）。"""
+        from .cal_dialog import open_calibration
+
+        open_calibration(self, kind)
 
     # ------------------------------------------------------------------ イベント
 
@@ -857,6 +861,8 @@ class MainWindow(QMainWindow):
         elif kind == "progress":
             if payload.get("kind") == "task":
                 self.task_panel.on_progress(payload)
+                if self.cal_window is not None:
+                    self.cal_window.on_progress(payload)
             elif payload.get("kind") == "waiting_sweep_end":
                 self.status_note(texts.waiting_text(payload["remaining_s"]))
         elif kind == "audio":
@@ -958,6 +964,8 @@ class MainWindow(QMainWindow):
         self.listen.apply(st)
         if self._settings is not None:
             self._settings.apply(st)
+        if self.cal_window is not None:
+            self.cal_window.apply_state(st)
         self.source_tab.apply_state(st)
         self.ref_quick.apply(st)
         for n in self.traces.apply_trace_states(st.get("traces") or []):
@@ -1059,6 +1067,11 @@ class MainWindow(QMainWindow):
         rec = self.state.get("recording") or {}
         if rec.get("active") or rec.get("stopped"):
             lost.append(texts.LABELS["close_lost_record"])
+        from .cal_view import main_close_line
+
+        cal_line = main_close_line(self.state)  # 校正の画面の保存していない作業（設計K §4.1・U-18）
+        if cal_line:
+            lost.append(cal_line)
         if lost and not self.confirm(texts.LABELS["close_title"], texts.LABELS["close_confirm"] + "\n" + "\n".join(lost),
                                     texts.LABELS["do_close"]):
             e.ignore()

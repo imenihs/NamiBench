@@ -24,6 +24,7 @@
 <script src="app_markers.js"></script>
 <script src="app_settings.js"></script>
 <script src="app_windows.js"></script>
+<script src="app_cal.js"></script>
 <script src="app_rtl.js"></script>
 <script src="app_devices.js"></script>
 <script src="app_files.js"></script>
@@ -645,6 +646,8 @@
   <!-- 設定（O §1.3）とプリセット（O §1.2）の窓。機器の一覧・入力の窓はこの上に重ねる。形は app_windows.js -->
   <gs-settings v-if="settingsWin"></gs-settings>
   <gs-presets v-if="presetsWin"></gs-presets>
+  <!-- 校正の画面（設計K。形は app_cal.js）。確かめる窓と入力の窓はこの上に重ねる -->
+  <gs-cal v-if="calWin && calView"></gs-cal>
 
   <!-- 入力の窓（保存先・開くファイル・名前など）。名前を左・欄を右（S-05）、欄の幅は値の種類（S-02） -->
   <div class="modal-back" v-if="modal" @click="modal = null">

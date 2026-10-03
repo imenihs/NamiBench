@@ -225,7 +225,8 @@
     <button class="primary" @click="a.answerConfirm(false)">{{ a.T('SETTINGS_LABELS', 'close') }}</button>
   </div>
   <div class="modal-btns" v-else>
-    <button class="primary" @click="a.answerConfirm(true)">{{ b.ok || a.W('confirm_ok') }}</button>
+    <button class="primary" :disabled="!!b.okDisabled" @click="a.answerConfirm(true)">{{ b.ok || a.W('confirm_ok') }}</button>
+    <button v-if="b.alt" @click="a.answerConfirm('alt')">{{ b.alt }}</button>
     <button @click="a.answerConfirm(false)">{{ a.W('cancel') }}</button>
   </div>
 </div>

@@ -1,11 +1,10 @@
-"""メニューの「機器」「校正」「ヘルプ」の画面（設計B §7.3・D §5.6・J §4.6・J §4.7）。"""
+"""メニューの「機器」「ヘルプ」の画面（設計B §7.3・J §4.6・J §4.7）。校正の画面は cal_dialog.py（設計K）。"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
-from ..core.units import format_freq
 from . import menus, texts
 from .device_list import DeviceListWindow
 
@@ -81,32 +80,3 @@ def connect_last(win: "MainWindow") -> None:
 def disconnect(win: "MainWindow") -> None:
     """利用者が切断したら一覧を開く（次に繋ぐ機器を選べるように: J §4.7 の 1）。"""
     win.call("disconnect", on_ok=lambda r: open_list(win))
-
-
-def import_legacy(win: "MainWindow") -> None:
-    conn = win.state.get("connection", {})
-    serial = (conn.get("identity") or {}).get("serial")
-    if not serial:
-        QMessageBox.information(win, texts.LABELS["legacy_short"], texts.LABELS["legacy_need_device"])
-        return
-    path, _ = QFileDialog.getOpenFileName(win, texts.LABELS["legacy_title"], "", texts.LABELS["filter_txt"])
-    if not path:
-        return
-    if not win.confirm(texts.LABELS["legacy_short"], texts.w("legacy_confirm", serial=serial), texts.LABELS["do_import"]):
-        return
-    win.call("import_legacy_calibration", on_ok=lambda r: show_cal_summary(win, r), path=path, serial=serial)
-
-
-def show_cal_summary(win: "MainWindow", result: dict) -> None:
-    s = result["summary"]
-    bands = s["freq_response_db"]["bands"]
-    lines = [
-        texts.w("legacy_sum_file", name=s["source"].get("file_name")),
-        texts.w("legacy_sum_level", db=f"{s['level_offset_db']:+.1f}"),
-        texts.w("legacy_sum_rbw", list="・".join(f"{format_freq(int(k))} {v:+.1f} dB"
-                                                 for k, v in s["rbw_offset_db"].items())),
-        texts.LABELS["legacy_sum_freq"],
-    ]
-    for b in bands:
-        lines.append(f"  {format_freq(b['start_hz'])}〜: {min(b['values']):+g} 〜 {max(b['values']):+g} dB")
-    QMessageBox.information(win, texts.LABELS["legacy_done"], "\n".join(lines))

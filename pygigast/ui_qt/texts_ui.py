@@ -25,7 +25,6 @@ MODE_UNSUPPORTED = "この機器はこのモードで測れません（受信だ
 
 NOT_YET = {
     "file": "保存・読込・書き出しはまだ使えません",
-    "cal": "校正の画面はまだ使えません",
     "view": "表示の切り替えはまだ使えません",
     "settings": "設定の画面はまだ使えません",
     "settings_keys": "キー操作の割り当ての画面はまだ使えません",
@@ -94,7 +93,7 @@ MENU_ITEMS = {
     "marker_remove": "選んでいるマーカーを消す",
     "marker_clear": "マーカーを全部消す",
     "marker_copy": "マーカー表をコピー（タブ区切り）",
-    "cal_freq": "周波数特性…",
+    "cal_freq": "周波数特性と全体のレベル…",
     "cal_rbw": "RBW…",
     "cal_nf": "NF の増幅度…",
     "cal_legacy": "旧校正ファイルを読み込む…",
@@ -129,7 +128,7 @@ MENU_LAYOUT = (
 
 # まだ作っていない項目と、その理由（NOT_YET のキー）
 MENU_NOT_YET = {
-    "self_test": "diag", "cal_freq": "cal", "cal_rbw": "cal", "cal_nf": "cal",
+    "self_test": "diag",
     "view_waterfall": "waterfall", "view_density": "density",
 }
 

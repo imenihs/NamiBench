@@ -25,6 +25,8 @@ from .texts_screens import *  # noqa: F401,F403 — 右のタブ・マーカー�
 from .texts_settings import *  # noqa: F401,F403 — 設定の画面・配色・キー・プリセット・表示の単位（設計O・J §4.4・§4.6）
 from .texts_settings import SETTINGS_ERRORS, VIEW_TEXTS
 from .texts_web_settings import *  # noqa: F401,F403 — ブラウザだけの設定の画面・キーの割り当ての語
+from .texts_cal import *  # noqa: F401,F403 — 校正の画面の語（設計K）
+from .texts_cal import CAL_ERRORS, CAL_TASK_CANCELLED, CAL_TASK_DONE, CAL_TASK_FAILED, CAL_TASK_NAMES
 
 
 def tpl(key: str, **kw) -> str:
@@ -260,6 +262,7 @@ RUN_STATES = {
     "single": "単発",
     "stopping": "停止中（掃引の終わりを待っています）",
     "reference": "基準を取っています",
+    "calibration": "校正で測っています",
 }
 
 
@@ -618,6 +621,13 @@ def storage_error_text(err: dict) -> str:
     return STORAGE_ERRORS.get(code) or ERRORS.get(code) or code
 
 
+# 校正の測定（設計K）の語は texts_cal.py に置き、ここで同じ表へ足す（Web へも同じ表で配る）
+TASK_NAMES.update(CAL_TASK_NAMES)
+TASK_DONE.update(CAL_TASK_DONE)
+TASK_FAILED.update(CAL_TASK_FAILED)
+TASK_CANCELLED.update(CAL_TASK_CANCELLED)
+
+
 def task_label(t: dict) -> str:
     """進み具合の1行（何件目/全体・経過時間。時間は約束しない: U-20）。"""
     kind = t.get("task") or t.get("kind") or ""
@@ -664,6 +674,8 @@ ERRORS.update({
     **SETTINGS_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
 })
+# 校正の画面（設計K）が断った理由。すでにある語は変えない
+ERRORS.update({k: v for k, v in CAL_ERRORS.items() if k not in ERRORS})
 
 
 # ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語
@@ -716,6 +728,12 @@ def source_text(st: dict) -> str:
     if not st or not st.get("run") or not st.get("sweep"):
         return ""
     running = st["run"]["state"] in ("continuous", "single", "stopping", "reference")
+    if st["run"]["state"] == "calibration" and (st.get("connection") or {}).get("state") == "connected":
+        # 校正の掃引は、いまの条件とは別の条件（RBW の校正は SG で 500MHz: 設計K §4.3）。機器へ渡した方を出す
+        src = st.get("source") or {}
+        if src.get("output") == "sg" and src.get("freq_hz") is not None:
+            return tpl("source_sg", freq=format_freq(src["freq_hz"]))
+        return TEMPLATES["source_tg"] if src.get("output") == "tg" else ""
     if (st.get("connection") or {}).get("state") != "connected" or not running:
         return ""
     sw = st["sweep"]

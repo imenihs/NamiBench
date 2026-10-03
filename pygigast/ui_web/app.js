@@ -401,6 +401,7 @@
           if (!this.running && this.run.state !== "stopping") this.waiting = "";
           this.onStateRtl(p);
           this.onStateDevices(p);
+          this.onStateCal(p);
           this.applyLook();
           this.watchPaletteOrigin();
           this.applyX();
@@ -1010,6 +1011,7 @@
   merge(base, GSAppFiles);
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
+  merge(base, window.GSAppCal || {});  // 校正の画面（app_cal.js）
   // キーの割り当て（app_keys.js）と設定の画面・プリセット・表示の設定（app_settings.js）
   merge(base, window.GSAppKeys || {});
   merge(base, window.GSAppSettings || {});

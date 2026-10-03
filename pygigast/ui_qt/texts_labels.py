@@ -146,7 +146,6 @@ LABELS = {
     "cancel": "やめる",
     # 確かめる窓のボタン（押したら何が起きるかの語。「はい・いいえ」「OK」にしない）
     "confirm_ok": "続ける",
-    "do_import": "取り込む",
     "do_discard": "捨てる",
     "do_restore": "戻す",
     "do_clear_all": "全部消す",
@@ -172,10 +171,6 @@ LABELS = {
     "export_start": "Start",
     "export_stop": "Stop",
     "export_all_placeholder": "全部",
-    "legacy_need_device": "校正を当てる機器を決めるため、先に機器に接続してください。",
-    "legacy_title": "旧校正ファイル（gigast.txt / ba205.txt）",
-    "legacy_note": "取り込む先: {serial}",
-    "legacy_done": "旧校正ファイルを取り込みました",
     "record_finish_title": "記録をまとめる",
     "dll_folder_web": "pyGigaSt の PC の画面で変えます",
     "no_clipboard_text": "この接続ではブラウザがコピーを許しません。欄の文字を選んでコピーしてください",
