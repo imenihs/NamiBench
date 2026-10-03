@@ -65,7 +65,7 @@ class ToolbarTest(PolarityUiBase):
         self.assertTrue(self.panel.pol_buttons["dip"].isChecked())
         self.assertFalse(self.panel.pol_buttons["peak"].isChecked())
         # 場所は変えず名前が変わる
-        self.assertEqual(self.bar_texts()[2:7], ["谷", "◀ 次の谷", "次の谷 ▶", "次に深い", "マーカー追加"])
+        self.assertEqual(self.bar_texts()[2:7], ["ピーク", "◀ 次のピーク", "次のピーク ▶", "次に深い", "マーカー追加"])
         self.assertIn(texts.SEARCH_TIPS["dip"]["marker_peak_lower"], self.panel.btn_lower.toolTip())
         # メニューの項目の名前も変わる（G §3.8）
         a = self.win.actions

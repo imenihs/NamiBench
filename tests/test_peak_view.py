@@ -23,7 +23,7 @@ class PeakViewTest(unittest.TestCase):
         for p in peak_view.POLARITIES:
             self.assertEqual(list(texts.SEARCH_BUTTONS[p]), list(peak_view.SEARCH_CODES))
             self.assertEqual(list(texts.SEARCH_TIPS[p]), list(peak_view.SEARCH_CODES))
-        self.assertEqual(peak_view.menu_label("marker_peak_lower", "dip"), "次に深い谷")
+        self.assertEqual(peak_view.menu_label("marker_peak_lower", "dip"), "次に深い −ピーク")
         self.assertEqual(peak_view.menu_label("marker_peak_lower", "peak"), texts.MENU_ITEMS["marker_peak_lower"])
         self.assertEqual(peak_view.menu_label("marker_clear", "dip"), texts.MENU_ITEMS["marker_clear"])
 

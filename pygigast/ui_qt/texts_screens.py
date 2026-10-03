@@ -17,13 +17,15 @@ MARKER_COLUMNS = ("番号", "トレース", "周波数 (MHz)", "値", "基準", 
 MARKER_KINDS = {"P": "ピーク", "M": "手動"}
 
 # 探すもの（G §3.8）。マーカー表の上のボタンの並びの頭の切り替え。ピークの一覧とマーカーのピーク探しが同じ選択を使う
-POLARITIES = {"peak": "山", "dip": "谷"}
-POLARITY_TIPS = {"peak": "ピーク（周りより盛り上がった点）を探す", "dip": "谷（周りよりへこんだ点）を探す"}
-# 探すボタンの語（場所は変えず、選んだほうで名前が変わる: G §3.8）。キーはメニューの項目のコード
+# 名前は「＋ピーク／−ピーク」（2026-10-03 ユーザー決定。「山／谷」だと、谷のとき切り替えの「谷」と探すボタンの「谷」が
+# 隣に並んで見分けにくかった）。探すボタンの名前は向きによらず「ピーク」（向きは切り替えが示す）
+POLARITIES = {"peak": "＋ピーク", "dip": "−ピーク"}
+POLARITY_TIPS = {"peak": "周りより盛り上がった点（山）を探す", "dip": "周りよりへこんだ点（谷）を探す"}
+# 探すボタンの語（キーはメニューの項目のコード）。「次に高い」だけは −ピークで「次に深い」（逆の意味になるため）
 SEARCH_BUTTONS = {
     "peak": {"marker_peak": "ピーク", "marker_peak_left": "◀ 次のピーク", "marker_peak_right": "次のピーク ▶",
              "marker_peak_lower": "次に高い", "marker_add": "マーカー追加"},
-    "dip": {"marker_peak": "谷", "marker_peak_left": "◀ 次の谷", "marker_peak_right": "次の谷 ▶",
+    "dip": {"marker_peak": "ピーク", "marker_peak_left": "◀ 次のピーク", "marker_peak_right": "次のピーク ▶",
             "marker_peak_lower": "次に深い", "marker_add": "マーカー追加"},
 }
 SEARCH_TIPS = {
@@ -34,10 +36,10 @@ SEARCH_TIPS = {
             "marker_peak_right": "右の次の谷へ", "marker_peak_lower": "いまより浅い谷のうち最も深いものへ",
             "marker_add": "新しい M を谷に置く"},
 }
-# 谷のときのメニューの項目の名前（山のときは MENU_ITEMS のまま: G §3.8）
+# −ピークのときのメニューの項目の名前（＋ピークのときは MENU_ITEMS のまま: G §3.8）
 DIP_MENU_ITEMS = {
-    "marker_peak": "選んでいるマーカーを谷へ", "marker_peak_left": "次の谷（左）", "marker_peak_right": "次の谷（右）",
-    "marker_peak_lower": "次に深い谷", "marker_add": "マーカーを追加（谷に M）",
+    "marker_peak": "選んでいるマーカーを −ピークへ", "marker_peak_left": "次の −ピーク（左）",
+    "marker_peak_right": "次の −ピーク（右）", "marker_peak_lower": "次に深い −ピーク", "marker_add": "マーカーを追加（−ピークに M）",
 }
 
 # PNG の配色の選び方（I §3.6）。並びは選ぶ欄の並び（Qt・Web）。"screen" は画面で使っている配色（変えた色を含む）
@@ -69,7 +71,7 @@ LABELS.update({
     # ---- マーカー表（グラフの下）。ピーク・谷を探すボタンの語は SEARCH_BUTTONS（山／谷の選択で変わる）
     "btn_copy_tip": "表をタブ区切りでクリップボードへ",
     # 谷に置いたマーカーの注意の列（N dB 帯域幅は谷から上がる点を探す・追従は谷を追う: G §3.8）
-    "row_dip": "谷",
+    "row_dip": "−ピーク",
     "row_ops": "操作",
     "ref_combo_tip": "デルタの基準（この行に Δ周波数・Δ値を出す相手）",
     "row_center": "この周波数を Center に",

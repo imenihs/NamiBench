@@ -234,7 +234,12 @@ class DipCommandsTest(InstrumentCase):
             self.wait_for(lambda k, p: k == "state" and p["run"]["state"] == "stopped" and p["run"]["sweep_count"] > n0)
         pl = self.call("peak_list", trace=1, floor_margin_db=10.0)
         self.assertEqual((pl["base"], pl["unit"]), ("max", "dB"))
-        self.assertAlmostEqual(pl["base_level"], 0.0, delta=0.5)  # 通過域（基準と同じ 0dB）
+        # 基準は表示の最大（「ピーク」ボタンが置く点と同じ）。雑音で 0dB から少しずれるので、最大そのものと比べる
+        top = self.call("marker_add", kind="M", trace=1)
+        m_top = {x["id"]: x for x in self.call("get_state")["markers"]["markers"]}[top["id"]]
+        self.assertAlmostEqual(pl["base_level"], m_top["level"], delta=0.01)
+        self.assertAlmostEqual(pl["base_level"], 0.0, delta=1.5)  # 通過域（基準と同じ 0dB の近く）
+        self.call("marker_remove", id=top["id"])
         self.assertTrue(all(-10.0 <= p["diff_db"] <= 0.0 for p in pl["peaks"]))
         dips = self.call("peak_list", trace=1, floor_margin_db=10.0, polarity="dip")
         self.assertEqual(dips["polarity"], "dip")

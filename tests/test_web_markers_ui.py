@@ -91,7 +91,7 @@ class WebMarkerToolsTest(unittest.TestCase):
         self.ev("document.querySelector('.pol-btn[data-polarity=dip]').click(); 1")
         self.page.settle()
         self.assertEqual(self.tools()[2:7], [S["dip"][c] for c in peak_view.SEARCH_CODES])
-        self.assertEqual(self.tools()[2:7], ["谷", "◀ 次の谷", "次の谷 ▶", "次に深い", "マーカー追加"])
+        self.assertEqual(self.tools()[2:7], ["ピーク", "◀ 次のピーク", "次のピーク ▶", "次に深い", "マーカー追加"])
         self.assertEqual(self.ev("gsApp.menuItem('marker_peak').label"), texts.DIP_MENU_ITEMS["marker_peak"])
         self.assertEqual(self.ev("localStorage.getItem('pygigast.polarity')"), "dip")
         # メニューの「山／谷を切り替える」で戻る

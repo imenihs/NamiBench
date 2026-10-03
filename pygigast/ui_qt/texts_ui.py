@@ -77,7 +77,7 @@ MENU_ITEMS = {
     "pause": "連続 ⇔ 停止",
     "ref_auto": "REF レベルを波形に合わせる（自動）",
     # 探すもの（山・谷）の切り替え（G §3.8）。キーの初期値は無い（キー操作の画面で割り当てられる）
-    "marker_polarity": "山／谷を切り替える",
+    "marker_polarity": "＋ピーク／−ピークを切り替える",
     "marker_peak": "選んでいるマーカーをピークへ",
     "marker_peak_left": "次のピーク（左）",
     "marker_peak_right": "次のピーク（右）",
