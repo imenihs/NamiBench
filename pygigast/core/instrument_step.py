@@ -26,11 +26,10 @@ import numpy as np
 
 from . import step_sweep as ss
 from .instrument_common import sweep_key
-from .instrument_display import apply_trace_settings, db_values, trace_settings
+from .instrument_display import apply_trace_settings, display_values, trace_settings
 from .storage import Cancelled
-from .trace import ConditionChange, TraceAction
+from .trace import ConditionChange, TraceAction, formats
 from .types import AdoptedSweep, Mode, RawSweep, SweepRequest
-from .view_units import shift_values
 
 TASK = "step_sweep"
 # 状態の run.state（ステップ掃引をしている間）
@@ -292,9 +291,9 @@ class StepSweepMixin:
         return True
 
     def _step_check_trace(self, number: int, kw: dict) -> None:
-        """ステップ掃引が結果を入れているトレースの動作は変えない（表示するか・線は変えてよい）。"""
+        """ステップ掃引が結果を入れているトレースの動作は変えない（表示するか・線・表示の形式は変えてよい）。"""
         job = self._step_job
-        if job is not None and number == job.trace and set(kw) - {"visible", "line"}:
+        if job is not None and number == job.trace and set(kw) - {"visible", "line", "fmt"}:
             raise self._error("step_sweep_trace", "number", {"number": number})
 
     def _step_leaks(self, t) -> list[dict]:
@@ -320,10 +319,10 @@ class StepSweepMixin:
 
     # ------------------------------------------------------------------ 画面へ送る形
 
-    def _step_rows_payload(self, t, shift: float) -> dict:
-        """全部重ねるときの段ごとの線（画面の単位の float32 [段, 点]）。1本の点が多ければ続く点の最大で間引き、
-        x0・dx で横の位置を渡す（ゼロスパンは点の番号）。"""
-        rows = shift_values(db_values(t.steps, t.quantity), shift)
+    def _step_rows_payload(self, t, shift: float, fmt: str = formats.DB) -> dict:
+        """全部重ねるときの段ごとの線（主の値と同じ画面の単位・表示の形式の float32 [段, 点]）。1本の点が多ければ続く点の
+        最大で間引き、x0・dx で横の位置を渡す。"""
+        rows = display_values(t.steps, t.quantity, shift, fmt)
         dec, k = ss.decimate_rows(rows)
         ax = t.axis
         unit = ax.step_hz if ax.step_hz > 0 else 1

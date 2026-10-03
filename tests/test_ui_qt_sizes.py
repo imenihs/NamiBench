@@ -132,6 +132,49 @@ class LayoutTest(UiBase):
         found += self.cal_pages()
         self.assertEqual(sorted(set(found)), [])
 
+    def test_zero_span_tabs(self):
+        """ゼロスパン（設計N §1）: 時間の欄（マーカー・X1・X2）・区間の行・表示する長さの欄も同じ決まりで数える。"""
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_view", zero_span_s=10).result(5)
+        self.api.call("set_sweep", center_hz=100_000_000, span_hz=0).result(5)
+        self.api.call("run", mode="single").result(5)
+        self.wait(lambda: (self.win.state.get("run") or {}).get("state") == "stopped"
+                  and (self.win.traces.live_payload(1) or {}).get("x_kind") == "time", what="ゼロスパンの1回の掃引")
+        r = self.api.call("marker_add", kind="M", trace=1).result(5)
+        self.pump(0.2)
+        self.win.select_marker(r["id"])
+        self.api.call("set_xy", x1_hz=-8_000_000, x2_hz=-1_000_000).result(5)
+        found = []
+        for key in ("tab-trace", "tab-marker", "tab-view"):
+            self.win.show_part(key)
+            found += self.check(self.win, f"ゼロスパン {key}")
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_s11_screens(self):
+        """S11（設計E §6.5・設計R §3）: オープンを測った後の信号源のタブと上段（次はショート）、基準を取って SWR にした
+        トレースの表（表示の形式・縦軸と単位が違うトレースの理由）・マーカーのタブ（SWR のしきい値）・|Γ|・SWR の縦軸の上段。"""
+        found = []
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000).result(5)
+        self.api.call("set_mode", mode="s11").result(5)
+        self.api.call("reference_take", kind="fine", standard="open").result(5)
+        self.wait(lambda: self.win.source_tab.s11_state.isVisible(), timeout=20, what="オープンを測った")
+        self.win.show_part("tab-source")
+        found += self.check(self.win, "主画面 S11 オープンの後 tab-source")
+        self.api.call("reference_take", standard="short").result(5)
+        self.wait(lambda: (self.win.state.get("display_quantity") == "ratio"), timeout=20, what="基準との比")
+        self.api.call("set_trace", number=1, format="swr").result(5)
+        self.api.call("set_trace", number=2, visible=True).result(5)
+        r = self.api.call("marker_peak", polarity="dip", trace=1).result(5)
+        self.api.call("marker_function", id=r["id"], threshold={"level": 2.0, "side": "below"}).result(5)
+        self.wait(lambda: self.win.display_unit() == "SWR", what="縦軸が SWR")
+        self.win.select_marker(r["id"])
+        self.wait(lambda: self.win.trace_tab.rows[2].unit_note.isVisible(), what="描かない理由")
+        for key in ("tab-trace", "tab-marker", "tab-source"):
+            self.win.show_part(key)
+            found += self.check(self.win, f"主画面 S11（SWR） {key}")
+        self.assertEqual(sorted(set(found)), [])
+
     def test_checker_finds_broken_layout(self):
         # 検査そのものが働くこと（本物の画面をわざと崩して見つかるか）
         self.win.show_part("tab-trace")
@@ -267,7 +310,7 @@ if __name__ == "__main__":
 
 
 class TopBarOneRowTest(UiBase):
-    """上段は SA の 1600 幅・TG（直結を 0dB にするとその基準の文が出る）の 1920 幅で1段に収まる（RBW 以降を2行目へ
+    """上段は SA の 1600 幅・TG（基準を取るとその基準の文が出る）の 1920 幅で1段に収まる（RBW 以降を2行目へ
     追い出さない: 2026-10-03 ユーザー指摘・設計の PDCA 2巡目）。上段の周波数の欄は一番長い値でも切れない。"""
 
     def one_row(self) -> bool:
@@ -285,7 +328,7 @@ class TopBarOneRowTest(UiBase):
         self.win.resize(1920, 1080)
         self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
         self.api.call("set_mode", mode="tg").result(5)
-        self.wait(lambda: self.win.ref_quick.isVisible(), what="直結を 0dB にする")
+        self.wait(lambda: self.win.ref_quick.isVisible(), what="基準を取る")
         self.assertTrue(self.one_row(), self.win.topbar.needed_one_row())
 
     def test_widest_top_frequency_fits(self):

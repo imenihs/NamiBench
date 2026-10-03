@@ -213,8 +213,13 @@ class StatusTest(UiBase):
         src = self.win.source_tab
         self.assertTrue(src.take_fine.isEnabled())
         src.take_name.setText("直結")
+        # 状態バーの知らせは最後の1つだけを出す。取った直後に比の表示に変わった知らせが続くと、待つ間に上書きされて
+        # 見えないことがあった（まとめて回したときだけ落ちた）。出した知らせを全部覚えて確かめる
+        notes = []
+        show = self.win.status.show_note
+        self.win.status.show_note = lambda text, folder=None: (notes.append(text), show(text, folder))
         src.take_fine.click()
-        self.wait(lambda: "基準を取りました" in self.win.st_note.text(), timeout=15, what="基準を取った知らせ")
+        self.wait(lambda: any("基準を取りました" in n for n in notes), timeout=15, what="基準を取った知らせ")
         self.wait(lambda: self.win.st_norm.text().startswith("基準: 直結"), what="基準の名前")
         self.wait(lambda: self.win.display_unit() == "dB", what="比の単位")
         self.assertTrue(self.win.traces.zero_line.isVisible())

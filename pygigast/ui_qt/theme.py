@@ -147,6 +147,7 @@ def stylesheet(c: dict[str, str] = DARK) -> str:
         QPushButton:checked {{ background: {c['accent']}; color: {c['graph_bg']}; }}
         QPushButton:disabled, QToolButton:disabled {{ color: {c['axis_text']}; }}
         QPushButton[running="true"] {{ background: {c['running']}; }}
+        QPushButton[primary="true"]:enabled {{ border: 1px solid {c['accent']}; color: {c['accent']}; }}
         *[tier="L"] {{ min-height: {l_in}px; max-height: {l_in}px; font-size: {Z.FONT_L_VALUE}px; }}
         QPushButton[tier="L"], QToolButton[tier="L"] {{ font-size: {Z.FONT_L_BUTTON}px; }}
         QPushButton[run="true"] {{ font-size: {Z.FONT_RUN}px; }}

@@ -46,7 +46,6 @@ LABELS = {
     "side_split_tip": "ドラッグで右のパネルの幅を変える",
     # ---- グラフ
     "graph_tip": "グラフの中を横にドラッグ: その範囲を Start/Stop に\nホイール: カーソルの位置を中心に拡大・縮小\nクリック: マーカーを置く\n右クリック: この位置への操作\n左の目盛の上でホイール: REF を1目盛（Ctrl で dB/div）・ドラッグ: REF を連続で",
-    "axis_zero_span": "点（ゼロスパン）",
     "axis_freq": "周波数 ({unit})",
     "axis_level": "レベル ({unit})",
     "ctx_center": "ここを Center に",
@@ -133,7 +132,7 @@ LABELS = {
     "references": "ノーマライズの基準",
     "ref_name_placeholder": "空なら「TG 日時」",
     "take_wide": "広く取る",
-    "take_wide_tip": "TG の範囲を 1MHz 刻みで取る（TG 出力と SP 入力を直結してから）",
+    "take_wide_tip": "TG の範囲を 1MHz 刻みで取る",
     "take_fine": "いまの条件で細かく取る",
     "take_fine_tip": "いまの Start・Stop・Step でその範囲だけ取り、いまの基準へ上書き合成する",
     "reload": "一覧を読み直す",

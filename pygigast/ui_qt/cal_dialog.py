@@ -768,15 +768,24 @@ class CalDialog(QDialog):
 
 
 def open_calibration(win: "MainWindow", kind: str) -> CalDialog:
-    """メニュー「校正」の項目から開く。窓は1つだけ。保存していない作業があれば、その作業のまま出す（U-18）。"""
+    """メニュー「校正」の項目から開く。窓は1つだけ。保存していない作業があれば、その作業のまま出す（U-18）。
+
+    窓は作業ができてから出す（Web と同じ）: コアは校正データを読んでから作業を作るので、それより前に届いた状態には
+    作業が無い。先に窓を出すと、その状態を「別の画面で閉じた」と取り違えて閉じてしまう（掃引中は状態が次々に届く）
+    """
     d = win.cal_window
     if d is None:
         d = CalDialog(win)
         win.cal_window = d
     if not d.isVisible():
         d.page = PREPARE
-    win.call("cal_open", on_ok=d._ok, kind=kind)
-    d.show()
-    d.raise_()
-    d.activateWindow()
+
+    def opened(r: Optional[dict]) -> None:
+        # 出してから描く: 確かめ待ちの点（Web で進めた作業）は、窓が見えているときに描くと聞く
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        d._ok(r)
+
+    win.call("cal_open", on_ok=opened, kind=kind)
     return d

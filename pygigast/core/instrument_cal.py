@@ -154,7 +154,9 @@ class CalMixin:
         if s is not None:
             if s.kind != kind and not s.unsaved() and self._cal_job is None:
                 s.set_kind(kind)
-                self._changed()
+            # 作業が既にあっても状態を送る: 開いた画面は、作業のある状態を受けて初めて窓を開いたものとし（Web）、その後に
+            # 作業の無い状態が届いたら閉じる。送らないと、開いた直後に別の画面が作業を閉じても窓の扱いが残る
+            self._changed()
             return self._cal_result()
         serial = self._cal_serial()
         model = self._profile.get("model") if serial else None

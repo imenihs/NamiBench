@@ -1,4 +1,4 @@
-"""機器の一覧・名前・使用中の見分け・自動接続（設計J §4.7・設計B §7.3）と、「直結を 0dB にする」の
+"""機器の一覧・名前・使用中の見分け・自動接続（設計J §4.7・設計B §7.3）と、上段の「基準を取る」の
 REF レベル（設計E §6.2・J §4.2）を、偽の GigaSt の種類・偽の DLL の RTL-SDR・シミュレータで確かめる。"""
 import tempfile
 import threading
@@ -232,7 +232,7 @@ class TestTexts(unittest.TestCase):
 
 
 class TestDirectZeroDb(InstrumentCase):
-    """「直結を 0dB にする」: 取ったら 0dB が見える REF レベルにし、変えたことを結果で知らせる（E §6.2・J §4）。"""
+    """上段の「基準を取る」: 取ったら 0dB が見える REF レベルにし、変えたことを結果で知らせる（E §6.2・J §4）。"""
 
     def take(self, **kw):
         r = self.call("reference_take", kind="wide", name="直結 12:00", show_zero=True, **kw)

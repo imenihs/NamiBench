@@ -28,9 +28,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.units import MINUS, ParseError, level_text, minus_sign, parse_db, parse_freq_hz
+from ..core.units import (MINUS, ParseError, format_time_us, level_text, minus_sign, parse_db, parse_freq_hz,
+                          parse_time_us)
 from . import sizes
 from .texts_labels import LABELS
+from .texts_zerospan import ZERO_SPAN_TEXTS
 
 NOTE_SHOW_MS = 4000
 # ボタンを添えた知らせは、読んで押すまでの時間を取る。マウスが知らせの上にある間は消さない
@@ -327,7 +329,11 @@ class SpanLockButton(QToolButton):
 
 
 class FreqField(ValueField):
-    """周波数の欄。値は Hz の int。表示は MHz の固定小数（桁を落とさない）。"""
+    """周波数の欄。値は Hz の int。表示は MHz の固定小数（桁を落とさない）。
+
+    ゼロスパンの横軸の位置を打つ欄（マーカー・XY カーソル）は set_time_axis(True) で時間の欄になる: 値はマイクロ秒の
+    int、表示と打つ値は ms（設計N §1）。時間には周波数オフセットを当てない。
+    """
 
     def __init__(self, name: str, on_commit: Callable[[int], None], big: bool = True) -> None:
         super().__init__(name, big)
@@ -343,6 +349,7 @@ class FreqField(ValueField):
         self._hz = 0
         # 周波数オフセット（設計O）: 欄は「測った周波数 + これ」を出し、打った値からこれを引いて渡す
         self.offset_hz = 0
+        self.time_axis = False
         self._on_commit = on_commit
         self.edit.committed.connect(self._commit_text)
         self.edit.stepped.connect(self._stepped)
@@ -359,30 +366,49 @@ class FreqField(ValueField):
             s = whole + "." + frac.ljust(3, "0")
         return s + " MHz"
 
+    def _shown(self) -> str:
+        return format_time_us(self._hz) if self.time_axis else self._to_text(self._hz + self.offset_hz)
+
     def set_hz(self, hz: int) -> None:
         self._hz = hz
-        self.edit.show_value(self._to_text(hz + self.offset_hz))
+        self.edit.show_value(self._shown())
 
     def set_offset(self, offset_hz: int) -> None:
         if offset_hz != self.offset_hz:
             self.offset_hz = int(offset_hz)
-            self.edit.show_value(self._to_text(self._hz + self.offset_hz))
+            self.edit.show_value(self._shown())
+
+    def set_time_axis(self, on: bool) -> None:
+        """ゼロスパンの時間の欄にする・周波数の欄に戻す（値の意味が変わるので、呼ぶ側が新しい値を入れ直す）。"""
+        if bool(on) != self.time_axis:
+            self.time_axis = bool(on)
+            self.edit.show_value(self._shown())
 
     def hz(self) -> int:
         return self._hz
 
     def _commit_text(self, text: str) -> None:
+        if self.time_axis:
+            try:
+                us = parse_time_us(text)
+            except ParseError:
+                self.flash_note(ZERO_SPAN_TEXTS["bad_time"])
+                self.edit.show_value(self._shown())
+                return
+            self._on_commit(us)
+            return
         try:
             hz = parse_freq_hz(text)
         except ParseError:
             self.flash_note(LABELS["bad_freq"])
-            self.edit.show_value(self._to_text(self._hz + self.offset_hz))
+            self.edit.show_value(self._shown())
             return
         self._on_commit(hz - self.offset_hz)
 
     def _stepped(self, exp: int, direction: int) -> None:
-        # 欄の数字は MHz なので、10^exp MHz = 10^(exp+6) Hz
-        step = 10 ** (exp + 6) if exp + 6 >= 0 else 1
+        # 欄の数字は MHz なので、10^exp MHz = 10^(exp+6) Hz。時間の欄は ms なので 10^(exp+3) μs
+        k = 3 if self.time_axis else 6
+        step = 10 ** (exp + k) if exp + k >= 0 else 1
         self._on_commit(self._hz + direction * step)
 
 
@@ -520,6 +546,17 @@ class DbChoiceField(DbField):
     def choices(self) -> list[str]:
         return [self.combo.itemText(i) for i in range(self.combo.count())]
 
+    def set_spec(self, choices, signed: bool, lo: Optional[float], hi: Optional[float],
+                 decimals: Optional[int]) -> bool:
+        """一覧・符号・範囲・桁を替える（しきい値の欄を |Γ|・SWR の値にする: 設計R §3）。替えたら True。"""
+        spec = (tuple(float(c) for c in choices), bool(signed), lo, hi, decimals)
+        if spec == (tuple(float(c) for c in self._choices), self._signed, self.lo, self.hi, self.decimals):
+            return False
+        self._choices, self._signed, (self.lo, self.hi, self.decimals) = spec[0], spec[1], spec[2:]
+        self._fit_width()
+        self._fill_choices()
+        return True
+
     def _chosen(self, i: int) -> None:
         v = self.combo.itemData(i)
         if v is not None:
@@ -556,7 +593,9 @@ class DbChoiceField(DbField):
 
     def set_value(self, v: float) -> None:
         self._value = v
-        self.edit.show_value(f"{level_text(v)} {self._unit}".rstrip())
+        # 小数2桁以上の欄（|Γ|・SWR のしきい値: 設計R §3）はその桁で出す。ほかは 0.1 まで（REF の欄と同じ）
+        text = level_text(v) if (self.decimals or 1) <= 1 else minus_sign(f"{float(v):.{self.decimals}f}")
+        self.edit.show_value(f"{text} {self._unit}".rstrip())
 
     def set_unit(self, unit: str) -> None:
         if unit != self._unit:

@@ -122,5 +122,87 @@ class CalBrowserTest(unittest.TestCase):
         self.assertEqual(page.errors, [])
 
 
+    def test_opens_while_sweeping_and_keeps_the_scroll(self):
+        # 掃引中は作業ができる前の状態（作業なし）が届く。それで窓を閉じない。手でスクロールした点の一覧を、状態が
+        # 届くたびに選んでいる行へ戻さない（Qt と同じ: 一覧の中身が変わったときだけ寄せる）
+        page, app = self.page, self.app
+        open_app(page, app, 1280, 720)
+
+        def sweeps(n):
+            n0 = app.call("get_state")["run"]["sweep_count"]
+            end = time.monotonic() + 30
+            while app.call("get_state")["run"]["sweep_count"] < n0 + n:
+                self.assertLess(time.monotonic(), end)
+                time.sleep(0.05)
+
+        app.call("run", mode="continuous")
+        try:
+            for _ in range(3):
+                page.ev("gsApp.openCal('freq'); gsApp.onStateCal({ui: {cal: null}}); 1")
+                page.wait("!!document.querySelector('.calwin')", "校正の画面")
+                sweeps(2)
+                page.settle()
+                self.assertTrue(page.ev("!!document.querySelector('.calwin')"))
+                page.ev("gsApp.calClose(); 1")
+                page.wait("!gsApp.calWin", "閉じた")
+            page.ev("gsApp.openCal('freq'); 1")
+            page.wait("!!document.querySelector('.calwin')", "校正の画面")
+            page.ev("gsApp.calNext(); 1")
+            page.wait("gsApp.calWin.page === 1 && !!document.querySelector('.calwin .cal-points')", "測る")
+            sweeps(2)
+            page.settle()
+            top = page.ev("(() => { const el = document.querySelector('.calwin .cal-points'); "
+                          "el.scrollTop = el.scrollHeight; return el.scrollTop; })()")
+            self.assertGreater(top, 100)
+            sweeps(3)
+            page.settle()
+            self.assertEqual(page.ev("document.querySelector('.calwin .cal-points').scrollTop"), top)
+        finally:
+            app.call("stop")
+            page.ev("gsApp.calWin && gsApp.calClose(); 1")
+        self.assertEqual(page.errors, [])
+
+
+    def test_round_trip_keeps_the_selected_point_visible(self):
+        # 測る → 確かめる → 戻る では一覧が作り直されて先頭に戻る。状態が届かなくても選んでいる点の行へ寄せる
+        page, app = self.page, self.app
+        open_app(page, app, 1280, 720)
+        page.ev("gsApp.openCal('freq'); 1")
+        page.wait("!!document.querySelector('.calwin')", "校正の画面")
+        app.call("cal_set", current=60)
+        page.wait("gsApp.calView && gsApp.calView.points[60].current", "60 番の点")
+        page.ev("gsApp.calNext(); 1")
+        page.wait("gsApp.calWin.page === 1 && !!document.querySelector('.calwin .cal-points tr.sel')", "測る")
+        page.settle()
+        page.ev("gsApp.calNext(); 1")
+        page.wait("gsApp.calWin.page === 2", "確かめる")
+        page.settle()
+        page.ev("gsApp.calBack(); 1")
+        page.wait("gsApp.calWin.page === 1 && !!document.querySelector('.calwin .cal-points tr.sel')", "戻る")
+        page.settle()
+        seen = page.ev("(() => { const r = document.querySelector('.calwin .cal-points tr.sel').getBoundingClientRect(); "
+                       "const b = document.querySelector('.calwin .cal-points').getBoundingClientRect(); "
+                       "return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; })()")
+        self.assertTrue(seen)
+        page.ev("gsApp.calClose(); 1")
+        page.wait("!gsApp.calWin", "閉じた")
+
+    def test_closed_elsewhere_right_after_opening(self):
+        # 別の画面が開いた作業を Web でも開き、次の状態が届く前に別の画面が閉じても、Web の窓の扱いを残さない
+        page, app = self.page, self.app
+        open_app(page, app, 1280, 720)
+        app.call("cal_open", kind="rbw")
+        page.wait("!!(gsApp.ui && gsApp.ui.cal)", "作業のある状態")
+        page.ev("gsApp.openCal('rbw'); 1")
+        app.call("cal_close")
+        page.wait("!gsApp.calWin", "窓の扱いが消える")
+        app.call("cal_open", kind="rbw")
+        page.wait("!!(gsApp.ui && gsApp.ui.cal)", "作業のある状態")
+        page.settle()
+        self.assertFalse(page.ev("!!document.querySelector('.calwin')"))  # 開いていない画面に窓は出ない
+        app.call("cal_close")
+        self.assertEqual(page.errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -356,9 +356,14 @@ class _Hub:
         if st is None:
             st = self.last_state = await _await(self.api.get_state())
         out = []
+        from ...ui_qt.screen_s11 import axis_unit, trace_drawn_reason
+
+        axis = axis_unit(st)
         for t in st.get("traces") or []:
             if not (t.get("visible") and t.get("has_values")):
                 continue
+            if trace_drawn_reason(t, axis):
+                continue  # 縦軸と単位が違うトレースは描かないので読まない（Qt の TraceLayer.shown_payloads と同じ）
             key = str(t.get("number"))
             p = self.latest_traces.get(key)
             if p is None:

@@ -1,8 +1,10 @@
-"""上段の「直結を 0dB にする」（設計J §4.2: TG・S11 の基準は1クリックで届く所に。設計E §6.2）。
+"""上段の「基準を取る」（設計J §4.2: TG・S11 の基準は1クリックで届く所に。設計E §6.2）。
 
 - TG・S11 のときだけ、連続/単発/停止の隣に出す（位置を動かさない: U-08）
 - 押したら「広く取る」（機種の TG の範囲を 1MHz 刻み）で基準を取り、すぐ1回測って 0dB を見せる。0dB が縦軸の
   外なら見える REF レベルにする（コアの reference_take の show_zero。変えたことは知らせに出る）
+- S11 では同じ場所のボタンが次の1段になる: 「オープンを測る」→「ショートを測る」（設計E §6.5）。ショートで基準が
+  できたら、すぐ1回測って見せる
 - 取っている間は進み具合と「やめる」をその場に出す（U-19）
 - 隣に、いま使っている基準（名前・取得の時刻・電源の入れ直し前の印）か「基準なし（dBm で表示）」
 - 細かい操作（名前・平均・いまの条件で細かく取る・一覧）は右の「信号源」タブに残す
@@ -16,7 +18,7 @@ from typing import TYPE_CHECKING, Optional
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
 
-from . import screen_model, sizes, texts
+from . import screen_model, screen_s11, sizes, texts
 from .texts_devices import REF_QUICK_LABELS as L
 
 if TYPE_CHECKING:
@@ -32,6 +34,7 @@ class RefQuick(QWidget):
         super().__init__()
         self.win = win
         self._task_id: Optional[str] = None
+        self._take: Optional[dict] = None  # 押したときに送る中身（screen_model.ref_quick_view の take）
         lay = QHBoxLayout(self)
         lay.setContentsMargins(sizes.GAP, 0, 0, 0)
         lay.setSpacing(sizes.GAP)
@@ -62,8 +65,12 @@ class RefQuick(QWidget):
     def apply(self, st: dict) -> None:
         v = screen_model.ref_quick_view(st)
         self.setVisible(v["visible"])
+        if self.button.text() != v["label"]:
+            self.button.setText(v["label"])  # S11 は次の1段（オープンを測る → ショートを測る: 設計E §6.5）
+            sizes.fit_button(self.button)  # 前の文字の幅のまま伸びて残らないように（S-03）
         self.button.setEnabled(v["reason"] is None)
-        self.button.setToolTip(L["tip"] + (f" — {v['reason']}" if v["reason"] else ""))
+        self.button.setToolTip(v["button_tip"])
+        self._take = v["take"]
         self._task_id = v["task_id"]
         self.bar.setVisible(v["taking"])
         self.cancel.setVisible(v["taking"])
@@ -77,8 +84,16 @@ class RefQuick(QWidget):
         self.win.topbar.relayout()  # 出る・消える・文の幅が変わると上段の幅が変わる（J §4.3.3）
 
     def take(self) -> None:
-        name = texts.tpl("ref_direct_name", time=datetime.datetime.now().strftime("%H:%M"))
-        self.win.call("reference_take", kind="wide", name=name, show_zero=True)
+        """TG は「広く取る」で基準を取り、S11 は次の1段（オープン → ショート。範囲は広く: 設計E §6.5）。"""
+        now = datetime.datetime.now().strftime("%H:%M")
+        t = dict(self._take or {"standard": None, "kind": "wide", "show_zero": True})
+        if t.get("standard"):
+            kw = {"standard": t["standard"], "name": screen_s11.s11_ref_name(now), "show_zero": bool(t["show_zero"])}
+            if t.get("kind"):
+                kw["kind"] = t["kind"]
+        else:
+            kw = {"kind": "wide", "name": texts.tpl("ref_direct_name", time=now), "show_zero": True}
+        self.win.call("reference_take", **kw)
 
     def _cancel(self) -> None:
         if self._task_id:

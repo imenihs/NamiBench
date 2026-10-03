@@ -272,8 +272,12 @@ class FileUnitWebTest(unittest.TestCase):
         info = self.app.call("get_state")["files"][0]["traces"][0]
         self.assertEqual(self.page.ev(f"document.querySelector('{sel}').textContent.trim()"),
                          qt_texts.w("file_trace_check", number=info["number"], unit=info["unit"], points=info["points"]))
-        # 縦軸を比（dB）にすると、電力（dBm）の参照トレースは重ねない（グラフ・凡例・PNG・REF の自動から外れる）
-        self.app.call("set_amplitude", unit="dB")
+        # 縦軸を比（dB）にすると、電力（dBm）の参照トレースは重ねない（グラフ・凡例・PNG・REF の自動から外れる）。
+        # 縦軸の単位は表示している測定中のトレースの単位（Qt と同じ screen_s11.axis_unit）: TG で基準を取って比にする
+        self.app.call("set_mode", mode="tg")
+        self.app.call("reference_take", kind="fine")
+        self.wait_idle("基準を取る")
+        self.app.call("run", mode="single")
         self.page.wait("gsApp.axisUnit === 'dB'", "縦軸が dB")
         self.page.settle()
         self.assertEqual(self.page.ev("gsApp.shownFiles(gsApp.palette).length"), 0)
@@ -283,5 +287,6 @@ class FileUnitWebTest(unittest.TestCase):
         self.assertEqual(title, qt_texts.w("file_unit_differs", axis="dB", unit=info["unit"]))
         self.assertIn("単位が縦軸", title)
         # 電力に戻すと重ねる
-        self.app.call("set_amplitude", unit=None)
+        self.app.call("set_mode", mode="sa")
+        self.app.call("run", mode="single")
         self.page.wait(f"gsApp.shownFiles(gsApp.palette).some((f) => f.id === '{tid}')", "また重ねる")

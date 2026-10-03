@@ -108,7 +108,8 @@ class _GraphViewBox(pg.ViewBox):
     def __init__(self, sig: GraphSignals) -> None:
         super().__init__(enableMenu=False)
         self._sig = sig
-        self.freq_ops_enabled = True
+        self.freq_ops_enabled = True  # 範囲のドラッグ（周波数軸だけ）
+        self.marker_ops_enabled = True  # クリックでマーカーを置く（ゼロスパンの時間軸でも置ける: 設計N §1）
         self._range_drag = False
         self._band = pg.LinearRegionItem(movable=False, brush=pg.mkBrush(79, 163, 255, 60),
                                          pen=pg.mkPen(79, 163, 255, 200))
@@ -147,7 +148,7 @@ class _GraphViewBox(pg.ViewBox):
         if ev.button() == Qt.MouseButton.LeftButton:
             # マーカーを置くのはダブルクリックだけ（1回のクリックはグラフを選ぶだけで何も変えない）
             ev.accept()
-            if ev.double() and self.freq_ops_enabled:
+            if ev.double() and self.marker_ops_enabled:
                 p = self.mapSceneToView(ev.scenePos())
                 self._sig.clicked.emit(p.x(), p.y())
             return

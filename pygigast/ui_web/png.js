@@ -240,13 +240,19 @@
       // トレースの線の基準の幅は Qt の PNG と同じ（report_layout.png_line_base: 文字の大きさから）
       const g = new GSGraph(host, { colors: c, static: true, bare: true, width: graphW, height: graphH, lineBase: lay.line_base_px });
       const s = (ctx.st || {}).sweep || {};
-      if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true); else g.setX(s.start_hz, s.stop_hz, false);
-      g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit);
+      // 横軸は画面と同じ（ゼロスパンは時間: サーバーの ui.x_axis。設計N §1）
+      const xa = ((ctx.st || {}).ui || {}).x_axis;
+      if (xa && xa.kind === "time") g.setX(xa.x0, xa.x1, xa); else g.setX(s.start_hz, s.stop_hz, null);
+      // 周波数オフセット（設計O）: 目盛の数字と軸の名前は画面と同じく換算後
+      if (s.step_hz !== 0 && ctx.offset && ctx.offset.hz) g.setXOffset(ctx.offset.hz, ctx.offset.text);
+      // |Γ|・SWR の縦軸は下端が決まっていて、目盛の数字は1目盛を書き分けられる桁（設計R §3。画面と同じ）
+      g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit, ctx.amp.linear, ctx.amp.decimals);
       g.setTraces(ctx.traces(c));
       g.setMarkers((ctx.markers || {}).markers || [], null);
       // マーカーの機能の線（G §3.6）: 画面で出しているときだけ PNG にも描く
       if ((((ctx.st || {}).view) || {}).function_lines !== false) g.setFunctionLines((ctx.markers || {}).rows || []);
       g.setXY((ctx.markers || {}).xy);
+      g.setCursorRows((ctx.markers || {}).rows || []);
       g.u.redraw(false, false);
       // uPlot は描き直しをまとめて microtask で行うので、描き終わるのを待ってから写す
       // （requestAnimationFrame は裏のタブで止まるので使わない）

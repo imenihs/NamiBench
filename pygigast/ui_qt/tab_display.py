@@ -3,6 +3,8 @@
 - 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（後の2つは設計P。消さずに無効にし理由: U-08）
 - 描き方: 線／塗りつぶし（旧 Line/Dot。測定値は変わらない）。コアの表示の設定（Qt と Web で同じ・プリセットに入る）。
   内部の漏れの印を出すか（設計L §1.4。同じくコアの表示の設定）
+- ゼロスパン（設計N §1）: 表示する長さ（掃引1回・1/10/60 秒）。コアの表示の設定 view.zero_span_s。ゼロスパンでない
+  間は理由付きで選べない（U-08）
 - 振幅の詳細（設計O）: 単位 dBm／dBμV／dBmV と外部補正 dB。換算はコア（グラフ・マーカー・CSV・PNG・REF が
   同じ単位になる）。「初期値に戻す」
   - 単位の欄は実際に使っている単位を出す（J §4.10 の 2）。基準との比を出している間は「dB（基準との比）」で、
@@ -95,6 +97,17 @@ class DisplayTab(QWidget):
         self.leak_marks.setChecked(True)
         self.leak_marks.toggled.connect(lambda on: win.call("set_view", leak_marks=bool(on)))
         v.addWidget(self.leak_marks)
+        lay.addWidget(g)
+
+        Z = texts.ZERO_SPAN_TEXTS
+        g = QGroupBox(Z["group"])
+        form = sizes.form(g)
+        self.zs_length = QComboBox()
+        for it in screen_model.zero_span_view({})["items"]:
+            self.zs_length.addItem(it["text"], it["value"])
+        self.zs_length.activated.connect(
+            lambda i: win.call("set_view", field=None, zero_span_s=int(self.zs_length.itemData(i))))
+        form.addRow(Z["length"], self.zs_length)
         lay.addWidget(g)
 
         g = QGroupBox(L["amplitude_detail"])
@@ -214,6 +227,9 @@ class DisplayTab(QWidget):
         """コアの表示の設定（単位・外部補正・描き方）と配色を映す。"""
         v = st.get("view") or {}
         self._apply_unit(st)
+        zv = screen_model.zero_span_view(st)
+        widget_sync.set_data(self.zs_length, zv["value"])
+        set_enabled(self.zs_length, zv["reason"], texts.ZERO_SPAN_TEXTS["length_tip"])
         widget_sync.set_checked(self.style_fill, v.get("draw_style") == "fill")
         widget_sync.set_checked(self.style_line, v.get("draw_style") != "fill")
         widget_sync.set_checked(self.leak_marks, v.get("leak_marks", True) is not False)

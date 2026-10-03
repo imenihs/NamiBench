@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from ..core.report_layout import TRACE_LINE_DEFAULT
 from ..core.units import format_freq
-from . import menus, screen_model, sizes, texts, widget_sync
+from . import menus, screen_model, screen_s11, sizes, texts, widget_sync
 from .fields import COUNT_CHOICES, COUNT_MAX, CountField
 from .theme import trace_color
 
@@ -208,6 +208,18 @@ class _TraceRow:
             self.line.addItem(name, code)
         self.line.setToolTip(L["line"])
         self.line.activated.connect(lambda i: win.call("set_trace", number=number, line=self.line.itemData(i)))
+        # 表示の形式（設計R §3: リターンロス（dB）・|Γ|・SWR。位相系は位相を測れない機器では無効にして理由: R §5.1）
+        self.fmt = QComboBox()
+        for code in texts.TRACE_FORMATS:
+            self.fmt.addItem(texts.TRACE_FORMATS[code], code)
+        self.fmt.setToolTip(L["trace_format"])
+        self.fmt.activated.connect(self._format_chosen)
+        self._fmt_key: tuple = ()
+        # 縦軸と単位が違って描かない理由（その行に出し続ける: U-25）
+        self.unit_note = QLabel("")
+        self.unit_note.setObjectName("warn")
+        self.unit_note.setWordWrap(True)
+        self.unit_note.hide()
         # いまの様子（「44/64」）は掃引ごとに長さが変わる。列の幅も行の高さも動かさない（文が延びて欄が右へずれる・
         # 折り返して行が高くなると、掃引のたびに部品が動く）: 1行目の部品で決まる列の幅に収めて切り、全部はツールチップ
         self.status = _ElidedLabel()
@@ -231,7 +243,10 @@ class _TraceRow:
         grid.addWidget(self.avg, row + 1, 2)
         grid.addWidget(self.after, row + 1, 3)
         grid.addWidget(self.line, row + 1, 4)  # クリアの真下
-        grid.addWidget(self.note, row + 2, 0, 1, 5)
+        # 3行目: 表示の形式（動作・平均の種類の真下。同じ列なので同じ幅: S-02）
+        grid.addWidget(self.fmt, row + 2, 2)
+        grid.addWidget(self.unit_note, row + 3, 0, 1, 5)
+        grid.addWidget(self.note, row + 4, 0, 1, 5)
 
     def _action_chosen(self, _i: int) -> None:
         a = self.action.currentData()
@@ -240,6 +255,32 @@ class _TraceRow:
             # 平均は回数を持つ（設計F §2）。回数が無ければ既定の回数で始める
             kw["count"] = DEFAULT_AVERAGE_COUNT
         self.tab.win.call("set_trace", number=self.n, **kw)
+
+    def _format_chosen(self, i: int) -> None:
+        code = self.fmt.itemData(i)
+        if code is not None and code != self._state.get("format"):
+            self.tab.win.call("set_trace", number=self.n, format=code)
+
+    def apply_format(self, v: dict, drawn_reason: Optional[str]) -> None:
+        """表示の形式の欄（screen_s11.trace_format_view）と、縦軸と単位が違って描かない理由。"""
+        key = tuple((it["code"], it["text"], it["enabled"], it["tip"]) for it in v["items"])
+
+        def show() -> None:
+            if key != self._fmt_key:
+                self._fmt_key = key
+                widget_sync.set_items(self.fmt, [(it["text"], it["code"]) for it in v["items"]])
+                model = self.fmt.model()
+                for k, it in enumerate(v["items"]):
+                    item = model.item(k) if isinstance(model, QStandardItemModel) else None
+                    if item is not None:
+                        # 使えない形式は一覧に残して無効にし、理由をツールチップに（U-08）
+                        item.setEnabled(bool(it["enabled"]))
+                        item.setToolTip(it["tip"])
+            widget_sync.set_data(self.fmt, v["value"])
+        widget_sync.when_idle(self.fmt, "fmt", show)
+        set_enabled(self.fmt, v["reason"], L["trace_format"])
+        self.unit_note.setText(drawn_reason or "")
+        self.unit_note.setVisible(bool(drawn_reason))
 
     def _after_chosen(self, _i: int) -> None:
         code = self.after.currentData()
@@ -354,13 +395,15 @@ class TraceTab(QWidget):
         grid.setContentsMargins(sizes.INSET, sizes.INSET, sizes.INSET, sizes.INSET)
         grid.setHorizontalSpacing(sizes.GAP)
         grid.setVerticalSpacing(sizes.GAP)
-        self.rows = {n: _TraceRow(self, n, grid, (n - 1) * 3) for n in (1, 2, 3, 4)}
+        self.rows = {n: _TraceRow(self, n, grid, (n - 1) * 5) for n in (1, 2, 3, 4)}
         grid.setColumnStretch(5, 1)  # 列は左から詰める（部品を横に伸ばさない: S-02・S-03）
         # 同じ列の欄は1つの幅（その列が出しうる一番長い選択肢）: 動作と平均の種類／回数と N 回の後
         rows = list(self.rows.values())
         kinds = [texts.w("default_with", type=t) for t in texts.AVERAGE_TYPES.values()]
-        self._col_action = SameWidth([r.action for r in rows] + [r.avg for r in rows],
-                                     [*texts.TRACE_ACTIONS.values(), L["default"], *texts.AVERAGE_TYPES.values(), *kinds])
+        # 表示の形式（設計R §3）も同じ列（3行目）。出しうる一番長い形式の名前（モードで名前が変わっても幅を動かさない）
+        self._col_action = SameWidth([r.action for r in rows] + [r.avg for r in rows] + [r.fmt for r in rows],
+                                     [*texts.TRACE_ACTIONS.values(), L["default"], *texts.AVERAGE_TYPES.values(), *kinds,
+                                      *screen_s11.format_width_samples()])
         counts = [L["no_count"]] + [f"{v}{L['times_suffix']}" for v in (*COUNT_CHOICES, COUNT_MAX)]
         self._col_count = SameWidth([r.count for r in rows] + [r.after for r in rows],
                                     [*counts, *texts.AVERAGE_AFTER.values(), *texts.HOLD_AFTER.values()])
@@ -414,10 +457,13 @@ class TraceTab(QWidget):
 
     def apply_state(self, st: dict) -> None:
         sw = st["sweep"]
+        s11 = screen_model.s11_ui(st)
         for s in st.get("traces") or []:
             r = self.rows.get(int(s["number"]))
             if r is not None:
                 r.apply(s)
+                key = str(s["number"])
+                r.apply_format(s11["trace_format"][key], s11["trace_drawn"].get(key))
         why = screen_model.sweep_reasons(st)
         self.points_auto.blockSignals(True)
         self.points_auto.setChecked(sw.get("points_setting") in (None, 0))

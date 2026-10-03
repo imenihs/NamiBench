@@ -357,17 +357,17 @@ class AxesRuleTest(unittest.TestCase):
         long_lay = rl.layout(d, (640, 400))
         self.assertGreater(long_lay["axes"]["x_every"], 1, long_lay["x_labels"])
 
-    def test_zero_span_axis_is_point_numbers(self):
+    def test_zero_span_axis_is_time(self):
         from pygigast.core import report_layout as rl
 
         d = sample_data()
-        d["conditions"].update(step_hz=0, stop_hz=d["conditions"]["start_hz"], points=501)
+        d["conditions"].update(step_hz=0, stop_hz=d["conditions"]["start_hz"], points=501,
+                               x_axis={"kind": "time", "x0": -10_000_000, "x1": 0, "factor": 1_000_000, "unit": "s",
+                                       "length_s": 10.0, "point_time_s": 0.00014})
         lay = rl.layout(d, (1600, 1000))
-        self.assertEqual(lay["x_labels"][0], "0")
-        self.assertEqual(lay["x_labels"][-1], "500")
-        self.assertEqual(lay["x_title"], rl.X_AXIS_TITLE_ZERO_SPAN)
-        self.assertEqual(rl.index_labels(11), [str(i) for i in range(11)])
-        self.assertEqual(rl.index_labels(2)[:2], ["0.0", "0.1"])
+        self.assertEqual(lay["x_labels"][0], "-10")
+        self.assertEqual(lay["x_labels"][-1], "0")
+        self.assertEqual(lay["x_title"], rl.X_AXIS_TITLE_TIME.replace("{unit}", "s"))
         png = pe.render_png(d, size=(800, 500))
         self.assertFalse(QImage.fromData(png, "PNG").isNull())
 

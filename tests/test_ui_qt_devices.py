@@ -1,4 +1,4 @@
-"""Qt の機器の一覧（設計J §4.7）・REF レベルの欄（J §4.1）・上段の「直結を 0dB にする」（J §4.2）。
+"""Qt の機器の一覧（設計J §4.7）・REF レベルの欄（J §4.1）・上段の「基準を取る」（J §4.2）。
 
 偽の GigaSt の種類（tests/device_helpers.py）とシミュレータで確かめる。実機のポートは開かない。
 """
@@ -238,9 +238,9 @@ class TestRefQuick(UiBase):
         q.button.click()
         self.wait(lambda: self.state()["normalization"].get("selected") is not None, timeout=20, what="基準が取れる")
         sel = self.state()["normalization"]["selected"]
-        self.assertTrue(sel["name"].startswith("直結 "))
+        self.assertTrue(sel["name"].startswith("TG "))
         self.wait(lambda: self.state()["run"]["last_stop_reason"] == "single_done", timeout=20, what="すぐ1回測る")
-        self.wait(lambda: q.status.text().startswith("基準: 直結 "), what="いまの基準")
+        self.wait(lambda: q.status.text().startswith("基準: TG "), what="いまの基準")
         # 0dB が見えるよう REF レベルを動かし、知らせる
         self.wait(lambda: self.win.ref_level() == 10.0, what="REF が +10")
         self.assertEqual(self.win.display_unit(), "dB")
