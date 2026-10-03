@@ -705,7 +705,12 @@ class MarkerTable:
         return Command(ST_OK, ref_level=r["level"], unit=r["unit"])
 
     def span_from_delta_command(self, marker_id: str, views: Views) -> Command:
-        """「デルタの2点を Start・Stop に」。低い方を Start、高い方を Stop にする。"""
+        """「デルタの2点を Start・Stop に」。低い方を Start、高い方を Stop にする。
+
+        この操作の目的は2点の間の幅を見ること（Span を変えることそのもの）なので、Span 固定が ON なら固定を外して
+        2点をそのまま Start・Stop にする（固定 ON のドラッグの規則を当てない。外したことは掃引条件モデルが知らせる:
+        設計C §5.13）。
+        """
         m = self._markers[marker_id]
         if m.ref is None:
             return Command(ST_NO_REF)
@@ -718,7 +723,7 @@ class MarkerTable:
         lo, hi = sorted((r["freq_hz"], rr["freq_hz"]))
         if lo == hi:
             return Command(ST_SAME_FREQUENCY)
-        return Command(ST_OK, SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz")))
+        return Command(ST_OK, SweepRequest(start_hz=lo, stop_hz=hi, edited=("start_hz", "stop_hz"), span_lock=False))
 
 
 # ---------------------------------------------------------------------------

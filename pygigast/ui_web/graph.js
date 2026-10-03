@@ -67,11 +67,13 @@
     _build(w, h) {
       const c = this.colors;
       const self = this;
+      // bare: 軸・目盛・余白なしで中身だけを描く（PNG。軸は png.js が report_layout.graph_axes の決まりで描く: Qt と同じ）
+      const bare = !!this.o.bare;
       const opts = {
         width: w,
         height: h,
         // 上に余白を取り、一番上の目盛（REF レベル）の数字を切らない（J §4.3）
-        padding: [14, 18, 0, 0],
+        padding: bare ? [0, 0, 0, 0] : [14, 18, 0, 0],
         legend: { show: false },
         pxAlign: 0,
         scales: {
@@ -80,6 +82,7 @@
         },
         axes: [
           {
+            show: !bare,
             stroke: c.text,
             grid: { stroke: c.grid, width: 1 },
             ticks: { stroke: c.axis, width: 1 },
@@ -94,6 +97,7 @@
             },
           },
           {
+            show: !bare,
             stroke: c.text,
             grid: { stroke: c.grid, width: 1 },
             ticks: { stroke: c.axis, width: 1 },

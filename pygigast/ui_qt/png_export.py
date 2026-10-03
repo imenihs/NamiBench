@@ -273,25 +273,26 @@ class _Painter:
     # ---- グラフ
     def _draw_graph(self, rect: QRectF) -> None:
         c = self.data.get("conditions") or {}
-        unit = c.get("unit", "dBm")
+        unit = self.lay["unit"]
         ref = float(c.get("ref_level", 0.0))
         div = float(c.get("db_per_div", 10.0))
         bottom = ref - DIVISIONS * div
-        start = float(c.get("start_hz", 0.0))
-        stop = float(c.get("stop_hz", start + 1.0))
+        zero_span = c.get("step_hz") == 0
+        if zero_span:
+            # ゼロスパン: 横軸は点の番号（画面と同じ: 設計N）
+            start, stop = 0.0, float(max(1, int(c.get("points") or 2) - 1))
+        else:
+            start = float(c.get("start_hz", 0.0))
+            stop = float(c.get("stop_hz", start + 1.0))
         if stop <= start:
             stop = start + 1.0
 
-        y_labels = self.lay["y_labels"]
-        axis_w = max(self.fm.horizontalAdvance(s) for s in y_labels + [unit]) + self.fm.horizontalAdvance("あ") * 0.6
-        legend_h = self.lh
-        # 一番上の目盛（REF）の数字が切れないよう、上に文字の半分の高さを空ける（J §4.3）
-        plot = QRectF(rect.left() + axis_w, rect.top() + legend_h + self.lh * 0.6,
-                      rect.width() - axis_w - self.fm.horizontalAdvance("0") * 3,
-                      0.0)
-        plot.setBottom(rect.bottom() - self.lh * 2.3)  # 横軸の数字と「周波数 (MHz)」
-        if plot.height() < self.lh * 3:
-            plot.setBottom(plot.top() + self.lh * 3)
+        # 枠と軸の文字の置き場所・横軸の数字の間引きは Web と同じ決まり（report_layout.graph_axes）
+        ax = self.lay["axes"]
+        plot = QRectF(ax["plot_left"], ax["plot_top"], ax["plot_right"] - ax["plot_left"], 0.0)
+        plot.setBottom(rect.bottom() - ax["bottom_room"])
+        if plot.height() < ax["min_plot_h"]:
+            plot.setBottom(plot.top() + ax["min_plot_h"])
 
         def fx(f: float) -> float:
             return plot.left() + (f - start) / (stop - start) * plot.width()
@@ -300,7 +301,7 @@ class _Painter:
             return plot.top() + (ref - v) / (ref - bottom) * plot.height()
 
         self.p.fillRect(plot, self.c("graph_bg"))
-        # 目盛線
+        # 目盛線（縦も横も 10 区画。目盛の数字はこの線の上: AXES）
         self.p.setPen(QPen(self.c("grid"), 1))
         for i in range(DIVISIONS + 1):
             y = plot.top() + plot.height() * i / DIVISIONS
@@ -314,20 +315,19 @@ class _Painter:
         self.p.setPen(QPen(self.c("axis"), 1))
         self.p.drawRect(plot)
 
-        # 縦軸の数字（絶対値: M-06）
+        # 縦軸の数字（絶対値: M-06）。右端をそろえ、目盛線の高さの真ん中に置く
         self.p.setFont(self.font)
         self.p.setPen(self.c("text"))
-        for i, s in enumerate(y_labels):
+        mid = (self.fm.ascent() - self.fm.descent()) / 2
+        for i, s in enumerate(self.lay["y_labels"]):
             y = plot.top() + plot.height() * i / DIVISIONS
-            tw = self.fm.horizontalAdvance(s)
-            self.p.drawText(QPointF(plot.left() - tw - self.fm.horizontalAdvance("0") * 0.5,
-                                    y + (self.fm.ascent() - self.fm.descent()) / 2), s)
-        # 単位は縦軸の上（凡例と同じ段）
+            self.p.drawText(QPointF(ax["y_label_right"] - self.fm.horizontalAdvance(s), y + mid), s)
+        # 単位は縦軸の数字の上（凡例と同じ段の左端）
         self.p.setPen(self.c("text_dim"))
-        self.p.drawText(QPointF(rect.left(), rect.top() + self.fm.ascent()), unit)
+        self.p.drawText(QPointF(ax["unit_left"], rect.top() + self.base), unit)
 
-        self._draw_x_axis(plot, start, stop)
-        self._draw_legend(QRectF(plot.left(), rect.top(), plot.width(), legend_h))
+        self._draw_x_axis(plot)
+        self._draw_legend(QRectF(ax["legend_left"], rect.top(), plot.right() - ax["legend_left"], self.lh))
 
         # トレースと印は枠の中だけに描く（横軸は表示の Start–Stop で切る）。重ねる順は画面と同じ（参照トレースが下、
         # 太い線が上、同じ段は番号順: 設計F §9）
@@ -335,29 +335,28 @@ class _Painter:
         self.p.setClipRect(plot)
         shown = [tr for tr in self.data.get("traces") or [] if tr.get("visible", True)]
         for tr in sorted(shown, key=lambda t: rl.draw_order_key(t.get("line"), t.get("number"))):
-            self._draw_trace(tr, fx, fy, start, stop)
+            self._draw_trace(tr, fx, fy, start, stop, index=zero_span)
         self.p.restore()
         self._draw_markers(plot, fx, fy, start, stop, ref, bottom)
 
-    def _draw_x_axis(self, plot: QRectF, start: float, stop: float) -> None:
+    def _draw_x_axis(self, plot: QRectF) -> None:
+        """横軸の数字（10 区画の線の上を x_every ごと）と、その下の見出し（単位）。置き場所は report_layout.graph_axes。"""
+        ax = self.lay["axes"]
         labels = self.lay["x_labels"]
         step_px = plot.width() / DIVISIONS
-        widest = max(self.fm.horizontalAdvance(s) for s in labels) + self.fm.horizontalAdvance("0") * 1.5
-        every = rl.x_label_every(step_px, widest)
         self.p.setFont(self.font)
         self.p.setPen(self.c("text"))
-        y = plot.bottom() + self.fm.ascent() + self.lh * 0.15
-        for i in range(0, DIVISIONS + 1, every):
+        y = plot.bottom() + ax["x_label_top"] + self.base
+        for i in range(0, DIVISIONS + 1, ax["x_every"]):
             s = labels[i]
             tw = self.fm.horizontalAdvance(s)
-            x = plot.left() + step_px * i - tw / 2
             # 両端の数字は画像の外に出さない
-            x = min(max(x, 0.0), self.w - self.margin * 0.3 - tw)
+            x = min(max(plot.left() + step_px * i - tw / 2, 0.0), ax["x_label_max_right"] - tw)
             self.p.drawText(QPointF(x, y), s)
         title = self.lay["x_title"]
         tw = self.fm.horizontalAdvance(title)
         self.p.setPen(self.c("text_dim"))
-        self.p.drawText(QPointF(plot.center().x() - tw / 2, y + self.lh), title)
+        self.p.drawText(QPointF(plot.center().x() - tw / 2, plot.bottom() + ax["x_title_top"] + self.base), title)
 
     def _draw_legend(self, rect: QRectF) -> None:
         self.p.setFont(self.font)
@@ -373,18 +372,22 @@ class _Painter:
             self.p.setPen(_stroke_pen(col, item["stroke"]))
             self.p.drawLine(QPointF(x, yc), QPointF(x + sw * 0.8, yc))
             self.p.setPen(self.c("text"))
-            self.p.drawText(QPointF(x + sw, rect.top() + self.fm.ascent()), s)
+            self.p.drawText(QPointF(x + sw, rect.top() + self.base), s)
             x += sw + self.fm.horizontalAdvance(s) + self.fm.horizontalAdvance("あ") * 2
 
-    def _draw_trace(self, tr: dict, fx, fy, start: float, stop: float) -> None:
+    def _draw_trace(self, tr: dict, fx, fy, start: float, stop: float, index: bool = False) -> None:
+        """index は横軸が点の番号（ゼロスパン）のとき。"""
         vals = tr.get("values_db")
         if vals is None:
             return
         vals = [float(v) for v in (vals.tolist() if hasattr(vals, "tolist") else vals)]
         n = int(tr.get("points") or len(vals))
         n = min(n, len(vals))
-        f0 = float(tr.get("start_hz", start))
-        st = float(tr.get("step_hz", (stop - start) / max(1, n - 1)))
+        if index:
+            f0, st = 0.0, 1.0
+        else:
+            f0 = float(tr.get("start_hz", start))
+            st = float(tr.get("step_hz", (stop - start) / max(1, n - 1)))
         flags = tr.get("flags")
         flags = list(flags.tolist() if hasattr(flags, "tolist") else flags) if flags is not None else None
         col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")

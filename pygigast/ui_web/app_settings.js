@@ -67,6 +67,9 @@
       return {
         settingsWin: null, // { page }
         presetsWin: null, // { rows, broken, sel, ready }
+        // 保存した配色の一覧（設定の「配色」の上: J §4.4.1）。一覧は状態に無いので、開いたとき・操作の後・いまの配色を
+        // 始めた配色が変わったとき（ほかの画面で保存・読み込みしたとき）に読み直す（Qt の settings_palettes と同じ）
+        palStore: { rows: [], broken: 0, sel: null, ready: false },
         confirmBox: null, // { title, text, resolve }
         keySel: null,
         keyCapture: false,
@@ -181,9 +184,14 @@
         this.keyMsg = null;
         this.keyCapture = false;
         if (!this.keySel) this.keySel = GSKeys.commands()[0];
+        if (this.settingsWin.page === "display") this.reloadPalettes();
       },
       closeSettings() { this.settingsWin = null; this.keyCapture = false; },
-      setPage(p) { this.settingsWin = { ...this.settingsWin, page: p }; this.keyCapture = false; },
+      setPage(p) {
+        this.settingsWin = { ...this.settingsWin, page: p };
+        this.keyCapture = false;
+        if (p === "display") this.reloadPalettes();
+      },
 
       // ---- 接続（覚えた機器・手動の COM 番号）
       knownName(r) { return r.name ? r.name + X.fmt("paren", { text: r.serial }) : r.serial; },
@@ -221,6 +229,83 @@
           if (!ok) return;
         }
         this.cmd("palette_reset", { base });
+      },
+      // ---- 保存した配色（独自の配色の保存と読み込み: J §4.4.1。Qt の settings_palettes.py と同じ並び・語・決まり）
+      async reloadPalettes(select) {
+        const r = await this.cmd("palette_list", {}, { field: "palettes" });
+        if (!r) return;
+        const rows = r.rows || [];
+        const cur = this.palStore.sel;
+        const want = [select, cur, r.origin_id].find((id) => id && rows.some((x) => x.id === id)) || null;
+        this.palStore = { rows, broken: r.broken || 0, sel: want, ready: true };
+      },
+      palSel() { const w = this.palStore; return w.rows.find((x) => x.id === w.sel) || null; },
+      // 読み込む: 保存していない変更があるときだけ、何個消えるかを言ってから聞く（U-18）。元に戻す（Ctrl+Z）でも戻せる
+      async palLoad() {
+        const p = this.palSel();
+        if (!p) return;
+        const n = this.paletteView.unsaved_n || 0;
+        if (n > 0 && !(await this.askConfirm(S("palette_load_title"), S("palette_load_confirm", { n, name: p.name }), S("palette_load")))) return;
+        const r = await this.cmd("palette_load", { id: p.id }, { field: "palettes" });
+        if (r) { this.note(null, S("palette_loaded", { name: r.name })); this.clearNote("palettes"); }
+      },
+      palSaveNew() {
+        this.openModal(S("palettes_group"), [{ key: "name", label: S("palette_name_prompt"), value: "" }], async (v) => {
+          const r = await this.cmd("palette_save", { name: String(v.name).trim() }, { field: "palettes" });
+          if (!r) return;
+          this.note(null, S("palette_saved", { name: r.name }));
+          this.reloadPalettes(r.id);
+        });
+      },
+      palRename() {
+        const p = this.palSel();
+        if (!p) return;
+        this.openModal(S("palettes_group"), [{ key: "name", label: S("palette_name_prompt"), value: p.name }], async (v) => {
+          const name = String(v.name).trim();
+          if (!name || name === p.name) return;
+          if (await this.cmd("palette_rename", { id: p.id, name }, { field: "palettes" })) this.reloadPalettes(p.id);
+        });
+      },
+      async palDelete() {
+        const p = this.palSel();
+        if (!p || !(await this.askConfirm(S("palettes_group"), S("palette_delete_confirm", { name: p.name }), X.w("do_delete")))) return;
+        if (await this.cmd("palette_delete", { id: p.id }, { field: "palettes" })) this.reloadPalettes();
+      },
+      async palOverwrite() {
+        const p = this.palSel();
+        if (!p || !(await this.askConfirm(S("palettes_group"), S("palette_overwrite_confirm", { name: p.name }), X.w("do_overwrite")))) return;
+        const r = await this.cmd("palette_save", { name: p.name, overwrite_id: p.id }, { field: "palettes" });
+        if (r) { this.note(null, S("palette_saved", { name: r.name })); this.reloadPalettes(p.id); }
+      },
+      // 書き出し: ファイルの中身をサーバーから受け取り、ブラウザの保存先へダウンロードする（A §4.3.2）
+      async palExport() {
+        const p = this.palSel();
+        if (!p) return;
+        const r = await this.cmd("palette_export", { id: p.id }, { field: "palettes" });
+        if (!r) return;
+        this.downloadText(r.file_name, r.text);
+        this.note(null, S("palette_exported", { name: r.name, file: r.file_name }));
+      },
+      // 取り込み: ブラウザで選んだファイルの中身を送り、新しい配色として一覧に足す（いまの配色は変えない）。
+      // 読みにくい組があれば、その行と知らせにその場で出す（文はサーバーの screen_model.palette_import_text: Qt と同じ）
+      async palImport() {
+        const files = await this.chooseFiles(true, ".json,application/json");
+        for (const f of files) {
+          let text;
+          try { text = await f.text(); } catch (e) { this.note("palettes", f.name + ": " + X.get("ERRORS", "palette_file_unreadable")); continue; }
+          const r = await this.cmd("palette_import", { text, file_name: f.name }, { field: "palettes" });
+          if (!r) continue;
+          this.note(null, (r.texts && r.texts.done) || S("palette_imported", { name: r.name }));
+          this.clearNote("palettes");
+          await this.reloadPalettes(r.id);
+        }
+      },
+      // 状態を受けたとき（app.js）: いまの配色を始めた配色が変わったら、開いている一覧を読み直す
+      watchPaletteOrigin() {
+        const id = this.paletteView.origin_id || null;
+        if (id === this.$palOrigin) return;
+        this.$palOrigin = id;
+        if (this.settingsWin && this.settingsWin.page === "display") this.reloadPalettes();
       },
       // 画面の配色（コアの palette）を CSS の変数とグラフへ写す。別ウィンドウも同じ状態を受けて同じ色になる
       applyLook() {

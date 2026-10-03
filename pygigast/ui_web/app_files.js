@@ -17,12 +17,13 @@
     return `gigast_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
 
-  // ファイルを選ばせる（選ばなければ空の並び）
-  function pickFiles(multiple) {
+  // ファイルを選ばせる（選ばなければ空の並び）。accept は選べるファイルの種類（".json" など。省くと全部）
+  function pickFiles(multiple, accept) {
     return new Promise((resolve) => {
       const input = document.createElement("input");
       input.type = "file";
       input.multiple = !!multiple;
+      if (accept) input.accept = accept;
       input.addEventListener("change", () => resolve(Array.from(input.files || [])));
       input.click();
     });
@@ -83,6 +84,17 @@
         if (!this.readOnly || READ_COMMANDS.has(name)) return false;
         this.note(null, this.readOnlyReason);
         return true;
+      },
+      // ---- ブラウザの中だけで扱うファイル（サーバーにファイルを作らない: 配色の書き出しと取り込み J §4.4.1）
+      chooseFiles(multiple, accept) { return pickFiles(multiple, accept); },
+      downloadText(name, text, type) {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([text], { type: type || "application/json" }));
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       },
       // ---- 作るファイル（終わったらダウンロード）
       async makeFile(command, args) {

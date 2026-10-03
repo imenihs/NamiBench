@@ -398,15 +398,91 @@ def y_labels(ref: float, div: float) -> list[str]:
 
 
 def x_labels(start: float, stop: float) -> list[str]:
-    """横軸の数字（MHz。全部の目盛で桁をそろえる）。"""
+    """横軸の数字（MHz。全部の目盛で桁をそろえる）。目盛は格子と同じ 10 区画の線の上（AXES の決まり）。"""
     ticks = [start + (stop - start) * i / DIVISIONS for i in range(DIVISIONS + 1)]
     d = freq_decimals(ticks)
     return [f"{t / 1e6:.{d}f}" for t in ticks]
 
 
+def index_labels(points: int) -> list[str]:
+    """ゼロスパンの横軸の数字（点の番号 0〜points−1 を 10 区画。画面の横軸と同じく点の番号: 設計N）。
+    全部の目盛で桁をそろえ、番号を落とさない最小の桁（最大 2 桁）。"""
+    last = max(1, int(points) - 1)
+    ticks = [last * i / DIVISIONS for i in range(DIVISIONS + 1)]
+    d = next((d for d in range(3) if all(abs(round(t, d) - t) < 1e-9 for t in ticks)), 2)
+    return [f"{t:.{d}f}" for t in ticks]
+
+
 def x_label_every(step_px: float, widest_px: float) -> int:
     """横軸の数字を何目盛ごとに出すか（重ならない最小の間隔）。"""
     return next((n for n in (1, 2, 5, 10) if step_px * n >= widest_px), 10)
+
+
+# ---------------------------------------------------------------- 軸の置き場所（Qt と Web で同じ: I §3.1）
+
+# 軸の目盛と単位の決まり。長さは文字の大きさ（px）に対する倍率。目盛は格子と同じ 10 区画の線の上に置き（縦も横も）、
+# 横軸の数字は重ならない最小の間隔（x_label_every）で間引く。縦軸の単位は縦軸の数字の上（凡例と同じ段の左端）、横軸の
+# 単位は横軸の数字の下の見出し（「周波数 (MHz)」）。
+# 置き場所と間引きは描く側の書体の測り方に頼らず、文字数からの幅の見積もり（TEXT_EM）で決める——測ると Qt とブラウザで
+# 書体の幅が違い、間引きと枠の位置が画像ごとに変わる。見積もりは広めにとる（狭く見積もると数字が重なる）
+AXES = {
+    "unit_gap": 0.6,          # 縦軸の数字（と単位）の右からグラフの枠までの余白
+    "right_room": 3.0,        # グラフの枠の右の余白（数字の字の幅の倍率）
+    "top_room": 1.6,          # 凡例と単位の段（1行）＋一番上の目盛の数字の半分（行の高さの倍率: J §4.3）
+    "bottom_room": 2.3,       # 横軸の数字と見出しの2行（行の高さの倍率）
+    "min_plot_rows": 3.0,     # グラフの枠の高さの下限（行の高さの倍率）
+    "y_label_gap": 0.5,       # 縦軸の数字の右端から枠まで（数字の字の幅の倍率）
+    "x_label_gap": 1.5,       # 横軸の数字どうしの最小の間（数字の字の幅の倍率）
+    "x_label_top": 0.15,      # 枠の下端から横軸の数字の段の上端まで（行の高さの倍率）
+    "edge_room": 0.3,         # 右端の数字を画像の外に出さない余白（外周の余白の倍率）
+}
+# 文字の幅の見積もり（文字の大きさに対する倍率）。数字・記号は 0.62（Yu Gothic UI 0.56・Meiryo UI 0.63）、m・w は 1.0
+# （同 0.88・0.94）、ほかの英字は 0.8、ASCII でない字（μ・−・かな）は 1.0
+TEXT_EM = {"narrow": 0.62, "letter": 0.8, "wide": 1.0}
+_WIDE_LETTERS = frozenset("mMwW")
+
+
+def text_width_px(text: str, px: float) -> float:
+    """文字の幅の見積もり（画素）。AXES の置き場所を決めるためだけに使う（描く位置の寄せは描く側が測る）。"""
+    em = 0.0
+    for ch in str(text):
+        if ord(ch) >= 0x80 or ch in _WIDE_LETTERS:
+            em += TEXT_EM["wide"]
+        elif ch.isalpha():
+            em += TEXT_EM["letter"]
+        else:
+            em += TEXT_EM["narrow"]
+    return em * px
+
+
+def graph_axes(width: float, px: float, line: float, margin: float, ylabels: list[str], unit: str,
+               xlabels: list[str]) -> dict:
+    """グラフの枠と軸の文字の置き場所（AXES の決まり）。縦の位置は枠の下端（描く側が区画から決める）からの距離で返す。
+
+    返すもの: plot_left・plot_right（枠の左右）・plot_top（枠の上）・bottom_room（枠の下に空ける高さ）・min_plot_h・
+    y_label_right（縦軸の数字の右端）・unit_left（縦軸の単位の左端。凡例と同じ段）・legend_left（凡例の左端）・
+    x_every（横軸の数字を何目盛ごとに出すか）・x_label_top・x_title_top（枠の下端から各段の上端まで）・
+    x_label_max_right（横軸の数字の右端の上限）。段の中の文字は段の高さの真ん中に置く。
+    """
+    digit = px * TEXT_EM["narrow"]
+    axis_w = max(text_width_px(s, px) for s in list(ylabels) + [unit]) + px * AXES["unit_gap"]
+    left = margin + axis_w
+    right = width - margin - digit * AXES["right_room"]
+    widest = max(text_width_px(s, px) for s in xlabels) + digit * AXES["x_label_gap"]
+    return {
+        "plot_left": left,
+        "plot_right": right,
+        "plot_top": margin + line * AXES["top_room"],
+        "bottom_room": line * AXES["bottom_room"],
+        "min_plot_h": line * AXES["min_plot_rows"],
+        "y_label_right": left - digit * AXES["y_label_gap"],
+        "unit_left": margin,
+        "legend_left": left,
+        "x_every": x_label_every((right - left) / DIVISIONS, widest),
+        "x_label_top": line * AXES["x_label_top"],
+        "x_title_top": line * (AXES["x_label_top"] + 1.0),
+        "x_label_max_right": width - margin * AXES["edge_room"],
+    }
 
 
 # ---------------------------------------------------------------- メタデータ
@@ -432,7 +508,7 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
     """描く側（Web の canvas）へ渡す配置の一式。Qt の png_export も同じ関数の結果で描く。
 
     返すもの: 文字の大きさ・行の高さ・余白・帯の段・マーカー表（見出し・行・右寄せ・列の数）・凡例・
-    縦軸と横軸の数字・PNG の tEXt の中身。帯の折り返し（文字の幅で決まる）は描く側が行う。
+    縦軸と横軸の数字・枠と軸の文字の置き場所（axes）・PNG の tEXt の中身。帯の折り返し（文字の幅で決まる）は描く側が行う。
     """
     w, h = int(size[0]), int(size[1])
     check_size(w, h)
@@ -445,6 +521,15 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
     if stop <= start:
         stop = start + 1.0
     off = int(c.get("freq_offset_hz") or 0)
+    ylabels = y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0)))
+    unit = c.get("unit", "dBm")
+    if c.get("step_hz") == 0:
+        # ゼロスパン: 横軸は点の番号（画面と同じ: 設計N）。周波数オフセットは横軸に出さない（設計O）
+        xlabels, xtitle = index_labels(int(c.get("points") or 2)), X_AXIS_TITLE_ZERO_SPAN
+    else:
+        # 横軸の数字は換算後の周波数、見出しに換算中であることを書く（設計O: 軸の名前で示す）
+        xlabels = x_labels(start + off, stop + off)
+        xtitle = X_AXIS_TITLE if not off else X_AXIS_TITLE_OFFSET.replace("{off}", ("+" if off > 0 else "−") + _hz(abs(off)))
     return {
         "size": [w, h],
         "font_px": px,
@@ -465,12 +550,12 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
         # トレースの線の基準の幅（画素）。線ごとの倍率は line_styles（Web は画面と同じ部品でグラフを描くので渡す）
         "line_base_px": png_line_base(px),
         "line_styles": LINE_STYLES,
-        "y_labels": y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0))),
-        # 横軸の数字は換算後の周波数、見出しに換算中であることを書く（設計O: 軸の名前で示す）
-        "x_labels": x_labels(start + off, stop + off),
-        "x_title": X_AXIS_TITLE if not off else X_AXIS_TITLE_OFFSET.replace("{off}",
-                                                                             ("+" if off > 0 else "−") + _hz(abs(off))),
-        "unit": c.get("unit", "dBm"),
+        "y_labels": ylabels,
+        "x_labels": xlabels,
+        "x_title": xtitle,
+        "unit": unit,
+        # 枠と軸の文字の置き場所・横軸の数字の間引き（AXES の決まり。Qt と Web が同じ値で描く）
+        "axes": graph_axes(w, px, lh, px * LAYOUT["margin"], ylabels, unit, xlabels),
         "meta": png_metadata(data, note, app_version),
         "meta_key": META_KEY,
     }

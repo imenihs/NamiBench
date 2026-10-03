@@ -440,6 +440,25 @@ class TestSpanLockTable(Base):
         alt = on.alternative
         self.assertEqual((alt.rule, alt.start_hz, alt.stop_hz), ("keep_center", 12000 * MHZ, 12100 * MHZ))
 
+    def test_release_lock_with_range(self):
+        # マーカーの「デルタの2点を Start・Stop に」（設計C §5.13）: 固定を外し、2点をそのまま Start・Stop にする。
+        # 固定 ON のドラッグの規則（真ん中を Center・幅は固定 Span）は当てない。外したことを1件の調整で知らせる
+        on = self.at(1000 * MHZ, 1500 * MHZ, current=self.base(True), span_lock=False)
+        self.assertEqual((on.start_hz, on.stop_hz, on.span_lock_hz), (1000 * MHZ, 1500 * MHZ, None))
+        a = adj_map(on)["span_lock"]
+        self.assertEqual((a.requested, a.adopted, a.reason), (self.L, None, "span_lock_released"))
+        self.assertNotIn("start_hz", adj_map(on))
+        self.assertIsNone(on.alternative)
+        # 固定 OFF なら知らせない（外すものが無い）
+        off = self.at(1000 * MHZ, 1500 * MHZ, current=self.base(False), span_lock=False)
+        self.assertEqual((off.start_hz, off.stop_hz), (1000 * MHZ, 1500 * MHZ))
+        self.assertNotIn("span_lock", adj_map(off))
+        # 切り替えのボタン（欄を触らない）とその1回だけの命令（プリセットの呼び出し）は利用者が選んだので知らせない
+        self.assertNotIn("span_lock", adj_map(self.req(self.base(True), span_lock=False)))
+        b = self.at(1000 * MHZ, 1500 * MHZ, current=self.base(True), span_lock=False, one_shot=True)
+        self.assertNotIn("span_lock", adj_map(b))
+        self.assertIsNone(b.span_lock_hz)
+
     def test_one_shot_bypasses_lock(self):
         on = self.at(200 * MHZ, 250 * MHZ, current=self.base(True), one_shot=True)
         self.assertEqual((on.start_hz, on.stop_hz, on.span_lock_hz), (200 * MHZ, 250 * MHZ, self.L))

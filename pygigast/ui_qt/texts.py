@@ -54,6 +54,7 @@ FIELD_NAMES = {
     "step_hz": "Step",
     "mode": "モード",
     "image_reject": "イメージ除去",
+    "span_lock": "Span 固定",
 }
 
 FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz", "span_hz", "sg_hz", "step_hz", "rbw_hz"}
@@ -64,7 +65,12 @@ OFFSET_FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz"}
 
 
 def adjustment_text(adj: dict, freq_offset_hz: int = 0) -> str:
-    """調整1件を「◯◯ に合わせました（理由）」にする。周波数は欄と同じく換算後の周波数で出す。"""
+    """調整1件を「◯◯ に合わせました（理由）」にする。周波数は欄と同じく換算後の周波数で出す。
+
+    値ではなく状態が変わった調整（Span 固定を外した: 設計C §5.13）は、その文だけを出す（SENTENCE_REASONS）。
+    """
+    if adj.get("reason") in SENTENCE_REASONS:
+        return SENTENCE_REASONS[adj["reason"]]
     field = adj.get("field", "")
     v = adj.get("adopted")
     if field in FREQ_FIELDS and isinstance(v, int):
@@ -105,6 +111,9 @@ REASONS = {
     "device_default_range": "機器の範囲の外なので、その機器の既定の範囲",
     "device_changed": "機器が変わったため既定",
 }
+
+# 値ではなく状態が変わった調整の文（「◯◯ に合わせました」の形にしない）。欄は調整の field で決まる
+SENTENCE_REASONS = {"span_lock_released": LABELS["span_lock_released"]}
 
 # 範囲の規則で値を動かした理由（設計C §5.11・§5.12）。この知らせには反対の規則のボタンを添える
 RULE_REASONS = {"keep_center", "keep_span"}

@@ -6,6 +6,8 @@
   - 単位・外部補正を変えたら、REF レベル・XY カーソルの Y・しきい値も同じだけずらす（画面の絵は変わらず、
     数字だけ新しい単位になる。実機の計測器と同じ）。いまの縦軸が比（ノーマライズ中の dB）のときはずらさない
 - 配色（palette）: ユーザー設定の1つ。ライト・ダークは初期値に戻す命令（確認は画面: 変えた色の数は状態にある）
+- 保存した配色（J §4.4.1）: 名前を付けて保存・読み込み・名前・消す・書き出しと取り込み（中身の文字でやりとりする）。
+  読み込みは元に戻すに積む。保存していない変更の数は状態の palette.unsaved（読み込む前の確認は画面）
 - プリセット（O §1.2）: モード・掃引条件・振幅・トレースの設定・表示の設定。校正とノーマライズの基準・
   マーカーは入れない。呼び出しは1回の命令で、元に戻せる
 - 表示の設定・配色・プリセットの呼び出しは「元に戻す」に積む（設計J §3・§4.4）。積むのは変えた部分だけ
@@ -16,9 +18,12 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
+import json
+from pathlib import PurePath
+
 from . import view_units
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict
-from .palette import BASES, Palette, normalize_color
+from .palette import BASES, IMPORT_MAX_CHARS, Palette, PaletteStore, normalize_color
 from .presets import PresetError, PresetStore
 from .sweep import image_reject as ir
 from .types import Mode, Quantity, SweepRequest
@@ -33,6 +38,7 @@ class ViewMixin:
         self._view_opts = view_units.restore((st or {}).get("view"))
         self._palette = Palette.from_saved(self._settings.get("theme"))
         self._presets = PresetStore(self._root / "presets")
+        self._palettes = PaletteStore(self._root / "palettes")
 
     def _view_state_to_save(self) -> dict:
         return {"view": dict(self._view_opts)}
@@ -160,6 +166,107 @@ class ViewMixin:
         self._save_palette_setting()
         self._changed()
         return {"palette": self._palette.state(), "lost": lost}
+
+    # ------------------------------------------------------------------ 独自の配色の保存と読み込み（設計J §4.4.1）
+    # 名前を付けた配色の一覧（アプリのデータの palettes フォルダ。Qt と Web で共有）。読み込むと、いまの配色をそれに
+    # 置き換える（元に戻すに積む）。何が失われるかの確認は画面（状態の palette.unsaved）。ファイルへの書き出しと
+    # ファイルからの取り込みは中身（JSON の文字）でやりとりし、パスを受け取らない（Web の口と同じ形: A §4.3.2）
+
+    def _palette_error(self, e: PresetError) -> CommandError:
+        return CommandError(e.code, "name" if "_name_" in e.code else "id", e.detail)
+
+    def _palette_changed(self) -> None:
+        """どの配色から始めたか（origin）が変わった: 設定に書き、状態を配る（色が同じなら元に戻すには積まない）。"""
+        self._save_palette_setting()
+        self._changed()
+
+    def _cmd_palette_list(self) -> dict:
+        """保存した配色の一覧。行ごとに読みやすさの知らせ（コード。文は画面: U-25）。"""
+        rows, broken = self._palettes.list(with_content=True)
+        out = [{"id": r["id"], "name": r["name"], "saved_at": r["saved_at"],
+                "warnings": Palette.from_saved(r["content"]).warnings()} for r in rows]
+        origin = self._palette.origin
+        return {"palettes": out, "broken": broken, "origin_id": origin["id"] if origin else None}
+
+    def _cmd_palette_save(self, name: str, overwrite_id: Optional[str] = None) -> dict:
+        """いまの配色に名前を付けて保存する（overwrite_id でその配色を置き換える）。いまの配色はこの配色から始めた扱い。"""
+        try:
+            r = self._palettes.save(name, self._palette.content(), {}, overwrite_id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        except OSError as e:
+            raise CommandError("palette_unwritable", None, {"message": str(e)}) from e
+        self._palette.set_origin(r["id"], r["name"])
+        self._palette_changed()
+        return {"id": r["id"], "name": r["name"]}
+
+    def _cmd_palette_load(self, id: str) -> dict:  # noqa: A002 — 命令の引数名（プリセットと同じ）
+        """いまの配色を、保存した配色で置き換える（1回の命令。Ctrl+Z で戻せる）。"""
+        try:
+            d = self._palettes.get(id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        new = PaletteStore.palette_of(d)
+        new.set_origin(d["id"], d["name"])
+        before = self._undo_snapshot(("palette",))
+        self._palette = new
+        self._record_undo(before)
+        self._palette_changed()
+        return {"name": d["name"], "palette": self._palette.state()}
+
+    def _cmd_palette_rename(self, id: str, name: str) -> dict:  # noqa: A002
+        try:
+            r = self._palettes.rename(id, name)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        if self._palette.origin and self._palette.origin["id"] == id:
+            self._palette.origin["name"] = r["name"]
+            self._palette_changed()
+        return r
+
+    def _cmd_palette_delete(self, id: str) -> dict:  # noqa: A002
+        try:
+            self._palettes.delete(id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        if self._palette.origin and self._palette.origin["id"] == id:
+            # 始めた配色が無くなった: いまの色は初期値から変えた色として数える（保存していない変更）
+            self._palette.set_origin(None)
+            self._palette_changed()
+        return {}
+
+    def _cmd_palette_export(self, id: str) -> dict:  # noqa: A002
+        """保存した配色1つのファイルの中身（JSON の文字）と既定のファイル名。書くのは画面（Qt はファイル、Web はダウンロード）。"""
+        try:
+            d = self._palettes.get(id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        return {"name": d["name"], "file_name": PaletteStore.file_name(d["name"]), "text": self._palettes.file_text(d)}
+
+    def _cmd_palette_import(self, text: str, file_name: str = "") -> dict:
+        """ファイルの中身（JSON の文字）を新しい配色として一覧に足す（いまの配色は変えない）。
+
+        名前はファイルの中の名前（無ければファイル名）。同じ名前があれば「名前 (2)」にする（黙って上書きしない）。
+        戻り値の warnings は取り込んだ配色の読みやすさの知らせ（その場で出す: 設計J §4.4.1）。
+        """
+        if not isinstance(text, str) or len(text) > IMPORT_MAX_CHARS:
+            raise CommandError("palette_file_unreadable", "text")
+        try:
+            d = self._palettes.parse(json.loads(text))
+        except ValueError:
+            d = None
+        if d is None:
+            raise CommandError("palette_file_unreadable", "text")
+        p = PaletteStore.palette_of(d)
+        stem = PurePath(str(file_name or "")).stem
+        try:
+            name = self._palettes.free_name(d["name"] if d["name"].strip() else stem)
+            r = self._palettes.save(name, p.content(), {})
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        except OSError as e:
+            raise CommandError("palette_unwritable", None, {"message": str(e)}) from e
+        return {"id": r["id"], "name": r["name"], "warnings": p.warnings()}
 
     # ------------------------------------------------------------------ プリセット（設計O §1.2）
 

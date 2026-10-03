@@ -393,7 +393,9 @@ def palette_view(st: dict) -> dict:
                      "default": defaults[k], "changed": k in changed,
                      "tip": S["palette_changed_tip"].replace("{default}", defaults[k]) if k in changed else "",
                      "warn": "  ".join(parts), "warn_tip": "\n".join(h["tips"])})
-    return {"rows": rows, "base": base, "changed_n": len(changed)}
+    # unsaved_n: 保存していない変更の数（保存した配色を読み込む前の確認: J §4.4.1）。origin_id: いまの配色を始めた配色
+    return {"rows": rows, "base": base, "changed_n": len(changed), "unsaved_n": len(p.get("unsaved") or []),
+            "origin_id": (p.get("origin") or {}).get("id")}
 
 
 def palette_reset_question(st: dict, base: str) -> Optional[str]:
@@ -403,6 +405,50 @@ def palette_reset_question(st: dict, base: str) -> Optional[str]:
         return None
     return texts.SETTINGS_TEXTS["palette_reset_confirm"].replace("{n}", str(n)).replace(
         "{base}", texts.PALETTE_BASES.get(base, base))
+
+
+def palette_warn_texts(warnings: list[dict]) -> tuple[str, str]:
+    """保存した配色の読みやすさの知らせ（一覧の行の短い文と、組ごとの文を並べたツールチップ）。無ければ ("", "")。"""
+    S = texts.SETTINGS_TEXTS
+    name = texts.PALETTE_NAMES.get
+    tips = []
+    for w in warnings or []:
+        if w.get("code") == "low_contrast":
+            tips.append(S["palette_contrast_tip"].replace("{fg}", name(w["fg"], w["fg"])).replace(
+                "{bg}", name(w["bg"], w["bg"])).replace("{ratio}", f"{w['ratio']:.1f}"))
+        elif w.get("code") == "similar_traces":
+            tips.append(S["palette_similar_tip"].replace("{a}", name(w["a"], w["a"])).replace(
+                "{b}", name(w["b"], w["b"])).replace("{d}", f"{w['delta_e']:.0f}"))
+    if not tips:
+        return "", ""
+    return S["palette_list_warn"].replace("{n}", str(len(tips))), "\n".join(tips)
+
+
+def palette_rows(result: dict) -> list[dict]:
+    """保存した配色の一覧の行（名前・読みやすさの知らせ・いまの配色を始めた配色か）。命令 palette_list の戻り値から。"""
+    out = []
+    for p in result.get("palettes") or []:
+        warn, tip = palette_warn_texts(p.get("warnings") or [])
+        out.append({"id": p["id"], "name": p["name"], "warn": warn, "warn_tip": tip,
+                    "origin": p["id"] == result.get("origin_id")})
+    return out
+
+
+def palette_load_question(st: dict, name: str) -> Optional[str]:
+    """保存した配色を読み込む前の確認の文。保存していない変更が無ければ None（聞かずに読み込む: J §4.4.1・U-18）。"""
+    n = len((st.get("palette") or {}).get("unsaved") or [])
+    if n == 0:
+        return None
+    return texts.SETTINGS_TEXTS["palette_load_confirm"].replace("{n}", str(n)).replace("{name}", name)
+
+
+def palette_import_text(result: dict) -> str:
+    """取り込んだあとの知らせ。読みにくい組があればその場で言う（J §4.4.1）。"""
+    S = texts.SETTINGS_TEXTS
+    warn, _tip = palette_warn_texts(result.get("warnings") or [])
+    if warn:
+        return S["palette_imported_warn"].replace("{name}", result.get("name", "")).replace("{warn}", warn)
+    return S["palette_imported"].replace("{name}", result.get("name", ""))
 
 
 def preset_rows(presets: list[dict]) -> list[dict]:
