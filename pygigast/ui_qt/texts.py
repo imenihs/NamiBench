@@ -25,6 +25,8 @@ from .texts_screens import *  # noqa: F401,F403 — 右のタブ・マーカー�
 from .texts_settings import *  # noqa: F401,F403 — 設定の画面・配色・キー・プリセット・表示の単位（設計O・J §4.4・§4.6）
 from .texts_settings import SETTINGS_ERRORS, VIEW_TEXTS
 from .texts_web_settings import *  # noqa: F401,F403 — ブラウザだけの設定の画面・キーの割り当ての語
+from .texts_s11 import *  # noqa: F401,F403 — 反射（S11）と表示の形式（|Γ|・SWR）の語（設計E §6.5・設計R §3）
+from .texts_s11 import S11_ERRORS, S11_NOTICES, S11_OPEN_DISCARD_REASONS, S11_TASK_NAMES, SWR_LIMIT_NOTE
 
 
 def tpl(key: str, **kw) -> str:
@@ -203,6 +205,7 @@ NOTICES = {
     "rtltcp_stopped": "rtl_tcp の送出を止めました",
     "listen_stopped": "聞くのをやめました",
     "auto_connected": "前回の機器に繋ぎました",
+    **S11_NOTICES,
 }
 
 DISCARD_REASONS = {
@@ -295,6 +298,10 @@ def notice_text(n: dict) -> str:
         text = tpl("auto_connected", name=d["name"])
     elif code == "listen_stopped":
         r = LISTEN_STOP_REASONS.get(d.get("reason"), d.get("reason") or "")
+        if r:
+            text += tpl("paren", text=r)
+    elif code == "s11_open_discarded":
+        r = S11_OPEN_DISCARD_REASONS.get(d.get("reason"), d.get("reason") or "")
         if r:
             text += tpl("paren", text=r)
     return text
@@ -462,6 +469,8 @@ MARKER_NOTES = {
     "no_value": "値なし",
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
     "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
+    # SWR の上限に当てた点（設計R §3。値は上限の SWR）
+    "swr_limit": SWR_LIMIT_NOTE,
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
     **DISPLAY_MARKS,
 }
@@ -613,6 +622,9 @@ def task_label(t: dict) -> str:
     """進み具合の1行（何件目/全体・経過時間。時間は約束しない: U-20）。"""
     kind = t.get("task") or t.get("kind") or ""
     text = TASK_NAMES.get(kind, kind)
+    std = (t.get("detail") or {}).get("standard") if kind == "reference_take" else None
+    if std in S11_TASK_NAMES:
+        text = S11_TASK_NAMES[std]  # S11 のオープン・ショート（設計E §6.5）
     if t.get("total"):
         text += tpl("task_progress", done=t.get("done", 0), total=t["total"])
     text += tpl("task_elapsed", s=int(t.get("elapsed_s") or 0))
@@ -653,6 +665,7 @@ ERRORS.update({
     "rtlsdr_fit_running": "いま利得を合わせています",
     **WEB_ERRORS,
     **SETTINGS_ERRORS,
+    **S11_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
 })
 

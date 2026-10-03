@@ -15,6 +15,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from ..trace import formats
 from ..types import FreqAxis, Frame, Quantity
 
 # 探す対象から外す点の印（設計G §3.2「前置き不足・範囲外」、設計E §6.4「基準の無い点」）
@@ -73,6 +74,9 @@ class TraceView:
     searchable: np.ndarray
     flags: dict = field(default_factory=dict)
     notes: tuple[str, ...] = ()
+    # 表示の形式（設計R §3: db・gamma・swr）。level_db は dB のまま持ち（ピーク・盛り上がり・N dB 帯域幅は dB で探す）、
+    # 読み値（level_at）としきい値だけを形式の値で扱う。unit は形式の単位（|Γ|・SWR）
+    fmt: str = formats.DB
 
     @classmethod
     def build(
@@ -162,8 +166,21 @@ class TraceView:
         return int(self.freqs[idx])
 
     def level_at(self, idx: int) -> Optional[float]:
+        """その点の読み値（表示の形式の値。dB の形式なら dB）。値なしは None。"""
         v = float(self.level_db[idx])
-        return v if math.isfinite(v) else None
+        if not math.isfinite(v):
+            return None
+        return v if self.fmt == formats.DB else formats.value_from_db(v, self.fmt)
+
+    def display(self, level_db: Optional[float]) -> Optional[float]:
+        """dB の値を、このトレースの表示の形式の値にする（レベルのカーソル・帯域幅の線）。"""
+        if level_db is None or not math.isfinite(level_db):
+            return None
+        return level_db if self.fmt == formats.DB else formats.value_from_db(level_db, self.fmt)
+
+    def db_of(self, value: float) -> float:
+        """表示の形式の値（しきい値など）を dB にする。"""
+        return float(value) if self.fmt == formats.DB else formats.to_db(value, self.fmt)
 
     @property
     def peak_candidate(self) -> np.ndarray:
@@ -182,6 +199,10 @@ class TraceView:
             arr = np.asarray(self.flags[name])
             if arr.shape and idx < len(arr) and bool(arr[idx]):
                 out.append(name)
+        if self.fmt == formats.SWR:
+            lim = formats.swr_limit_mask(self.level_db[idx:idx + 1], self.fmt)
+            if lim is not None and bool(lim[0]):
+                out.append(formats.FLAG_SWR_LIMIT)  # SWR の上限に当てた点（設計R §3。値は SWR_MAX）
         return out
 
 
@@ -208,10 +229,18 @@ def oriented(view: TraceView, polarity: str) -> TraceView:
 
     返したトレースで山を探すと、谷の判定（周りより excursion_db 以上へこんだ点）・一番深い点・
     次に深い谷が、山と同じ関数で求まる。値なしの点（NaN）は返しても値なしのまま。
+    探す側は dB で比べるので、返すトレースの表示の形式は dB にする（level_at が dB を返す。設計R §3 の |Γ|・SWR でも
+    探す点は同じ）。
     """
     if check_polarity(polarity) == PEAK:
-        return view
-    return dataclasses.replace(view, level_db=-view.level_db)
+        return view if view.fmt == formats.DB else dataclasses.replace(view, fmt=formats.DB)
+    return dataclasses.replace(view, level_db=-view.level_db, fmt=formats.DB)
+
+
+def db_at(view: TraceView, idx: int) -> Optional[float]:
+    """その点の dB の値（表示の形式によらない）。値なしは None。"""
+    v = float(view.level_db[idx])
+    return v if math.isfinite(v) else None
 
 
 def _oriented_threshold(threshold: Optional[float], polarity: str) -> Optional[float]:
@@ -397,7 +426,7 @@ def list_base(view: TraceView) -> tuple[str, Optional[float]]:
     if view.quantity == Quantity.POWER:
         return BASE_NOISE_FLOOR, noise_floor(view)
     idx = highest_index(view)
-    return BASE_MAX, None if idx is None else view.level_at(idx)
+    return BASE_MAX, None if idx is None else db_at(view, idx)
 
 
 def peak_list(
@@ -537,7 +566,10 @@ def threshold_band(view: TraceView, idx: int, level: float, side: str) -> Band:
     """しきい値との交点（設計G §3.5）: idx を含み、値がしきい値の side 側にある範囲の両端と幅。
 
     SIDE_BELOW は level 以下、SIDE_ABOVE は level 以上を内側とする（しきい値ちょうどは内側）。
+    level は表示の形式の値（例 SWR 2）。形式は |Γ| について単調に増えるので、dB に直して dB の値で探す（設計R §3）。
     """
+    level = view.db_of(level)
+    view = oriented(view, PEAK)  # 探すのは dB の値（level_at が dB を返す）
     if side == SIDE_BELOW:
         inside: Callable[[float], bool] = lambda v: v <= level
     elif side == SIDE_ABOVE:

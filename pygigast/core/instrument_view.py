@@ -25,6 +25,9 @@ from .types import Mode, Quantity, SweepRequest
 
 _UNSET = object()
 
+# プリセットに入れる縦軸（設計J §4.1）。|Γ|・SWR の縦軸の1目盛も入れる（設計R §3。前の版のプリセットに無ければ初期値）
+PRESET_AMPLITUDE_KEYS = ("ref_level", "db_per_div", "unit", "swr_per_div", "gamma_per_div")
+
 
 class ViewMixin:
     """表示の設定・配色・プリセット・覚えた機器（Instrument に混ぜる）。"""
@@ -172,7 +175,7 @@ class ViewMixin:
                       "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
                       "image_reject": a.image_reject, "sg_hz": a.sg_hz, "span_lock_hz": a.span_lock_hz},
             "traces": [trace_settings(t) for t in self._traces],
-            "amplitude": {k: self._amplitude.get(k) for k in ("ref_level", "db_per_div", "unit")},
+            "amplitude": {k: self._amplitude.get(k) for k in PRESET_AMPLITUDE_KEYS},
             "view": dict(self._view_opts),
         }
 
@@ -246,7 +249,7 @@ class ViewMixin:
         before = self._undo_snapshot(("sweep", "view", "amplitude"))
         self._set_view_opts(view_units.restore(c.get("view")), shift_levels=False)
         amp = c.get("amplitude") or {}
-        for k in ("ref_level", "db_per_div", "unit"):
+        for k in PRESET_AMPLITUDE_KEYS:
             self._amplitude[k] = amp.get(k)
         for td in c.get("traces") or []:
             try:

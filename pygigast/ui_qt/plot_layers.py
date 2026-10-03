@@ -152,10 +152,15 @@ class TraceLayer:
         e["curve"].setZValue(z)
         e["mark"].setZValue(z + 0.5)
 
+    def live_unit_ok(self, n: int) -> bool:
+        """1つの目盛りに違う単位を混ぜない（E §6.4・設計R §3）。縦軸と単位の違う測定中のトレースは描かない。"""
+        t = self.live[n]["payload"]
+        return t is None or t.get("unit", self.unit) == self.unit
+
     def _draw_live(self, n: int) -> None:
         e = self.live[n]
         t = e["payload"]
-        if t is None or not e["visible"] or not e["has_values"]:
+        if t is None or not e["visible"] or not e["has_values"] or not self.live_unit_ok(n):
             e["curve"].setData([], [])
             e["mark"].setData([], [])
             return
@@ -197,8 +202,9 @@ class TraceLayer:
         return missing
 
     def live_payload(self, n: int) -> Optional[dict]:
+        """描いている測定中のトレースの中身（表示していない・縦軸と単位が違うものは None）。"""
         e = self.live.get(n)
-        if e is None or not e["visible"] or not e["has_values"]:
+        if e is None or not e["visible"] or not e["has_values"] or not self.live_unit_ok(n):
             return None
         return e["payload"]
 
@@ -254,6 +260,8 @@ class TraceLayer:
         self.unit = unit
         for tid in self.files:
             self._draw_file(tid)
+        for n in LIVE_TRACES:
+            self._draw_live(n)  # 縦軸と単位の違う測定中のトレースは描かない（設計R §3）
         self._update_legend()
 
     def _draw_file(self, tid: str) -> None:
@@ -408,6 +416,9 @@ class MarkerLayer:
         # マーカーの機能の線を出すか（G §3.6。コアの表示の設定 view.function_lines を look.apply_view が入れる）
         self.function_lines = True
         self.function_items: list[pg.InfiniteLine] = []
+        # 縦軸の単位（画面が入れる）。単位の違うトレースに載ったマーカー・カーソル・機能の線は描かない（設計R §3:
+        # そのトレースを描いていないため。表には出る）
+        self.unit: Optional[str] = None
 
     def _take(self, pool: str, make) -> object:
         """使い回しの部品を1つ取る（足りなければ作ってグラフに足す）。"""
@@ -489,6 +500,8 @@ class MarkerLayer:
                 kind = r.get("kind")
                 if r.get("id") in ("X1", "X2", "Y1", "Y2"):
                     continue
+                if self.unit and r.get("unit") and r["unit"] != self.unit:
+                    continue  # 縦軸と単位の違う（描いていない）トレースのもの
                 sel = r.get("id") == selected or r.get("parent") == selected and selected is not None
                 col = scol if sel else mcol
                 if kind == "marker" and r.get("freq_hz") is not None and r.get("value") is not None:

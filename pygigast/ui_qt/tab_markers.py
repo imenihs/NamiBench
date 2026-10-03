@@ -29,8 +29,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.trace import formats
 from ..core.units import ParseError, format_freq, parse_db, parse_freq_hz
-from . import peak_view, sizes, texts, widget_sync
+from . import peak_view, screen_s11, sizes, texts, widget_sync
 from .fields import (BANDWIDTH_CHOICES, BANDWIDTH_RANGE, FLOOR_CHOICES, FLOOR_RANGE, REF_CHOICES, THRESHOLD_RANGE,
                      DbField, FreqField, LocalDbChoiceField)
 from .marker_rows import function_lines_on
@@ -255,8 +256,13 @@ class MarkerTab(QWidget):
                   self.g_offset, self.func_body):
             set_enabled(w, reason)
         unit = self.win.display_unit()
-        # しきい値の一覧は REF と同じく、いまの縦軸の単位で出す（G §3.6）
-        self.th_level.set_unit(unit)
+        # しきい値の一覧は REF と同じく縦軸の単位で出す（G §3.6）。選んでいるマーカーがあればそのトレースの単位
+        # （|Γ|・SWR のトレースなら、その値の一覧と範囲: 設計R §3）
+        th_unit = (marker or {}).get("unit") or unit
+        spec = screen_s11.threshold_spec(th_unit)
+        self.th_level.set_unit(th_unit)
+        if self.th_level.set_spec(spec["choices"], spec["signed"], spec["lo"], spec["hi"], spec["decimals"]):
+            self.th_level.set_value(spec["default"])  # 単位の種類が変わったら、その単位の初期値から
         off = texts.freq_offset_of(self.win.state)  # 周波数の欄は換算後の周波数（設計O）
         self.freq.set_offset(off)
         for k in ("x1_hz", "x2_hz"):
@@ -266,8 +272,8 @@ class MarkerTab(QWidget):
             set_enabled(self.track, reason)
         else:
             kind = texts.MARKER_KINDS.get(marker["kind"], marker["kind"])
-            val = f"{marker['level']:.2f} {marker.get('unit') or unit}" if marker.get("level") is not None else \
-                texts.MARKER_STATUS.get(marker.get("status"), "")
+            val = screen_s11.value_text(marker["level"], marker.get("unit") or unit) if marker.get("level") is not None \
+                else texts.MARKER_STATUS.get(marker.get("status"), "")
             self.sel_label.setText(texts.w("selected_text", id=marker["id"], kind=kind, trace=marker["trace"], value=val))
             if marker.get("freq_hz") is not None:
                 self.freq.set_hz(int(marker["freq_hz"]))
@@ -292,7 +298,8 @@ class MarkerTab(QWidget):
             if v is not None:
                 f.set_hz(int(v)) if isinstance(f, FreqField) else f.set_value(float(v))
         self.dx.setText(f"ΔX = {format_freq(int(xy['dx_hz']))}" if xy.get("dx_hz") is not None else "")
-        self.dy.setText(f"ΔY = {xy['dy']:+.2f} dB" if xy.get("dy") is not None else "")
+        self.dy.setText(f"ΔY = {formats.delta_cell(xy['dy'], unit)}" + ("" if formats.is_linear_unit(unit) else " dB")
+                        if xy.get("dy") is not None else "")
         # 空の行を出さない（U-15）
         self.dx.setVisible(bool(self.dx.text()))
         self.dy.setVisible(bool(self.dy.text()))

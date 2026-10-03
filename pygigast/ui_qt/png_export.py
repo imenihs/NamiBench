@@ -423,7 +423,8 @@ class _Painter:
         line_col = QColor(mcol)
         line_col.setAlpha(89)
         self.p.setPen(QPen(line_col, 1, Qt.PenStyle.DotLine))
-        for m in self.data.get("markers") or []:
+        shown = [m for m in self.data.get("markers") or [] if not m.get("hidden")]  # 描いていないトレースのものは除く
+        for m in shown:
             ln = m.get("line") if m.get("kind") == "function" else None
             if not ln or ln.get("level") is None:
                 continue
@@ -435,7 +436,7 @@ class _Painter:
                 if start <= f <= stop:
                     x = fx(f)
                     self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
-        for m in self.data.get("markers") or []:
+        for m in shown:
             kind = m.get("kind", "marker")
             f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
             if kind == "freq_cursor":

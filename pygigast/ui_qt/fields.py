@@ -520,6 +520,17 @@ class DbChoiceField(DbField):
     def choices(self) -> list[str]:
         return [self.combo.itemText(i) for i in range(self.combo.count())]
 
+    def set_spec(self, choices, signed: bool, lo: Optional[float], hi: Optional[float],
+                 decimals: Optional[int]) -> bool:
+        """一覧・符号・範囲・桁を替える（しきい値の欄を |Γ|・SWR の値にする: 設計R §3）。替えたら True。"""
+        spec = (tuple(float(c) for c in choices), bool(signed), lo, hi, decimals)
+        if spec == (tuple(float(c) for c in self._choices), self._signed, self.lo, self.hi, self.decimals):
+            return False
+        self._choices, self._signed, (self.lo, self.hi, self.decimals) = spec[0], spec[1], spec[2:]
+        self._fit_width()
+        self._fill_choices()
+        return True
+
     def _chosen(self, i: int) -> None:
         v = self.combo.itemData(i)
         if v is not None:
@@ -556,7 +567,9 @@ class DbChoiceField(DbField):
 
     def set_value(self, v: float) -> None:
         self._value = v
-        self.edit.show_value(f"{level_text(v)} {self._unit}".rstrip())
+        # 小数2桁以上の欄（|Γ|・SWR のしきい値: 設計R §3）はその桁で出す。ほかは 0.1 まで（REF の欄と同じ）
+        text = level_text(v) if (self.decimals or 1) <= 1 else minus_sign(f"{float(v):.{self.decimals}f}")
+        self.edit.show_value(f"{text} {self._unit}".rstrip())
 
     def set_unit(self, unit: str) -> None:
         if unit != self._unit:

@@ -340,14 +340,17 @@ class MenuAndKeyTest(_Base):
         acts = self.win.actions
         expect = {"save": "Ctrl+S", "open": "Ctrl+O", "export": "Ctrl+E", "png_save": "Ctrl+P",
                   "png_copy": "Ctrl+Shift+C", "undo": "Ctrl+Z", "redo": "Ctrl+Y", "run_cont": "F5",
-                  "run_single": "F6", "stop": "F7", "pause": "Pause", "mode_sa": "Ctrl+1", "mode_nf": "Ctrl+5",
+                  "run_single": "F6", "stop": "F7", "pause": "Pause", "mode_sa": "Ctrl+1", "mode_s11": "Ctrl+3",
+                  "mode_nf": "Ctrl+5",
                   "marker_peak": "P", "marker_here": "M"}
         for code, key in expect.items():
             self.assertEqual(acts[code].shortcut().toString(), key, code)
         # まだ無い機能は消さずに無効にし、理由をツールチップに出す（U-08）
-        for code in ("cal_freq", "view_waterfall", "mode_s11"):
+        for code in ("cal_freq", "view_waterfall", "mode_nf"):
             self.assertFalse(acts[code].isEnabled(), code)
             self.assertIn("—", acts[code].toolTip(), code)
+        # S11（反射）は使える（設計E §6.5・設計L §1.1）
+        self.assertTrue(acts["mode_s11"].isEnabled())
         # ボタンのツールチップにもキーを出す（U-12）
         self.assertIn("F5", self.win.btn_cont.toolTip())
         self.assertIn("Ctrl+1", self.win.mode_buttons["sa"].toolTip())

@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..core.marker.analysis import DIP, PEAK, POLARITIES
+from ..core.trace.formats import is_linear_unit, value_decimals
 from ..core.units import level_text
 from . import texts
 
@@ -76,18 +77,21 @@ def result_view(r: dict, freq_offset_hz: int = 0) -> dict:
     unit = r.get("unit") or ""
     base_level = r.get("base_level")
     by_max = r.get("base") == "max"
+    # |Γ|・SWR のトレース（設計R §3）は、その値の桁（|Γ| は3桁）。差の列は dB のまま（dB で探すため）
+    digits = value_decimals(unit)
+    linear = is_linear_unit(unit)
     if base_level is None:
         found = texts.w("peaks_found", n=len(peaks))
     else:
         found = texts.w("peaks_found_max" if by_max else "peaks_found_floor", n=len(peaks),
-                        level=level_text(float(base_level)), unit=unit)
+                        level=_num(float(base_level), digits) if linear else level_text(float(base_level)), unit=unit)
     rows = []
     for p in peaks:
         hz = int(p["freq_hz"])
         rows.append({
             "freq_hz": hz,
             "freq": f"{(hz + int(freq_offset_hz or 0)) / 1e6:.6f}".rstrip("0").rstrip("."),
-            "level": f"{_num(float(p['level']), 2)} {unit}".strip(),
+            "level": f"{_num(float(p['level']), digits)} {unit}".strip(),
             "diff": _num(float(p["diff_db"]), 1) if p.get("diff_db") is not None else "",
         })
     header = texts.LABELS["col_below_max_db" if by_max else "col_height_db"]

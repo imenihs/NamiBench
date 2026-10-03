@@ -1,0 +1,234 @@
+"""反射（S11）の基準の手順・トレースの表示の形式・|Γ|・SWR の縦軸について、コアの状態から画面に出すものを作る
+（設計E §6.5・設計R §3・§5.1・設計J §4.1）。
+
+Qt と Web が同じものを使う（J §5: 同じ構成・同じ語。同じ処理を2回書かない）。Qt はここを直接呼び、Web の口は
+screen_model.ui_view が state に `ui` として付けて送る。Qt を import しない。
+
+- 表示の形式: トレースの行の欄の選択肢（使えないものは理由付きで無効: U-08。位相系は「この機器は振幅だけ」）
+- 縦軸の単位: 表示している測定中のトレースのうち番号の一番小さいものの単位（1つの目盛りに違う単位を混ぜない）。
+  単位の違うトレースは描かず、行に理由を出す
+- |Γ|・SWR の縦軸: 下端が決まっていて、1目盛の大きさだけを選ぶ（core/trace/formats.py）
+- S11 の基準: オープン → ショートを1段ずつ（次に押すボタンを強調し、測ったオープンの時刻と範囲を出す）
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from ..core.report_layout import DIVISIONS
+from ..core.trace import formats
+from . import texts
+from .texts import LABELS, REASON_TEXTS, TEMPLATES, tpl
+
+# dB の縦軸の 1目盛（設計J §4.1。core/instrument_display.DB_PER_DIV_CHOICES と同じ）
+DB_PER_DIV_CHOICES = (1, 2, 5, 10)
+
+
+def _r(key: str, **kw) -> str:
+    text = REASON_TEXTS[key]
+    for k, v in kw.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
+
+# ---------------------------------------------------------------- 表示の形式（設計R §3）
+
+def format_name(code: str, measurement: Optional[str]) -> str:
+    """形式の名前。dB の形式は S11 では「リターンロス（dB）」、ほかは「振幅（dB）」。"""
+    if code == formats.DB and measurement == "s11":
+        return texts.S11_FORMAT_NAMES[code]
+    return texts.TRACE_FORMATS.get(code, code)
+
+
+def trace_format_view(t: dict, st: dict) -> dict:
+    """トレースの行の「表示の形式」の欄。
+
+    形: {"value": 欄に出す形式, "items": [{"code", "text", "enabled", "tip"}], "reason": 欄ごと使えない理由 or None,
+         "tip": 欄のツールチップ}
+    - 選べるのは TG・S11 で基準との比を出しているトレースと、S11 モードのとき（基準を取る前に選んでおける）
+    - |Γ|・SWR は S11 のトレースだけ。位相系は位相を測れる機器だけ（GigaSt は振幅だけ: 設計R §2）
+    - 欄には、S11 のトレース（か S11 モード）なら選んだ形式、ほかはいま使う形式（S11 で選んだ形式は覚えていて、
+      S11 に戻ると使う）
+    """
+    mode = (st.get("sweep") or {}).get("mode")
+    ratio = t.get("quantity") == "ratio"
+    meas = t.get("measurement") if t.get("has_values") else None
+    # 比の値を持つトレースはその値を測ったモードで決まる（固定した S21 の値に |Γ|・SWR は当たらない）。比の値を持たない
+    # （まだ値が無い・基準を取る前の電力）ときは、いまのモードが S11 なら選んでおける
+    s11_ctx = (meas == "s11") if ratio and t.get("has_values") else mode == "s11"
+    phase = t.get("value_kind") == "complex"
+    name_meas = "s11" if s11_ctx else meas
+    items = []
+    for code in formats.FORMATS:
+        if code in formats.VECTOR_FORMATS:
+            why = texts.S11_ERRORS["format_not_yet"] if phase else _r("format_vector")
+        elif code in formats.S11_FORMATS:
+            why = None if s11_ctx else _r("format_s11_only")
+        else:
+            why = None
+        items.append({"code": code, "text": format_name(code, name_meas), "enabled": why is None, "tip": why or ""})
+    setting = t.get("format") if formats.is_format(t.get("format")) else formats.DB
+    value = setting if s11_ctx and setting not in formats.VECTOR_FORMATS else (t.get("format_effective") or formats.DB)
+    reason = None if ratio or mode == "s11" else _r("format_power")
+    tip = LABELS["trace_format"] + (f" — {reason}" if reason else "")
+    return {"value": value, "items": items, "reason": reason, "tip": tip}
+
+
+def format_width_samples() -> list[str]:
+    """表示の形式の欄の一番長い文字の見本（行ごと・モードごとに欄の幅を変えない: S-02）。"""
+    return list(texts.TRACE_FORMATS.values()) + list(texts.S11_FORMAT_NAMES.values())
+
+
+# ---------------------------------------------------------------- 縦軸（設計J §4.1・設計R §3）
+
+def axis_unit(st: dict) -> str:
+    """縦軸の単位: 表示している測定中のトレース（番号の小さい順）の最初の単位。無ければ振幅の単位か dBm。"""
+    for t in st.get("traces") or []:
+        if t.get("visible") and t.get("has_values") and t.get("unit"):
+            return t["unit"]
+    return (st.get("amplitude") or {}).get("unit") or "dBm"
+
+
+def trace_drawn_reason(t: dict, axis: str) -> Optional[str]:
+    """測定中のトレースを描かない理由（縦軸と単位が違う）。描くなら None。"""
+    unit = t.get("unit")
+    if not unit or unit == axis or not t.get("has_values") or not t.get("visible"):
+        return None
+    return _r("trace_unit_differs", axis=axis, unit=unit)
+
+
+def axis_view(st: dict, unit: str) -> dict:
+    """縦軸の決め方。dB 系は REF レベル（一番上）と dB/div（値は画面が振幅の状態から持つ）、|Γ|・SWR は下端が決まり
+    1目盛の大きさだけを選ぶ（top・div はここで決まる）。
+
+    形: {"linear", "unit", "top", "div", "bottom", "div_label", "div_key", "div_choices": [{"value", "text"}],
+         "ref_reason": REF の欄・自動・REF を動かす操作が使えない理由, "decimals": 目盛の数字の小数の桁}
+    """
+    if formats.is_linear_unit(unit):
+        ax = formats.LINEAR_AXES[unit]
+        per = formats.per_div_of(unit, st.get("amplitude"))
+        return {"linear": True, "unit": unit, "top": formats.linear_top(unit, per, DIVISIONS), "div": per,
+                "bottom": ax["bottom"], "div_label": tpl_label("per_div", unit=unit), "div_key": ax["key"],
+                "div_choices": [{"value": float(v), "text": f"{v:g}"} for v in ax["choices"]],
+                "ref_reason": _r("ref_linear", unit=unit, bottom=f"{ax['bottom']:g}"),
+                "decimals": formats.tick_decimals(unit, per)}
+    return {"linear": False, "unit": unit, "top": None, "div": None, "bottom": None, "div_label": "dB/div",
+            "div_key": "db_per_div", "div_choices": [{"value": v, "text": f"{v:g} dB"} for v in DB_PER_DIV_CHOICES],
+            "ref_reason": None, "decimals": 1}
+
+
+def threshold_spec(unit: Optional[str]) -> dict:
+    """しきい値との交点の欄の決まり（texts.THRESHOLD_SPECS。dB 系の単位（dBm・dBμV など）は dB と同じ）。"""
+    return {**texts.THRESHOLD_SPECS[unit if formats.is_linear_unit(unit) else "dB"], "unit": unit or ""}
+
+
+def div_width_samples() -> list[str]:
+    """1目盛の欄の一番長い文字の見本（単位が変わっても欄の幅を動かさない: S-02）。"""
+    out = [f"{v:g} dB" for v in DB_PER_DIV_CHOICES]
+    for ax in formats.LINEAR_AXES.values():
+        out += [f"{v:g}" for v in ax["choices"]]
+    return out
+
+
+def tpl_label(key: str, **kw) -> str:
+    text = LABELS[key]
+    for k, v in kw.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
+
+def tick_text(v: float, decimals: int) -> str:
+    """縦軸の目盛の数字（負号は「−」。dB 系は REF の欄と同じ 0.1 まで: units.level_text と同じ形）。"""
+    s = f"{float(v):.{decimals}f}"
+    if s.startswith("-") and float(s) == 0.0:
+        s = s[1:]
+    return s.replace("-", "−")
+
+
+def value_text(v: Optional[float], unit: Optional[str]) -> str:
+    """読み値の文字（マーカー表・マウスの位置・PNG の表で同じ）。|Γ| は小数3桁、ほかは2桁。"""
+    return formats.value_cell(v, unit)
+
+
+# ---------------------------------------------------------------- S11 の基準（設計E §6.5）
+
+def _range_name(kind: Optional[str]) -> str:
+    return LABELS["s11_range_fine"] if kind == "fine" else LABELS["s11_range_wide"]
+
+
+def _common_reason(st: dict) -> Optional[str]:
+    if (st.get("connection") or {}).get("state") != "connected":
+        return REASON_TEXTS["needs_connection"]
+    if (st.get("sweep") or {}).get("mode") != "s11":
+        return _r("s11_mode_only")
+    if any(t.get("kind") == "reference_take" for t in st.get("tasks") or []):
+        return REASON_TEXTS["taking_reference"]
+    return None
+
+
+def s11_view(st: dict) -> dict:
+    """信号源のタブの S11 の手順: ボタンの使えない理由・次に押すボタン・測ったオープンの文・ツールチップ。
+
+    TG の「広く取る」「いまの条件で細かく取る」は S11 では使えない（基準はオープン・ショートの2段で取る）。
+    """
+    from .texts_devices import hhmm
+
+    o = (st.get("normalization") or {}).get("s11_open")
+    common = _common_reason(st)
+    open_kind = (o or {}).get("kind")
+    return {
+        "open_reason": common,
+        "short_reason": common or (None if o else _r("s11_needs_open")),
+        "range_reason": common,
+        "next": "short" if o else "open",
+        "state_text": tpl_label("s11_open_done", time=hhmm(o.get("taken_at")), range=_range_name(open_kind)) if o
+        else "",
+        "short_tip": tpl_label("s11_short_tip", range=_range_name(open_kind)),
+        "open_kind": open_kind,
+    }
+
+
+def ref_state_text(st: dict) -> str:
+    """信号源のタブの基準の状態の文（状態バーの「基準: …」と同じ。使わないモードでは選んでいる基準か「未取得」）。"""
+    import datetime
+
+    n = st.get("normalization") or {}
+    text = texts.normalization_text(n)
+    if text:
+        return text
+    sel = n.get("selected")
+    if not sel:
+        return LABELS["ref_none"]  # 無いこと自体が情報（U-15）
+    ts = sel.get("taken_at")
+    when = datetime.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M") if ts else ""
+    return tpl_label("ref_selected", name=sel.get("name", ""), when=when)
+
+
+def tg_take_reason(st: dict) -> Optional[str]:
+    """TG の「広く取る」「いまの条件で細かく取る」の使えない理由（S11 では2段の手順で取る）。"""
+    sw = st.get("sweep") or {}
+    if (st.get("connection") or {}).get("state") != "connected":
+        return REASON_TEXTS["needs_connection"]
+    if sw.get("mode") == "s11":
+        return _r("tg_take_in_s11")
+    if sw.get("mode") != "tg":
+        return texts.ERRORS["mode_not_normalizable"]
+    if any(t.get("kind") == "reference_take" for t in st.get("tasks") or []):
+        return REASON_TEXTS["taking_reference"]
+    return None
+
+
+def s11_quick(st: dict) -> dict:
+    """上段の S11 のボタン（「直結を 0dB にする」の場所: J §4.2）: 次の1段の名前・ツールチップ・送る中身・状態の文。"""
+    from .texts_devices import hhmm
+
+    o = (st.get("normalization") or {}).get("s11_open")
+    step = "short" if o else "open"
+    q = texts.S11_QUICK_LABELS
+    # 「広く」で取る（TG の「直結を 0dB にする」と同じ）。ショートはオープンと同じ範囲（コアが合わせる）
+    take = {"standard": step, "kind": None if o else "wide", "show_zero": step == "short"}
+    return {"label": q[step], "tip": q[step + "_tip"], "take": take,
+            "open_text": tpl("s11_open_quick", time=hhmm(o.get("taken_at"))) if o else ""}
+
+
+def s11_ref_name(time_text: str) -> str:
+    return TEMPLATES["ref_s11_name"].replace("{time}", time_text)

@@ -44,5 +44,6 @@ def build(win: "MainWindow") -> dict:
     return rl.build_data(
         st, ref_level=win.ref_level(), db_per_div=win.db_div(), unit=win.display_unit(),
         mode_name=texts.MODE_NAMES.get(sw.get("mode"), sw.get("mode")), traces=traces,
-        markers=marker_rows.png_rows(win.marker_row_list, lines=marker_rows.function_lines_on(st)), warnings=screen_model.png_warnings(st),
+        markers=marker_rows.png_rows(win.marker_row_list, lines=marker_rows.function_lines_on(st),
+                                     axis_unit=win.display_unit()), warnings=screen_model.png_warnings(st),
         app_version=APP_VERSION, norm_reasons=texts.NORM_REASONS)

@@ -124,7 +124,9 @@ class WebMarkupTest(unittest.TestCase):
         sec = html[start:html.index("W('xy_cursor')")]
         self.assertEqual(sec.count("<db-field"), 3)
         self.assertIn(":choices=\"dbLists.bw\"", sec)
-        self.assertIn(":unit=\"axisUnit\" signed :choices=\"dbLists.ref\"", sec)
+        # しきい値の欄は、選んでいるマーカーのトレースの単位の決まり（dB は REF と同じ一覧・符号付き、|Γ|・SWR はその値:
+        # texts.THRESHOLD_SPECS。設計R §3）
+        self.assertIn(':unit="thSpec.unit" :signed="!!thSpec.signed" :choices="thSpec.choices"', sec)
         self.assertIn("setView({function_lines: $event.target.checked}", sec)
         self.assertIn("viewOpts.function_lines !== false", sec)
         start = html.index("W('peak_list')")

@@ -557,6 +557,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         self._worker.start()
         self._load_calibration(ident.serial)
         self._load_saved_reference()
+        self._s11_open_follow(self._adopted)  # 電源を入れ直す前に測ったオープンはショートと組まない（設計E §6.5）
         self._conn = "connected"
         self._rtltcp_update_header()
         self._rtlsdr_on_clients()  # rtl_tcp の相手が先につながっていれば、中心を動かさない動きにする
@@ -726,6 +727,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         self._last_estimate = new.estimated_sweep_s
         if changed:
             self._on_sweep_condition(old, new, step_sweep=step_sweep)
+            self._s11_open_follow(new)  # 測ってあるオープンとショートが組めなくなったら捨てて知らせる（設計E §6.5）
             if self._run == "single":
                 self._single_done = 0
             self._push_job()

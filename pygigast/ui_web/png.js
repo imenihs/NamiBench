@@ -198,7 +198,8 @@
       if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true); else g.setX(s.start_hz, s.stop_hz, false);
       // 周波数オフセット（設計O）: 目盛の数字と軸の名前は画面と同じく換算後
       if (s.step_hz !== 0 && ctx.offset && ctx.offset.hz) g.setXOffset(ctx.offset.hz, ctx.offset.text);
-      g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit);
+      // |Γ|・SWR の縦軸は下端が決まっていて、目盛の数字は1目盛を書き分けられる桁（設計R §3。画面と同じ）
+      g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit, ctx.amp.linear, ctx.amp.decimals);
       g.setTraces(ctx.traces(c));
       g.setMarkers((ctx.markers || {}).markers || [], null);
       // マーカーの機能の線（G §3.6）: 画面で出しているときだけ PNG にも描く
