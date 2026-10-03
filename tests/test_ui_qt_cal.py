@@ -207,6 +207,27 @@ class CalUiTest(UiBase):
         self.wait(lambda: d.v["points"][0]["status"] == "measured", timeout=30, what="確かめて入れる")
         self.assertTrue(any(cal_view.C["confirm_big"].split("{")[0] in t for t in self.confirm_asked))
 
+    def test_pending_from_another_screen_is_asked_on_open(self):
+        # Web で確かめ待ちまで進めた作業を、Qt の窓を開いたときに聞く（同じ作業を映す: K §4.6）
+        self.connect_sim()
+        p = self.root / "gigast.txt"
+        p.write_bytes(build_legacy_bytes())
+        self.cmd("import_legacy_calibration", path=str(p), serial="SIM00001")
+        work = self.cmd("cal_open", kind="freq")["calibration_work"]
+        idx = work["current"]
+        raw = work["points"][idx]
+        before, f = raw["before_db"], raw["measure_hz"]
+        self.dev.config.signals = [(f, -20.0 - before + 1.0 + 20.0 * f / 12e9)]
+        self.cmd("cal_measure")
+        self.wait(lambda: (self.state()["calibration_work"] or {}).get("pending") is not None, timeout=30,
+                  what="確かめ待ち")
+        self.confirm_answer = True
+        n0 = len(self.confirm_asked)
+        self.menu_action("cal_freq").trigger()
+        self.wait(lambda: len(self.confirm_asked) > n0, what="開いたら聞く")
+        self.assertIn(cal_view.C["confirm_big"].split("{")[0], self.confirm_asked[-1])
+        self.wait(lambda: self.state()["calibration_work"].get("pending") is None, what="答えた")
+
     def test_rbw_nf_and_legacy_pages(self):
         self.connect_sim()
         d = self.open("rbw")

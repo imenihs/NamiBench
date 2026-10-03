@@ -781,10 +781,11 @@ def open_calibration(win: "MainWindow", kind: str) -> CalDialog:
         d.page = PREPARE
 
     def opened(r: Optional[dict]) -> None:
-        d._ok(r)
+        # 出してから描く: 確かめ待ちの点（Web で進めた作業）は、窓が見えているときに描くと聞く
         d.show()
         d.raise_()
         d.activateWindow()
+        d._ok(r)
 
     win.call("cal_open", on_ok=opened, kind=kind)
     return d
