@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import unittest
 
@@ -76,6 +77,23 @@ class CorrectionTest(unittest.TestCase):
         # 測っていない点（境目の両側を含む）の当てる補正は変わらない
         for f, v in before.items():
             self.assertAlmostEqual(applied(cal, f), v, places=6, msg=f)
+
+    def test_level_stays_when_500mhz_not_measured(self):
+        # 全体のレベルは表の外（TG・S11・表の上端より上）にも効く。500MHz を測らない校正（RBW だけ・NF だけ・
+        # 周波数特性の一部だけ）で全体のレベルと各欄を書き換えない。旧校正は 500MHz の欄が 0 でないことがある
+        src = legacy_cal()
+        b0 = list(src.bands[0].values)
+        b0[5] = -2.0
+        src = dataclasses.replace(src, level_offset_db=1.0,
+                                  bands=(dataclasses.replace(src.bands[0], values=tuple(b0)),) + src.bands[1:])
+        for kw in ({"rbw": {30_000: 0.4, 15_000: 1.6}}, {"nf_amp": -6.0}, {"totals": {1_500_000_000: -3.0}}):
+            cal = cw.build(src, model="gigast-v5", serial="SIM00001", created_at=AT, source=cw_source(), **kw)
+            self.assertEqual(cal.level_offset_db, 1.0, msg=str(kw))
+            measured = cw.cells_of(1_500_000_000) if "totals" in kw else []
+            for i, band in enumerate(cal.bands):
+                for k, v in enumerate(band.values):
+                    if (i, k) not in measured:
+                        self.assertEqual(v, src.bands[i].values[k], msg=f"{kw} {i} {k}")
 
     def test_boundary_point_sets_both_cells(self):
         cal = cw.build(legacy_cal(), model="gigast-v5", serial="SIM00001", created_at=AT, source=cw_source(),

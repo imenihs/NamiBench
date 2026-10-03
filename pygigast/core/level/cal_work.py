@@ -168,8 +168,10 @@ def build(
 ) -> Calibration:
     """前の校正に、測った値を差し替えた新しい校正データ（K §2: やり直した点だけ差し替える）。
 
-    totals は 周波数 → 当てる補正（その周波数の欄を全部その値にする）。500MHz の欄を全体のレベルにして、
-    ほかの欄はそこからの差として持ち直す（測っていない欄の当てる補正は変わらない）。
+    totals は 周波数 → 当てる補正（その周波数の欄を全部その値にする）。500MHz を測ったときだけ、その値を全体のレベルに
+    して、ほかの欄はそこからの差として持ち直す（測っていない欄の当てる補正は変わらない）。500MHz を測っていないときは
+    全体のレベルを前の値のままにする: 全体のレベルは表の外（TG・S11 と表の上端より上の周波数）にも効くので、
+    500MHz の欄の差の分だけ動かすと、測っていない所の値が変わる（RBW・NF だけの校正でも変わってしまう）
     """
     grid = totals_grid(base)
     for f, t in (totals or {}).items():
@@ -178,8 +180,11 @@ def build(
     # 当てる補正を先に 0.01dB に丸めてから分ける（全体のレベルと差を別々に丸めると、足した値が測った値から
     # 0.01dB ずれる）
     grid = np.round(grid, 2)
-    lb, lk = point_cell(LEVEL_POINT_HZ)
-    level = _r(grid[lb, lk])
+    if LEVEL_POINT_HZ in (totals or {}):
+        lb, lk = point_cell(LEVEL_POINT_HZ)
+        level = _r(grid[lb, lk])
+    else:
+        level = _r(base.level_offset_db) if base is not None else 0.0
     values = np.round(grid - level, 2)
     rbw_off = dict(base.rbw_offset_db) if base is not None else {RBW_BASE_HZ: 0.0}
     for r, v in (rbw or {}).items():
