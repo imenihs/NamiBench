@@ -56,6 +56,21 @@ class CalUiTest(UiBase):
         d.close()
         self.wait(lambda: self.state()["calibration_work"] is None, what="閉じたら作業も閉じる")
 
+    def test_opens_while_sweeping(self):
+        # 掃引中は作業ができる前の状態（作業なし）が次々に届く。それで窓を閉じない（窓は作業ができてから出す）
+        self.connect_sim()
+        self.cmd("run", mode="continuous")
+        for _ in range(5):
+            self.menu_action("cal_freq").trigger()
+            d = self.win.cal_window
+            d.apply_state({**self.win.state, "calibration_work": None})  # 作業ができる前の状態が先に届いた
+            self.wait(lambda: d.isVisible() and d.v is not None, what="窓が出る")
+            self.pump(0.3)
+            self.assertTrue(d.isVisible())
+            d.close()
+            self.wait(lambda: self.state()["calibration_work"] is None, what="閉じたら作業も閉じる")
+        self.cmd("stop")
+
     def test_frequency_response_flow(self):
         self.connect_sim()
         d = self.open("freq")

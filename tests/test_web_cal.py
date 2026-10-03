@@ -122,5 +122,46 @@ class CalBrowserTest(unittest.TestCase):
         self.assertEqual(page.errors, [])
 
 
+    def test_opens_while_sweeping_and_keeps_the_scroll(self):
+        # 掃引中は作業ができる前の状態（作業なし）が届く。それで窓を閉じない。手でスクロールした点の一覧を、状態が
+        # 届くたびに選んでいる行へ戻さない（Qt と同じ: 一覧の中身が変わったときだけ寄せる）
+        page, app = self.page, self.app
+        open_app(page, app, 1280, 720)
+
+        def sweeps(n):
+            n0 = app.call("get_state")["run"]["sweep_count"]
+            end = time.monotonic() + 30
+            while app.call("get_state")["run"]["sweep_count"] < n0 + n:
+                self.assertLess(time.monotonic(), end)
+                time.sleep(0.05)
+
+        app.call("run", mode="continuous")
+        try:
+            for _ in range(3):
+                page.ev("gsApp.openCal('freq'); gsApp.onStateCal({ui: {cal: null}}); 1")
+                page.wait("!!document.querySelector('.calwin')", "校正の画面")
+                sweeps(2)
+                page.settle()
+                self.assertTrue(page.ev("!!document.querySelector('.calwin')"))
+                page.ev("gsApp.calClose(); 1")
+                page.wait("!gsApp.calWin", "閉じた")
+            page.ev("gsApp.openCal('freq'); 1")
+            page.wait("!!document.querySelector('.calwin')", "校正の画面")
+            page.ev("gsApp.calNext(); 1")
+            page.wait("gsApp.calWin.page === 1 && !!document.querySelector('.calwin .cal-points')", "測る")
+            sweeps(2)
+            page.settle()
+            top = page.ev("(() => { const el = document.querySelector('.calwin .cal-points'); "
+                          "el.scrollTop = el.scrollHeight; return el.scrollTop; })()")
+            self.assertGreater(top, 100)
+            sweeps(3)
+            page.settle()
+            self.assertEqual(page.ev("document.querySelector('.calwin .cal-points').scrollTop"), top)
+        finally:
+            app.call("stop")
+            page.ev("gsApp.calWin && gsApp.calClose(); 1")
+        self.assertEqual(page.errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()

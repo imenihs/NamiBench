@@ -178,15 +178,23 @@
       C(k, kw) { return C(k, kw); },
       openCal(kind) {
         if (this.readOnlyBlocks("cal_open")) return;
-        if (!this.calWin) this.calWin = { page: PREPARE, asked: null };
-        this.cmd("cal_open", { kind });
+        // 窓は作業ができてから出す（Qt と同じ）: コアは校正データを読んでから作業を作るので、それより前に届いた状態には
+        // 作業が無い。それを「別の画面で閉じた」と取り違えないよう、作業を一度見るまでは閉じない（opened）
+        if (!this.calWin) this.calWin = { page: PREPARE, asked: null, opened: false, pointsSig: null };
+        this.cmd("cal_open", { kind }).then((r) => {
+          if (!r && this.calWin && !this.calWin.opened) this.calWin = null; // 開けなかった（知らせは cmd が出す）
+        });
       },
       // 状態が届いたとき（app.js の onEvent）。作業が閉じた（別の画面で閉じた）ら窓も閉じる。確かめ待ちの点は1回だけ聞く
       onStateCal(p) {
         const v = (p.ui || {}).cal;
         const w = this.calWin;
         if (!w) return;
-        if (!v) { this.calWin = null; return; }
+        if (!v) {
+          if (w.opened) this.calWin = null;
+          return;
+        }
+        w.opened = true;
         if (w.kind && w.kind !== v.kind && (w.page === MEASURE || w.page === CHECK)) w.page = PREPARE;
         w.kind = v.kind;
         if (v.pending && w.asked !== v.pending.index) {
@@ -197,6 +205,11 @@
         } else if (!v.pending) {
           w.asked = null;
         }
+        // 選んでいる点の行へ寄せるのは、点の一覧の中身か手順の位置が変わったときだけ（Qt と同じ。状態のたびに寄せると、
+        // 手でスクロールした一覧が掃引のたびに戻される）
+        const sig = JSON.stringify([w.page, (v.points || []).map((p) => [p.freq, p.before, p.after, p.state, p.big, p.current])]);
+        if (sig === w.pointsSig) return;
+        w.pointsSig = sig;
         this.$nextTick(() => {
           const row = document.querySelector(".calwin .cal-points tr.sel");
           if (row) row.scrollIntoView({ block: "nearest" });
