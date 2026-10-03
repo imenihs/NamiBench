@@ -205,8 +205,14 @@
         } else if (!v.pending) {
           w.asked = null;
         }
-        // 選んでいる点の行へ寄せるのは、点の一覧の中身か手順の位置が変わったときだけ（Qt と同じ。状態のたびに寄せると、
-        // 手でスクロールした一覧が掃引のたびに戻される）
+        this.calRevealSel(v);
+      },
+      // 選んでいる点の行へ寄せる。寄せるのは点の一覧の中身か手順の位置が変わったときだけ（Qt と同じ。状態のたびに寄せると、
+      // 手でスクロールした一覧が掃引のたびに戻される）。手順の位置は状態の間にも変わる（戻る・次へ。一覧は作り直されて
+      // 先頭に戻る）ので、そこからも呼ぶ
+      calRevealSel(v) {
+        const w = this.calWin;
+        if (!w || !v) return;
         const sig = JSON.stringify([w.page, (v.points || []).map((p) => [p.freq, p.before, p.after, p.state, p.big, p.current])]);
         if (sig === w.pointsSig) return;
         w.pointsSig = sig;
@@ -275,6 +281,7 @@
       calBack() {
         const w = this.calWin;
         if (w && (w.page === MEASURE || w.page === CHECK)) w.page -= 1;
+        this.calRevealSel(this.calView);
       },
       async calNext() {
         const w = this.calWin;
@@ -284,6 +291,7 @@
           const r = await this.cmd("cal_save");
           if (r && this.calWin) this.calWin.page = SAVED;
         } else w.page = PREPARE;
+        this.calRevealSel(this.calView);
       },
       // 閉じる（✕・Escape・閉じる・外を押す）。測った値があれば、何が失われるかを言って聞く（U-18）
       async calClose() {
