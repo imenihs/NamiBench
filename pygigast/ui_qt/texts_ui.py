@@ -14,7 +14,7 @@ MODES = (
     ("tg", "TG", "伝送特性", None),
     ("s11", "S11", "反射", "反射（方向性結合器）の測定はまだ使えません"),
     ("sg", "SG", "信号源", None),
-    ("nf", "NF", "NF 測定", "NF 測定はまだ使えません"),
+    ("nf", "NF", "NF 測定", None),
 )
 MODE_NAMES = {code: name for code, _l, name, _w in MODES}
 MODE_LABELS = {code: label for code, label, _n, _w in MODES}

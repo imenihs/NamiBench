@@ -2,7 +2,7 @@
 
 SA・SG: P = AD × 80/1986 − 80 + level_offset_db + rbw_offset_db[実際の RBW] + corr(f)
 TG・S11: P = AD × 80/1986 − 80 + level_offset_db（周波数特性と RBW の補正はノーマライズが兼ねる: 設計E）
-NF: 設計M（未実装）
+NF: ここでは換算しない。HOT と COLD の組から level/nf.py が NF を出す（設計M。補正は当てない: 設計D §3）
 """
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ class LevelConverter:
             raise ValueError(f"raw の点数 {raw.shape} が軸の点数 {adopted.axis.points} と違う")
         mode = Mode(adopted.mode)
         if mode == Mode.NF:
-            raise NotImplementedError("NF の換算は設計M")
+            raise NotImplementedError("NF は HOT と COLD の組から level/nf.py が出す（設計M）")
 
         base = self.ad_to_db(raw)
         cal = self._cal

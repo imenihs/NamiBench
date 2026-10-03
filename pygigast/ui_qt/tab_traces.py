@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from ..core.report_layout import TRACE_LINE_DEFAULT
 from ..core.units import format_freq
-from . import menus, screen_model, sizes, texts, widget_sync
+from . import menus, nf_view, screen_model, sizes, texts, widget_sync
 from .fields import COUNT_CHOICES, COUNT_MAX, CountField
 from .theme import trace_color
 
@@ -269,7 +269,9 @@ class _TraceRow:
                 self.avg.setItemText(0, default_text)
             widget_sync.set_data(self.avg, s.get("average_type"))
         widget_sync.when_idle(self.avg, "avg", show_avg)
-        set_enabled(self.avg, None if a == "average" else REASON_AVG_TYPE, L["average_type"])
+        # NF では HOT と COLD をパワー平均するので種類を選べない（設計M §1。選んだ種類はほかのモードで使う）
+        set_enabled(self.avg, (None if a == "average" else REASON_AVG_TYPE)
+                    or nf_view.average_type_reason(self.tab.win.state), L["average_type"])
         choices = texts.AVERAGE_AFTER if a == "average" else texts.HOLD_AFTER
         cur = s.get("average_after") if a == "average" else s.get("hold_after")
         widget_sync.set_items(self.after, [(name, code) for code, name in choices.items()])

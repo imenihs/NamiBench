@@ -86,7 +86,8 @@ class ViewMixin:
         if self._amplitude.get("unit") not in (None, "dB"):
             # 縦軸の単位を決めてあれば（マーカーから REF に・など）、電力の単位を新しい単位の名前にする
             self._amplitude["unit"] = view_units.level_shift(unit_for(Quantity.POWER, self._profile), new)[1]
-        if delta and self._last_quantity == Quantity.POWER:
+        # NF の縦軸は NF の dB（単位・外部補正を当てない: 設計M）。NF に入って最初の掃引の前も動かさない
+        if delta and self._last_quantity == Quantity.POWER and self._adopted.mode != Mode.NF:
             if shift_levels:
                 ref = self._amplitude.get("ref_level")
                 self._amplitude["ref_level"] = round((0.0 if ref is None else float(ref)) + delta, 2)
@@ -352,9 +353,13 @@ class ViewMixin:
         self._rtlsdr_check_condition(new)
         before = self._undo_snapshot(("sweep", "view", "amplitude"))
         self._set_view_opts(view_units.restore(c.get("view")), shift_levels=False)
+        from .instrument_display import amp_kind_of
+
         amp = c.get("amplitude") or {}
+        # プリセットの縦軸は、プリセットのモードの縦軸へ入れる（NF は別の縦軸: instrument_display.AMPLITUDE_DEFAULTS）
+        target = self._amp_store[amp_kind_of(new.mode)]
         for k in ("ref_level", "db_per_div", "unit"):
-            self._amplitude[k] = amp.get(k)
+            target[k] = amp.get(k)
         for td in c.get("traces") or []:
             try:
                 apply_trace_settings(self._traces[int(td["number"])], td)

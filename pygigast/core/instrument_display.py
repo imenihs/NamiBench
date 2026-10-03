@@ -38,7 +38,18 @@ NORMALIZED_MODES = (Mode.TG, Mode.S11)
 # REF レベルの dB/div の選択肢（設計J §4.1）
 DB_PER_DIV_CHOICES = (1, 2, 5, 10)
 
-UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB"}
+UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB", Quantity.NF: "dB"}
+
+# 縦軸（REF レベル・dB/div: 設計J §4.1）はモードの量ごとに持つ。NF は NF の dB の縦軸で、既定は REF 20dB・2dB/div
+# （設計M §1: 旧アプリの NF モードと同じ見やすさ。0〜20dB が見える）。ほかのモードは今までどおり1つ
+AMP_KIND_LEVEL = "level"
+AMP_KIND_NF = "nf"
+AMPLITUDE_DEFAULTS = {AMP_KIND_LEVEL: {"ref_level": None, "unit": None, "db_per_div": None},
+                      AMP_KIND_NF: {"ref_level": 20.0, "unit": None, "db_per_div": 2}}
+
+
+def amp_kind_of(mode) -> str:
+    return AMP_KIND_NF if mode == Mode.NF else AMP_KIND_LEVEL
 
 # 生の値の形（機種のプロファイルの raw.encoding）が RTL-SDR のもの（instrument_rtlsdr.py で換算する）
 _RTLSDR_ENCODING = "rtlsdr_power_w"
@@ -152,8 +163,8 @@ class DisplayMixin:
         self._marker_snap: dict = self._markers.snapshot({})
         self._undo: list[dict] = []
         self._redo: list[dict] = []
-        # 縦軸（設計J §4.1）。None は画面が決める既定
-        self._amplitude = {"ref_level": None, "unit": None, "db_per_div": None}
+        # 縦軸（設計J §4.1）。None は画面が決める既定。モードの量ごと（NF は別: AMPLITUDE_DEFAULTS）
+        self._amp_store = {k: dict(v) for k, v in AMPLITUDE_DEFAULTS.items()}
         self._ref = None  # 選んでいるノーマライズの基準（normalize.Reference）
         self._norm_state: dict = {"used": False}
         self._norm_key: Optional[tuple] = None
@@ -174,19 +185,26 @@ class DisplayMixin:
                 pass
         # 読めない行・読めない XY は飛ばす（MarkerTable.from_defs）
         self._markers.from_defs({"markers": st.get("markers") or [], "xy": st.get("xy") or {}})
-        amp = st.get("amplitude") or {}
-        for k in self._amplitude:
-            if k in amp:
-                self._amplitude[k] = amp[k]
+        for kind, key in ((AMP_KIND_LEVEL, "amplitude"), (AMP_KIND_NF, "amplitude_nf")):
+            amp = st.get(key) or {}
+            for k in self._amp_store[kind]:
+                if k in amp:
+                    self._amp_store[kind][k] = amp[k]
         self._marker_snap = self._markers.snapshot({})
 
     def _display_state_to_save(self) -> dict:
         return {
             "traces": [trace_settings(t) for t in self._traces],
             **{k: v for k, v in self._markers.to_defs().items() if k in ("markers", "xy")},
-            "amplitude": dict(self._amplitude),
+            "amplitude": dict(self._amp_store[AMP_KIND_LEVEL]),
+            "amplitude_nf": dict(self._amp_store[AMP_KIND_NF]),
             "trace_options": dict(self._trace_opts),
         }
+
+    @property
+    def _amplitude(self) -> dict:
+        """いまのモードの縦軸（NF は NF の縦軸: AMPLITUDE_DEFAULTS）。書き換えるとそのモードの縦軸が変わる。"""
+        return self._amp_store[amp_kind_of(self._adopted.mode)]
 
     # ------------------------------------------------------------------ 状態
 
@@ -281,6 +299,8 @@ class DisplayMixin:
         """生の値 → dBm（設計D §5.3）→ リニア W の Frame（設計F §5.1）。RTL-SDR は instrument_rtlsdr.py。"""
         if raw.encoding == _RTLSDR_ENCODING:
             return self._build_rtlsdr_frame(raw)
+        if raw.adopted.mode == Mode.NF:
+            return self._build_nf_frame(raw)  # HOT・COLD の組から NF（設計M: instrument_nf.py）
         a = raw.adopted
         levels = self._converter.to_dbm(a, raw.raw)
         self._no_calibration = levels.no_calibration
@@ -525,6 +545,8 @@ class DisplayMixin:
             s["view"] = dict(self._view_opts)
         if "amplitude" in keys:
             s["amplitude"] = dict(self._amplitude)
+            # モードの量ごとの縦軸を全部（プリセットは別のモードの縦軸を書き換えうる: AMPLITUDE_DEFAULTS）
+            s["amplitude_store"] = {k: dict(v) for k, v in self._amp_store.items()}
         if "palette" in keys:
             s["palette"] = self._palette.to_saved()
         return s
@@ -539,6 +561,8 @@ class DisplayMixin:
         for k in ("view", "amplitude"):
             if k in s:
                 out.append(tuple(sorted(s[k].items())))
+        if "amplitude_store" in s:
+            out.append(tuple(sorted((k, tuple(sorted(v.items()))) for k, v in s["amplitude_store"].items())))
         if "palette" in s:
             out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items()))))
         return tuple(out)
@@ -555,7 +579,10 @@ class DisplayMixin:
         if "view" in s:
             # 縦軸も一緒に戻すときは、縦軸は持っている値にする（ずらさない）
             self._set_view_opts(s["view"], shift_levels="amplitude" not in s)
-        if "amplitude" in s:
+        if "amplitude_store" in s:
+            for k, v in s["amplitude_store"].items():
+                self._amp_store[k].update(v)
+        elif "amplitude" in s:
             self._amplitude.update(s["amplitude"])
         if "palette" in s:
             from .palette import Palette

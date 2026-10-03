@@ -25,6 +25,7 @@
 <script src="app_settings.js"></script>
 <script src="app_windows.js"></script>
 <script src="app_cal.js"></script>
+<script src="app_nf.js"></script>
 <script src="app_rtl.js"></script>
 <script src="app_devices.js"></script>
 <script src="app_files.js"></script>
@@ -282,8 +283,8 @@
               <button class="tclr" :title="W('clear_tip')" @click="cmd('clear_trace', {number: t.number}, {field: 'trace' + t.number})">{{ W('clear') }}</button>
               <span class="tstat dim" :title="traceStatus(t).tip">{{ traceStatus(t).text }}</span>
               <!-- 平均の種類と N 回の後（設計F §5.2.1） -->
-              <select class="tavg" :value="t.average_type || ''" :disabled="t.action !== 'average'"
-                      :title="traceTip('average_type', t.action === 'average' ? null : Td('REASON_TEXTS').average_type_only)"
+              <select class="tavg" :value="t.average_type || ''" :disabled="t.action !== 'average' || !!nfAverageTypeReason"
+                      :title="traceTip('average_type', t.action === 'average' ? nfAverageTypeReason : Td('REASON_TEXTS').average_type_only)"
                       @change="setTrace(t.number, 'average_type', $event.target.value || null)">
                 <option value="">{{ t.average_type_effective ? W('default_with', { type: Td('AVERAGE_TYPES')[t.average_type_effective] }) : W('default') }}</option>
                 <option v-for="(l, c) in Td('AVERAGE_TYPES')" :key="c" :value="c" :disabled="c === 'vector' && t.value_kind !== 'complex'"
@@ -548,10 +549,8 @@
             </tbody>
           </table>
         </section>
-        <section class="sec">
-          <h3>NF</h3>
-          <div class="dim">{{ modeReason('nf') }}</div>
-        </section>
+        <!-- NF（設計M。形は app_nf.js: Qt の tab_source の NF の欄と同じ並び） -->
+        <gs-nf></gs-nf>
       </div>
       </div>
       </fieldset>
@@ -648,6 +647,8 @@
   <gs-presets v-if="presetsWin"></gs-presets>
   <!-- 校正の画面（設計K。形は app_cal.js）。確かめる窓と入力の窓はこの上に重ねる -->
   <gs-cal v-if="calWin && calView"></gs-cal>
+  <!-- NF 測定のつなぎ方（設計M。NF モードに初めて入ったときと、信号源のタブのボタンから。形は app_nf.js） -->
+  <gs-nf-guide v-if="nfGuide"></gs-nf-guide>
 
   <!-- 入力の窓（保存先・開くファイル・名前など）。名前を左・欄を右（S-05）、欄の幅は値の種類（S-02） -->
   <div class="modal-back" v-if="modal" @click="modal = null">

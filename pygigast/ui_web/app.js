@@ -35,6 +35,29 @@
     return `gigast_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
   function fmtLevel(v, unit) { return v == null ? "" : `${v.toFixed(2)} ${unit || ""}`.trim(); }
+  // 控えめな色で描く点（Qt の plot_layers.marked_points と同じ: 前置き不足・校正の範囲外・DIM_POINT_FLAGS の印）。
+  // DIM_POINT_FLAGS は Qt の plot_layers.DIM_POINT_FLAGS と同じ（NF の HOT と COLD の差が小さい点: 設計M §1）。
+  // 点ごとの印は [始まり, 終わり) の組の並びで届く（api/web/server.py の encode_trace）
+  const DIM_POINT_FLAGS = ["transient", "nf_small_difference"];
+  const dimCache = new WeakMap();
+  function dimMarks(t) {
+    if (dimCache.has(t)) return dimCache.get(t);
+    const fl = t.flags || {};
+    const n = (t.values || []).length;
+    const m = new Uint8Array(n);
+    let any = false;
+    const put = (s, e) => {
+      for (let i = Math.max(0, s); i < Math.min(n, e); i++) { m[i] = 1; any = true; }
+    };
+    put(0, fl.transient_head_points || 0);
+    const pts = fl.points || {};
+    for (const ranges of [fl.out_of_cal_range, ...DIM_POINT_FLAGS.map((k) => pts[k])]) {
+      if (Array.isArray(ranges)) for (const r of ranges) if (Array.isArray(r)) put(r[0], r[1]);
+    }
+    const out = any ? m : null;
+    dimCache.set(t, out);
+    return out;
+  }
 
   const base = {
     data() {
@@ -421,6 +444,7 @@
         } else if (kind === "devices") {
           this.onDevices(p);
         } else if (kind === "notice") {
+          if (this.onNoticeNf && this.onNoticeNf(p)) return;  // NF に初めて入った: つなぎ方の窓（app_nf.js）
           this.onNoticeFiles(p);
           const v = p.view || { text: p.code, traces: {} };
           for (const [n, text] of Object.entries(v.traces || {})) this.traceNote(Number(n), text);
@@ -534,6 +558,7 @@
         return {
           x: zero ? (i) => i : x, y: t.values, color, minHold: t.action === "min_hold",
           head: isFile ? 0 : (t.flags && t.flags.transient_head_points) || 0, fill: !isFile && this.drawFill,
+          mark: isFile ? null : dimMarks(t),
           dimColor: colors.text_dim, style,
         };
       },
@@ -1012,6 +1037,7 @@
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
   merge(base, window.GSAppCal || {});  // 校正の画面（app_cal.js）
+  merge(base, window.GSAppNf || {});  // NF 測定の欄とつなぎ方の窓（app_nf.js）
   // キーの割り当て（app_keys.js）と設定の画面・プリセット・表示の設定（app_settings.js）
   merge(base, window.GSAppKeys || {});
   merge(base, window.GSAppSettings || {});

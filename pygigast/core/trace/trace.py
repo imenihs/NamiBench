@@ -7,6 +7,8 @@
 - 値の意味が変わる条件の変更で蓄積を捨て、動作は OFF にしない。表示だけの変更では何も捨てない。
   固定のトレースは捨てない（設計F §5.3）
 - 知らせはコードで返す。画面の文言は画面側が決める（U-22）
+- NF（設計M §1）の平均は、HOT と COLD をそれぞれパワー平均してから NF にする（NF の値を平均しない）。
+  掃引の Frame.nf（core/level/nf.NfParts）が HOT・COLD と NF にする計算を持つ
 純粋な計算だけ。スレッド・入出力を持たない。
 """
 from __future__ import annotations
@@ -81,6 +83,8 @@ class ConditionChange(str, enum.Enum):
     REFERENCE = "reference"  # ノーマライズの基準
     # SG モードで SG の周波数を変えた（設計F §8）。最大・最小保持を残すかは HoldKeep で渡す
     SG_FREQ = "sg_freq"
+    # NF の ENR を変えた（設計M。NF の値の意味が変わる）
+    ENR = "enr"
 
 
 class HoldKeep(str, enum.Enum):
@@ -261,7 +265,12 @@ class Trace:
         return tuple(notices)
 
     def effective_average_type(self) -> Optional[AverageType]:
-        """いま使う平均の種類。選んでいなければ量と値の種類の既定（値が来る前は選んだものか None）。"""
+        """いま使う平均の種類。選んでいなければ量と値の種類の既定（値が来る前は選んだものか None）。
+
+        NF は選択によらずパワー平均（HOT と COLD の電力を平均する: 設計M §1。選んだ種類は覚えておき、ほかの量で使う）。
+        """
+        if self.quantity == Quantity.NF:
+            return AverageType.POWER
         if self.average_type is not None:
             return self.average_type
         if self.quantity is None or self.value_kind is None:
@@ -366,7 +375,7 @@ class Trace:
         if self.action == TraceAction.UPDATE:
             changed = self._apply_update(new, new_flags)
         elif self.action == TraceAction.AVERAGE:
-            changed = self._apply_average(new, new_flags)
+            changed = self._apply_average(new, new_flags, frame.nf if frame.quantity == Quantity.NF else None)
         else:
             changed = self._apply_hold(new, new_flags)
         if changed:
@@ -412,14 +421,22 @@ class Trace:
         self.flags = {k: v.copy() for k, v in self._acc_flags.items()}
         return True
 
-    def _apply_average(self, new: np.ndarray, new_flags: dict) -> bool:
+    def _apply_average(self, new: np.ndarray, new_flags: dict, nf=None) -> bool:
+        """nf（NF の掃引の HOT・COLD: core/level/nf.NfParts）があれば、HOT と COLD をそれぞれパワー平均し、
+        平均から NF を出す（設計M §1）。差が小さい点の印は平均した HOT・COLD で決め直す（1回ずつの印を足さない）。"""
         kind = self.effective_average_type()
         n = self.count
         assert kind is not None and n is not None and self.quantity is not None
         if self._acc_kind != kind:
             self._acc = None
             self._k = 0
-        d = to_domain(new, self.quantity, kind)
+        if nf is not None:
+            d = np.stack([np.asarray(nf.hot_w, dtype=np.float64), np.asarray(nf.cold_w, dtype=np.float64)])
+            if self._acc is not None and self._acc.shape != d.shape:
+                self._acc = None
+                self._k = 0
+        else:
+            d = to_domain(new, self.quantity, kind)
 
         if self._k >= n and self.average_after == AverageAfterCount.RESTART:
             # N 回分の平均を出し終えたので、次の N 回で新しい平均を作る。出す値は前の平均のまま
@@ -445,6 +462,10 @@ class Trace:
 
         if self.average_after == AverageAfterCount.RESTART and self._restart_published and self._k < n:
             return False
+        if nf is not None:
+            self.values, nf_flags = nf.evaluate(self._acc[0], self._acc[1])
+            self.flags = {**{k: v.copy() for k, v in self._acc_flags.items()}, **nf_flags}
+            return True
         self.values = from_domain(self._acc, self.quantity, kind)
         self.flags = {k: v.copy() for k, v in self._acc_flags.items()}
         return True

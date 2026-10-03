@@ -5,7 +5,7 @@
 機器との送受信は機器スレッドが行い、結果を制御スレッドの待ち行列へ戻す。
 ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
-校正作業（設計K）は instrument_cal.py。
+校正作業（設計K）は instrument_cal.py。NF 測定（設計M）は instrument_nf.py。
 rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
 機能は instrument_listen.py。
 機種のプロファイルと掃引条件モデルは、つないだ機器に合わせて切り替える（設計Q §2.1・§6.4: GigaSt と
@@ -34,6 +34,7 @@ from .instrument_diff import DiffMixin
 from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
 from .instrument_listen import ListenMixin
+from .instrument_nf import NfMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_view import ViewMixin
@@ -168,7 +169,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin,
-                 ViewMixin):
+                 ViewMixin, NfMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -227,6 +228,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
 
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
         self._init_display(saved if isinstance(saved, dict) else None)
+        self._init_nf(saved if isinstance(saved, dict) else None)  # NF の ENR（設計M）
         # 表示の設定・配色・プリセット（設計O・J §4.4）。トレースの値を出す前に要る
         self._init_view(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
@@ -286,6 +288,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
             **self._files_state_to_save(),
             **self._diff_state_to_save(),
             **self._view_state_to_save(),
+            **self._nf_state_to_save(),
         }
 
     def _error(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> CommandError:
@@ -450,6 +453,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
             "rtltcp": self._rtltcp_state(),
             "rtlsdr": self._rtlsdr_state(),
             "listen": self._listen_state(),
+            "nf": self._nf_state(),  # NF の ENR・増幅度（設計M）
             **self._view_snapshot(),
         }
 
@@ -744,6 +748,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
         changed = _sweep_key(new) != _sweep_key(old)
         self._adopted = new
         self._last_estimate = new.estimated_sweep_s
+        self._nf_on_mode(old.mode, new.mode)  # NF に初めて入ったら外部機器とつなぎ方を1回知らせる（設計M）
         if changed:
             self._on_sweep_condition(old, new, step_sweep=step_sweep)
             if self._run == "single":

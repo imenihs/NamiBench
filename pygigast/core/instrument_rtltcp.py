@@ -28,7 +28,7 @@ import numpy as np
 
 from .instrument_common import CommandError
 from .rtltcp import BIND_LAN, BIND_LOCAL, DEFAULT_PORT, TUNER_UNKNOWN, EnvelopeToIQ, RtlTcpServer
-from .types import Frame, RawSweep, SweepRequest
+from .types import Frame, Quantity, RawSweep, SweepRequest
 
 # 引数を渡さなかった（設定をそのまま残す）
 _UNSET = object()
@@ -259,8 +259,8 @@ class RtlTcpMixin:
         if s is None or not s.running or s.client_count == 0:
             return
         a = raw.adopted
-        if not a.zero_span or self._rtltcp_content() != CONTENT_ENVELOPE:
-            return
+        if not a.zero_span or self._rtltcp_content() != CONTENT_ENVELOPE or frame.quantity != Quantity.POWER:
+            return  # 振幅にするのは電力だけ（NF の値は電力ではない: 設計M）
         with np.errstate(divide="ignore", invalid="ignore"):
             dbm = 10.0 * np.log10(np.asarray(frame.values, dtype=np.float64)) + 30.0
         if dbm.size == 0:
