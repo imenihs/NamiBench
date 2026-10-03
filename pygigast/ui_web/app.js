@@ -356,7 +356,8 @@
         q.busy = true;
         const t0 = performance.now();
         try {
-          const r = await call("mouse_reading", { x: m.x, y: m.y });
+          // px_hz: 1画素の周波数の幅（内部の漏れの印をマウスで拾う幅: 設計L §1.4。Qt と同じ）
+          const r = await call("mouse_reading", { x: m.x, y: m.y, px_hz: this.$graph ? this.$graph.pxHz() : 0 });
           if (this.hover && !this.hover.buttons) this.hoverLines = r.lines || null;
         } catch (e) {
           this.hoverLines = null; // 読めないときは出さない（グラフの操作は妨げない）
@@ -535,6 +536,8 @@
           x: zero ? (i) => i : x, y: t.values, color, minHold: t.action === "min_hold",
           head: isFile ? 0 : (t.flags && t.flags.transient_head_points) || 0, fill: !isFile && this.drawFill,
           dimColor: colors.text_dim, style,
+          // ステップ掃引を全部重ねた段ごとの線（設計L §1.3。{x0, dx, rows}。無ければ null）
+          steps: !isFile && t.steps && t.steps.rows ? t.steps : null,
         };
       },
       // グラフの中の凡例（Qt と同じ中身と並び: 表示中のトレースを番号順、その後に参照トレース）
@@ -556,6 +559,7 @@
           this.rafPending = false;
           if (!this.$graph) return;
           this.$graph.setBands(this.marks());
+          this.$graph.setLeaks(this.leakMarks());  // 内部の漏れの印（設計L §1.4。app_step.js）
           this.$graph.setTraces(this.graphTraces(this.palette));
           this.$graph.setLegend(this.legendItems());
           this.drawMarkers();
@@ -1012,6 +1016,7 @@
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
   merge(base, window.GSAppCal || {});  // 校正の画面（app_cal.js）
+  merge(base, window.GSAppStep || {});  // SG のステップ掃引・内部の漏れの印（app_step.js）
   // キーの割り当て（app_keys.js）と設定の画面・プリセット・表示の設定（app_settings.js）
   merge(base, window.GSAppKeys || {});
   merge(base, window.GSAppSettings || {});

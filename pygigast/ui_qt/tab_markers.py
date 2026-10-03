@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -201,8 +202,9 @@ class MarkerTab(QWidget):
         self.pk_detach = QPushButton(L["detach"])
         self.pk_detach.setToolTip(texts.w("detach_item", part=L["part_peaks"]))
         v.addLayout(sizes.buttons_row(self.pk_find, self.pk_detach))
-        self.pk_table = QTableWidget(0, 4)
-        self.pk_table.setHorizontalHeaderLabels([L["col_freq_mhz"], L["level"], L["col_height_db"], ""])
+        # 列: 周波数・レベル・基準からの差・P に登録・内部の漏れの可能性の印（設計P §9.6・L §1.4。無い行は空）
+        self.pk_table = QTableWidget(0, 5)
+        self.pk_table.setHorizontalHeaderLabels([L["col_freq_mhz"], L["level"], L["col_height_db"], "", ""])
         self.pk_table.verticalHeader().hide()
         self.pk_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.pk_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -427,6 +429,10 @@ class MarkerTab(QWidget):
                 b.clicked.connect(lambda _=False, f=p["freq_hz"]: self.win.call(
                     "marker_register_peak", trace=trace, freq_hz=int(f), polarity=polarity))
                 self.pk_table.setCellWidget(i, 3, b)
+                leak = QTableWidgetItem(p.get("leak") or "")
+                leak.setToolTip(p.get("leak_tip") or "")
+                leak.setForeground(QColor(self.win.pal["warn"]))
+                self.pk_table.setItem(i, 4, leak)
             self.pk_note.setText(view["found"])
 
         self.win.call("peak_list", on_ok=show, trace=trace, floor_margin_db=self.pk_margin.value(),

@@ -1,7 +1,8 @@
 """右のタブ「表示」（設計J §4.5・P §2・O・I §3）。
 
 - 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（後の2つは設計P。消さずに無効にし理由: U-08）
-- 描き方: 線／塗りつぶし（旧 Line/Dot。測定値は変わらない）。コアの表示の設定（Qt と Web で同じ・プリセットに入る）
+- 描き方: 線／塗りつぶし（旧 Line/Dot。測定値は変わらない）。コアの表示の設定（Qt と Web で同じ・プリセットに入る）。
+  内部の漏れの印を出すか（設計L §1.4。同じくコアの表示の設定）
 - 振幅の詳細（設計O）: 単位 dBm／dBμV／dBmV と外部補正 dB。換算はコア（グラフ・マーカー・CSV・PNG・REF が
   同じ単位になる）。「初期値に戻す」
   - 単位の欄は実際に使っている単位を出す（J §4.10 の 2）。基準との比を出している間は「dB（基準との比）」で、
@@ -88,6 +89,12 @@ class DisplayTab(QWidget):
             self.style_group.addButton(b)
             v.addWidget(b)
         self.style_fill.toggled.connect(self._style_changed)
+        # 内部の漏れの印（設計L §1.4。コアの表示の設定 view.leak_marks で Qt と Web が共有）
+        self.leak_marks = QCheckBox(L["leak_marks"])
+        self.leak_marks.setToolTip(L["leak_marks_tip"])
+        self.leak_marks.setChecked(True)
+        self.leak_marks.toggled.connect(lambda on: win.call("set_view", leak_marks=bool(on)))
+        v.addWidget(self.leak_marks)
         lay.addWidget(g)
 
         g = QGroupBox(L["amplitude_detail"])
@@ -209,6 +216,7 @@ class DisplayTab(QWidget):
         self._apply_unit(st)
         widget_sync.set_checked(self.style_fill, v.get("draw_style") == "fill")
         widget_sync.set_checked(self.style_line, v.get("draw_style") != "fill")
+        widget_sync.set_checked(self.leak_marks, v.get("leak_marks", True) is not False)
         self.ext.set_value(float(v.get("ext_db") or 0.0))  # 打っている間は欄が書き直さない（fields._Edit）
 
     def fill_on(self) -> bool:

@@ -13,7 +13,7 @@ from typing import Optional
 
 from ..core.marker.analysis import DIP, PEAK, POLARITIES
 from ..core.units import level_text
-from . import texts
+from . import source_view, texts
 
 # 名前が選択で変わるボタン・メニューの項目（マーカー表の上の並び。この順で並べる: Qt と Web で同じ）
 SEARCH_CODES = ("marker_peak", "marker_peak_left", "marker_peak_right", "marker_peak_lower", "marker_add")
@@ -84,11 +84,15 @@ def result_view(r: dict, freq_offset_hz: int = 0) -> dict:
     rows = []
     for p in peaks:
         hz = int(p["freq_hz"])
+        # 内部の漏れの可能性の印（設計P §9.6・L §1.4）: 列の文字とツールチップ（漏れでなければ空）
+        leak, leak_tip = source_view.peak_leak(p.get("leak"), freq_offset_hz)
         rows.append({
             "freq_hz": hz,
             "freq": f"{(hz + int(freq_offset_hz or 0)) / 1e6:.6f}".rstrip("0").rstrip("."),
             "level": f"{_num(float(p['level']), 2)} {unit}".strip(),
             "diff": _num(float(p["diff_db"]), 1) if p.get("diff_db") is not None else "",
+            "leak": leak,
+            "leak_tip": leak_tip,
         })
     header = texts.LABELS["col_below_max_db" if by_max else "col_height_db"]
     return {"found": found, "diff_header": header, "rows": rows}

@@ -185,6 +185,10 @@ class Trace:
         self.display_start_hz: Optional[int] = None
         self.display_stop_hz: Optional[int] = None
         self.last_update_time: Optional[float] = None
+        # SG のステップ掃引の結果（設計L §1.3。固定のトレースにだけ入る）: 全部重ねるときの段ごとの値 [段, 点]（リニア）と、
+        # 掃引の設定と済んだ段の数（凡例・保存に出す）。固定でなくなったら・値を捨てたら消す
+        self.steps: Optional[np.ndarray] = None
+        self.step_info: Optional[dict] = None
 
         # 蓄積（平均は平均の領域の値、最大・最小保持はリニアの値）と回数
         self._acc: Optional[np.ndarray] = None
@@ -253,6 +257,7 @@ class Trace:
         if (self.action, self.count, self.average_type) != old[:3]:
             if self.action != TraceAction.FIXED:
                 self._discard(clear_values=self.action in ACCUMULATING_ACTIONS)
+                self.steps = self.step_info = None  # ステップ掃引の結果の印は固定の間だけ
         if self.average_after != old[3]:
             self._restart_published = False
         if (self.action == TraceAction.AVERAGE and self.effective_average_type() == AverageType.LOG
@@ -289,6 +294,7 @@ class Trace:
         if clear_values:
             self.values = None
             self.flags = {}
+            self.steps = self.step_info = None
 
     def discard(self) -> None:
         """蓄積を捨てる（単発の前など）。動作はそのまま（設計F §5.2.1）。"""
@@ -339,6 +345,7 @@ class Trace:
             raise ValueError("values の長さが軸の点数と違う")
         if self.action == TraceAction.FIXED:
             return self._result(changed=False)
+        self.steps = self.step_info = None
 
         notices: list[str] = []
         if self.axis is not None and (
@@ -372,6 +379,30 @@ class Trace:
         if changed:
             self.last_update_time = frame.time
         return self._result(changed=changed, notices=tuple(notices))
+
+    def set_result(self, frame: Optional[Frame], steps: Optional[np.ndarray] = None,
+                   step_info: Optional[dict] = None) -> None:
+        """固定のトレースに値を入れる（SG のステップ掃引の結果: 設計L §1.3）。frame が None なら空にする。
+
+        frame の値・軸・量・印・プロファイル・表示の範囲・時刻をそのまま持つ。steps は全部重ねるときの段ごとの値
+        [段, 点]（リニア）。固定でないトレースには入れない（ValueError）。
+        """
+        if self.action != TraceAction.FIXED:
+            raise ValueError("ステップ掃引の結果は固定のトレースに入れる")
+        self._discard(clear_values=True)
+        if frame is None:
+            return
+        self.axis = frame.axis
+        self.quantity = frame.quantity
+        self.value_kind = frame.value_kind
+        self.profile = copy.deepcopy(frame.profile)
+        self.display_start_hz = frame.display_start_hz
+        self.display_stop_hz = frame.display_stop_hz
+        self.values = np.asarray(frame.values, dtype=np.float64).copy()
+        self.flags = _flags_of(frame)
+        self.last_update_time = frame.time
+        self.steps = None if steps is None else np.asarray(steps, dtype=np.float64).copy()
+        self.step_info = None if step_info is None else dict(step_info)
 
     def _result(self, changed: bool, notices: tuple[str, ...] = ()) -> TraceUpdate:
         return TraceUpdate(

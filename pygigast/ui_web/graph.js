@@ -14,6 +14,10 @@
   // マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Qt の plot_layers.FUNCTION_LINE_ALPHA と同じ）
   const FUNCTION_LINE_ALPHA = 89 / 255;
   const FUNCTION_LINE_DASH = [2, 3];
+  // ステップ掃引を全部重ねたときの段ごとの線の濃さ（設計L §1.3。core/step_sweep.LINE_ALPHA と同じ: Qt の画面・PNG も同じ）
+  const STEP_LINE_ALPHA = 0.35;
+  // 内部の漏れの印の三角の大きさ（px。Qt の mark_bands の ▼ と同じくらい: 設計L §1.4）
+  const LEAK_MARK_PX = 9;
   // 画面の線の基準の幅（px。設計F §9 の実線 = 今までの線）。PNG は opts.lineBase で渡す
   const SCREEN_LINE_BASE = 1.25;
   // 凡例の線の見本の長さと行の高さ（px。Qt の pyqtgraph の凡例の見本と同じ 20px）
@@ -51,6 +55,7 @@
       this.unit = "dBm";
       this.traces = [];
       this.bands = [];
+      this.leaks = []; // 内部の漏れの印（設計L §1.4）: [{freq_hz, fill}]
       this.markers = [];
       this.selectedMarker = null;
       this.functionRows = []; // マーカーの機能の線（マーカー表の機能の行の line: G §3.6）
@@ -224,6 +229,15 @@
     }
     // 機器の範囲の外・意味の無い区間の帯（J §4.8）: [{start_hz, stop_hz, label, fill}]
     setBands(list) { this.bands = list || []; this.u.redraw(false); }
+    // 内部の漏れの印（設計L §1.4）: グラフの上端に小さな ▼。説明はマウスの位置の読み値に出る（Qt と同じ）
+    setLeaks(list) {
+      const next = list || [];
+      if (JSON.stringify(next) === JSON.stringify(this.leaks)) return;
+      this.leaks = next;
+      this.u.redraw(false);
+    }
+    // 1画素の周波数の幅（Hz。マウスの位置の読み値で狭い印を拾う幅）
+    pxHz() { return (this.x1 - this.x0) / Math.max(1, (this.u.over && this.u.over.clientWidth) || this.u.bbox.width); }
     setMarkers(rows, selected) { this.markers = rows || []; this.selectedMarker = selected; this.u.redraw(false); }
     setXY(xy) { this.xy = xy; this.u.redraw(false); }
     // マーカーの機能の線（G §3.6）: マーカー表の行のうち line を持つもの。出さないときは空を渡す
@@ -240,6 +254,7 @@
       ctx.clip();
       const dpr = b.width / Math.max(1, u.over ? u.over.clientWidth || b.width : b.width);
       if (!this.zeroSpan) this._drawBands(u, dpr || 1);
+      if (!this.zeroSpan) this._drawLeaks(u, dpr || 1);
       if (this.zeroLine) this._hline(u, 0, this.colors.zero_db, [], 1.5);
       for (const t of this.traces) this._drawTrace(u, t);
       if (!this.zeroSpan) this._drawFunctionLines(u);
@@ -287,6 +302,47 @@
       }
     }
 
+    // 内部の漏れの印: 上端から下を指す小さな三角（Qt の ▼ と同じ形・色は配色の「注意」）
+    _drawLeaks(u, dpr) {
+      const ctx = u.ctx;
+      const b = u.bbox;
+      const h = LEAK_MARK_PX * Math.max(1, dpr);
+      for (const m of this.leaks) {
+        const px = u.valToPos(m.freq_hz, "x", true);
+        if (px < b.left || px > b.left + b.width) continue;
+        ctx.fillStyle = m.fill;
+        ctx.beginPath();
+        ctx.moveTo(px - h / 2, b.top);
+        ctx.lineTo(px + h / 2, b.top);
+        ctx.lineTo(px, b.top + h * 0.8);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // ステップ掃引を全部重ねた段ごとの線（設計L §1.3）: トレースの色の細く薄い線で、トレースの線の下に描く
+    _drawStepLines(u, t) {
+      const st = t.steps;
+      const ctx = u.ctx;
+      ctx.globalAlpha = STEP_LINE_ALPHA;
+      ctx.strokeStyle = t.color;
+      ctx.lineWidth = Math.max(1, this.lineBase * 0.5);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      for (const row of st.rows) {
+        let pen = false;
+        for (let i = 0; i < row.length; i++) {
+          const v = row[i];
+          if (!Number.isFinite(v)) { pen = false; continue; }  // 値の無い点で線を切る
+          const px = u.valToPos(st.x0 + st.dx * i, "x", true);
+          const py = u.valToPos(v, "y", true);
+          if (pen) ctx.lineTo(px, py); else { ctx.moveTo(px, py); pen = true; }
+        }
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     _hline(u, level, color, dash, width) {
       const ctx = u.ctx;
       const b = u.bbox;
@@ -324,6 +380,7 @@
       const b = u.bbox;
       const n = t.y.length;
       if (!n) return;
+      if (t.steps) this._drawStepLines(u, t);  // ゼロスパンでは x0・dx が点の番号（横軸と同じ）
       const useMin = !!t.minHold;
       const segments = [[0, n, t.color]];
       if (t.head > 0 && t.dimColor) segments.splice(0, 1, [0, Math.min(n, t.head + 1), t.dimColor], [t.head, n, t.color]);

@@ -272,6 +272,8 @@ class FilesMixin:
             self._abort_ref_job(Cancelled())
         elif getattr(self, "_cal_job", None) is not None and self._cal_job.task is t:
             self._cal_abort(Cancelled())  # 校正の測定（設計K）。測りかけの値は入れない
+        elif self._step_cancel(t):
+            pass  # SG のステップ掃引（設計L §1.3）。そこまでの結果は残る
         else:
             self._changed()
         return {"task_id": task_id, "cancelling": True}
@@ -381,6 +383,8 @@ class FilesMixin:
             raise self._error("reference_in_progress")
         if getattr(self, "_cal_job", None) is not None:
             raise self._error("calibration_in_progress")
+        if getattr(self, "_step_job", None) is not None:
+            raise self._error("step_sweep_in_progress")  # SG のステップ掃引（設計L §1.3）
 
     def _cmd_reference_take(self, kind: str = KIND_WIDE, name: Optional[str] = None, averages: int = 1,
                             standard: Optional[str] = None, show_zero: bool = False) -> dict:
@@ -547,7 +551,9 @@ class FilesMixin:
             info={"action": t.action.value, "visible": t.visible, "count": t.count,
                   "current_count": t.current_count, "average_type": None if eff is None else eff.value,
                   "average_after": t.average_after.value, "hold_after": t.hold_after.value,
-                  "last_update_time": t.last_update_time, "unit": unit_for(t.quantity, t.profile)},
+                  "last_update_time": t.last_update_time, "unit": unit_for(t.quantity, t.profile),
+                  # SG のステップ掃引の結果なら、その設定と済んだ段の数（何の測定か分かる形で残す: M-08）
+                  **({"step_sweep": dict(t.step_info)} if t.step_info else {})},
             flags={k: np.array(v, dtype=bool) for k, v in t.flags.items()},
             profile=copy.deepcopy(t.profile),
         )

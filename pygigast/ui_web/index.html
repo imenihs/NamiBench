@@ -28,6 +28,7 @@
 <script src="app_rtl.js"></script>
 <script src="app_devices.js"></script>
 <script src="app_files.js"></script>
+<script src="app_step.js"></script>
 <script src="app.js"></script>
 </head>
 <body>
@@ -455,11 +456,13 @@
           <div class="row"><button data-field="peak_find" :disabled="!!pkView.reason" :title="pkView.reason || ''" @click="getPeakList">{{ W('find') }}</button></div>
           <div class="fnote" v-if="notes.peaks">{{ notes.peaks.text }}</div>
           <table class="mtable peaks">
-            <thead><tr><th class="r">{{ W('col_freq_mhz') }}</th><th class="r">{{ W('level') }}</th><th class="r">{{ peakText().diff_header }}</th><th></th></tr></thead>
+            <thead><tr><th class="r">{{ W('col_freq_mhz') }}</th><th class="r">{{ W('level') }}</th><th class="r">{{ peakText().diff_header }}</th><th></th><th></th></tr></thead>
             <tbody>
               <tr v-for="p in peakText().rows" :key="p.freq_hz">
                 <td class="r">{{ p.freq }}</td><td class="r">{{ p.level }}</td><td class="r">{{ p.diff }}</td>
                 <td class="ops"><button @click="registerPeak(p)">{{ W('register_p') }}</button></td>
+                <!-- 内部の漏れの可能性の印（設計P §9.6・L §1.4。Qt の一覧と同じ列: 無い行は空） -->
+                <td class="warn" data-field="peak_leak" :title="p.leak_tip || ''">{{ p.leak || '' }}</td>
               </tr>
             </tbody>
           </table>
@@ -485,6 +488,8 @@
           <h3>{{ W('draw_style') }}</h3>
           <div class="row"><label class="inline" v-for="d in ['line', 'fill']" :key="d">
             <input type="radio" name="draw_style" :value="d" :checked="(viewOpts.draw_style || 'line') === d" @change="setView({draw_style: d})">{{ W('draw_' + d) }}</label></div>
+          <!-- 内部の漏れの印（設計L §1.4。コアの表示の設定 view.leak_marks で Qt と共有） -->
+          <label class="inline" :title="W('leak_marks_tip')"><input type="checkbox" data-field="leak_marks" :checked="viewOpts.leak_marks !== false" @change="setView({leak_marks: $event.target.checked})">{{ W('leak_marks') }}</label>
         </section>
         <!-- 振幅の詳細（設計O）: 単位と外部補正。換算はコア（グラフ・マーカー・CSV・PNG・REF が同じ単位）。
              単位の欄は実際に使っている単位を出し、いま選べない単位は理由付きで選べない（J §4.10。中身は ui.level） -->
@@ -516,13 +521,43 @@
           <h3>SG</h3>
           <div class="form">
             <label>{{ W('sg_freq') }}</label>
-            <num-field :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')"
+            <num-field :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
                        @commit="commitFreq('sg', 'sg_hz', $event)" @step="(e, d) => stepFreq('sg', 'sg_hz', e, d)"></num-field>
           </div>
           <!-- SG の周波数を変えたら最大・最小保持も消すか（設計F §8。コアの設定で Qt と共有） -->
           <label class="inline" :title="W('sg_clear_holds_tip')"><input type="checkbox" data-field="sg_clears_holds" :checked="traceOpts.sg_clears_holds !== false" @change="setTraceOptions({sg_clears_holds: $event.target.checked})">{{ W('sg_clear_holds') }}</label>
           <!-- 出していないときは原因（未接続・モード・止めている）を言う（Qt と同じ文: ui.sg_state） -->
           <div class="dim">{{ ui.sg_state }}</div>
+        </section>
+
+        <!-- SG のステップ掃引（設計L §1.3。SG の欄のすぐ下。Qt の step_panel と同じ並び・語: 中身は ui.step）。
+             使えないときは理由付きで無効（U-08）。進み具合とやめるは窓の下の処理の帯 -->
+        <section class="sec" data-part="step">
+          <h3>{{ W('step_group') }}</h3>
+          <div class="form">
+            <label>{{ W('step_start') }}</label>
+            <num-field :text="stepText('start_hz')" :note="notes.step_start" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
+                       @clear-note="clearNote('step_start')" @commit="commitStepFreq('start_hz', 'step_start', $event)" @step="(e, d) => stepStepFreq('start_hz', 'step_start', e, d)"></num-field>
+            <label>{{ W('step_stop') }}</label>
+            <num-field :text="stepText('stop_hz')" :note="notes.step_stop" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
+                       @clear-note="clearNote('step_stop')" @commit="commitStepFreq('stop_hz', 'step_stop', $event)" @step="(e, d) => stepStepFreq('stop_hz', 'step_stop', e, d)"></num-field>
+            <label>{{ W('step_step') }}</label>
+            <num-field :text="stepText('step_hz')" :note="notes.step_step" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
+                       @clear-note="clearNote('step_step')" @commit="commitStepFreq('step_hz', 'step_step', $event)" @step="(e, d) => stepStepFreq('step_hz', 'step_step', e, d)"></num-field>
+            <label>{{ W('step_per_step') }}</label>
+            <div class="row"><input class="w-int" type="number" data-field="step_per_step" :min="stepView.per_step_min" :max="stepView.per_step_max" v-steady="stepView.per_step"
+                   :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStepPerStep($event.target.value)"><span>{{ W('times_suffix').trim() }}</span></div>
+            <label>{{ W('step_combine') }}</label>
+            <select data-field="step_combine" :value="stepView.combine" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStep({combine: $event.target.value})">
+              <option v-for="c in stepView.combines" :key="c.code" :value="c.code">{{ c.text }}</option></select>
+            <label>{{ W('step_trace') }}</label>
+            <select data-field="step_trace" :value="stepView.trace" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStep({trace: Number($event.target.value)})">
+              <option v-for="t in stepView.traces" :key="t.value" :value="t.value">{{ t.text }}</option></select>
+          </div>
+          <div class="fnote" v-if="notes.step_per_step">{{ notes.step_per_step.text }}</div>
+          <div class="dim" data-field="step_estimate">{{ stepView.estimate }}</div>
+          <div class="row"><button data-field="step_run" :disabled="!!stepView.reason" :title="W('step_run_tip') + (stepView.reason ? ' — ' + stepView.reason : '')" @click="stepRun">{{ W('step_run') }}</button></div>
+          <div class="fnote" v-if="notes.step">{{ notes.step.text }}</div>
         </section>
 
         <section class="sec">

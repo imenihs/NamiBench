@@ -1,6 +1,7 @@
 """グラフの上に描くもの（設計F §5・E §6.4・E §6.6・G §3.5）。
 
-- TraceLayer: 測定中のトレース 1〜4（J §4.4 の色・選んだ線と重なりの順: F §9）と参照トレース（ファイル。点線で一番下）、
+- TraceLayer: 測定中のトレース 1〜4（J §4.4 の色・選んだ線と重なりの順: F §9。ステップ掃引を全部重ねた結果は段ごとの
+  線をトレースの色の細く薄い線で下に重ねる: 設計L §1.3）と参照トレース（ファイル。点線で一番下）、
   凡例（動作・平均の種類・回数。線の見本はそのトレースの線）、
   値なしの点は線を切る、前置き不足・校正の範囲外の点は控えめな色、比（dB）のときの 0dB の線（E §6.6）、
   基準の範囲外の区間の帯（E §6.4）
@@ -20,6 +21,7 @@ from PySide6.QtGui import QColor
 from . import texts
 from ..core import report_layout as rl
 from ..core.palette import FILE_TRACE_ORDER
+from ..core.step_sweep import LINE_ALPHA
 from ..core.report_layout import legend_text
 from .screen_model import nearest_point, trace_x
 from .theme import trace_color
@@ -27,6 +29,22 @@ from .theme import trace_color
 LIVE_TRACES = (1, 2, 3, 4)
 # マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Web の graph.js と同じ）
 FUNCTION_LINE_ALPHA = 89
+# ステップ掃引を全部重ねるときの段ごとの線（設計L §1.3）: トレースの色の不透明度 約 35% の細い線（Web の graph.js・PNG と同じ）
+STEP_LINE_ALPHA = int(round(LINE_ALPHA * 255))
+
+
+def step_lines(steps: Optional[dict]) -> tuple[np.ndarray, np.ndarray]:
+    """段ごとの線（イベント trace の steps: {x0, dx, values[段, 点]}）を、値なしで区切った1本の (x, y) にする。"""
+    if not steps:
+        return np.array([]), np.array([])
+    rows = np.asarray(steps["values"], dtype=np.float64)
+    if rows.ndim != 2 or rows.size == 0:
+        return np.array([]), np.array([])
+    n = rows.shape[1]
+    x = float(steps["x0"]) + float(steps["dx"]) * np.arange(n, dtype=np.float64)
+    xs = np.concatenate([np.append(x, np.nan) for _ in range(rows.shape[0])])
+    ys = np.concatenate([np.append(r, np.nan) for r in rows])
+    return xs, ys
 
 
 def x_of(payload: dict) -> np.ndarray:
@@ -101,8 +119,10 @@ class TraceLayer:
             curve = self.pi.plot(connect="finite")
             # 印の付いた点（前置き不足・校正の範囲外）は同じ線の上に控えめな色で重ねる
             mark = self.pi.plot(connect="finite")
-            self.live[n] = {"curve": curve, "mark": mark, "payload": None, "visible": n == 1, "has_values": False,
-                            "line": rl.TRACE_LINE_DEFAULT}
+            # ステップ掃引を全部重ねたときの段ごとの線（設計L §1.3）。トレースの線の下に細く薄く重ねる
+            steps = self.pi.plot(connect="finite")
+            self.live[n] = {"curve": curve, "mark": mark, "steps": steps, "payload": None, "visible": n == 1,
+                            "has_values": False, "line": rl.TRACE_LINE_DEFAULT}
             self._style_live(n)
         self.zero_line = pg.InfiniteLine(pos=0.0, angle=0, movable=False, pen=pg.mkPen(pal["zero_db"], width=1.5))
         self.zero_line.setZValue(-5)
@@ -151,6 +171,8 @@ class TraceLayer:
         z = line_z(code, n)
         e["curve"].setZValue(z)
         e["mark"].setZValue(z + 0.5)
+        e["steps"].setPen(pg.mkPen(_alpha(trace_color(n, self.pal), STEP_LINE_ALPHA), width=1))
+        e["steps"].setZValue(z - 0.5)
 
     def _draw_live(self, n: int) -> None:
         e = self.live[n]
@@ -158,7 +180,10 @@ class TraceLayer:
         if t is None or not e["visible"] or not e["has_values"]:
             e["curve"].setData([], [])
             e["mark"].setData([], [])
+            e["steps"].setData([], [])
             return
+        sx, sy = step_lines(t.get("steps"))
+        e["steps"].setData(sx, sy, connect="finite")
         x = x_of(t)
         y = np.asarray(t["values"], dtype=np.float64)
         m = marked_points(t, y.size)
@@ -188,7 +213,8 @@ class TraceLayer:
                 # 凡例の回数・動作は状態の方が新しいことがある（設定を変えた直後）
                 e["payload"] = {**e["payload"], "action": s["action"], "count": s["current_count"],
                                 "count_target": s["count_target"], "average_type": s["average_type_effective"],
-                                "axis_differs": s["axis_differs"], "line": e["line"]}
+                                "axis_differs": s["axis_differs"], "line": e["line"],
+                                "step_sweep": s.get("step_sweep")}
             if changed:
                 self._draw_live(n)
             if e["visible"] and e["has_values"] and e["payload"] is None:

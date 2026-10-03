@@ -113,9 +113,10 @@ class ViewMixin:
             self._notice("level_unit_changed", {"unit": new.get("level_unit"), "previous": old.get("level_unit")})
 
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
-                      layout=_UNSET, function_lines=_UNSET) -> dict:
+                      layout=_UNSET, function_lines=_UNSET, leak_marks=_UNSET) -> dict:
         kw = {k: v for k, v in (("level_unit", level_unit), ("ext_db", ext_db), ("freq_offset_hz", freq_offset_hz),
-                                ("draw_style", draw_style), ("layout", layout), ("function_lines", function_lines))
+                                ("draw_style", draw_style), ("layout", layout), ("function_lines", function_lines),
+                                ("leak_marks", leak_marks))  # 内部の漏れの印（設計L §1.4）
               if v is not _UNSET}
         for k in view_units.DEFAULTS:
             if k in kw and kw[k] is None:

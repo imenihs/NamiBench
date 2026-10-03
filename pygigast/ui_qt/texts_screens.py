@@ -152,7 +152,6 @@ LABELS.update({
     "show_bandplan": "バンドプランを表示",
     # ---- 信号源のタブ
     "sg_group": "SG",
-    "step_sweep": "ステップ掃引…",
     "take_name_placeholder": "空なら「TG 日時」",
     "average": "平均",
     "s11_open": "S11: オープンを測る",
