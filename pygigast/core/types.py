@@ -27,6 +27,8 @@ class Quantity(str, enum.Enum):
 
     POWER = "power"
     RATIO = "ratio"
+    # NF（設計M）。値は NF の dB を 20·log10 で読める振幅の形（core/level/nf.py）。単位・外部補正は当てない
+    NF = "nf"
 
 
 class ValueKind(str, enum.Enum):
@@ -259,6 +261,7 @@ class Frame:
     "no_reference"（ノーマライズの基準が無い点）・"lo_leak"・"negative_mirror"・"outside_tg_range"
     （機器の範囲の外・意味の無い点: core/display_marks.py）など。
     profile は測った機器の機種のプロファイルの写し（設計Q §2.1）。
+    nf は NF モードの HOT・COLD の電力と NF にするための値（core/level/nf.NfParts。トレースの平均が使う: 設計M §1）。
     """
 
     axis: FreqAxis
@@ -274,6 +277,7 @@ class Frame:
     raw: Optional[RawSweep] = None
     flags: dict = field(default_factory=dict)
     profile: dict = field(default_factory=dict)
+    nf: Optional[object] = None
 
 
 class DeviceError(Exception):

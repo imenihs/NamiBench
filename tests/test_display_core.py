@@ -147,6 +147,50 @@ class ColormapPaletteTest(unittest.TestCase):
         self.assertEqual(Palette.from_saved({"base": "light", "colormap": "nope"}).colormap, "viridis")
         self.assertEqual(p.state()["colormaps"], list(colormaps.CHOICES))
 
+    def test_saved_palette_carries_colormap(self):
+        # 名前を付けた配色（J §4.4.1）にも色の並びが入る。読み込んだ後に変えたら「保存していない変更」に数える
+        p = Palette("dark", colormap="magma")
+        self.assertEqual(p.content()["colormap"], "magma")
+        p.set_origin("id1", "mine")
+        self.assertEqual(p.unsaved(), [])
+        p.colormap = "gray"
+        self.assertEqual(p.unsaved(), ["colormap"])
+        q = Palette.from_saved(p.to_saved())
+        self.assertEqual((q.colormap, q.origin["colormap"], q.unsaved()), ("gray", "magma", ["colormap"]))
+        # 色の並びを持たない前の版の保存は初期値の色の並びとして読む
+        old = Palette.from_saved({"base": "dark", "colors": {}, "origin": {"id": "a", "name": "b", "colors": {}}})
+        self.assertEqual((old.colormap, old.origin["colormap"], old.unsaved()), ("viridis", "viridis", []))
+
+
+class DisplayViewTest(unittest.TestCase):
+    """画面の中身（Qt と Web が同じものを使う: ui_qt/display_view.py）のうち、ほかの設計と組むところ。"""
+
+    def test_zero_span_and_density_unit(self):
+        from pygigast.ui_qt import display_view, texts
+
+        st = {"sweep": {"start_hz": 100, "stop_hz": 100, "step_hz": 0, "points": 500}, "view": {"layout": "density"}}
+        why = texts.REASON_TEXTS["layout_zero_span"]
+        self.assertEqual(display_view.shown_layout(st), "spectrum")
+        self.assertEqual(display_view.layout_reasons(st), {"spectrum": None, "waterfall": why, "density": why})
+        self.assertEqual(display_view.part_reasons(st), {"waterfall": why, "density": why})
+        # 再生中は記録の周波数の範囲（ゼロスパンの間は再生しないが、再生の範囲が横軸）
+        pb = {**st, "playback": {"active": True, "view": {"start_hz": 1, "stop_hz": 2}}}
+        self.assertEqual(display_view.shown_layout(pb), "density")
+        # 密度の縦はグラフの縦軸と同じ範囲: 行にするトレースの単位が縦軸と違えば描かない（設計R §3）
+        st = {"sweep": {"step_hz": 1000}, "view": {"layout": "density"}, "waterfall": {"unit": "SWR"},
+              "traces": [{"number": 1, "visible": True, "has_values": True, "unit": "dB"}]}
+        self.assertEqual(display_view.density_reason(st),
+                         texts.REASON_TEXTS["trace_unit_differs"].replace("{axis}", "dB").replace("{unit}", "SWR"))
+        st["traces"][0]["unit"] = "SWR"
+        self.assertIsNone(display_view.density_reason(st))
+        # |Γ|・SWR の行は縦軸と同じ範囲で色を付ける（自動・下限・上限は理由付きで使えない）
+        st["waterfall"]["range"] = {"lo": 1.0, "hi": 3.0, "auto": False, "axis": True}
+        v = display_view.display_tab_view(st)
+        self.assertEqual((v["auto"], v["auto_reason"], v["range_reason"], v["lo"], v["hi"]),
+                         (False, texts.REASON_TEXTS["wf_linear_axis"], texts.REASON_TEXTS["wf_linear_axis"], 1.0, 3.0))
+        self.assertEqual(display_view.waterfall_reading(0.0, 1, 100, 1.23456, "SWR")[-1], "1.23 SWR")
+        self.assertEqual(display_view.waterfall_reading(0.0, 1, 100, 0.12345, "|Γ|")[-1], "0.123 |Γ|")
+
 
 class BandplanTest(unittest.TestCase):
     def setUp(self):

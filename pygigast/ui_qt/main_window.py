@@ -985,6 +985,12 @@ class MainWindow(QMainWindow):
         if code in ("task_done", "task_failed", "task_cancelled"):
             self.files.on_task_end(code, n.get("detail") or {})
             return
+        if code == "nf_guide":
+            # NF モードに初めて入った: 必要な外部機器とつなぎ方を1回だけ出す（設計M）
+            from .nf_dialog import open_guide
+
+            open_guide(self)
+            return
         v = texts.notice_view(n, self.state)
         for num, text in v["traces"].items():
             row = self.trace_tab.rows.get(int(num)) if str(num).isdigit() else None

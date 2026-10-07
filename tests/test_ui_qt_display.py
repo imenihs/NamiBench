@@ -95,6 +95,30 @@ class WaterfallUiTest(UiBase):
         g.half.activated.emit(i)
         self.wait(lambda: self.state()["view"]["density_half"] == 50, what="半分になる回数")
 
+    def test_zero_span_hides_lower_parts_with_reason(self):
+        # ゼロスパン（横軸が時間: 設計N §1）の間はウォーターフォール・密度を出さない。設定は変えず、選べない理由を出す
+        self.cmd("connect", backend="simulator", serial="SIM00001")
+        self.cmd("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        self.cmd("set_view", layout="waterfall")
+        holder = self.win.parts.lower["waterfall"].holder
+        self.wait(lambda: holder.isVisible(), what="ウォーターフォールを出す")
+        self.cmd("set_sweep", center_hz=100 * MHZ, span_hz=0)
+        self.wait(lambda: not holder.isVisible(), what="ゼロスパンで隠す")
+        why = texts.REASON_TEXTS["layout_zero_span"]
+        tab = self.win.display_tab
+        self.assertEqual(self.state()["view"]["layout"], "waterfall")  # 設定は変えない
+        self.assertTrue(tab.view_waterfall.isChecked())
+        self.assertFalse(tab.view_waterfall.isEnabled())
+        self.assertIn(why, tab.view_waterfall.toolTip())
+        self.assertFalse(tab.view_density.isEnabled())
+        act = self.win.actions["view_density"]
+        self.assertFalse(act.isEnabled())
+        self.assertIn(why, act.toolTip())
+        # 抜けたら元の組み合わせに戻る
+        self.cmd("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        self.wait(lambda: holder.isVisible(), what="ゼロスパンを抜けたら出す")
+        self.assertTrue(tab.view_density.isEnabled())
+
     def test_menu_toggles_layout_and_checks(self):
         act = self.win.actions["view_waterfall"]
         self.assertTrue(act.isEnabled())

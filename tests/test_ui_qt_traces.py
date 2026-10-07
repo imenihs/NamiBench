@@ -193,7 +193,8 @@ class DisplayTabTest(UiBase):
             self.assertTrue(w.isEnabled())
         # 4つ目は基準との比を出している間に欄が出す値（選ぶものではないのでいつも選べない: J §4.10）
         self.assertEqual([d.unit.itemText(i) for i in range(d.unit.count())],
-                         ["dBm", "dBμV", "dBmV", texts.VIEW_TEXTS["level_unit_ratio_item"]])
+                         ["dBm", "dBμV", "dBmV", texts.NF_TEXTS["level_unit_nf_item"],
+                          texts.VIEW_TEXTS["level_unit_ratio_item"]])
         self.assertFalse(d.unit.model().item(3).isEnabled())
 
 

@@ -170,6 +170,9 @@ class PlaybackMixin:
                     # ゼロスパンの区間（横軸が時間: 設計N §1）は周波数の横軸のウォーターフォールとスペクトルに載らない。
                     # 時間軸の再生は決めていないので、開かずに理由を返す
                     raise CommandError("playback_zero_span", None, {"file": Path(path).name})
+                if str(s.quantity) == Quantity.NF.value:
+                    # NF の区間（設計M）は HOT と COLD の組から NF を出す。記録の1つの生の値からは出せないので開かない
+                    raise CommandError("playback_nf", None, {"file": Path(path).name})
                 levels, offset, ref, meta = self._segment_levels(src, pos)
                 if not levels.can_convert:
                     problems.append({"code": "playback_segment_unreadable", "segment": pos})
@@ -532,8 +535,10 @@ class PlaybackMixin:
         """記録の [t_lo, t_hi] の行（古い順・多くても max_rows 行くらい。書き込みスレッドで呼ぶ）。"""
         rows: list[wf.Row] = []
         for pos, s in enumerate(src.segments):
-            if not s.n_sweeps or s.step_hz == 0:
-                continue  # ゼロスパンの区間は周波数の横軸に載らないので行にしない（設計N §1）
+            if not s.n_sweeps or s.step_hz == 0 or str(s.quantity) == Quantity.NF.value:
+                # ゼロスパンの区間は周波数の横軸に載らない（設計N §1）。NF の区間は記録の1つの生の値から NF を出せない
+                # （HOT と COLD の組: 設計M）。どちらも行にしない
+                continue
             ts = src.times(pos)
             s0 = 0 if t_lo is None else int(np.searchsorted(ts, t_lo, side="left"))
             s1 = len(ts) if t_hi is None else int(np.searchsorted(ts, t_hi, side="right"))

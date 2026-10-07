@@ -11,6 +11,7 @@ import numpy as np
 
 from pygigast.core.instrument import CommandError
 from tests.instrument_helpers import InstrumentCase
+from tests.test_instrument_s11 import S11Case
 
 MHZ = 1_000_000
 
@@ -353,3 +354,88 @@ class PlaybackTest(InstrumentCase):
         res = self.call("waterfall_pick", t=first)
         self.assertEqual(res["t"], first)
         self.call("record_stop")
+
+
+class ZeroSpanAndFormatTest(S11Case):
+    """ほかの設計と組んだときの動き: ゼロスパン（横軸が時間: 設計N §1）と |Γ|・SWR（設計R §3）。"""
+
+    def test_zero_span_adds_no_rows_and_refuses_playback(self):
+        self.connect(50 * MHZ, 200 * MHZ)
+        self.call("record_start")
+        sweep_once(self)
+        sweep_once(self)
+        wait_state(self, lambda s: s["recording"].get("sweeps", 0) >= 2)
+        self.call("record_stop")
+        h5 = self.root / "rec.h5"
+        self.wait_task(self.call("record_finish", path=str(h5))["task_id"])
+        n = self.call("get_state")["waterfall"]["rows"]
+        self.call("set_sweep", center_hz=100 * MHZ, span_hz=0)
+        self.clear_events()
+        sweep_once(self)
+        self.assertEqual(self.call("get_state")["waterfall"]["rows"], n)  # ゼロスパンの掃引は行にしない
+        self.assertFalse([p for k, p in self.events if k == "waterfall" and p.get("rows")])
+        # ゼロスパンの間は記録を再生しない（マーカーとトレースの横軸が時間になっているため）
+        done = self.wait_task(self.call("open", paths=[str(h5)])["task_id"])
+        res = done["detail"]["result"]
+        self.assertIsNone(res["playback"])
+        self.assertEqual(res["errors"][0]["code"], "playback_zero_span_live")
+        self.assertFalse(self.call("get_state")["playback"]["active"])
+
+    def test_zero_span_record_is_not_played(self):
+        self.connect(50 * MHZ, 200 * MHZ)
+        self.call("set_sweep", center_hz=100 * MHZ, span_hz=0)
+        self.call("record_start")
+        sweep_once(self)
+        sweep_once(self)
+        wait_state(self, lambda s: s["recording"].get("sweeps", 0) >= 2)
+        self.call("record_stop")
+        h5 = self.root / "zs.h5"
+        self.wait_task(self.call("record_finish", path=str(h5))["task_id"])
+        self.call("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        done = self.wait_task(self.call("open", paths=[str(h5)])["task_id"])
+        self.assertEqual(done["detail"]["result"]["errors"][0]["code"], "playback_zero_span")
+
+    def test_swr_rows_range_and_density_use_display_values(self):
+        from pygigast.core.trace import formats
+
+        self.s11_reference()
+        self.call("set_view", layout="density")
+        self.call("set_trace", number=1, format="swr")
+        self.call("set_amplitude", swr_per_div=0.5)
+        self.clear_events()
+        sweep_once(self)
+        t = self.call("get_trace", id=1)
+        evs = [p for k, p in self.events if k == "waterfall" and p.get("rows")]
+        row = evs[-1]["rows"][0]
+        # 行の値はトレースと同じ SWR の値（dB ではない）
+        np.testing.assert_allclose(row["values"], np.asarray(t["values"], dtype=np.float32)[:len(row["values"])],
+                                   rtol=1e-5)
+        st = self.call("get_state")
+        self.assertEqual(st["waterfall"]["unit"], formats.UNIT_SWR)
+        # 色の範囲は縦軸と同じ（下端 1・1目盛 0.5 で 10 目盛）
+        self.assertEqual(st["waterfall"]["range"], {"lo": 1.0, "hi": 6.0, "auto": False, "axis": True})
+        d = [p for k, p in self.events if k == "density"][-1]
+        self.assertEqual((d["level_lo"], d["level_hi"], d["unit"]), (1.0, 6.0, formats.UNIT_SWR))
+        self.assertAlmostEqual(d["bin_db"], 0.5 / 20)
+        self.assertEqual(d["bins"], 200)
+        # 密度に入れた値は SWR（縦の升目の位置で確かめる: 一番下の升目は SWR 1〜1.025）
+        img = np.asarray(d["image"])[::-1]
+        swr = np.asarray(row["values"], dtype=np.float64)
+        col = int(np.nanargmin(swr)) * d["cols"] // len(swr)
+        b = int(np.floor((swr[int(np.nanargmin(swr))] - 1.0) / d["bin_db"]))
+        self.assertGreater(img[min(b, d["bins"] - 1), col], 0)
+        # 1目盛を変えたら色の範囲と密度の縦も変わる
+        self.clear_events()
+        self.call("set_amplitude", swr_per_div=1.0)
+        st = self.call("get_state")
+        self.assertEqual((st["waterfall"]["range"]["lo"], st["waterfall"]["range"]["hi"]), (1.0, 11.0))
+        d = [p for k, p in self.events if k == "density"][-1]
+        self.assertEqual(d["level_hi"], 11.0)
+        # 形式を dB に戻すと行を取り直す（持っている行も新しい形式で出す）
+        ep = st["waterfall"]["epoch"]
+        self.call("set_trace", number=1, format="db")
+        st = self.call("get_state")
+        self.assertGreater(st["waterfall"]["epoch"], ep)
+        r = self.call("waterfall_rows", max_rows=5)
+        self.assertEqual(r["unit"], "dB")
+        self.assertLess(float(np.nanmax(r["rows"][-1]["values"])), 0.5)  # リターンロスの dB（0dB 以下）

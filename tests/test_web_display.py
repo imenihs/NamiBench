@@ -271,3 +271,22 @@ class WebDisplayUiTest(unittest.TestCase):
         p.ev("document.querySelector('[data-field=pb_live]').click(); 1")
         p.wait("!gsApp.pbView.visible", "ライブに戻る")
         self.assertEqual(p.errors, [])
+
+    def test_zero_span_hides_lower_parts_with_reason(self):
+        # ゼロスパン（横軸が時間: 設計N §1）の間は下の部分を出さず、＋ウォーターフォール・＋密度を理由付きで選べない（Qt と同じ）
+        p = self.page
+        open_app(p, self.app, 1280, 720)
+        p.ev("gsApp.tab = 'view'; 1")
+        self.app.call("set_view", layout="waterfall")
+        p.wait("gsApp.lowerVisible('waterfall')", "ウォーターフォールを出す")
+        self.app.call("set_sweep", center_hz=100 * MHZ, span_hz=0)
+        p.wait("!gsApp.lowerVisible('waterfall') && gsApp.shownLayout === 'spectrum'", "ゼロスパンで隠す")
+        why = texts.REASON_TEXTS["layout_zero_span"]
+        r = p.ev("(() => { const b = document.querySelector('input[name=layout][value=waterfall]');"
+                 " return [b.checked, b.disabled, b.title]; })()")
+        self.assertEqual(r, [True, True, why])  # 設定は変えず（印は付いたまま）、選べない理由
+        self.assertEqual(p.ev("gsApp.menuItem('view_density').why"), why)
+        self.app.call("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        p.wait("gsApp.lowerVisible('waterfall')", "ゼロスパンを抜けたら出す")
+        self.app.call("set_view", layout="spectrum")
+        self.assertEqual(p.errors, [])

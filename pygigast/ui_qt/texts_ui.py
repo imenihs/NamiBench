@@ -14,7 +14,7 @@ MODES = (
     ("tg", "TG", "伝送特性", None),
     ("s11", "S11", "反射", None),
     ("sg", "SG", "信号源", None),
-    ("nf", "NF", "NF 測定", "NF 測定はまだ使えません"),
+    ("nf", "NF", "NF 測定", None),
 )
 MODE_NAMES = {code: name for code, _l, name, _w in MODES}
 MODE_LABELS = {code: label for code, label, _n, _w in MODES}
@@ -35,7 +35,6 @@ NOT_YET = {
     "unit": "dBμV・dBmV への切り替えはまだ使えません",
     "ext": "外部補正（アッテネータ・アンプ）はまだ使えません",
     "bandplan": "バンドプラン・ブックマークはまだ使えません",
-    "nf": "NF 測定はまだ使えません",
     "freq_offset": "周波数オフセット（変換器の観測用）はまだ使えません",
     "generic": "まだ使えません",
 }

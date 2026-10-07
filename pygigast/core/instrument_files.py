@@ -667,12 +667,14 @@ class FilesMixin:
         markers = self._marker_defs_to_save()
         quantity = self._last_quantity
         norm = self._normalization_record() if pb is None else pb["normalization"]
+        # NF の ENR・増幅度（設計M）。再生中の掃引には付けない（NF の区間は再生しない: instrument_playback.py）
+        nf = self._nf_record(raw.adopted.mode) if raw is not None and pb is None else None
         if raw is None and not traces:
             raise self._error("no_data")
 
         def job(progress, cancel):
             progress(0, 1, 0.0)
-            out = save_snapshot(path, header, raw, traces, markers, quantity=quantity, normalization=norm)
+            out = save_snapshot(path, header, raw, traces, markers, quantity=quantity, normalization=norm, nf=nf)
             return out
 
         return self._start_task("save", lambda p, c: self._writer.submit(job, p, c),
@@ -844,6 +846,7 @@ class FilesMixin:
             "conditions": storage_conditions(self._adopted),
             "calibration": self._calibration_record(),
             "normalization": self._normalization_record(),
+            "nf": self._nf_record(),  # NF の ENR・増幅度（NF モードのときだけ: 設計M）
             "exported_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
         pb = self._pb_context()
@@ -892,7 +895,7 @@ class FilesMixin:
         try:
             # 校正は測った機器のもの（GigaSt は設計D §5.2、RTL-SDR は個体の校正: _calibration_record）
             rec.append(raw, quantity=quantity, value_kind=value_kind, normalization=self._normalization_record(),
-                       calibration=self._calibration_record())
+                       calibration=self._calibration_record(), nf=self._nf_record(raw.adopted.mode))
         except (RuntimeError, ValueError, TypeError) as e:
             self._notice("record_error", {"message": str(e)})
 

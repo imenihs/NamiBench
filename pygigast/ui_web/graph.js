@@ -494,9 +494,19 @@
       if (!n) return;
       if (t.steps) this._drawStepLines(u, t);  // 段ごとの線は周波数軸のときだけ届く（設計L §1.3）
       const useMin = !!t.minHold;
-      const segments = [[0, n, t.color]];
-      if (t.head > 0 && t.dimColor) segments.splice(0, 1, [0, Math.min(n, t.head + 1), t.dimColor], [t.head, n, t.color]);
-      for (const [i0, i1, color] of segments) {
+      const segments = [[0, n, t.color, false]];
+      if (t.mark && t.dimColor) {
+        // 印の付いた点（前置き不足・校正の範囲外・NF の差が小さい点）は、隣の点まで控えめな色で重ねる（線の切れ目を
+        // 作らない。Qt の plot_layers と同じ）。重ねる区間は塗りつぶしを2回塗らない
+        for (let i = 0; i < n;) {
+          if (!t.mark[i]) { i++; continue; }
+          let j = i;
+          while (j < n && t.mark[j]) j++;
+          segments.push([Math.max(0, i - 1), Math.min(n, j + 1), t.dimColor, true]);
+          i = j;
+        }
+      } else if (t.head > 0 && t.dimColor) segments.splice(0, 1, [0, Math.min(n, t.head + 1), t.dimColor, false], [t.head, n, t.color, false]);
+      for (const [i0, i1, color, overlay] of segments) {
         // 値の無い点で途切れる、つながった線の並び（[x0, y0, x1, y1, ...]）
         const runs = [];
         let run = null;
@@ -527,7 +537,7 @@
           }
         }
         flush();
-        if (t.fill) {
+        if (t.fill && !overlay) {
           const bottom = b.top + b.height;
           ctx.globalAlpha = FILL_ALPHA;
           ctx.fillStyle = color;

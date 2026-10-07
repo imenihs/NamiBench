@@ -97,18 +97,15 @@ class DisplayControl:
         changed_layout = lay != self.layout
         self.layout = lay
         fv = display_view.freq_view(st)
-        if fv:
-            zero = fv["step_hz"] == 0
-            x0, x1 = (0, max(1, fv["points"] - 1)) if zero else (fv["start_hz"], fv["stop_hz"])
+        if fv and fv["step_hz"] != 0:
+            # ゼロスパン（横軸が時間）の間は下の部分を出さないので、周波数の範囲のときだけ合わせる
+            x0, x1 = fv["start_hz"], fv["stop_hz"]
             off = texts.freq_offset_of(st)
-            self.waterfall.set_x(x0, x1, zero, off)
-            self.density.set_x(x0, x1, off, zero)
+            self.waterfall.set_x(x0, x1, False, off)
+            self.density.set_x(x0, x1, off, False)
             # 横軸の名前はスペクトルと同じ（周波数オフセットで換算中なら軸の名前で示す: 設計O）
             for plot in (self.waterfall.plot, self.density.plot):
-                if zero:
-                    plot.getPlotItem().setLabel("bottom", texts.LABELS["axis_zero_span"], units="")
-                else:
-                    plot.getPlotItem().setLabel("bottom", look.freq_axis_label(st), units="Hz")
+                plot.getPlotItem().setLabel("bottom", look.freq_axis_label(st), units="Hz")
             self.apply_axes()  # 名前を付けると軸が出るので、出すかを決め直す
         pal = st.get("palette") or {}
         cmap = pal.get("colormap") or "viridis"

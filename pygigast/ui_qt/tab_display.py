@@ -115,7 +115,9 @@ class DisplayTab(QWidget):
         self.unit = QComboBox()
         for code, name in LEVEL_UNITS.items():
             self.unit.addItem(name, code)
-        # 基準との比を出している間に欄に出す値（選ぶものではないので、いつも選べない）
+        # NF の dB を出している間に欄に出す値（設計M。選ぶものではないので、いつも選べない）
+        self.unit.addItem(texts.NF_TEXTS["level_unit_nf_item"], screen_model.NF_UNIT)
+        # 基準との比を出している間に欄に出す値（同じく選ぶものではない）
         self.unit.addItem(V["level_unit_ratio_item"], screen_model.RATIO_UNIT)
         self.unit.setToolTip(V["level_unit_tip"])
         self.unit.activated.connect(self._unit_chosen)

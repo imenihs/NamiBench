@@ -112,6 +112,7 @@ DISPLAY_ERRORS = {
     "unknown_bookmark": "そのブックマークはもうありません",
     "playback_not_saved_file": "記録中の作業ファイルからは切り出せません（まとめた保存ファイルを開いてください）",
     "playback_zero_span": "ゼロスパンの区間がある記録は再生できません",
+    "playback_nf": "NF の区間がある記録は再生できません",
     "playback_zero_span_live": "ゼロスパンの間は記録を再生できません（Span を 0 より大きくしてから開いてください）",
 }
 

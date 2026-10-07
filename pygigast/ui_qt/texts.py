@@ -33,6 +33,8 @@ from .texts_s11 import *  # noqa: F401,F403 — 反射（S11）と表示の形�
 from .texts_s11 import S11_ERRORS, S11_NOTICES, S11_OPEN_DISCARD_REASONS, S11_TASK_NAMES, SWR_LIMIT_NOTE
 from .texts_step import *  # noqa: F401,F403 — SG のステップ掃引・内部の漏れの印の語（設計L §1.3・§1.4）
 from .texts_step import STEP_ERRORS, step_end_text, step_legend, step_task_label
+from .texts_nf import *  # noqa: F401,F403 — NF 測定の語（設計M）
+from .texts_nf import ENR_TABLE_REASONS, NF_ERRORS, NF_MARKER_NOTES, NF_TEXTS
 from .texts_display import *  # noqa: F401,F403 — ウォーターフォール・密度・再生・バンドプラン（設計P）
 from .texts_display import (DISPLAY_ERRORS, DISPLAY_NORM_REASONS, DISPLAY_NOTICES, DISPLAY_RESET_CAUSES,
                             DISPLAY_TASKS, DISPLAY_TEXTS, clock_text, display_notice_text)
@@ -349,6 +351,15 @@ def error_text(e) -> str:
         text += tpl("paren", text=str(detail["message"]))
     elif code == "bad_value" and "min" in detail and "max" in detail:
         text += tpl("paren", text=tpl("range_min_max", min=detail["min"], max=detail["max"]))
+    elif code == "enr_table_unreadable" and detail.get("reason"):
+        # どの行の何が読めないか（設計M の ENR の表）
+        from ..core.level.nf import ENR_RANGE_DB
+
+        why = ENR_TABLE_REASONS.get(detail["reason"], detail["reason"]).replace(
+            "{min}", f"{ENR_RANGE_DB[0]:g}").replace("{max}", f"{ENR_RANGE_DB[1]:g}")
+        if detail.get("line"):
+            why = NF_TEXTS["table_error_line"].replace("{line}", str(detail["line"])).replace("{why}", why)
+        text += tpl("paren", text=why)
     return text
 
 
@@ -421,6 +432,7 @@ RESET_CAUSES = {
     "ppm": "周波数の補正（ppm）",
     "level": "レベルの補正",
     "level_calibration": "レベルの補正",
+    "enr": "ENR",
     **DISPLAY_RESET_CAUSES,
 }
 
@@ -516,6 +528,8 @@ MARKER_NOTES = {
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
     **DISPLAY_MARKS,
 }
+
+MARKER_NOTES.update(NF_MARKER_NOTES)  # NF の点の印（設計M）
 
 # 印のうち読み値の注意にしないもの（細かい基準は正常）
 # ic_noise_floor は前の版の印（雑音の床が低く読めるという注意。実測で真ん中はほぼ動かず誤りだった: T18）
@@ -733,6 +747,7 @@ TASK_CANCELLED.update(DISPLAY_TASKS["cancelled"])
 # 校正の画面（設計K）・SG のステップ掃引（設計L §1.3）が断った理由。すでにある語は変えない
 ERRORS.update({k: v for k, v in CAL_ERRORS.items() if k not in ERRORS})
 ERRORS.update({k: v for k, v in STEP_ERRORS.items() if k not in ERRORS})
+ERRORS.update({k: v for k, v in NF_ERRORS.items() if k not in ERRORS})  # NF の ENR（設計M）
 
 
 # ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語

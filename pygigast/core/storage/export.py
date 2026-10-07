@@ -29,8 +29,9 @@ CSV_FORMAT = "pygigast-csv"
 CSV_VERSION = 1
 
 # 量の種類ごとに選べる単位。リニアの値（W・振幅比）はそのまま、dB 系は変換する
-UNITS = {Quantity.POWER: ("dBm", "W"), Quantity.RATIO: ("dB", "lin")}
-DEFAULT_UNIT = {Quantity.POWER: "dBm", Quantity.RATIO: "dB"}
+# NF（設計M）は dB だけ（トレースの値は NF の dB を 20·log10 で読む形で、リニアの値に意味を持たせていない）
+UNITS = {Quantity.POWER: ("dBm", "W"), Quantity.RATIO: ("dB", "lin"), Quantity.NF: ("dB",)}
+DEFAULT_UNIT = {Quantity.POWER: "dBm", Quantity.RATIO: "dB", Quantity.NF: "dB"}
 
 # 表計算の上限（列 16384・行 1048576）。超えても書くが、知らせのコードを返す
 SPREADSHEET_MAX_COLUMNS = 16384

@@ -102,11 +102,8 @@
           if (!g) continue;
           g.setColors(this.palette);
           if (g.lutName !== cm) { g.lutName = cm; g.setLut(luts[cm] || null); }
-          if (f) {
-            const zero = f.step_hz === 0;
-            if (zero) g.setX(0, Math.max(1, f.points - 1), true, 0, "");
-            else g.setX(f.start_hz, f.stop_hz, false, this.freqOff, this.ui.freq_offset_text || "");
-          }
+          // ゼロスパン（横軸が時間）の間は下の部分を出さないので、周波数の範囲のときだけ合わせる（Qt と同じ）
+          if (f && f.step_hz !== 0) g.setX(f.start_hz, f.stop_hz, false, this.freqOff, this.ui.freq_offset_text || "");
         }
         if (this.$dens) {
           this.$dens.setY(this.amp.ref, this.amp.div, this.axisUnit, this.amp.decimals);

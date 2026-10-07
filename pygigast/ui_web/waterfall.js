@@ -137,8 +137,8 @@
     _labels() {
       const X = root.GSTexts;
       const [, unit] = xUnit(this.x1 - this.x0);
-      if (this.zeroSpan) this.u.axes[0].label = X.w("axis_zero_span");
-      else if (this.xOffset) this.u.axes[0].label = X.fmtText(X.get("VIEW_TEXTS", "axis_freq_offset"), { off: this.xOffsetText }) + ` (${unit})`;
+      // 横軸はいつも周波数（ゼロスパンの間は下の部分を出さない: display_view.shown_layout）
+      if (this.xOffset) this.u.axes[0].label = X.fmtText(X.get("VIEW_TEXTS", "axis_freq_offset"), { off: this.xOffsetText }) + ` (${unit})`;
       else this.u.axes[0].label = X.w("axis_freq", { unit });
       this.u.axes[1].label = this.yLabel();
     }

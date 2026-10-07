@@ -231,6 +231,7 @@ class Recorder:
         value_kind: ValueKind | str = ValueKind.REAL,
         normalization: Optional[dict] = None,
         calibration=SAME_CALIBRATION,
+        nf: Optional[dict] = None,
     ) -> None:
         """掃引1回を待ち行列に入れる。生の値はここで写す（呼び側が後で配列を書き換えても影響しない）。"""
         if self._stopped:
@@ -242,6 +243,7 @@ class Recorder:
             value_kind=value_kind,
             normalization=normalization,
             calibration=None if cal == self.header.calibration else cal,
+            nf=nf,
         )
         r1, r2 = split_raw(raw)
         dt = meta.dtype

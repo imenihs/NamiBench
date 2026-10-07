@@ -5,7 +5,8 @@
 - ノーマライズの基準（TG・S11）: いまの基準の状態（名前・精度・経過時間・電源の入れ直し前）・一覧と選択・名前・消す・
   TG の「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 の範囲とオープン → ショート
   （1段ずつ。次に押すボタンを強調し、測ったオープンの時刻と範囲を出す: 設計E §6.5。中身は screen_s11.s11_view）
-- NF: 次の回
+- NF（設計M）: ENR（dB の小数）・ENR の表（CSV を読み込む・外す）・NF の増幅度（校正データの倍率）・つなぎ方の窓を開く。
+  中身は nf_view.nf_view（Web と同じ）。ENR が無いときの知らせは ENR の欄に、表の範囲の知らせは表の行に付ける（U-25）
 - 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）、ボタンは文字の幅で左から詰める（S-03）
 """
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import datetime
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,21 +28,47 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import screen_s11, sizes, texts, widget_sync
-from .fields import FreqField
+from . import nf_view, screen_s11, sizes, texts, widget_sync
+from .fields import DbField, FreqField
 from .step_panel import StepPanel
+from .texts_nf import NF_TEXTS as N
 from .tab_traces import body, outer, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-# まだ作っていないもの（NF: 設計M）
-REASON_NF = texts.NOT_YET["nf"]
 REASON_NO_SELECTION = texts.REASON_TEXTS["select_reference"]
 L = texts.LABELS
 ID_ROLE = Qt.ItemDataRole.UserRole
 # 基準の一覧の高さの下限（数行）
 REF_LIST_MIN_H = 90
+
+
+# ENR の表を読み込めなかった理由を出しておく長さ（ミリ秒。Web の app_nf.js と同じ）
+TABLE_NOTE_MS = 8000
+
+
+def read_text(data: bytes) -> str:
+    """CSV のバイト列を文字にする（UTF-8、読めなければ CP932。Web の app_nf.js と同じ順）。"""
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp932", errors="replace")
+
+
+class _EnrField(DbField):
+    """ENR の欄（dB の小数を 0.01dB まで出す。値が無いときは空: nf_view.enr_text）。"""
+
+    def __init__(self, name: str, on_commit) -> None:
+        super().__init__(name, "dB", on_commit, big=False)
+
+    def set_value(self, v: float) -> None:
+        self._value = v
+        self.edit.show_value(nf_view.enr_text(v))
+
+    def clear_value(self) -> None:
+        self._value = 0.0
+        self.edit.show_value("")
 
 
 def _when(ts) -> str:
@@ -133,18 +160,109 @@ class SourceTab(QWidget):
         v.addLayout(sizes.buttons_row(self.btn_select, self.btn_unselect, self.btn_rename, self.btn_delete))
         lay.addWidget(g)
 
-        g = QGroupBox("NF")
-        v = sizes.vbox(g)
-        self.enr = QLineEdit("")
-        self.enr.setPlaceholderText("ENR (dB)")
-        sizes.set_width(self.enr, "value")
-        set_enabled(self.enr, REASON_NF)
-        v.addWidget(self.enr)
-        lay.addWidget(g)
+        lay.addWidget(self._build_nf())
         lay.addStretch(1)
         outer(self, inner)
         self._refs: list[dict] = []
         self._open_kind: Optional[str] = None
+
+    # ---------------------------------------------------------------- NF（設計M）
+
+    def _build_nf(self) -> QGroupBox:
+        g = QGroupBox(N["group"])
+        form = sizes.form(g)
+        self.enr = _EnrField(N["enr"], self._set_enr)
+        form.addRow(self.enr.name, self.enr)
+        self.enr_warn = QLabel("")
+        self.enr_warn.setObjectName("warn")
+        self.enr_warn.hide()
+        form.addRow("", self.enr_warn)
+        self.enr_table = QLabel("")
+        form.addRow(N["enr_table"], self.enr_table)
+        self.table_warn = QLabel("")
+        self.table_warn.setObjectName("warn")
+        self.table_warn.hide()
+        form.addRow("", self.table_warn)
+        # 読み込めなかった理由（一度きり: U-05。表の行のそばに出して消す）
+        self.table_note = QLabel("")
+        self.table_note.setObjectName("warn")
+        self.table_note.setWordWrap(True)
+        self.table_note.hide()
+        self._table_note_timer = QTimer(self)
+        self._table_note_timer.setSingleShot(True)
+        self._table_note_timer.timeout.connect(lambda: (self.table_note.setText(""), self.table_note.hide()))
+        form.addRow("", self.table_note)
+        self.load_table = QPushButton(N["load_table"])
+        self.load_table.clicked.connect(self._load_table)
+        self.clear_table = QPushButton(N["clear_table"])
+        self.clear_table.clicked.connect(lambda: self.win.call("nf_clear_enr_table"))
+        form.addRow("", sizes.buttons_row(self.load_table, self.clear_table))
+        self.amp = QLabel("")
+        form.addRow(N["amp"], self.amp)
+        self.guide = QPushButton(N["guide_button"])
+        self.guide.clicked.connect(self._open_guide)
+        form.addRow(sizes.buttons_row(self.guide))
+        return g
+
+    def _apply_nf(self, st: dict) -> None:
+        v = nf_view.nf_view(st)
+        if v["enr_value"] is None:
+            self.enr.clear_value()
+        else:
+            self.enr.set_value(v["enr_value"])
+        set_enabled(self.enr.edit, v["enr_reason"], v["enr_tip"])
+        self.enr_warn.setText(v["enr_warn"])
+        self.enr_warn.setVisible(bool(v["enr_warn"]))
+        self.enr_table.setText(v["table_text"])
+        self.table_warn.setText(v["table_warn"])
+        self.table_warn.setVisible(bool(v["table_warn"]))
+        set_enabled(self.load_table, v["load_reason"])
+        set_enabled(self.clear_table, v["clear_reason"])
+        self.amp.setText(v["amp_text"])
+
+    def _set_enr(self, db: float) -> None:
+        self.win.call("nf_set_enr", field=self.enr, enr_db=float(db))
+
+    def _load_table(self) -> None:
+        paths = self.win.ask_open_paths(N["table_file_title"], "", N["table_file_filter"])
+        if not paths:
+            return
+        from pathlib import Path
+
+        p = Path(paths[0])
+        try:
+            data = p.read_bytes()
+        except OSError:
+            self.flash_table_note(texts.ERRORS["file_unreadable"])
+            return
+        self.send_table(read_text(data), p.name)
+
+    def send_table(self, text: str, name: str) -> None:
+        """表の中身を送る（Web と同じ命令。読めなければ理由を表の行のそばに出す）。"""
+        fut = self.win.api.call("nf_load_enr_table", text=text, file_name=name)
+
+        def done(f) -> None:
+            def in_gui() -> None:
+                exc = f.exception()
+                if exc is not None:
+                    self.flash_table_note(texts.error_text(exc))
+                else:
+                    self.flash_table_note("")
+
+            self.win._bridge.call.emit(in_gui)
+
+        fut.add_done_callback(done)
+
+    def flash_table_note(self, text: str) -> None:
+        self.table_note.setText(text)
+        self.table_note.setVisible(bool(text))
+        if text:
+            self._table_note_timer.start(TABLE_NOTE_MS)
+
+    def _open_guide(self) -> None:
+        from .nf_dialog import open_guide
+
+        open_guide(self.win)
 
     # ---------------------------------------------------------------- SG
 
@@ -193,6 +311,7 @@ class SourceTab(QWidget):
             if v["open_kind"]:
                 widget_sync.set_data(self.s11_range, v["open_kind"])
         self._update_buttons()
+        self._apply_nf(st)
 
     def refresh(self) -> None:
         """基準の一覧を読み直す（機器が決まっていなければ空）。"""

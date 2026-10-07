@@ -6,7 +6,7 @@
 ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
 ウォーターフォールと密度表示は instrument_waterfall.py、記録の再生は instrument_playback.py、バンドプランと
-ブックマークは instrument_bandplan.py（設計P）。校正作業（設計K）は instrument_cal.py。
+ブックマークは instrument_bandplan.py（設計P）。校正作業（設計K）は instrument_cal.py。NF 測定（設計M）は instrument_nf.py。
 rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
 機能は instrument_listen.py、SG のステップ掃引（設計L §1.3）は instrument_step.py。
 機種のプロファイルと掃引条件モデルは、つないだ機器に合わせて切り替える（設計Q §2.1・§6.4: GigaSt と
@@ -36,6 +36,7 @@ from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
 from .instrument_listen import ListenMixin
 from .instrument_bandplan import BandplanMixin
+from .instrument_nf import NfMixin
 from .instrument_playback import PlaybackMixin
 from .instrument_waterfall import WaterfallMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
@@ -174,7 +175,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
-                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin):
+                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -234,6 +235,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
         self._init_zero_span()  # ゼロスパンの流す表示（設計N §1）
         self._init_display(saved if isinstance(saved, dict) else None)
+        self._init_nf(saved if isinstance(saved, dict) else None)  # NF の ENR（設計M）
         # 表示の設定・配色・プリセット（設計O・J §4.4）。トレースの値を出す前に要る
         self._init_view(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
@@ -299,6 +301,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             **self._diff_state_to_save(),
             **self._view_state_to_save(),
             **self._step_state_to_save(),
+            **self._nf_state_to_save(),
         }
 
     def _error(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> CommandError:
@@ -467,6 +470,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             "rtlsdr": self._rtlsdr_state(),
             "listen": self._listen_state(),
             "step_sweep": self._step_state(),  # SG のステップ掃引の設定と動き（設計L §1.3）
+            "nf": self._nf_state(),  # NF の ENR・増幅度（設計M）
             "waterfall": self._waterfall_state(),
             "playback": self._playback_state(),
             "bandplan": self._bandplan_state(),
@@ -778,6 +782,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         changed = _sweep_key(new) != _sweep_key(old)
         self._adopted = new
         self._last_estimate = new.estimated_sweep_s
+        self._nf_on_mode(old.mode, new.mode)  # NF に初めて入ったら外部機器とつなぎ方を1回知らせる（設計M）
         if changed:
             self._on_sweep_condition(old, new, step_sweep=step_sweep)
             self._s11_open_follow(new)  # 測ってあるオープンとショートが組めなくなったら捨てて知らせる（設計E §6.5）
