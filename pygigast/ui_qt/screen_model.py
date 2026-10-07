@@ -17,7 +17,7 @@ import numpy as np
 
 from ..core import zero_span as zs
 from ..core.units import format_freq, format_time_us, time_axis_unit
-from . import marker_rows, nf_view, screen_s11, source_view, texts
+from . import display_view, marker_rows, nf_view, screen_s11, source_view, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
 
@@ -132,10 +132,20 @@ def image_reject_width_samples() -> list[str]:
 def mode_reasons(st: dict) -> dict:
     """モードごとの使えない理由。まだ作っていないもの → 機器が測れないもの（Q §2.1）の順。"""
     meas = profile_of(st).get("measurements") or []
+    playing = texts.REASON_TEXTS["playback_active"] if (st.get("playback") or {}).get("active") else None
     out = {}
     for code, _label, _name, why in texts.MODES:
-        out[code] = why or (None if code in meas else texts.MODE_UNSUPPORTED)
+        out[code] = why or (None if code in meas else texts.MODE_UNSUPPORTED) or playing
     return out
+
+
+def run_reason(st: dict) -> Optional[str]:
+    """連続・単発が使えない理由（未接続・再生中: 設計P §9.4 の「ライブの測定と再生」）。"""
+    if (st.get("playback") or {}).get("active"):
+        return texts.REASON_TEXTS["playback_active"]
+    if (st.get("connection") or {}).get("state") != "connected":
+        return texts.ERRORS["not_connected"]
+    return None
 
 
 # ---------------------------------------------------------------- 単位の欄（J §4.10 の 2。C §5.14 の RBW と同じ決まり）
@@ -548,6 +558,10 @@ def x_axis_view(st: dict) -> dict:
     表示する長さ length_s（0 は1回の掃引）。1回の掃引は 0〜最後の点、流す表示は −長さ〜0（core/zero_span.py）。
     """
     sw = (st or {}).get("sweep") or {}
+    fv = display_view.freq_view(st or {})
+    if fv.get("playback"):
+        # 再生中は再生の表示の範囲（設計P §5。ゼロスパンの間は再生しない: instrument_playback.py）
+        return {"kind": "freq", "x0": fv["start_hz"], "x1": fv["stop_hz"]}
     if sw.get("step_hz") != 0:
         return {"kind": "freq", "x0": sw.get("start_hz", 0), "x1": sw.get("stop_hz", 1)}
     length = zero_span_length(st)
@@ -632,6 +646,8 @@ def ui_view(st: dict) -> dict:
         # SG のステップ掃引の欄と、内部の漏れの印（設計L §1.3・§1.4）
         "step": source_view.step_view(st),
         "leaks": source_view.leak_marks_view(st),
+        "run_reason": run_reason(st),
+        "display": display_view.ui(st),  # ウォーターフォール・密度・再生・バンドプラン（設計P）
     }
 
 

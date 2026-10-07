@@ -539,6 +539,46 @@ def open_app(page: EdgePage, app: App, w: int, h: int) -> None:
     page.settle()
 
 
+def display_views(page: EdgePage, app: "App"):
+    """設計P の部分（ウォーターフォール・密度表示・再生の帯・表示のタブのブックマークの一覧）を開いて (どこ, 範囲) を返す。"""
+    page.ev("gsApp.closeSettings(); gsApp.closePresets(); gsApp.tab = 'view'; 1")
+    app.call("bookmark_add", name="ビーコン", hz=500_000_000)
+    app.call("bookmark_add", name="FM", hz=450_000_000)
+    app.call("record_start")
+    app.call("set_view", layout="waterfall")
+    for _ in range(2):
+        n0 = app.call("get_state")["run"]["sweep_count"]
+        app.call("run", mode="single")
+        end = time.monotonic() + 30
+        while app.call("get_state")["run"]["sweep_count"] <= n0 or app.call("get_state")["run"]["state"] != "stopped":
+            if time.monotonic() > end:
+                raise RuntimeError("掃引が終わらない")
+            time.sleep(0.05)
+    page.wait("gsApp.layoutCode === 'waterfall' && !!gsApp.$wf && gsApp.$wf.shown.length >= 2", "ウォーターフォールの行")
+    page.settle()
+    yield "主画面 ＋ウォーターフォール", ".app"
+    app.call("set_view", layout="density")
+    page.wait("gsApp.layoutCode === 'density' && !!(gsApp.$dens && gsApp.$dens.d)", "密度の絵")
+    page.settle()
+    yield "主画面 ＋密度", ".app"
+    app.call("record_stop")
+    h5 = Path(app.tmp.name) / "layout_rec.h5"
+    app.call("record_finish", path=str(h5))
+    end = time.monotonic() + 30
+    while not h5.exists():
+        if time.monotonic() > end:
+            raise RuntimeError("記録をまとめられない")
+        time.sleep(0.05)
+    app.call("open", paths=[str(h5)])
+    page.wait("gsApp.pbView.visible && !!document.querySelector('.pbbar')", "再生の帯")
+    page.settle()
+    yield "主画面 再生", ".app"
+    app.call("playback_close")
+    app.call("set_view", layout="spectrum")
+    page.wait("!gsApp.pbView.visible && gsApp.layoutCode === 'spectrum'", "ライブに戻る")
+    page.settle()
+
+
 def cal_views(page: EdgePage, app: "App"):
     """校正の画面（設計K）の手順を開く: 準備・測る（周波数特性・RBW・NF の増幅度）・確かめる（周波数特性・旧校正ファイル）。
     測った点と結果がある形で数える（Qt の LayoutTest.cal_pages と同じ手順）。"""
@@ -593,13 +633,15 @@ CAL_VIEWS = 6
 
 
 def views(page: EdgePage, tabs_only: bool = False, app: "App" = None):
-    """数える画面を順に開き、(どこ, 数える範囲) を返す。tabs_only は主画面の右のタブだけ。app を渡すと校正の画面も。"""
+    """数える画面を順に開き、(どこ, 数える範囲) を返す。tabs_only は主画面の右のタブだけ。app を渡すと設計P の部分と校正の画面も。"""
     for tab in TABS:
         page.ev(f"gsApp.closeSettings(); gsApp.closePresets(); gsApp.tab = '{tab}'; 1")
         page.settle()
         yield f"主画面 {tab}", ".app"
     if tabs_only:
         return
+    if app is not None:
+        yield from display_views(page, app)
     # 探すもの「谷」（G §3.8）: マーカー表の上のボタンの名前が変わる（場所は同じ）。マーカーのタブのピークの一覧も
     page.ev("gsApp.setPolarity('dip'); gsApp.tab = 'marker'; 1")
     page.settle()
@@ -670,8 +712,8 @@ class WebLayoutTest(unittest.TestCase):
         for where, root in views(self.page, app=self.app):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
-        # 数えた画面が揃っていること（開けずに数えなければ何も守らない）
-        self.assertEqual(len(seen), len(TABS) + 2 + 8 + 6 + CAL_VIEWS, seen)
+        # 数えた画面が揃っていること（開けずに数えなければ何も守らない）。設計P の3つ（ウォーターフォール・密度・再生）を含む
+        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 8 + 6 + CAL_VIEWS, seen)
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 

@@ -3,6 +3,8 @@
 - マーカー表と右のパネルのタブ（トレース・掃引／マーカー／表示／信号源）は、ドッキングできる部品にする
   （元の窓に付ける・切り離して別の窓にする・元に戻す）。タブは1つずつ切り離せる（複数同時に）
 - グラフは「大きく別の画面に出し、操作は元の画面で行う」形: 別の窓へ移し、元の場所には戻すボタンを置く
+- ウォーターフォール・密度表示（設計P）もグラフと同じ形。グラフの下に境目をドラッグできる分割で置き（スペクトルとの
+  分割比: P §2・J §4.3.2）、表示の組み合わせで選んだほうだけを出す。再生の帯はその下（P §9.4）
 - ピークの一覧（マーカーのタブの中）も同じ形で別の窓へ出せる
 - 別の窓が閉じられたら元の位置に戻す（なくならない）。ドッキングの部品は閉じるボタンを持たせず、
   切り離した窓を閉じたら元の位置へ戻す
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QSplitter,
     QTabWidget,
     QToolTip,
     QWidget,
@@ -38,6 +41,9 @@ TABLE_RATIO = 0.24
 TABLE_MIN = 90
 SIDE_WIDTH = 340
 TAB_PARTS = ("tab-trace", "tab-marker", "tab-view", "tab-source")
+# スペクトルとウォーターフォール（密度表示）の分割の既定（スペクトルの割合）
+GRAPH_SPLIT = 0.6
+LOWER_PARTS = ("waterfall", "density")
 
 
 class PartDock(QDockWidget):
@@ -109,6 +115,8 @@ class Detachable:
         lay.addWidget(self.placeholder)
         self.placeholder.hide()
         self.window: Optional[_PartWindow] = None
+        # 別の窓へ出した・戻したときに呼ぶ（ウォーターフォールの周波数軸を出すかを決め直す: display_control）
+        self.on_change: Optional[Callable[[], None]] = None
 
     @property
     def detached(self) -> bool:
@@ -130,6 +138,8 @@ class Detachable:
         if geometry is None or not w.restoreGeometry(geometry):
             w.resize(960, 640)
         w.show()
+        if self.on_change is not None:
+            self.on_change()
 
     def attach(self) -> None:
         w = self.window
@@ -142,6 +152,8 @@ class Detachable:
         w._on_close = lambda: None
         w.close()
         w.deleteLater()
+        if self.on_change is not None:
+            self.on_change()
 
     def geometry(self) -> Optional[str]:
         return bytes(self.window.saveGeometry().toBase64()).decode("ascii") if self.window is not None else None
@@ -151,7 +163,8 @@ class Parts:
     """部分の並び。inner（入れ子の QMainWindow）を画面の中央に置く。"""
 
     def __init__(self, win: "MainWindow", graph: QWidget, markers: QWidget, tabs: dict[str, QWidget],
-                 peaks: QWidget, peaks_parent_layout) -> None:
+                 peaks: QWidget, peaks_parent_layout, lower: Optional[dict[str, QWidget]] = None,
+                 bar: Optional[QWidget] = None) -> None:
         self.win = win
         L = texts.LABELS
         self.inner = QMainWindow()
@@ -159,7 +172,25 @@ class Parts:
         self.inner.setDockNestingEnabled(True)
         self.inner.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QTabWidget.TabPosition.North)
         self.graph = Detachable(win, "graph", graph, L["part_graph"], texts.LAYOUT_TEXTS["graph_detached"])
-        self.inner.setCentralWidget(self.graph.holder)
+        # グラフの下のウォーターフォール・密度表示（設計P §2）。どちらもグラフと同じ形で別の窓へ出せる
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.graph.holder)
+        self.lower: dict[str, Detachable] = {}
+        for key, body in (lower or {}).items():
+            det = Detachable(win, key, body, L["part_" + key],
+                             texts.w("detached_now", part=L["part_" + key]))
+            self.lower[key] = det
+            self.splitter.addWidget(det.holder)
+            det.holder.hide()
+        self.layout_code = "spectrum"
+        center = QWidget()
+        cl = sizes.vbox(center, inset=False)
+        cl.setSpacing(0)
+        cl.addWidget(self.splitter, 1)
+        if bar is not None:
+            cl.addWidget(bar)
+        self.inner.setCentralWidget(center)
         self.docks: dict[str, PartDock] = {"markers": PartDock("markers", L["part_markers"], markers)}
         for key, body in tabs.items():
             self.docks[key] = PartDock(key, L["part_" + key], body)
@@ -179,6 +210,9 @@ class Parts:
         """初期の並び: マーカー表はグラフの下、タブは右に重ねて「トレース・掃引」を前に。切り離した部分は戻す。"""
         self.graph.attach()
         self.peaks.attach()
+        for det in self.lower.values():
+            det.attach()
+        self._split_default()
         for d in self.docks.values():
             d.setFloating(False)
             self.inner.removeDockWidget(d)
@@ -198,6 +232,23 @@ class Parts:
                                Qt.Orientation.Vertical)
         self.inner.resizeDocks([self.docks[TAB_PARTS[0]]], [SIDE_WIDTH], Qt.Orientation.Horizontal)
 
+    def _split_default(self) -> None:
+        h = max(self.splitter.height(), 100)
+        sizes_ = [int(h * GRAPH_SPLIT)] + [h - int(h * GRAPH_SPLIT)] * len(self.lower)
+        self.splitter.setSizes(sizes_)
+
+    def set_layout(self, code: str) -> None:
+        """表示の組み合わせ（スペクトルのみ／＋ウォーターフォール／＋密度: 設計P §2）に合わせて下の部分を出す。
+        組み合わせから外れた部分は、別の窓に出していれば元に戻して隠す（窓を残さない）。"""
+        if code == self.layout_code:
+            return
+        self.layout_code = code
+        for key, det in self.lower.items():
+            on = key == code
+            if not on and det.detached:
+                det.attach()
+            det.holder.setVisible(on)
+
     def reset(self) -> None:
         self.place_default()
         self.win.status_note(texts.LAYOUT_TEXTS["layout_reset_done"])
@@ -206,6 +257,9 @@ class Parts:
         """部分を別の窓にする（メニュー「表示」から）。"""
         if key == "graph":
             self.graph.detach()
+        elif key in self.lower:
+            if key == self.layout_code:
+                self.lower[key].detach()
         elif key == "peaks":
             self.win.show_part("tab-marker")
             self.peaks.detach()
@@ -225,7 +279,9 @@ class Parts:
 
     def save(self) -> dict:
         return {"docks": bytes(self.inner.saveState().toBase64()).decode("ascii"),
-                "graph": self.graph.geometry(), "peaks": self.peaks.geometry()}
+                "graph": self.graph.geometry(), "peaks": self.peaks.geometry(),
+                "split": bytes(self.splitter.saveState().toBase64()).decode("ascii"),
+                **{k: d.geometry() for k, d in self.lower.items()}}
 
     def restore(self, saved) -> bool:
         if not isinstance(saved, dict) or not isinstance(saved.get("docks"), str):
@@ -238,6 +294,12 @@ class Parts:
             g = saved.get(key)
             if isinstance(g, str) and g:
                 det.detach(QByteArray.fromBase64(g.encode("ascii")))
+        # スペクトルとウォーターフォールの分割比（P §2・J §4.3.2）。下の部分の窓は表示の組み合わせが決まってから
+        sp = saved.get("split")
+        if isinstance(sp, str) and sp:
+            self.splitter.restoreState(QByteArray.fromBase64(sp.encode("ascii")))
+            self._split_restored = True
+        self._lower_saved = {k: saved.get(k) for k in self.lower if isinstance(saved.get(k), str) and saved.get(k)}
         self._sized = bool(ok)
         return bool(ok)
 
@@ -246,9 +308,20 @@ class Parts:
         if not self._sized:
             self._sized = True
             self.apply_sizes()
+        if not getattr(self, "_split_restored", False):
+            self._split_restored = True
+            self._split_default()
+
+    def restore_lower(self) -> None:
+        """前回別の窓に出していたウォーターフォール・密度表示を、表示の組み合わせが届いてから出し直す。"""
+        saved = getattr(self, "_lower_saved", {})
+        self._lower_saved = {}
+        for key, g in saved.items():
+            if key == self.layout_code:
+                self.lower[key].detach(QByteArray.fromBase64(g.encode("ascii")))
 
     def close_windows(self) -> None:
-        for det in (self.graph, self.peaks):
+        for det in (self.graph, self.peaks, *self.lower.values()):
             if det.window is not None:
                 det.window._on_close = lambda: None
                 det.window.close()

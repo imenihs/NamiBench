@@ -199,8 +199,26 @@ label.disabled { color: var(--axis); cursor: default; }
 /* ---- 中央 ---- */
 .main { flex: 1; min-height: 0; display: flex; }
 .left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.graph-box { flex: 0 0 var(--split); min-height: 120px; display: flex; flex-direction: column; background: var(--graph-bg); }
+/* グラフの部分（スペクトル・その下のウォーターフォールか密度表示・再生の帯: 設計P §2・§9.4）。マーカー表との分割は --split、
+   スペクトルと下の部分の分割は --lower（下の部分の割合）。Qt の docks.Parts の分割と同じ並び */
+.graph-area { flex: 0 0 var(--split); min-height: 120px; display: flex; flex-direction: column; }
+.partmode .graph-area { flex: 1 1 auto; }
+.graph-box { flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column; background: var(--graph-bg); }
 .partmode .graph-box { flex: 1 1 auto; }
+.lower-box { flex: 0 0 var(--lower); min-height: 80px; display: flex; flex-direction: column; background: var(--graph-bg); }
+.partmode .lower-box { flex: 1 1 auto; }
+.lower-box .part-bar { justify-content: flex-start; }
+.wf { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.pbbar { display: flex; gap: var(--gap); align-items: center; padding: var(--gap) var(--inset); }
+.pbbar .pb-gap { margin-left: calc(var(--section-gap) - var(--gap)); }
+.pb-slider { flex: 1; min-width: 80px; }
+.pb-pos { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* ブックマークの一覧: 名前・周波数・Center に・消す（同じ列にそろえる: S-02） */
+.bm-list { display: grid; grid-template-columns: max-content max-content max-content max-content; gap: var(--gap) var(--label-gap);
+           align-items: center; justify-items: start; font-variant-numeric: tabular-nums; }
+.col { display: flex; flex-direction: column; gap: var(--gap); align-items: flex-start; }
+/* 表示の組み合わせのメニューの項目: 選んでいるものに印（Qt の選べる項目と同じ） */
+.menu-item.on > span:first-child::before { content: "¹3  "; }
 .part-bar { display: flex; gap: var(--section-gap); align-items: center; justify-content: flex-end; padding: var(--gap) var(--inset) 0;
             font-size: var(--font-s); }
 /* グラフの中の凡例（Qt の pyqtgraph の凡例と同じ: 右上から 8px・上から 6px の箱。背景はグラフの背景を少し透かし、枠は軸の色、
@@ -297,7 +315,9 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
   .menu-wrap { display: flex; }
   .app { height: auto; min-height: 100vh; }
   .main { flex-direction: column; }
+  .graph-area { flex: 0 0 auto; }
   .graph-box { flex: 0 0 auto; height: 55vh; }
+  .lower-box { flex: 0 0 auto; height: 35vh; }
   .marker-box { flex: 0 0 auto; max-height: 40vh; }
   .hsplit, .vsplit { display: none; }
   .side { flex: 0 0 auto; border-left: 0; border-top: 1px solid var(--axis); }

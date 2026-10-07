@@ -117,6 +117,8 @@ class CalMixin:
         """測れない・取り込めない理由のコード（入口で止める: U-02）。"""
         if self._conn != "connected":
             return "not_connected"
+        if getattr(self, "_playback", None) is not None:
+            return "playback_active"  # 記録の再生中は機器の掃引を受けない（ライブに戻ってから: 設計P §9.4）
         if (self._profile.get("raw") or {}).get("encoding") != _GIGAST_ENCODING:
             return "calibration_not_for_device"
         s = self._cal_session

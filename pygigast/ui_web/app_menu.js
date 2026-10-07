@@ -58,6 +58,9 @@
           presets: () => this.openPresets(), preset_save: () => this.presetSaveNew(),
           layout_reset: () => this.layoutReset(),
           view_colors: () => this.openSettings("display"), settings_keys: () => this.openSettings("keys"),
+          view_waterfall: () => this.toggleLayout("waterfall"), view_density: () => this.toggleLayout("density"),
+          playback_extract: () => this.recordRangeDialog("playback_extract", ".h5", "extract_title"),
+          playback_export_csv: () => this.recordRangeDialog("playback_export_csv", ".csv", "export_record_title"),
           help_keys: () => { this.modal = { title: X.get("MENU_ITEMS", "help_keys"), keys: true, fields: [] }; },
           help_about: () => { this.modal = { title: X.get("MENU_ITEMS", "help_about"), note: W("about", { version: this.info.version || "" }), fields: [] }; },
         };
@@ -84,7 +87,8 @@
           case "record_finish": return rec.active || rec.stopped ? null : X.get("ERRORS", "not_recording");
           case "undo": return st.undo && !st.undo.can_undo ? R("no_undo") : null;
           case "redo": return st.undo && !st.undo.can_redo ? R("no_redo") : null;
-          case "run_cont": case "run_single": return this.connected ? null : X.get("ERRORS", "not_connected");
+          case "run_cont": case "run_single": return this.runReason;
+          case "playback_extract": case "playback_export_csv": return this.pbActive ? null : R("not_playing");
           case "ref_auto": return this.refAutoReason();
           // 次のピーク（左・右・次に高い）はマーカーが無ければ M を作ってから動かす（G §3.5。Qt と同じ）ので理由を持たない
           case "marker_left": case "marker_right": case "marker_center": case "marker_ref": case "marker_remove": return noMarker;
@@ -99,9 +103,13 @@
         const items = (codes) => codes.filter((c) => !WEB_SKIP.has(c)).map((code) => {
           if (code === null) return null;
           const notYet = X.get("MENU_NOT_YET", code, null);
-          const why = notYet ? X.get("NOT_YET", notYet) : this.itemReason(code);
+          // 表示の組み合わせの項目はゼロスパンの間は選べない（理由: display_view.layout_reasons）
+          const layoutWhy = code === "view_waterfall" ? this.layoutReasons.waterfall : (code === "view_density" ? this.layoutReasons.density : null);
+          const why = notYet ? X.get("NOT_YET", notYet) : (layoutWhy || this.itemReason(code));
           // 名前は山／谷の選択で変わる項目がある（app_markers.js の menuLabel: G §3.8）
-          return { code, label: this.menuLabel(code), run: notYet ? null : h[code], why, keys: this.keySeqs[code] || [], graphOnly: graphOnly(code) };
+          // 表示の組み合わせの項目は、選んでいるものに印（Qt の選べる項目と同じ: 設計P §2）
+          const on = (code === "view_waterfall" && this.layoutCode === "waterfall") || (code === "view_density" && this.layoutCode === "density");
+          return { code, label: this.menuLabel(code), run: notYet ? null : h[code], why, keys: this.keySeqs[code] || [], graphOnly: graphOnly(code), on };
         });
         const out = [];
         for (const [sec, codes] of X.list("MENU_LAYOUT")) {
@@ -115,7 +123,8 @@
             // 部分ごとの「別ウィンドウで開く」（J §4.3.2。Qt のメニュー「表示」と同じ並び・語・コード: texts の DETACH_PARTS）
             list.push(null, ...X.list("DETACH_PARTS").map((p) => ({
               code: "detach_" + p, label: W("detach_item", { part: W("part_" + p) }), run: () => this.detach(p),
-              why: this.part ? X.get("REASON_TEXTS", "part_window") : null, keys: [], graphOnly: false,
+              // ウォーターフォール・密度表示は表示の組み合わせで選んでいるときだけ（設計P: display_view.part_reasons）
+              why: this.part ? X.get("REASON_TEXTS", "part_window") : ((this.dv.parts || {})[p] || null), keys: [], graphOnly: false,
             })));
           }
           while (list.length && list[list.length - 1] === null) list.pop();

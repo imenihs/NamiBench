@@ -35,6 +35,9 @@ from .texts_step import *  # noqa: F401,F403 — SG のステップ掃引・内�
 from .texts_step import STEP_ERRORS, step_end_text, step_legend, step_task_label
 from .texts_nf import *  # noqa: F401,F403 — NF 測定の語（設計M）
 from .texts_nf import ENR_TABLE_REASONS, NF_ERRORS, NF_MARKER_NOTES, NF_TEXTS
+from .texts_display import *  # noqa: F401,F403 — ウォーターフォール・密度・再生・バンドプラン（設計P）
+from .texts_display import (DISPLAY_ERRORS, DISPLAY_NORM_REASONS, DISPLAY_NOTICES, DISPLAY_RESET_CAUSES,
+                            DISPLAY_TASKS, DISPLAY_TEXTS, clock_text, display_notice_text)
 
 
 def tpl(key: str, **kw) -> str:
@@ -282,6 +285,9 @@ def notice_text(n: dict) -> str:
     code = n.get("code", "")
     text = NOTICES.get(code, code)
     d = n.get("detail") or {}
+    shown = display_notice_text(code, d)  # 再生・バンドプランの知らせ（設計P）
+    if shown is not None:
+        return shown
     if code == "sweep_discarded":
         r = d.get("reason", "")
         text += tpl("paren", text=DISCARD_REASONS.get(r, r))
@@ -427,6 +433,7 @@ RESET_CAUSES = {
     "level": "レベルの補正",
     "level_calibration": "レベルの補正",
     "enr": "ENR",
+    **DISPLAY_RESET_CAUSES,
 }
 
 TRACE_NOTICES = {
@@ -466,8 +473,20 @@ def legend_parts(t: dict) -> dict:
     return out
 
 
+def file_display_name(f: dict) -> str:
+    """参照トレースのファイルの名前。過去のトレース（ウォーターフォールの行をクリックした掃引: 設計P §3）は
+    「過去の掃引 時刻」。"""
+    if f.get("kind") == "past":
+        key = "past_trace_merged" if (f.get("sweeps") or 1) > 1 else "past_trace"
+        return DISPLAY_TEXTS[key].replace("{time}", clock_text(f.get("t"), tenths=True)).replace(
+            "{n}", str(f.get("sweeps") or 1))
+    return str(f.get("name") or "")
+
+
 def file_trace_label(f: dict, tid: str) -> str:
     """参照トレース（開いたファイル）の凡例の文字: 名前・番号・日時・機器。"""
+    if f.get("kind") == "past":
+        return file_display_name(f)
     num = str(tid).split(".", 1)[-1]
     when = str(f.get("created_at") or "")[:16].replace("T", " ")
     dev = f.get("device_serial") or ""
@@ -541,6 +560,7 @@ NORM_REASONS = {
     "image_reject_mismatch": "基準とイメージ除去が違います",
     "rbw_mismatch": "基準と RBW が違います",
     "out_of_range": "表示範囲に基準がありません",
+    **DISPLAY_NORM_REASONS,
 }
 
 ACCURACY = {
@@ -717,7 +737,13 @@ ERRORS.update({
     **SETTINGS_ERRORS,
     **S11_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
+    **DISPLAY_ERRORS,
 })
+NOTICES.update(DISPLAY_NOTICES)
+TASK_NAMES.update(DISPLAY_TASKS["names"])
+TASK_DONE.update(DISPLAY_TASKS["done"])
+TASK_FAILED.update(DISPLAY_TASKS["failed"])
+TASK_CANCELLED.update(DISPLAY_TASKS["cancelled"])
 # 校正の画面（設計K）・SG のステップ掃引（設計L §1.3）が断った理由。すでにある語は変えない
 ERRORS.update({k: v for k, v in CAL_ERRORS.items() if k not in ERRORS})
 ERRORS.update({k: v for k, v in STEP_ERRORS.items() if k not in ERRORS})
@@ -755,6 +781,14 @@ def calibration_status(st: dict) -> str:
         return tpl("status_cal_rtl_none", ppm=f"{int(ppm or 0):+d}", unit=unit)
     cal = st.get("calibration")
     return tpl("status_cal", at=cal["created_at"]) if cal else TEMPLATES["status_cal_none"]
+
+
+def playback_status(pb: dict) -> str:
+    """状態バーの「ライブ」／「再生 名前 時刻」（設計P §5・§9.4）。"""
+    if not pb.get("active"):
+        return DISPLAY_TEXTS["status_live"]
+    return DISPLAY_TEXTS["status_playback"].replace("{name}", str(pb.get("name") or "")).replace(
+        "{time}", clock_text(pb.get("t"), tenths=True))
 
 
 def recording_text(rec: dict) -> str:
@@ -852,6 +886,9 @@ def status_items(st: dict) -> list[dict]:
          tpl("status_conn", state=CONN_STATES.get(conn.get("state"), conn.get("state")), who=who),
          "cls": "ok" if conn.get("state") == "connected" else "warn"},
         {"key": "run", "text": tpl("status_run", state=rs), "cls": ""},
+        # ライブを見ているか、記録を再生しているか（ライブの値と取り違えない: 設計P §5）
+        {"key": "view", "text": playback_status(st.get("playback") or {}),
+         "cls": "warn" if (st.get("playback") or {}).get("active") else ""},
         {"key": "time", "text": tpl("status_sweep_time", s=f"{run['last_sweep_s']:.2f}") if run.get("last_sweep_s")
          else TEMPLATES["status_sweep_time_none"], "cls": ""},
         {"key": "discard", "text": tpl("status_discard", n=run.get("discard_count", 0)), "cls": ""},
@@ -884,13 +921,22 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
         path = res.get("path")
         if path:
             text = tpl("task_done_path", done=text, name=PurePath(path).name)
-        if kind == "open":
+        if kind == "open" and res.get("playback"):
+            # 記録のファイルを開いて再生に入った（設計P §5）。止めたライブ・出したウォーターフォールも言う
+            text = display_notice_text("playback_started", res["playback"]) or ""
+            if res.get("files"):
+                text += "・" + tpl("open_done", n=len(res["files"]))
+            errs = res.get("errors") or []
+            if errs:
+                text += tpl("open_errors", list="、".join(
+                    tpl("open_error_item", name=PurePath(e["path"]).name, reason=storage_error_text(e)) for e in errs))
+        elif kind == "open":
             text = tpl("open_done", n=len(res.get("files") or []))
             errs = res.get("errors") or []
             if errs:
                 text += tpl("open_errors", list="、".join(
                     tpl("open_error_item", name=PurePath(e["path"]).name, reason=storage_error_text(e)) for e in errs))
-        elif kind == "export_csv":
+        elif kind in ("export_csv", "playback_export_csv"):
             text += tpl("export_rows", rows=res.get("rows", 0))
             warns = [EXPORT_WARNINGS.get(w, w) for w in res.get("warnings") or []]
             if warns:

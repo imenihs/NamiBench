@@ -17,6 +17,7 @@
 <script src="texts.js"></script>
 <script src="fields.js"></script>
 <script src="graph.js"></script>
+<script src="waterfall.js"></script>
 <script src="png.js"></script>
 <script src="audio.js"></script>
 <script src="app_keys.js"></script>
@@ -32,6 +33,7 @@
 <script src="app_zerospan.js"></script>
 <script src="app_s11.js"></script>
 <script src="app_step.js"></script>
+<script src="app_display.js"></script>
 <script src="app.js"></script>
 </head>
 <body>
@@ -133,11 +135,12 @@
                :title="W('sweep_progress_tip')"><div class="sp-fill" :style="{width: sweepProgress.percent + '%'}"></div></div>
           <span class="sp-text dim" :title="W('sweep_progress_tip')">{{ sweepProgress.text }}</span>
         </div>
+        <!-- 連続・単発は未接続・再生中は使えない（理由をツールチップに: U-08・設計P §9.4。Qt と同じ screen_model.run_reason） -->
         <div class="runbtns">
-          <button class="run-btn" :class="{running: run.state === 'continuous'}" :disabled="!connected"
-                  :title="W('run_cont_tip') + keyHint('run_cont')" @click="trigger('run_cont')">{{ T('MENU_ITEMS', 'run_cont') }}</button>
-          <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!connected"
-                  :title="W('run_single_tip') + keyHint('run_single')" @click="trigger('run_single')">{{ T('MENU_ITEMS', 'run_single') }}</button>
+          <button class="run-btn" :class="{running: run.state === 'continuous'}" :disabled="!!runReason"
+                  :title="W('run_cont_tip') + keyHint('run_cont') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_cont')">{{ T('MENU_ITEMS', 'run_cont') }}</button>
+          <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!!runReason"
+                  :title="W('run_single_tip') + keyHint('run_single') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_single')">{{ T('MENU_ITEMS', 'run_single') }}</button>
           <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
                   :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
         </div>
@@ -160,7 +163,10 @@
 
   <!-- ================= グラフ・マーカー表・右のタブ ================= -->
   <main class="main" ref="main">
-    <section class="left" v-show="show('graph') || show('markers') || (!part && (detached.graph || detached.markers))">
+    <section class="left" v-show="show('graph') || show('markers') || lowerVisible('waterfall') || lowerVisible('density') || (!part && (detached.graph || detached.markers))">
+      <!-- グラフの部分: スペクトル・その下のウォーターフォールか密度表示（表示の組み合わせ: 設計P §2）・再生の帯（P §9.4）。
+           Qt の docks.Parts の分割と同じ並び。境目をドラッグして高さを変えられる -->
+      <div class="graph-area" ref="garea" v-show="show('graph') || lowerVisible('waterfall') || lowerVisible('density') || (!part && detached.graph)">
       <div class="graph-box" v-show="show('graph')">
         <!-- 凡例はグラフの中の右上の箱（Qt と同じ: graph.js の setLegend） -->
         <div class="part-bar" v-if="!part">
@@ -170,6 +176,42 @@
         <div class="graph" ref="graph" :title="hoverLines ? '' : W('graph_tip')"></div>
       </div>
       <div class="detached-bar" v-if="!part && detached.graph"><span>{{ W('detached_now', {part: W('part_graph')}) }}</span><button @click="reattach('graph')">{{ W('reattach') }}</button></div>
+      <div class="hsplit" v-if="!part && show('graph') && (lowerVisible('waterfall') || lowerVisible('density'))" @mousedown="startSplit($event, 'g')" :title="W('split_tip')"></div>
+      <!-- ウォーターフォール（P §3・§9.2）。題・最新へ（再生中は全体）・別ウィンドウ（Qt の waterfall_view と同じ並び） -->
+      <div class="lower-box" data-part="waterfall" v-show="lowerVisible('waterfall')">
+        <div class="part-bar">
+          <span class="part-title">{{ W('part_waterfall') }}</span>
+          <span class="grow"></span>
+          <button data-field="wf_follow" :disabled="!!followReason" :title="followReason || ''" @click="wfFollowClick">{{ followLabel }}</button>
+          <button v-if="!part" @click="detach('waterfall')" :disabled="!!(dv.parts || {}).waterfall" :title="W('detach_item', {part: W('part_waterfall')})">{{ W('detach') }}</button>
+        </div>
+        <div class="wf" ref="wf" :title="hoverLines ? '' : W('waterfall_tip')"></div>
+      </div>
+      <!-- 密度表示（P §4・§9.3）。何秒分の密度かを題の行に（P §4） -->
+      <div class="lower-box" data-part="density" v-show="lowerVisible('density')">
+        <div class="part-bar">
+          <span class="part-title">{{ W('part_density') }}</span>
+          <span class="grow"></span>
+          <span :class="densityReason ? 'warn' : 'dim'" data-field="density_note">{{ densityReason || densitySeconds }}</span>
+          <button v-if="!part" @click="detach('density')" :disabled="!!(dv.parts || {}).density" :title="W('detach_item', {part: W('part_density')})">{{ W('detach') }}</button>
+        </div>
+        <div class="wf" ref="dens"></div>
+      </div>
+      <div class="detached-bar" v-if="!part && lowerKey && detached[lowerKey]"><span>{{ W('detached_now', {part: W('part_' + lowerKey)}) }}</span><button @click="reattach(lowerKey)">{{ W('reattach') }}</button></div>
+      <!-- 再生の帯（P §9.4）: 再生／一時停止・時間の軸のつまみ・位置・速さ・保存時の分解能・ライブに戻る。ライブの測定中は出ない -->
+      <div class="pbbar" v-if="!part && pbView.visible">
+        <fieldset class="ro" :disabled="readOnly" :title="readOnlyReason || undefined">
+        <button data-field="pb_play" @click="pbToggle">{{ pbView.play_label }}</button>
+        <input type="range" class="pb-slider" min="0" :max="Math.max(0, pbView.total - 1)" :value="pbView.index" @input="pbSlide($event.target.value)">
+        <span class="pb-pos">{{ pbView.position }}</span>
+        <span class="pb-gap">{{ D('speed') }}</span>
+        <select data-field="pb_speed" :value="pbView.speed" @change="cmd('playback_speed', {speed: Number($event.target.value)})">
+          <option v-for="o in pbView.speeds" :key="o.code" :value="o.code">{{ o.text }}</option></select>
+        <span class="dim">{{ pbView.resolution }}</span>
+        <button class="pb-gap" data-field="pb_live" @click="cmd('playback_close')">{{ D('back_to_live') }}</button>
+        </fieldset>
+      </div>
+      </div>
       <div class="hsplit" v-if="!part && show('graph') && show('markers')" @mousedown="startSplit($event, 'v')" :title="W('split_tip')"></div>
 
       <div class="marker-box" v-show="show('markers')">
@@ -322,7 +364,7 @@
           <h3>{{ W('files') }}</h3>
           <div class="dim" v-if="!files.length">{{ W('no_files') }}</div>
           <div class="file" v-for="f in files" :key="f.file_id">
-            <div class="file-head"><b>{{ f.name }}</b><span class="dim">{{ f.created_at }} {{ f.device_model }} {{ f.device_serial }}</span>
+            <div class="file-head"><b>{{ (ui.file_names || {})[f.file_id] || f.name }}</b><span class="dim">{{ f.created_at }} {{ f.device_model }} {{ f.device_serial }}</span>
               <button @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
             <label class="inline" v-for="tr in f.traces" :key="tr.id" :class="{disabled: !!fileUnitReason(tr.id)}" :title="fileUnitReason(tr.id) || undefined"><input type="checkbox" :checked="!fileHidden[tr.id]" :disabled="!!fileUnitReason(tr.id)" @change="toggleFileTrace(tr.id)">{{ W('file_trace_check', {number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
           </div>
@@ -479,7 +521,9 @@
             <tbody>
               <tr v-for="p in peakText().rows" :key="p.freq_hz">
                 <td class="r">{{ p.freq }}</td><td class="r">{{ p.level }}</td><td class="r">{{ p.diff }}</td>
-                <td class="ops"><button @click="registerPeak(p)">{{ W('register_p') }}</button></td>
+                <!-- 行から「P に登録」（G §3.5）・Center にする（P §7・§9.6） -->
+                <td class="ops"><div class="cell-row"><button @click="registerPeak(p)">{{ W('register_p') }}</button>
+                  <button @click="centerOn(p.freq_hz)">{{ D('to_center') }}</button></div></td>
                 <!-- 内部の漏れの可能性の印（設計P §9.6・L §1.4。Qt の一覧と同じ列: 無い行は空） -->
                 <td class="warn" data-field="peak_leak" :title="p.leak_tip || ''">{{ p.leak || '' }}</td>
               </tr>
@@ -495,12 +539,38 @@
 
       <!-- ---- 表示（J §4.5） ---- -->
       <div class="tab-body" :class="{off: !showTab('view')}" data-tab="view">
+        <!-- 表示の組み合わせ（設計P §2: 1操作で切り替える。コアの表示の設定で Qt と同じ） -->
         <section class="sec">
           <h3>{{ W('view_combo') }}</h3>
-          <div class="row"><label class="inline"><input type="radio" checked>{{ W('spectrum_only') }}</label>
-            <label class="inline disabled" :title="T('NOT_YET', 'waterfall')"><input type="radio" disabled>{{ W('plus_waterfall') }}</label>
-            <label class="inline disabled" :title="T('NOT_YET', 'density')"><input type="radio" disabled>{{ W('plus_density') }}</label></div>
-          <div class="dim">{{ T('NOT_YET', 'view') }}</div>
+          <div class="col">
+            <label class="inline" v-for="c in ['spectrum', 'waterfall', 'density']" :key="c">
+              <input type="radio" name="layout" :value="c" :checked="layoutCode === c" :disabled="!!layoutReasons[c]" :title="layoutReasons[c] || ''" @change="setView({layout: c})">{{ W({spectrum: 'spectrum_only', waterfall: 'plus_waterfall', density: 'plus_density'}[c]) }}</label>
+          </div>
+        </section>
+        <!-- ウォーターフォール・密度（P §9.2・§9.3）。中身はサーバーの display_view.display_tab_view（Qt と同じ） -->
+        <section class="sec">
+          <h3>{{ D('wf_group') }}</h3>
+          <div class="form">
+            <label>{{ D('wf_trace') }}</label>
+            <select data-field="wf_trace" :value="dtab.trace" @change="setView({wf_trace: Number($event.target.value)}, 'wf')">
+              <option v-for="o in dtab.traces" :key="o.code" :value="o.code">{{ o.text }}</option></select>
+            <label>{{ D('wf_color') }}</label>
+            <label class="inline" :title="dtab.auto_reason || ''"><input type="checkbox" data-field="wf_auto" :checked="dtab.auto" :disabled="!!dtab.auto_reason" @change="setView({wf_color_auto: $event.target.checked}, 'wf')">{{ D('auto') }}</label>
+            <label>{{ D('lower') }}</label>
+            <input class="w-value" data-field="wf_lo" v-steady="wfLevelText(dtab.lo)" :disabled="!!dtab.range_reason" :title="dtab.range_reason || ''" @change="commitWfLevel('wf_color_lo', $event.target.value)">
+            <label>{{ D('upper') }}</label>
+            <input class="w-value" data-field="wf_hi" v-steady="wfLevelText(dtab.hi)" :disabled="!!dtab.range_reason" :title="dtab.range_reason || ''" @change="commitWfLevel('wf_color_hi', $event.target.value)">
+            <label>{{ D('colormap') }}</label>
+            <select data-field="colormap" :value="dtab.colormap" @change="cmd('palette_set', {colormap: $event.target.value}, {field: 'wf'})">
+              <option v-for="o in dtab.colormaps" :key="o.code" :value="o.code">{{ o.text }}</option></select>
+            <label>{{ D('wf_rows') }}</label>
+            <select data-field="wf_rows" :value="dtab.rows" @change="setView({wf_rows: Number($event.target.value)}, 'wf')">
+              <option v-for="o in dtab.rows_choices" :key="o.code" :value="o.code">{{ o.text }}</option></select>
+            <label>{{ D('density_half') }}</label>
+            <select data-field="density_half" :value="dtab.half" @change="setView({density_half: Number($event.target.value)}, 'wf')">
+              <option v-for="o in dtab.half_choices" :key="o.code" :value="o.code">{{ o.text }}</option></select>
+          </div>
+          <div class="fnote" v-if="notes.wf">{{ notes.wf.text }}</div>
         </section>
         <!-- 描き方（旧 Line/Dot・設計O）。測った値は変わらない。コアの表示の設定なので Qt と同じになる -->
         <section class="sec">
@@ -538,12 +608,36 @@
           <div class="fnote" v-if="notes.view">{{ notes.view.text }}</div>
           <button @click="setView({level_unit: null, ext_db: null})">{{ V('reset_amp') }}</button>
         </section>
+        <!-- バンドプラン・ブックマーク（P §6・§9.5）: 出すか・読み込む・書き出す・一覧（Center に・消す）・追加（Qt と同じ並び） -->
+        <section class="sec">
+          <h3>{{ D('bandplan_group') }}</h3>
+          <div class="row">
+            <label class="inline"><input type="checkbox" data-field="bandplan_shown" :checked="dtab.bandplan_shown" @change="setView({bandplan_shown: $event.target.checked}, 'bandplan')">{{ W('show_bandplan') }}</label>
+            <label class="inline"><input type="checkbox" data-field="bookmarks_shown" :checked="dtab.bookmarks_shown" @change="setView({bookmarks_shown: $event.target.checked}, 'bandplan')">{{ D('show_bookmarks') }}</label>
+          </div>
+          <div class="row"><button data-field="bandplan_load" @click="bandplanLoad">{{ D('bandplan_load') }}</button>
+            <button data-field="bandplan_save" @click="bandplanSave">{{ D('bandplan_save') }}</button><span class="dim">{{ bpCount }}</span></div>
+          <div class="fnote" v-if="notes.bandplan">{{ notes.bandplan.text }}</div>
+          <div class="bm-list" data-repeat v-if="bpView.list.length">
+            <template v-for="m in bpView.list" :key="m.name + m.hz">
+              <span>{{ m.name }}</span><span>{{ m.freq }}</span>
+              <button @click="centerOn(m.hz)">{{ D('to_center') }}</button>
+              <button @click="cmd('bookmark_remove', {hz: m.hz, name: m.name}, {field: 'bookmark'})">{{ W('remove') }}</button>
+            </template>
+          </div>
+          <div class="dim" v-else>{{ D('no_bookmarks') }}</div>
+          <div class="row">
+            <input class="w-name" data-field="bookmark_name" v-model="bmName" :placeholder="D('bookmark_name')" @keydown.enter="bookmarkAdd">
+            <input class="w-value" data-field="bookmark_freq" v-model="bmFreq" :placeholder="freqText.center" @keydown.enter="bookmarkAdd">
+            <button data-field="bookmark_add" @click="bookmarkAdd">{{ W('add') }}</button>
+          </div>
+          <div class="fnote" v-if="notes.bookmark">{{ notes.bookmark.text }}</div>
+        </section>
         <!-- 配色（J §4.4）: ライト・ダークは初期値に戻すボタン（変えた色の数を言ってから聞く）と、編集の画面への入口 -->
         <section class="sec">
           <h3>{{ W('colors') }}</h3>
           <div class="row"><button @click="resetPalette('light')">{{ S('palette_reset_light') }}</button><button @click="resetPalette('dark')">{{ S('palette_reset_dark') }}</button></div>
-          <div class="row"><button @click="openSettings('display')">{{ T('MENU_ITEMS', 'view_colors') }}</button>
-            <button disabled :title="T('NOT_YET', 'bandplan')">{{ W('show_bandplan') }}</button></div>
+          <div class="row"><button @click="openSettings('display')">{{ T('MENU_ITEMS', 'view_colors') }}</button></div>
         </section>
       </div>
 

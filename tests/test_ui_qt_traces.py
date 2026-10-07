@@ -176,12 +176,18 @@ class TraceTabTest(UiBase):
 
 
 class DisplayTabTest(UiBase):
-    def test_later_features_disabled_with_reason(self):
+    def test_layout_choice_and_amplitude_detail(self):
         d = self.win.display_tab
-        for w in (d.view_waterfall, d.view_density):
-            self.assertFalse(w.isEnabled())
-            self.assertIn("まだ使えません", w.toolTip())
+        # 表示の組み合わせ（設計P §2: 1操作で切り替える。コアの表示の設定）
         self.assertTrue(d.view_spectrum.isChecked())
+        for w in (d.view_waterfall, d.view_density):
+            self.assertTrue(w.isEnabled())
+        d.view_waterfall.click()
+        self.wait(lambda: (self.state()["view"] or {}).get("layout") == "waterfall", what="＋ウォーターフォール")
+        self.wait(lambda: self.win.parts.lower["waterfall"].holder.isVisible(), what="ウォーターフォールを出す")
+        self.assertFalse(self.win.parts.lower["density"].holder.isVisible())
+        d.view_spectrum.click()
+        self.wait(lambda: (self.state()["view"] or {}).get("layout") == "spectrum", what="スペクトルのみ")
         # 単位・外部補正・配色は作った（設計O・J §4.4）ので使える
         for w in (d.ext, d.colors, d.unit, d.reset_light, d.reset_dark):
             self.assertTrue(w.isEnabled())

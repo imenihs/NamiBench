@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from . import colormaps
 from .presets import NamedStore
 from .report_layout import DARK_DEFAULT, LIGHT_DEFAULT
 
@@ -110,16 +111,20 @@ def _full_colors(base: str, colors) -> dict[str, str]:
 class Palette:
     """ユーザー設定の配色（1つ）。
 
-    origin: いまの配色を始めた保存した配色 {"id", "name", "colors"}（保存・読み込みで決まり、ライト・ダークの初期値に
-    したら無くなる）。保存していない変更は origin の色から変えた色、origin が無ければ初期値から変えた色。
+    origin: いまの配色を始めた保存した配色 {"id", "name", "colors", "colormap"}（保存・読み込みで決まり、ライト・ダークの
+    初期値にしたら無くなる）。保存していない変更は origin の色から変えた色、origin が無ければ初期値から変えた色。
+    colormap: ウォーターフォールと密度表示の色の並び（J §4.4 の色の組の最後の1つ。ライト・ダークとも viridis が初期値:
+    設計P §9.1）。色の組の1つなので、名前を付けた配色の保存・読み込み（J §4.4.1）にも入る。
     """
 
-    def __init__(self, base: str = DEFAULT_BASE, colors: Optional[dict] = None, origin: Optional[dict] = None) -> None:
+    def __init__(self, base: str = DEFAULT_BASE, colors: Optional[dict] = None, origin: Optional[dict] = None,
+                 colormap: Optional[str] = None) -> None:
         self.base = base if base in BASES else DEFAULT_BASE
         self.colors = _full_colors(self.base, colors)
+        self.colormap = colormap if colormaps.valid(colormap) else colormaps.DEFAULT
         self.origin: Optional[dict] = None
         if isinstance(origin, dict) and isinstance(origin.get("id"), str) and isinstance(origin.get("name"), str):
-            self.set_origin(origin["id"], origin["name"], origin.get("colors"))
+            self.set_origin(origin["id"], origin["name"], origin.get("colors"), origin.get("colormap"))
 
     @classmethod
     def from_saved(cls, d) -> "Palette":
@@ -127,37 +132,50 @@ class Palette:
         if not isinstance(d, dict):
             return cls()
         return cls(str(d.get("base") or DEFAULT_BASE), d.get("colors") if isinstance(d.get("colors"), dict) else None,
-                   d.get("origin"))
+                   d.get("origin"), d.get("colormap"))
 
     def to_saved(self) -> dict:
-        out = {"base": self.base, "colors": dict(self.colors)}
+        out = {"base": self.base, "colors": dict(self.colors), "colormap": self.colormap}
         if self.origin is not None:
-            out["origin"] = {"id": self.origin["id"], "name": self.origin["name"], "colors": dict(self.origin["colors"])}
+            out["origin"] = {"id": self.origin["id"], "name": self.origin["name"], "colors": dict(self.origin["colors"]),
+                             "colormap": self.origin["colormap"]}
         return out
 
     def content(self) -> dict:
         """保存する配色の中身（PaletteStore の content）。どの配色から始めたかは入れない。"""
-        return {"base": self.base, "colors": dict(self.colors)}
+        return {"base": self.base, "colors": dict(self.colors), "colormap": self.colormap}
 
-    def set_origin(self, pid: Optional[str], name: str = "", colors: Optional[dict] = None) -> None:
-        """いまの配色を始めた保存した配色。colors を省くといまの色（保存した直後・読み込んだ直後）。None で外す。"""
+    def set_origin(self, pid: Optional[str], name: str = "", colors: Optional[dict] = None,
+                   colormap: Optional[str] = None) -> None:
+        """いまの配色を始めた保存した配色。colors を省くといまの色（保存した直後・読み込んだ直後）。None で外す。
+        colormap は colors を渡したときだけ見る（読めなければ初期値。色の並びを持たない古い保存も初期値で読む）。"""
         if pid is None:
             self.origin = None
             return
-        self.origin = {"id": pid, "name": name,
-                       "colors": dict(self.colors) if colors is None else _full_colors(self.base, colors)}
+        if colors is None:
+            self.origin = {"id": pid, "name": name, "colors": dict(self.colors), "colormap": self.colormap}
+            return
+        self.origin = {"id": pid, "name": name, "colors": _full_colors(self.base, colors),
+                       "colormap": colormap if colormaps.valid(colormap) else colormaps.DEFAULT}
 
     def changed(self) -> list[str]:
-        """初期値（base）から変えた色の名前（並びは NAMES の順）。"""
+        """初期値（base）から変えた色の名前（並びは NAMES の順）。色の並び（カラーマップ）を変えていれば最後に
+        "colormap"（ライト・ダークの初期値に戻すと失うものとして数える: J §4.4）。"""
         d = BASES[self.base]
-        return [k for k in NAMES if self.colors[k] != d[k]]
+        out = [k for k in NAMES if self.colors[k] != d[k]]
+        if self.colormap != colormaps.DEFAULT:
+            out.append("colormap")
+        return out
 
     def unsaved(self) -> list[str]:
         """保存していない変更（origin の色から変えた色。origin が無ければ初期値から変えた色）の名前。"""
         if self.origin is None:
             return self.changed()
         ref = self.origin["colors"]
-        return [k for k in NAMES if self.colors[k] != ref.get(k)]
+        out = [k for k in NAMES if self.colors[k] != ref.get(k)]
+        if self.colormap != self.origin["colormap"]:
+            out.append("colormap")
+        return out
 
     def warnings(self) -> list[dict]:
         """読みにくい組（止めはしない）。コントラスト比 7 未満の文字と背景・見分けにくいトレースの組。"""
@@ -176,7 +194,8 @@ class Palette:
         origin = None if self.origin is None else {"id": self.origin["id"], "name": self.origin["name"]}
         return {"base": self.base, "colors": dict(self.colors), "changed": self.changed(),
                 "warnings": self.warnings(), "defaults": {k: dict(v) for k, v in BASES.items()},
-                "origin": origin, "unsaved": self.unsaved()}
+                "origin": origin, "unsaved": self.unsaved(),
+                "colormap": self.colormap, "colormaps": list(colormaps.CHOICES)}
 
 
 # ---------------------------------------------------------------- 独自の配色の保存と読み込み（設計J §4.4.1）
