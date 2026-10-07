@@ -869,11 +869,11 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         if mode == "continuous":
             self._run = "continuous"
         elif mode == "single":
-            # 回数を持つトレースのうち最大の N 回、無ければ1回。1回目の前にそれらの蓄積を捨てる（設計F §5.2.1）。
-            # count は回数を直接決めたいとき（試験・将来の用途）だけ
+            # 単発 = 1画面（イメージ除去の 2・4・6 回の掃引を含む）で止まる。平均・保持の回数は待たず、蓄積も捨てない
+            # （押すたびに1画面ずつ足される: 設計F §5.2.1。2026-10-07 ユーザー決定）。count は回数を直接決めたいとき
+            # （試験・将来の用途）だけ
             self._run = "single"
-            self._single_target = max(1, int(count)) if count else self._traces.single_target()
-            self._traces.reset_for_single()
+            self._single_target = max(1, int(count)) if count else 1
             self._single_done = 0
         else:
             raise CommandError("unknown_run_mode", "mode", {"mode": mode})

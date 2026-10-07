@@ -8,19 +8,19 @@ from tests.instrument_helpers import InstrumentCase
 
 
 class TraceCommandsTest(InstrumentCase):
-    def test_single_runs_max_count_of_traces(self):
-        # 単発 = 回数を持つトレースのうち最大の N 回（設計F §5.2.1）
+    def test_single_is_one_screen_and_keeps_accumulation(self):
+        # 単発 = 1画面で止まる。平均・保持の回数は待たず、蓄積も捨てない（押すたびに1画面ずつ足す: 設計F §5.2.1）
         self.connect()
         self.call("set_trace", number=1, action="average", count=3)
         self.call("set_trace", number=2, action="max_hold", count=2, visible=True)
         st = self.single()
-        self.assertEqual((st["run"]["single_target"], st["run"]["single_done"]), (3, 3))
+        self.assertEqual((st["run"]["single_target"], st["run"]["single_done"]), (1, 1))
         tr = {t["number"]: t for t in st["traces"]}
-        self.assertEqual((tr[1]["current_count"], tr[1]["count_target"]), (3, 3))
-        self.assertEqual(tr[2]["current_count"], 2)
-        # 2回目の単発は蓄積を捨ててから数え直す
+        self.assertEqual((tr[1]["current_count"], tr[1]["count_target"]), (1, 3))
+        self.assertEqual(tr[2]["current_count"], 1)
         st = self.single()
-        self.assertEqual({t["number"]: t for t in st["traces"]}[1]["current_count"], 3)
+        tr = {t["number"]: t for t in st["traces"]}
+        self.assertEqual((tr[1]["current_count"], tr[2]["current_count"]), (2, 2))
 
     def test_single_without_counted_trace_is_one_sweep(self):
         self.connect()
@@ -31,6 +31,7 @@ class TraceCommandsTest(InstrumentCase):
         self.connect()
         self.call("set_trace", number=1, action="average", count=2)
         self.single()
+        self.single()  # 単発は1画面ずつ（設計F §5.2.1）: 2回で平均が 2 回になる
         t = self.wait_for(lambda k, p: k == "trace" and p["trace"] == 1 and p["count"] == 2)
         self.assertEqual((t["source"], t["quantity"], t["unit"], t["action"]), ("live", "power", "dBm", "average"))
         self.assertEqual(t["average_type"], "power")
@@ -236,7 +237,8 @@ class TraceLineTest(InstrumentCase):
     def test_changing_line_keeps_accumulation(self):
         self.connect()
         self.call("set_trace", number=2, action="average", count=3, visible=True)
-        self.single()
+        self.call("run", mode="single", count=3)  # 3画面（単発は1画面ずつなので回数を直接決める）
+        self.wait_for(lambda k, p: k == "state" and p["run"]["last_stop_reason"] == "single_done")
         before = {t["number"]: t for t in self.call("get_state")["traces"]}[2]
         self.assertEqual(before["current_count"], 3)
         self.clear_events()

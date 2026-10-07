@@ -272,27 +272,6 @@ class TestTraceSet(unittest.TestCase):
         self.assertEqual([t.visible for t in s], [True, False, False, False])
         self.assertIs(s[3], s.traces[2])
 
-    def test_single_target(self):
-        s = TraceSet()
-        self.assertEqual(s.single_target(), 1)
-        s[2].configure(action=TraceAction.AVERAGE, count=16)
-        s[3].configure(action=TraceAction.MAX_HOLD, count=20, visible=False)
-        s[4].configure(action=TraceAction.MIN_HOLD)  # 回数なしは数えない
-        self.assertEqual(s.single_target(), 20)
-        s[3].configure(action=TraceAction.UPDATE)  # 更新では回数は意味を持たない
-        self.assertEqual(s.single_target(), 16)
-
-    def test_reset_for_single(self):
-        s = TraceSet()
-        s[2].configure(action=TraceAction.AVERAGE, count=4)
-        s[4].configure(action=TraceAction.MAX_HOLD)
-        s.apply(frame([1.0] * 4))
-        s.apply(frame([2.0] * 4))
-        s.reset_for_single()
-        self.assertEqual(s[2].current_count, 0)
-        self.assertIsNone(s[2].values)
-        self.assertEqual(s[4].current_count, 2)  # 回数を持たないトレースはそのまま
-        self.assertEqual(s[2].action, TraceAction.AVERAGE)
 
 
 class TestDiscard(unittest.TestCase):

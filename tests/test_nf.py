@@ -242,7 +242,8 @@ class InstrumentNfTest(InstrumentCase):
         self.nf_mode()
         self.call("nf_set_enr", enr_db=15.0)
         self.call("set_trace", number=1, action="average", count=4)
-        self.single()
+        self.call("run", mode="single", count=4)  # 4組（単発は1画面＝1組ずつなので回数を直接決める: 設計F §5.2.1）
+        self.wait_for(lambda k, p: k == "state" and p["run"]["last_stop_reason"] == "single_done")
         t1 = next(t for t in self.call("get_state")["traces"] if t["number"] == 1)
         self.assertEqual((t1["current_count"], t1["average_type_effective"], t1["unit"]), (4, "power", "dB"))
         self.assertEqual(nf_view.average_type_reason(self.call("get_state")), texts.NF_TEXTS["average_type_nf"])

@@ -561,17 +561,3 @@ class TraceSet:
         """いまの軸と違う軸の値を持つ固定のトレースの番号（凡例に出す: 設計F §5.3）。"""
         return [t.number for t in self.traces if t.action == TraceAction.FIXED and t.axis_differs(current_axis)]
 
-    def single_target(self) -> int:
-        """単発で掃引する回数（設計F §5.2.1）。
-
-        回数を持つトレース（平均 N・回数付きの最大/最小保持）のうち最大の N。無ければ 1。
-        非表示のトレースも含める（非表示でも処理は続くため: 設計F §5.1）。
-        """
-        counts = [t.effective_count for t in self.traces if t.effective_count is not None]
-        return max(counts) if counts else 1
-
-    def reset_for_single(self) -> None:
-        """単発の1回目の前に、回数を持つトレースの蓄積を捨てる（設計F §5.2.1）。"""
-        for t in self.traces:
-            if t.effective_count is not None:
-                t.discard()
