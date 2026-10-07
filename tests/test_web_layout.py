@@ -919,6 +919,70 @@ class WebLayoutZeroSpanTest(unittest.TestCase):
         self.check_size(*SIZES[1])
 
 
+@unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
+class WebLayoutS11Test(unittest.TestCase):
+    """S11（設計E §6.5・設計R §3）の画面を、決めた解像度で開いて数える（Qt の LayoutTest.test_s11_screens と同じ場面）:
+    オープンを測った後の信号源のタブと上段、基準を取って SWR にしたトレースの表（表示の形式・描かない理由）・
+    マーカーのタブ（SWR のしきい値）・|Γ|・SWR の縦軸の上段。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App()
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def wait_tasks(self) -> None:
+        end = time.monotonic() + 30
+        while self.app.call("get_state")["tasks"]:
+            self.assertLess(time.monotonic(), end, "基準を取り終えない")
+            time.sleep(0.05)
+
+    def check_size(self, w: int, h: int) -> None:
+        a, p = self.app, self.page
+        a.call("set_trace", number=1, format="db")
+        a.call("set_trace", number=2, visible=False)
+        a.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000)
+        a.call("set_mode", mode="s11")
+        a.call("reference_take", kind="fine", standard="open")
+        self.wait_tasks()
+        open_app(p, a, w, h)
+        found: list[str] = []
+        p.ev("gsApp.tab = 'source'; 1")
+        p.wait("!!document.querySelector('[data-field=\"s11_state\"]')", "オープンを測った")
+        p.settle()
+        found += p.problems(".app", f"{w}×{h} S11 オープンの後 source")
+        a.call("reference_take", standard="short")
+        self.wait_tasks()
+        a.call("run", mode="single")
+        a.call("set_trace", number=1, format="swr")
+        a.call("set_trace", number=2, visible=True, action="update")
+        mid = a.call("get_state")["markers"]["markers"][0]["id"]
+        a.call("marker_peak", id=mid, polarity="dip")
+        a.call("marker_function", id=mid, threshold={"level": 2.0, "side": "below"}, bandwidth_db=[])
+        p.wait("gsApp.axisUnit === 'SWR' && !!document.querySelector('.tunit')", "縦軸が SWR")
+        p.ev("gsApp.modal = null; gsApp.confirmBox = null; 1")
+        for tab in ("trace", "marker", "source"):
+            p.ev(f"gsApp.tab = '{tab}'; gsApp.selectedMarker = '{mid}'; 1")
+            p.settle()
+            found += p.problems(".app", f"{w}×{h} S11（SWR） {tab}")
+        self.assertEqual(p.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_1280x720(self):
+        self.check_size(*SIZES[0])
+
+    def test_1920x1080(self):
+        self.check_size(*SIZES[1])
+
+
 class TopFreqSampleTest(unittest.TestCase):
     def test_web_uses_the_same_samples_as_qt(self):
         """上段の周波数の欄の幅を決める見本は Qt と Web で同じ（同じ並び・同じ文字。同じ幅になる: U-09）。"""

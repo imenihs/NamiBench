@@ -29,7 +29,7 @@ from typing import Callable, Iterable, Optional
 import numpy as np
 import serial
 
-from ...types import DeviceDisconnected, DeviceIdentity
+from ...types import DeviceDisconnected, DeviceIdentity, Mode
 from ..base import Device
 from ..gigast import protocol
 from ..gigast.driver import SweepRunner
@@ -75,6 +75,16 @@ class SynthConfig:
     freq_gain_db: tuple[tuple[int, float], ...] = ()
     # RBW ごとの利得の差（設計K §4.3）。RBW の Hz → dB を信号に足す。無い RBW は 0
     rbw_gain_db: dict = field(default_factory=dict)
+    # S11（反射: 設計E §6.5）。TG の出力を方向性結合器に通し、結合した側を SP で受ける形を作る。
+    # 受ける電力 = TG の出力 + 結合量 + 20·log10|Γ + 漏れ|。漏れ（方向性の不足）は大きさが方向性で、位相が周波数で回る
+    # （オープンとショートで波打ちが逆になり、2つの振幅の平均で打ち消せる）。値は試験に使える仮の値
+    s11_coupling_db: float = -20.0
+    s11_directivity_db: float = -30.0
+    s11_leak_delay_s: float = 3e-9  # 漏れの位相が回る遅れ（波打ちの周期 1/τ ≈ 333MHz）
+    # 繋いでいる被測定物: "dut"（直列共振のアンテナ。共振で 50Ω に整合する）・"open"・"short"・"load"（50Ω）
+    s11_load: str = "dut"
+    s11_dut_f0_hz: int = 145_000_000
+    s11_dut_q: float = 8.0
 
 
 class Synth:
@@ -84,6 +94,29 @@ class Synth:
         self.profile = profile
         self.config = config
         self.rng = np.random.default_rng(seed)
+        # いまの掃引が S11 か（機器へ送る要求は TG と同じなので、要求からは分からない。SimulatorDevice が掃引ごとに入れる）
+        self.s11 = False
+        # S11 の基準を取っている間に繋いだことにする標準器（None なら s11_load）
+        self.standard: Optional[str] = None
+
+    def reflection(self, f: np.ndarray) -> np.ndarray:
+        """結合した側で受ける反射の振幅（|Γ + 漏れ|。1 が全反射）。"""
+        c = self.config
+        load = self.standard or c.s11_load
+        ff = f.astype(np.float64)
+        if load == "open":
+            gamma = np.ones(ff.shape, dtype=np.complex128)
+        elif load == "short":
+            gamma = -np.ones(ff.shape, dtype=np.complex128)
+        elif load == "load":
+            gamma = np.zeros(ff.shape, dtype=np.complex128)
+        else:
+            # 直列共振（R = 50Ω で共振のとき整合）: Z = R·(1 + jQ(f/f0 − f0/f))、Γ = (Z − 50)/(Z + 50)
+            x = np.where(ff > 0, ff / c.s11_dut_f0_hz - c.s11_dut_f0_hz / np.maximum(ff, 1.0), -1e6)
+            jqx = 1j * c.s11_dut_q * x
+            gamma = jqx / (2.0 + jqx)
+        leak = 10 ** (c.s11_directivity_db / 20.0) * np.exp(-2j * np.pi * ff * c.s11_leak_delay_s)
+        return np.abs(gamma + leak)
 
     def response(self, ds: DeviceSweep) -> np.ndarray:
         c = self.config
@@ -116,8 +149,12 @@ class Synth:
         if c.bursts_per_sweep > 0:
             ad = self._add_bursts(ad, f)
         if ds.mode_bits & protocol.MODE_TG:
-            ad = np.maximum(ad, dbm_to_ad(c.sg_dbm + (c.b3_level_db if b3 else 0.0)) + self._gain_ad(f)
-                            + self.rng.normal(0, 3, size=n))
+            level = np.full(n, c.sg_dbm + (c.b3_level_db if b3 else 0.0))
+            if self.s11:
+                # 方向性結合器の結合した側で受ける反射（設計E §6.5）
+                with np.errstate(divide="ignore"):
+                    level = level + c.s11_coupling_db + 20.0 * np.log10(np.maximum(self.reflection(f), 1e-9))
+            ad = np.maximum(ad, dbm_to_ad(level) + self._gain_ad(f) + self.rng.normal(0, 3, size=n))
         return np.clip(np.rint(ad), 0, AD_MAX).astype("<u2")
 
     def _gain_at(self, freq_hz: int) -> float:
@@ -304,7 +341,8 @@ class SimulatedPort:
             self.unplugged = True
             self._check()
         ds = protocol.unpack(bytes(data))
-        resp = self.replay.lookup(data) if self.replay is not None else None
+        # S11 は要求が TG と同じなので、TG を直結して記録した応答を返さない（反射の形を合成する: 設計E §6.5）
+        resp = self.replay.lookup(data) if self.replay is not None and not self.synth.s11 else None
         if resp is not None:
             self.last_source = "replay"
         else:
@@ -382,6 +420,15 @@ class SimulatorDevice(SweepRunner, Device):
         self._transport = Transport(self.port, self._traffic_log)
 
     # ---- 機器の口 ----
+    def measure(self, sweep, cancel=None):
+        # 要求は TG と S11 で同じなので、どちらの形を作るかを採用値のモードで決める（設計E §6.5）
+        self.port.synth.s11 = sweep.mode == Mode.S11
+        return super().measure(sweep, cancel)
+
+    def on_reference_standard(self, standard: Optional[str]) -> None:
+        """S11 の基準を取る間は、その標準器（オープン・ショート）を繋いだことにする（実機は利用者が繋ぎ替える）。"""
+        self.port.synth.standard = standard if standard in ("open", "short") else None
+
     def profile(self) -> dict:
         return self._profile
 

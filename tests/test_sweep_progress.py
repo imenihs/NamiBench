@@ -329,6 +329,41 @@ class SweepProgressEventsTest(InstrumentCase):
         time.sleep(0.3)
         self.assertEqual([p for p, _t in self.progress_events() if p["show"]], [])
 
+    def test_step_sweep_counts_each_device_sweep(self):
+        # SG のステップ掃引（設計L §1.3）: 段ごとの掃引も1回ずつ画面を更新するので、1回の掃引を 100% とする。機器へ
+        # 渡す条件はイメージ除去なし（1回）なので、利用者の選択（正確: 6回）の点の数で数えない。段の進み具合は別の
+        # 長い処理の知らせ（task "step_sweep"）が出す
+        self.inst._backends["simulator"].speed = 0.2
+        self.connect(50_000_000, 2_000_000_000)
+        self.call("set_sweep", image_reject="accurate")
+        self.call("set_mode", mode="sg", sg_hz=500_000_000)
+        accurate_total = sum(s.passes * (s.points + s.preroll_points) for s in self.inst._adopted.segments)
+        sent = []
+        orig = self.inst._step_push_job
+
+        def spy():
+            job = self.inst._step_job
+            if job is not None and job.adopted is not None:
+                sent.append(job.adopted)
+            return orig()
+
+        self.inst._step_push_job = spy
+        self.call("set_step_sweep", start_hz=400_000_000, stop_hz=450_000_000, step_hz=50_000_000, per_step=1,
+                  combine="max", trace=2)
+        self.clear_events()
+        r = self.call("step_sweep_start")
+        self.wait_task(r["task_id"])
+        self.wait_for(lambda k, p: k == "sweep_progress" and not p["show"])
+        self.assertTrue(sent)
+        totals = {sum(s.passes * (s.points + s.preroll_points) for s in a.segments) for a in sent}
+        self.assertEqual({a.image_reject_used for a in sent}, {"off"})
+        self.assertGreater(min(a.estimated_sweep_s for a in sent), SHOW_ABOVE_S)
+        shown = [p for p, _t in self.progress_events() if p["show"]]
+        self.assertTrue(shown)
+        self.assertEqual({p["total"] for p in shown}, totals)
+        self.assertNotIn(accurate_total, totals)
+        self.assertTrue(all(p["done"] <= p["total"] for p in shown))
+
 
 class StallPort:
     """要求ごとに応答の 40% だけを届けて黙る偽のポート（掃引の途中で止まった機器）。"""

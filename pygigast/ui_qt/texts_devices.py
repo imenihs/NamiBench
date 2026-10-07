@@ -79,7 +79,6 @@ REF_QUICK_LABELS = {
     "button": "基準を取る",
     "tip": "TG の範囲を 1MHz 刻みで1回測り、0dB の基準にする",
     "cancel": "やめる",
-    "s11_reason": "S11 の基準はオープン・ショートの2段で取ります（まだ使えません）",
     "taking_reason": "基準を取っています",
 }
 

@@ -18,11 +18,11 @@ from . import display_marks as dm
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
-from .marker.markers import Marker
+from .marker.markers import Y_KIND_POWER, Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
-from .trace import ConditionChange, HoldKeep, TraceAction, TraceLine, TraceSet, to_db
+from .trace import ConditionChange, HoldKeep, TraceAction, TraceLine, TraceSet, formats, to_db
 from .types import AdoptedSweep, Frame, Mode, Quantity, RawSweep, ValueKind
 from .view_units import shift_values
 
@@ -39,6 +39,9 @@ NORMALIZED_MODES = (Mode.TG, Mode.S11)
 DB_PER_DIV_CHOICES = (1, 2, 5, 10)
 
 UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB"}
+
+# 比の縦軸の単位 → 表示の形式（測ったトレースが無いときの縦軸の種類: _axis_kind）
+_RATIO_AXIS_FORMATS = {"dB": formats.DB, formats.UNIT_GAMMA: formats.GAMMA, formats.UNIT_SWR: formats.SWR}
 
 # 生の値の形（機種のプロファイルの raw.encoding）が RTL-SDR のもの（instrument_rtlsdr.py で換算する）
 _RTLSDR_ENCODING = "rtlsdr_power_w"
@@ -107,18 +110,21 @@ def trace_settings(t) -> dict:
         "average_after": t.average_after.value,
         "hold_after": t.hold_after.value,
         "line": t.line.value,
+        "format": t.format,  # 表示の形式（設計R §3）
     }
 
 
 def apply_trace_settings(t, d: dict) -> tuple[str, ...]:
-    # 線（設計F §9）は前の版の設定・プリセットに無い。無い・読めないときは既定の実線にし、ほかの欄は戻す
-    # （線が読めないだけでトレースの設定を全部捨てない）
+    # 線（設計F §9）・表示の形式（設計R §3）は前の版の設定・プリセットに無い。無い・読めないときは既定（実線・dB）にし、
+    # ほかの欄は戻す（読めない欄が1つあるだけでトレースの設定を全部捨てない）
     line = d.get("line")
+    fmt = d.get("format")
     return t.configure(
         action=d["action"], count=d.get("count"), average_type=d.get("average_type"),
         average_after=d.get("average_after", "exponential"), hold_after=d.get("hold_after", "continue"),
         visible=bool(d.get("visible", True)),
         line=line if line in {x.value for x in TraceLine} else TraceLine.SOLID,
+        fmt=fmt if formats.is_format(fmt) and fmt not in formats.VECTOR_FORMATS else formats.DB,
     )
 
 
@@ -140,6 +146,27 @@ def db_values(values: np.ndarray, quantity: Quantity) -> np.ndarray:
     return v.astype(np.float32)
 
 
+def display_values(values: np.ndarray, quantity: Quantity, shift: float, fmt: str) -> np.ndarray:
+    """画面に出す値（float32）: dB の形式は表示の単位の分だけずらした dB、|Γ|・SWR はその値（設計R §3）。"""
+    v = db_values(values, quantity)
+    if fmt != formats.DB:
+        return formats.from_db(v, fmt).astype(np.float32)
+    return shift_values(v, shift)
+
+
+def file_trace_format(td) -> str:
+    """参照トレース（開いたファイル）の表示の形式: 保存したときの形式（info.format）。S11 の比でなければ dB（設計R §3）。"""
+    info = td.info if isinstance(getattr(td, "info", None), dict) else {}
+    return formats.effective(info.get("format"), info.get("measurement"), td.quantity)
+
+
+def swr_limit_points(values: np.ndarray, quantity: Quantity, fmt: str) -> Optional[np.ndarray]:
+    """SWR の上限に当てた点の印（設計R §3。SWR の形式でなければ None）。"""
+    if fmt != formats.SWR:
+        return None
+    return formats.swr_limit_mask(db_values(values, quantity), fmt)
+
+
 class DisplayMixin:
     """トレース・マーカー・ノーマライズ・元に戻す・振幅（Instrument に混ぜる）。"""
 
@@ -158,8 +185,9 @@ class DisplayMixin:
         self._marker_snap: dict = self._markers.snapshot({})
         self._undo: list[dict] = []
         self._redo: list[dict] = []
-        # 縦軸（設計J §4.1）。None は画面が決める既定
-        self._amplitude = {"ref_level": None, "unit": None, "db_per_div": None}
+        # 縦軸（設計J §4.1）。None は画面が決める既定。|Γ|・SWR の縦軸の1目盛（設計R §3: 下端は決まった値）
+        self._amplitude = {"ref_level": None, "unit": None, "db_per_div": None,
+                           "swr_per_div": None, "gamma_per_div": None}
         self._ref = None  # 選んでいるノーマライズの基準（normalize.Reference）
         self._norm_state: dict = {"used": False}
         self._norm_key: Optional[tuple] = None
@@ -213,10 +241,14 @@ class DisplayMixin:
             # 決めるのに使う。まだ値が無いトレースは、つないでいる機器のプロファイルの値の種類
             "value_kind": (t.value_kind.value if t.value_kind is not None
                            else self._profile.get("value_kind", "real")),
-            "unit": self._level_shift(t.quantity, t.profile)[1],
+            "unit": self._trace_display(t)[1],
+            # 表示の形式（設計R §3）: いま使う形式と、値を測ったモード（画面が選べる形式と名前を決める）
+            "format_effective": t.effective_format,
+            "measurement": None if t.mode is None else t.mode.value,
             "has_values": t.values is not None,
             "axis_differs": t.action == TraceAction.FIXED and t.axis_differs(self._adopted.axis),
             "last_update_time": t.last_update_time,
+            "step_sweep": t.step_info,  # SG のステップ掃引の結果なら設定と済んだ段の数（設計L §1.3）
         }
 
     def _display_snapshot(self) -> dict:
@@ -229,11 +261,30 @@ class DisplayMixin:
             # 機器の範囲の外・意味の無い区間の帯（設計J §4.8）。画面は計算し直さずに描く
             "display_marks": dm.display_marks(self._adopted.mode, self._profile, int(self._adopted.start_hz),
                                               int(self._adopted.stop_hz)),
+            # 内部の漏れの周波数（設計L §1.4。SG・TG のときだけ）と、測った山を漏れとみなす幅
+            "internal_leaks": self._leaks_state(),
             "ref_auto": self._ref_auto_state(),
             "trace_options": dict(self._trace_opts),
             # いま出している測定の量（"power"・"ratio"。まだ掃引が無ければ None）。単位の欄が実際の単位を出す（J §4.10）
             "display_quantity": None if self._shown_quantity is None else self._shown_quantity.value,
         }
+
+    def _leaks_state(self) -> dict:
+        """内部の漏れの周波数（表示範囲の中）と、測った山を漏れとみなす幅（設計L §1.4・display_marks）。"""
+        a = self._adopted
+        leaks = dm.internal_leaks(a.mode, self._profile, a.sg_hz, int(a.start_hz), int(a.stop_hz)) \
+            if a.axis.step_hz > 0 else []
+        return {"leaks": leaks, "tolerance_hz": dm.leak_tolerance_hz(a.rbw_hz, a.axis.step_hz)}
+
+    def _trace_display(self, t) -> tuple[float, Optional[str], str]:
+        """測っているトレースの (足す dB, 出す単位, 表示の形式)。|Γ|・SWR の形式では単位はその名前で、ずらさない。"""
+        return self._shown(t.quantity, t.profile, t.effective_format)
+
+    def _shown(self, quantity, profile, fmt: str) -> tuple[float, Optional[str], str]:
+        shift, unit = self._level_shift(quantity, profile)
+        if fmt != formats.DB:
+            return 0.0, formats.unit_of(fmt, unit), fmt
+        return shift, unit, fmt
 
     def _ref_auto_state(self) -> dict:
         """REF の「自動」に使う、トレースごとの最大値（設計J §4.8）。id は "1"〜"4"・"D"（差）・"F1.1"（参照）。
@@ -252,10 +303,10 @@ class DisplayMixin:
         def put(tid: str, values_db, freqs, flags, unit) -> None:
             peaks[tid] = {"unit": unit, "max": dm.usable_max(values_db, freqs, flags, lo, hi)}
 
-        def put_shifted(tid: str, values, quantity, freqs, flags, profile) -> None:
-            # 表示の単位・外部補正の分だけずらした最大（縦軸と同じ数: core/view_units.py）
-            shift, unit = self._level_shift(quantity, profile)
-            put(tid, db_values(values, quantity), freqs, flags, unit)
+        def put_shifted(tid: str, values, quantity, freqs, flags, profile, fmt: str = formats.DB) -> None:
+            # 表示の単位・外部補正の分だけずらした最大（縦軸と同じ数: core/view_units.py）。|Γ|・SWR はその値の最大
+            shift, unit, _f = self._shown(quantity, profile, fmt)
+            put(tid, display_values(values, quantity, 0.0, fmt), freqs, flags, unit)
             if shift and peaks[tid]["max"] is not None:
                 peaks[tid]["max"] = peaks[tid]["max"] + shift
 
@@ -264,14 +315,16 @@ class DisplayMixin:
         else:
             for t in self._traces:
                 if t.visible and t.values is not None and t.axis is not None and t.quantity is not None:
-                    put_shifted(str(t.number), t.values, t.quantity, t.axis.freqs(), t.flags, t.profile)
+                    put_shifted(str(t.number), t.values, t.quantity, t.axis.freqs(), t.flags, t.profile,
+                                t.effective_format)
         cache = self._ref_auto_file_cache
         new_cache = {}
         for e in self._files.values():
             for tid, td in e["traces"].items():
-                key = (tid, id(td), lo, hi, self._level_shift(td.quantity, td.profile))
+                fmt = file_trace_format(td)
+                key = (tid, id(td), lo, hi, self._shown(td.quantity, td.profile, fmt))
                 if key not in cache:
-                    put_shifted(tid, td.values, td.quantity, td.freqs(), td.flags, td.profile)
+                    put_shifted(tid, td.values, td.quantity, td.freqs(), td.flags, td.profile, fmt)
                     cache[key] = peaks[tid]
                 peaks[tid] = new_cache[key] = cache[key]
         self._ref_auto_file_cache = new_cache
@@ -286,7 +339,8 @@ class DisplayMixin:
         if ref is not None:
             sel = {"id": ref.ref_id, "name": ref.name, "mode": ref.mode.value, "serial": ref.serial,
                    "taken_at": ref.taken_at}
-        return {"selected": sel, **self._norm_state}
+        # s11_open: 測ってあるオープン（S11 の基準の1段目。次はショート: 設計E §6.5）
+        return {"selected": sel, **self._norm_state, "s11_open": self._s11_open_state()}
 
     # ------------------------------------------------------------------ 1回の掃引
 
@@ -401,16 +455,55 @@ class DisplayMixin:
                 t.number, t.axis, t.values, t.quantity, int(t.display_start_hz), int(t.display_stop_hz),
                 t.flags, notes + self._trace_own_notes(t.profile),
             )
-            shift, unit = self._level_shift(t.quantity, t.profile)
+            shift, unit, fmt = self._trace_display(t)
             if shift:
                 # 表示の単位（dBμV など）・外部補正の分だけずらした値で読む（core/view_units.py）。
                 # 盛り上がり・帯域幅は差で決まるので、ずらしても同じ点になる
                 v = dataclasses.replace(v, level_db=v.level_db + shift)
+            if fmt != formats.DB:
+                # 表示の形式（設計R §3）: 探すのは dB のまま、読み値を |Γ|・SWR で出す
+                v = dataclasses.replace(v, fmt=fmt)
             if unit != v.unit:
-                # 測った機器の単位（「dB（未校正）」など）・表示の単位でマーカーを読む。単位の違うトレース同士のデルタは作らない
+                # 測った機器の単位（「dB（未校正）」など）・表示の単位・形式でマーカーを読む。単位の違うトレース同士の
+                # デルタは作らない
                 v = dataclasses.replace(v, unit=unit)
             views[t.number] = v
         self._views = views
+        self._follow_axis_format()
+
+    def _axis_kind(self, without_traces: bool = True) -> Optional[str]:
+        """いまの縦軸の単位の種類（XY カーソルの Y を置いたときに記録する: markers.Y_KINDS）。
+
+        縦軸は、表示していて値のある一番番号の小さいトレースの単位（画面の screen_s11.axis_unit と同じ決まり）。
+        そのトレースが比なら表示の形式（"db"・"gamma"・"swr"）、電力なら "power"。値のあるトレースが無ければ
+        縦軸の単位（振幅の単位: 比の dB なら "db"、無い・電力の単位なら "power"）。without_traces が偽なら None。
+        """
+        t = next((t for t in self._traces if t.visible and t.values is not None and t.quantity is not None), None)
+        if t is None:
+            return _RATIO_AXIS_FORMATS.get(self._amplitude.get("unit"), Y_KIND_POWER) if without_traces else None
+        if t.quantity != Quantity.RATIO:
+            return Y_KIND_POWER
+        return self._trace_display(t)[2]
+
+    def _follow_axis_format(self) -> None:
+        """縦軸が比の dB・|Γ|・SWR のどれかのとき、XY カーソルの Y のうち別の比の形式で置いたものを、同じ反射の
+        大きさのいまの形式の値に直す（設計R §3・設計書 O §1.4: 絵の意味はそのまま、数字の単位だけが替わる）。
+
+        直すのは、置いたときの単位が比の形式だった Y だけ（電力の縦軸で置いた Y・前の版の分からない Y は比の形式の
+        値ではないので直さない）。縦軸が電力の間は何もしない（比の形式の Y はそのまま持ち、比の縦軸に戻ったときに
+        置いたときの形式から直す）。値のあるトレースが無い間も何もしない（掃引を捨てた直後の間に、残っている振幅の
+        単位で形式を行き来させない）。電力の単位の替え方は _set_view_opts。
+        """
+        fn = self._axis_kind(without_traces=False)
+        if fn in (None, Y_KIND_POWER):
+            return
+        xy = self._markers.xy
+        for k in ("y1", "y2"):
+            v, fp = getattr(xy, k), getattr(xy, k + "_kind")
+            if v is None or fp in (None, Y_KIND_POWER) or fp == fn:
+                continue
+            setattr(xy, k, formats.convert_value(v, fp, fn))
+            setattr(xy, k + "_kind", fn)
 
     def _refresh_markers(self, emit: bool = True) -> None:
         self._marker_snap = self._markers.snapshot(self._views)
@@ -475,7 +568,10 @@ class DisplayMixin:
         pts = {k: np.asarray(v, dtype=bool) for k, v in t.flags.items()}
         n = t.axis.points
         eff = t.effective_average_type()
-        shift, unit = self._level_shift(t.quantity, t.profile)
+        shift, unit, fmt = self._trace_display(t)
+        lim = swr_limit_points(t.values, t.quantity, fmt)
+        if lim is not None and lim.any():
+            pts[formats.FLAG_SWR_LIMIT] = lim  # SWR の上限に当てた点（マウスの位置の読み値の注意: 設計R §3）
         payload = {
             "trace": t.number,
             "source": "live",
@@ -487,7 +583,8 @@ class DisplayMixin:
                         "tail_gap": self._adopted.tail_gap},
             "quantity": t.quantity.value,
             "unit": unit,
-            "values": shift_values(db_values(t.values, t.quantity), shift),
+            "format": fmt,  # 表示の形式（設計R §3）
+            "values": display_values(t.values, t.quantity, shift, fmt),
             "action": t.action.value,
             "visible": t.visible,
             "line": t.line.value,  # 描く線（設計F §9）
@@ -501,9 +598,14 @@ class DisplayMixin:
                 "no_calibration": self._no_calibration,
                 "points": pts,
             },
+            "step_sweep": t.step_info,
         }
         if self._adopted.axis.step_hz == 0 and t.axis.step_hz == 0:
-            return self._zs_payload(t, payload)  # 横軸は時間（設計N §1）
+            # 横軸は時間（設計N §1）。ステップ掃引の段ごとの線は点の番号の位置なので、時間軸の表示には載せない
+            return self._zs_payload(t, payload)
+        if t.steps is not None:
+            # 全部重ねるときの段ごとの線（設計L §1.3。主の値と同じ単位・形式: instrument_step.py）
+            payload["steps"] = self._step_rows_payload(t, shift, fmt)
         return payload
 
     # ------------------------------------------------------------------ 条件の変更
@@ -649,13 +751,35 @@ class DisplayMixin:
                 self._emit("trace", self._trace_payload(t))
         self._diff_refresh()
 
+    def _check_format(self, t, fmt) -> None:
+        """表示の形式を選べるか（設計R §2・§3・§5.1）。位相系は位相を測れる機器（複素数の値）だけ、|Γ|・SWR は反射（S11）
+        だけ（S11 で測った値のトレースか、いまのモードが S11）。"""
+        if not formats.is_format(fmt):
+            raise self._error("bad_trace_setting", "format", {"format": fmt})
+        if fmt in formats.VECTOR_FORMATS:
+            kind = t.value_kind.value if t.value_kind is not None else self._profile.get("value_kind", "real")
+            if kind != "complex":
+                raise self._error("format_needs_phase", "format", {"format": fmt})
+            raise self._error("format_not_yet", "format", {"format": fmt})  # 位相系は SDR の VNA と一緒に作る（R §5.1）
+        if fmt in formats.S11_FORMATS:
+            # 比の値を持つトレースはその値を測ったモードで決まる（固定した S21 の値に |Γ|・SWR は当たらない）。比の値を
+            # 持たない（まだ値が無い・基準を取る前の電力）ときは、いまのモードが S11 なら選んでおける
+            has_ratio = t.values is not None and t.quantity == Quantity.RATIO
+            if (t.mode != Mode.S11) if has_ratio else (self._adopted.mode != Mode.S11):
+                raise self._error("format_s11_only", "format", {"format": fmt})
+
     def _cmd_set_trace(self, number, action=_UNSET, count=_UNSET, visible=_UNSET, average_type=_UNSET,
-                       average_after=_UNSET, hold_after=_UNSET, line=_UNSET) -> dict:
-        """トレースの設定（設計F §5）。line は描く線（設計F §9: thin・solid・thick・dash・dot）で、変えても蓄積を捨てない。"""
+                       average_after=_UNSET, hold_after=_UNSET, line=_UNSET, format=_UNSET) -> dict:  # noqa: A002
+        """トレースの設定（設計F §5）。line は描く線（設計F §9: thin・solid・thick・dash・dot）、format は表示の形式
+        （設計R §3: db・gamma・swr）。どちらも描き方・表し方だけなので、変えても蓄積を捨てない。"""
         t = self._trace_of(number)
         kw = {k: v for k, v in (("action", action), ("count", count), ("visible", visible),
                                 ("average_type", average_type), ("average_after", average_after),
                                 ("hold_after", hold_after), ("line", line)) if v is not _UNSET}
+        if format is not _UNSET:
+            self._check_format(t, format)
+            kw["fmt"] = format
+        self._step_check_trace(number, kw)  # ステップ掃引が結果を入れている間は動作を変えない（設計L §1.3）
         if "count" in kw and kw["count"] is not None and (isinstance(kw["count"], bool) or not isinstance(kw["count"], int)):
             raise self._error("not_integer", "count")
         before = self._undo_snapshot()
@@ -699,7 +823,16 @@ class DisplayMixin:
 
     # ------------------------------------------------------------------ 振幅（設計J §4.1）
 
-    def _cmd_set_amplitude(self, ref_level=_UNSET, unit=_UNSET, db_per_div=_UNSET) -> dict:
+    def _cmd_set_amplitude(self, ref_level=_UNSET, unit=_UNSET, db_per_div=_UNSET, swr_per_div=_UNSET,
+                           gamma_per_div=_UNSET) -> dict:
+        """縦軸（設計J §4.1）。swr_per_div・gamma_per_div は |Γ|・SWR の形式の縦軸の1目盛（設計R §3。下端は決まった値）。"""
+        for key, v in (("swr_per_div", swr_per_div), ("gamma_per_div", gamma_per_div)):
+            if v is _UNSET:
+                continue
+            choices = formats.LINEAR_AXES[formats.UNIT_SWR if key == "swr_per_div" else formats.UNIT_GAMMA]["choices"]
+            if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or float(v) not in choices):
+                raise self._error("bad_value", key, {"choices": list(choices)})
+            self._amplitude[key] = None if v is None else float(v)
         if ref_level is not _UNSET:
             if ref_level is not None and (isinstance(ref_level, bool) or not isinstance(ref_level, (int, float))
                                           or not np.isfinite(ref_level)):
@@ -919,9 +1052,13 @@ class DisplayMixin:
             if bandwidth_db is not _UNSET:
                 self._markers.set_bandwidth(m.id, tuple(bandwidth_db or ()))
             if threshold is not _UNSET:
+                # しきい値はいまのトレースの表示の形式の値で受け、その形式と電力のしきい値かを覚える（設計R §3: SWR 2
+                # 以下など。電力のしきい値だけが電力の単位・外部補正に従ってずれる: 設計書 O §1.4）
+                v = self._views.get(m.trace)
                 self._markers.set_threshold(
-                    m.id, None if threshold is None else ThresholdSetting(float(threshold["level"]),
-                                                                          str(threshold["side"])))
+                    m.id, None if threshold is None else ThresholdSetting(
+                        float(threshold["level"]), str(threshold["side"]), v.fmt if v is not None else formats.DB,
+                        power=(v.quantity == Quantity.POWER) if v is not None else self._last_quantity == Quantity.POWER))
         except (ValueError, TypeError, KeyError) as e:
             raise self._error("bad_marker_function", None, {"message": str(e)}) from e
         self._markers_changed()
@@ -935,6 +1072,12 @@ class DisplayMixin:
             raise self._error("not_integer", None, {"fields": sorted(kw)}) from None
         except ValueError as e:
             raise self._error("bad_value", None, {"message": str(e)}) from e
+        # Y は、置いたときの縦軸の単位の値として持つ（あとで単位・外部補正・形式を替えたときは、その単位に従ってだけ
+        # ずらす・直す: _set_view_opts・_follow_axis_format）
+        kind = self._axis_kind()
+        for k in ("y1", "y2"):
+            if k in kw:
+                self._markers.set_y_kind(k, kind)
         self._markers_changed()
         return {"xy": self._marker_snap["xy"]}
 
@@ -948,8 +1091,15 @@ class DisplayMixin:
         v = self._view(trace)
         self._no_dips_on_power(v, polarity)
         pl = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db, polarity)
-        return {"trace": trace, "unit": v.unit, "base": pl.base, "base_level": pl.base_level, "polarity": pl.polarity,
-                "peaks": [{"freq_hz": r.freq_hz, "level": r.level, "diff_db": r.diff_db} for r in pl.rows]}
+        # 内部の漏れの周波数から幅の内にある行は、その漏れを添える（設計P §9.6・L §1.4。SG・TG のときだけ）。
+        # ステップ掃引の結果のトレースは、段ごとの SG からのずれの漏れも持つ（instrument_step._step_leaks）
+        lk = self._leaks_state()
+        leaks = lk["leaks"] + self._step_leaks(self._traces[trace])
+        # 探すのは dB（盛り上がり・基準からの N dB）。レベルは表示の形式の値で返す（|Γ|・SWR: 設計R §3）
+        return {"trace": trace, "unit": v.unit, "base": pl.base, "base_level": v.display(pl.base_level),
+                "polarity": pl.polarity,
+                "peaks": [{"freq_hz": r.freq_hz, "level": v.display(r.level), "diff_db": r.diff_db,
+                           "leak": dm.leak_at(r.freq_hz, leaks, lk["tolerance_hz"])} for r in pl.rows]}
 
     def _cmd_marker_to(self, id, target: str) -> dict:  # noqa: A002
         """マーカーから条件を変える（設計G §3.4）。Center・Span は設計C §5.11 の規則を通る。"""
@@ -964,6 +1114,9 @@ class DisplayMixin:
             cmd = self._markers.ref_level_command(m.id, self._views)
             if not cmd.ok:
                 raise self._error(cmd.code, "id", {"id": m.id})
+            if formats.is_linear_unit(cmd.unit):
+                # |Γ|・SWR の縦軸は下端が決まっていて REF レベルを持たない（設計R §3）
+                raise self._error("ref_level_linear", "id", {"id": m.id, "unit": cmd.unit})
             self._amplitude["ref_level"] = cmd.ref_level
             self._amplitude["unit"] = cmd.unit
             self._changed()

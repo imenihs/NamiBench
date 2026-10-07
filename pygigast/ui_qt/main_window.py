@@ -36,7 +36,8 @@ from shiboken6 import isValid
 
 from ..api.local import LocalApi
 from ..core.units import drag_ref_level, format_freq, level_text
-from . import device_menu, look, marker_rows, menu_table, menus, png_data, screen_model, sizes, texts, theme, widget_sync
+from . import (device_menu, look, marker_rows, menu_table, menus, png_data, screen_model, screen_s11, sizes, texts, theme,
+               widget_sync)
 from .docks import Parts
 from .fields import FreqField, RefLevelField, SpanLockButton, ValueField
 from .files import FileActions
@@ -98,6 +99,7 @@ class MainWindow(QMainWindow):
         self.state: dict = {}
         self._ref_dbm = DEFAULT_REF
         self._db_div = DEFAULT_DIV
+        self._axis_shown: Optional[tuple] = None  # 描いている縦軸（単位・一番上・1目盛）
         self._amp_pending = 0
         self._drag_ref0 = 0.0
         self.selected_marker: Optional[str] = None
@@ -297,9 +299,11 @@ class MainWindow(QMainWindow):
         self.f_ref.add_header_widget(self.btn_ref_auto)
         top.addWidget(self.f_ref)
         div_box = ValueField("dB/div", big=True)
+        self.div_field = div_box
         self.div_combo = QComboBox()
         for v in DB_PER_DIV_CHOICES:
             self.div_combo.addItem(f"{v:g} dB", v)
+        self._div_key: tuple = ()
         self.div_combo.setCurrentIndex(DB_PER_DIV_CHOICES.index(DEFAULT_DIV))
         self.div_combo.activated.connect(lambda i: self._set_div(self.div_combo.itemData(i)))
         div_box.layout().replaceWidget(div_box.edit, self.div_combo)
@@ -479,24 +483,22 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 縦軸（J §4.1。正本はコアの amplitude）
 
     def ref_level(self) -> float:
-        return self._ref_dbm
+        """縦軸の一番上の値（dB 系は REF レベル、|Γ|・SWR は下端 + 10 目盛: 設計R §3）。"""
+        a = self.axis()
+        return a["top"] if a["linear"] else self._ref_dbm
 
     def db_div(self) -> float:
-        return self._db_div
+        """縦軸の1目盛（dB 系は dB/div、|Γ|・SWR はその単位の /div）。"""
+        a = self.axis()
+        return a["div"] if a["linear"] else self._db_div
 
     def display_unit(self) -> str:
-        """縦軸の単位。コアの amplitude.unit が決まっていればそれ、無ければ見えているトレースの単位。"""
-        amp = self.state.get("amplitude") or {}
-        if amp.get("unit") == "dB" or (amp.get("unit") and amp.get("unit") == (self.state.get("view") or {}).get(
-                "level_unit_label")):
-            return amp["unit"]
-        p = self.traces.any_live()
-        if p is not None and p.get("unit"):
-            return p["unit"]
-        for s in self.state.get("traces") or []:
-            if s.get("visible") and s.get("unit"):
-                return s["unit"]
-        return "dBm"
+        """縦軸の単位 = 表示している測定中のトレースの最初の単位（Web と同じ screen_s11.axis_unit）。"""
+        return screen_s11.axis_unit(self.state)
+
+    def axis(self) -> dict:
+        """縦軸の決め方（dB 系か、下端の決まった |Γ|・SWR か: screen_s11.axis_view）。"""
+        return screen_s11.axis_view(self.state, self.display_unit())
 
     def _send_amplitude(self, **kw) -> None:
         self._amp_pending += 1
@@ -518,15 +520,32 @@ class MainWindow(QMainWindow):
         if (ref, div) != (self._ref_dbm, self._db_div):
             self._ref_dbm, self._db_div = ref, div
             self._update_y_axis()
+        elif self._axis_shown != self._axis_key():
+            self._update_y_axis()  # |Γ|・SWR の1目盛・縦軸の単位が変わった（設計R §3）
+
+    def _axis_key(self) -> tuple:
+        a = self.axis()
+        return (a["linear"], a["unit"], a["top"], a["div"])
 
     def _set_ref(self, v: float) -> None:
         # 表示だけの値。測定値は変わらない（J §4.1）。画面はすぐ動かし、コアへ送る
+        why = self.axis()["ref_reason"]
+        if why:
+            self.f_ref.flash_note(why)  # |Γ|・SWR の縦軸は下端が決まっていて REF を持たない（設計R §3）
+            return
         self._ref_dbm = round(v, 2)
         self._update_y_axis()
         self._send_amplitude(ref_level=self._ref_dbm)
 
     def _set_div(self, v: float) -> None:
-        # dB/div を変えても REF レベルは動かない（J §4.1）
+        # dB/div を変えても REF レベルは動かない（J §4.1）。|Γ|・SWR は1目盛だけを選ぶ（下端は決まった値: 設計R §3）
+        a = self.axis()
+        if a["linear"]:
+            amp = self.state.setdefault("amplitude", {})
+            amp[a["div_key"]] = float(v)  # すぐ描き直し、コアからの戻りで確かめる
+            self._update_y_axis()
+            self._send_amplitude(**{a["div_key"]: float(v)})
+            return
         self._db_div = float(v)
         self._update_y_axis()
         self._send_amplitude(db_per_div=int(v))
@@ -541,6 +560,9 @@ class MainWindow(QMainWindow):
 
     def _ref_auto_view(self) -> dict:
         """表示中のトレース（測定中の 1〜4・重ねた参照トレース）から screen_model.ref_auto_view（Web と同じ規則）。"""
+        why = self.axis()["ref_reason"]
+        if why:
+            return {"level": None, "reason": why}
         shown = [str(n) for n in (1, 2, 3, 4) if self.traces.live_payload(n) is not None]
         shown += [tid for tid in self.traces.files if self.traces.file_drawn(tid)]
         return screen_model.ref_auto_view(self.state, shown, self.display_unit(), self._db_div,
@@ -553,16 +575,22 @@ class MainWindow(QMainWindow):
         self.btn_ref_auto.setToolTip(texts.LABELS["ref_auto_tip"] + (f" — {why}" if why else ""))
 
     def _on_level_wheel(self, steps: int, ctrl: bool) -> None:
-        if ctrl:
-            # Ctrl+ホイール: dB/div を1段（奥へ回すと大きく）
-            i = DB_PER_DIV_CHOICES.index(self._db_div) if self._db_div in DB_PER_DIV_CHOICES else 3
-            i = min(max(i + (1 if steps > 0 else -1), 0), len(DB_PER_DIV_CHOICES) - 1)
-            self._set_div(DB_PER_DIV_CHOICES[i])
+        a = self.axis()
+        if ctrl or a["linear"]:
+            # Ctrl+ホイール: 1目盛を1段（奥へ回すと大きく）。|Γ|・SWR の縦軸は REF を持たないので、ホイールは
+            # いつも1目盛を変える（下端は決まった値: 設計R §3）
+            values = [c["value"] for c in a["div_choices"]]
+            cur = self.db_div()
+            i = values.index(cur) if cur in values else len(values) - 1
+            i = min(max(i + (1 if steps > 0 else -1), 0), len(values) - 1)
+            self._set_div(values[i])
         else:
             # ホイール1段で REF レベルを1目盛（奥へ回すと REF が上がる。数値の欄のホイールと同じ向き）
             self._set_ref(self._ref_dbm + steps * self._db_div)
 
     def _on_level_drag(self, start: bool, frac: float) -> None:
+        if self.axis()["linear"]:
+            return  # |Γ|・SWR の縦軸は下端が決まっていて動かさない（設計R §3）
         # つかんだ目盛がマウスに付いてくる: 下へ引くと、より上の値が見える（REF が上がる）
         if start:
             self._drag_ref0 = self._ref_dbm
@@ -570,14 +598,20 @@ class MainWindow(QMainWindow):
         self._set_ref(drag_ref_level(self._drag_ref0, frac, self._db_div, DIVISIONS))
 
     def _update_y_axis(self) -> None:
-        top = self._ref_dbm
-        bottom = top - DIVISIONS * self._db_div
+        a = self.axis()
+        self._axis_shown = self._axis_key()
+        top, div = (a["top"], a["div"]) if a["linear"] else (self._ref_dbm, self._db_div)
+        bottom = top - DIVISIONS * div
         pi = self.plot.getPlotItem()
         # 端ちょうどの目盛は範囲の外と見なされて数字が消えるので、わずかに広げる
-        eps = self._db_div * 1e-3
+        eps = div * 1e-3
         pi.setYRange(bottom - eps, top + eps, padding=0)
-        # 目盛の数字は REF の欄と同じ形（0.1 dB まで・負号「−」）。単位を換えた REF の端数を出さない
-        ticks = [(top - i * self._db_div, level_text(top - i * self._db_div)) for i in range(DIVISIONS + 1)]
+        # 目盛の数字は REF の欄と同じ形（0.1 dB まで・負号「−」）。単位を換えた REF の端数を出さない。
+        # |Γ|・SWR は1目盛を書き分けられる桁（設計R §3）
+        def tick(v: float) -> str:
+            return screen_s11.tick_text(v, a["decimals"]) if a["linear"] else level_text(v)
+
+        ticks = [(top - i * div, tick(top - i * div)) for i in range(DIVISIONS + 1)]
         pi.getAxis("left").setTicks([ticks, []])
         for line in self._hgrid:
             pi.removeItem(line)
@@ -586,12 +620,25 @@ class MainWindow(QMainWindow):
         for line in self._hgrid:
             line.setZValue(-10)
             pi.addItem(line, ignoreBounds=True)
-        self.f_ref.set_value(self._ref_dbm)
-        i = self.div_combo.findData(self._db_div)
+        self.f_ref.set_value(top)
+        self._apply_div_choices(a)
+        i = self.div_combo.findData(div)
         if i >= 0:
             widget_sync.set_index(self.div_combo, i)
         fill = (self.state.get("view") or {}).get("draw_style") == "fill"
         self.traces.set_fill(fill, bottom)
+
+    def _apply_div_choices(self, a: dict) -> None:
+        """1目盛の欄の名前と選択肢（dB/div か、|Γ|・SWR の /div: 設計R §3）と、REF の欄の使えない理由。"""
+        key = tuple((c["value"], c["text"]) for c in a["div_choices"])
+        if key != self._div_key:
+            self._div_key = key
+            widget_sync.set_items(self.div_combo, [(c["text"], c["value"]) for c in a["div_choices"]])
+            self.div_field.name_label.setText(a["div_label"])
+            self.topbar.relayout()  # 選択肢の幅が変わると上段の幅が変わる（J §4.3.3）
+        why = a["ref_reason"]
+        self.f_ref.setEnabled(why is None)
+        self.f_ref.setToolTip(why or "")
 
     def _update_unit(self) -> None:
         unit = self.display_unit()
@@ -602,9 +649,14 @@ class MainWindow(QMainWindow):
         label = texts.LABELS["level"]
         if n.get("used") and not n.get("applied"):
             label = texts.LABELS["level_no_ref"]
-        self.plot.getPlotItem().setLabel("left", label, units=unit)
+        if screen_s11.formats.is_linear_unit(unit):
+            self.plot.getPlotItem().setLabel("left", unit, units="")  # |Γ|・SWR はレベルではないので名前だけ（設計R §3）
+        else:
+            self.plot.getPlotItem().setLabel("left", label, units=unit)
         # 比（dB）のときは 0dB の線を目盛線と別の色で描く（E §6.6）
         self.traces.set_zero_line(unit == "dB")
+        if self._axis_shown != self._axis_key():
+            self._update_y_axis()  # 縦軸の単位が dB 系と |Γ|・SWR の間で変わった（設計R §3）
 
     def redraw_style(self) -> None:
         self._update_y_axis()
@@ -669,6 +721,11 @@ class MainWindow(QMainWindow):
         act = m.addAction(texts.LABELS["ctx_ref"].replace("{level}", f"{level:.1f}").replace("{unit}", self.display_unit()))
         act.setObjectName("ctx_ref")
         act.triggered.connect(lambda: self._set_ref(level))
+        ref_why = self.axis()["ref_reason"]
+        if ref_why:
+            # |Γ|・SWR の縦軸は REF を持たない（設計R §3）。消さずに無効にして理由（U-08）
+            act.setEnabled(False)
+            act.setToolTip(ref_why)
         sel = self.selected_marker
         if sel:
             m.addSeparator()
@@ -801,6 +858,7 @@ class MainWindow(QMainWindow):
         self.marker_panel.set_rows(self.marker_row_list, self.selected_marker)
         self.marker_tab.apply(self._selected_row(), self.marker_snap)
         self.marker_layer.enabled = self._marker_reason() is None
+        self.marker_layer.unit = self.display_unit()  # 縦軸と単位の違うトレースのマーカーは描かない（設計R §3）
         self.marker_layer.update(self.marker_row_list, self.selected_marker, self.marker_snap["xy"])
         why = None if self.selected_marker else texts.REASON_TEXTS["select_marker"]
         for code in ("marker_left", "marker_right", "marker_ref", "marker_remove"):

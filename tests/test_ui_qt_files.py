@@ -57,7 +57,10 @@ class SaveOpenTest(UiBase):
         self.wait(lambda: self.win.traces.files and self.win.trace_tab._file_checks, what="開く")
         tid = next(iter(self.win.traces.files))
         self.assertTrue(self.win.traces.file_drawn(tid))
-        self.cmd("set_amplitude", unit="dB")
+        # 縦軸を比（dB）にする: TG で基準を取ると、表示している測定中のトレースが比になる（縦軸の単位はそのトレースの単位）
+        self.cmd("set_mode", mode="tg")
+        self.cmd("reference_take", kind="fine")
+        self.wait(lambda: self.win.display_unit() == "dB", timeout=20, what="縦軸が比（dB）")
         self.pump()
         self.assertFalse(self.win.traces.file_drawn(tid))
         self.assertEqual(len(self.win.traces.files[tid]["curve"].yData or []), 0)

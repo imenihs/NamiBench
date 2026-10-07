@@ -29,6 +29,8 @@
 <script src="app_devices.js"></script>
 <script src="app_files.js"></script>
 <script src="app_zerospan.js"></script>
+<script src="app_s11.js"></script>
+<script src="app_step.js"></script>
 <script src="app.js"></script>
 </head>
 <body>
@@ -107,17 +109,18 @@
         <div v-if="notes.rbw" class="note-pop" data-tier="M"><span>{{ notes.rbw.text }}</span></div>
       </div>
       <!-- REF レベル: 打てる欄＋一覧（+20〜−120・10dB 刻み）＋欄の上のホイールで 1dB（J §4.1） -->
+      <!-- |Γ|・SWR の縦軸は下端が決まっていて REF を持たない（設計R §3）: 消さずに無効にして理由（U-08） -->
       <num-field class="ref" :style="{'--ref-text-w': refTextW + 'px'}" :label="W('ref_level')" :text="refText" :note="notes.ref" @clear-note="clearNote('ref')"
-                 :choices="refChoices" :wheel-exp="0" @commit="commitRef" @step="stepRef">
+                 :choices="refChoices" :wheel-exp="0" :disabled="!!axis.ref_reason" :title="axis.ref_reason || undefined" @commit="commitRef" @step="stepRef">
         <template #head>
           <button :disabled="!!refAutoReason()" @click="trigger('ref_auto')"
                   :title="W('ref_auto_tip') + (refAutoReason() ? ' — ' + refAutoReason() : '')">{{ W('ref_auto') }}</button>
         </template>
       </num-field>
       <div class="field">
-        <div class="field-head" data-tier="S"><span class="field-name">dB/div</span></div>
+        <div class="field-head" data-tier="S"><span class="field-name">{{ axis.div_label }}</span></div>
         <select class="field-select" :value="amp.div" @change="setDiv($event.target.value)">
-          <option v-for="v in divChoices" :key="v" :value="v">{{ v }} dB</option>
+          <option v-for="c in divChoices" :key="c.value" :value="c.value">{{ c.text }}</option>
         </select>
       </div>
       <span class="grow"></span>
@@ -138,10 +141,9 @@
                   :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
         </div>
       </div>
-      <!-- TG・S11 のとき「基準を取る」といまの基準（J §4.2: 基準を取るは1クリックで届く所に） -->
+      <!-- TG・S11 のとき「基準を取る」（S11 は次の1段: オープンを測る → ショートを測る）といまの基準（J §4.2: 基準を取るは1クリックで届く所に。設計E §6.5） -->
       <div class="refquick" v-if="refQuick.visible">
-        <button :disabled="!!refQuick.reason" @click="takeDirect"
-                :title="T('REF_QUICK_LABELS', 'tip') + (refQuick.reason ? ' — ' + refQuick.reason : '')">{{ T('REF_QUICK_LABELS', 'button') }}</button>
+        <button :disabled="!!refQuick.reason" @click="takeQuick" :title="refQuick.button_tip">{{ refQuick.label }}</button>
         <template v-if="refQuick.taking">
           <progress></progress>
           <button :disabled="refQuick.cancelling" @click="cmd('cancel_task', {task_id: refQuick.task_id}, {quiet: ['unknown_task']})">{{ T('REF_QUICK_LABELS', 'cancel') }}</button>
@@ -306,6 +308,11 @@
               <!-- 線（設計F §9）。描き方だけなので、変えても蓄積は捨てない -->
               <select class="tline" :value="t.line || 'solid'" :title="W('line')" @change="setTrace(t.number, 'line', $event.target.value)">
                 <option v-for="(l, c) in Td('TRACE_LINES')" :key="c" :value="c">{{ l }}</option></select>
+              <!-- 3行目: 表示の形式（設計R §3。使えない形式は残して無効にし理由: R §5.1）。縦軸と単位が違って描かない理由 -->
+              <select class="tfmt" :value="traceFormat(t).value" :disabled="!!traceFormat(t).reason" :title="traceFormat(t).tip"
+                      @change="setTraceFormat(t, $event.target.value)">
+                <option v-for="it in traceFormat(t).items" :key="it.code" :value="it.code" :disabled="!it.enabled" :title="it.tip">{{ it.text }}</option></select>
+              <div class="tunit warn" v-if="traceDrawnReason(t)">{{ traceDrawnReason(t) }}</div>
               <div class="tnote" v-if="traceNotes[t.number] || notes['trace' + t.number]">{{ traceNotes[t.number] || notes['trace' + t.number].text }}</div>
             </div>
           </div>
@@ -428,7 +435,7 @@
             <db-field :value="fnView().n2" :choices="dbLists.bw" :lo="dbRanges.bw[0]" :hi="dbRanges.bw[1]" :disabled="!selMarker || !!zsView.freq_only" @commit="setBandwidth(1, null, $event)"></db-field>
             <span></span>
             <label class="inline"><input type="checkbox" :checked="fnView().thOn" :disabled="!selMarker || !!zsView.freq_only" @change="setThreshold({on: $event.target.checked})">{{ W('threshold_cross') }}</label>
-            <db-field :value="fnView().thr" :unit="axisUnit" signed :choices="dbLists.ref" :lo="dbRanges.th[0]" :hi="dbRanges.th[1]" :disabled="!selMarker || !!zsView.freq_only" @commit="setThreshold({level: $event})"></db-field>
+            <db-field :value="fnView().thr" :unit="thSpec.unit" :signed="!!thSpec.signed" :choices="thSpec.choices" :lo="thSpec.lo" :hi="thSpec.hi" :decimals="thSpec.decimals" :disabled="!selMarker || !!zsView.freq_only" @commit="setThreshold({level: $event})"></db-field>
             <select :value="fnView().side" :disabled="!selMarker || !!zsView.freq_only" @change="setThreshold({side: $event.target.value})"><option v-for="(l, c) in Td('THRESHOLD_SIDES')" :key="c" :value="c">{{ l }}</option></select>
           </div>
           <!-- 結果の線を出すかは表示の設定（全部のマーカーに効く。マーカーを選んでいなくても切り替えられる） -->
@@ -445,7 +452,7 @@
               <input class="w-value" v-steady="xyText(k)" :placeholder="W('empty_to_remove')" @change="commitXY(k, $event.target.value)">
             </template>
             <label>ΔX</label><div>{{ markers.xy && markers.xy.dx_hz != null ? fmtX(markers.xy.dx_hz) : '—' }}</div>
-            <label>ΔY</label><div>{{ markers.xy && markers.xy.dy != null ? markers.xy.dy.toFixed(2) + ' dB' : '—' }}</div>
+            <label>ΔY</label><div>{{ markers.xy && markers.xy.dy != null ? markers.xy.dy.toFixed(2) + ' ' + (axis.linear ? axisUnit : 'dB') : '—' }}</div>
           </div>
           <div class="fnote" v-if="notes.xy">{{ notes.xy.text }}</div>
         </section>
@@ -467,11 +474,13 @@
           <div class="row"><button data-field="peak_find" :disabled="!!pkView.reason" :title="pkView.reason || ''" @click="getPeakList">{{ W('find') }}</button></div>
           <div class="fnote" v-if="notes.peaks">{{ notes.peaks.text }}</div>
           <table class="mtable peaks">
-            <thead><tr><th class="r">{{ W('col_freq_mhz') }}</th><th class="r">{{ W('level') }}</th><th class="r">{{ peakText().diff_header }}</th><th></th></tr></thead>
+            <thead><tr><th class="r">{{ W('col_freq_mhz') }}</th><th class="r">{{ W('level') }}</th><th class="r">{{ peakText().diff_header }}</th><th></th><th></th></tr></thead>
             <tbody>
               <tr v-for="p in peakText().rows" :key="p.freq_hz">
                 <td class="r">{{ p.freq }}</td><td class="r">{{ p.level }}</td><td class="r">{{ p.diff }}</td>
                 <td class="ops"><button @click="registerPeak(p)">{{ W('register_p') }}</button></td>
+                <!-- 内部の漏れの可能性の印（設計P §9.6・L §1.4。Qt の一覧と同じ列: 無い行は空） -->
+                <td class="warn" data-field="peak_leak" :title="p.leak_tip || ''">{{ p.leak || '' }}</td>
               </tr>
             </tbody>
           </table>
@@ -497,6 +506,8 @@
           <h3>{{ W('draw_style') }}</h3>
           <div class="row"><label class="inline" v-for="d in ['line', 'fill']" :key="d">
             <input type="radio" name="draw_style" :value="d" :checked="(viewOpts.draw_style || 'line') === d" @change="setView({draw_style: d})">{{ W('draw_' + d) }}</label></div>
+          <!-- 内部の漏れの印（設計L §1.4。コアの表示の設定 view.leak_marks で Qt と共有） -->
+          <label class="inline" :title="W('leak_marks_tip')"><input type="checkbox" data-field="leak_marks" :checked="viewOpts.leak_marks !== false" @change="setView({leak_marks: $event.target.checked})">{{ W('leak_marks') }}</label>
         </section>
         <!-- ゼロスパン（設計N §1）: 表示する長さ（掃引1回・秒）。ゼロスパンでない間は理由付きで選べない（U-08。
              中身は Qt と同じ ui.zero_span: screen_model.zero_span_view） -->
@@ -541,7 +552,7 @@
           <h3>SG</h3>
           <div class="form">
             <label>{{ W('sg_freq') }}</label>
-            <num-field :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')"
+            <num-field :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
                        @commit="commitFreq('sg', 'sg_hz', $event)" @step="(e, d) => stepFreq('sg', 'sg_hz', e, d)"></num-field>
           </div>
           <!-- SG の周波数を変えたら最大・最小保持も消すか（設計F §8。コアの設定で Qt と共有） -->
@@ -550,28 +561,84 @@
           <div class="dim">{{ ui.sg_state }}</div>
         </section>
 
+        <!-- SG のステップ掃引（設計L §1.3。SG の欄のすぐ下。Qt の step_panel と同じ並び・語: 中身は ui.step）。
+             使えないときは理由付きで無効（U-08）。進み具合とやめるは窓の下の処理の帯 -->
+        <section class="sec" data-part="step">
+          <h3>{{ W('step_group') }}</h3>
+          <div class="form">
+            <label>{{ W('step_start') }}</label>
+            <num-field :text="stepText('start_hz')" :note="notes.step_start" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
+                       @clear-note="clearNote('step_start')" @commit="commitStepFreq('start_hz', 'step_start', $event)" @step="(e, d) => stepStepFreq('start_hz', 'step_start', e, d)"></num-field>
+            <label>{{ W('step_stop') }}</label>
+            <num-field :text="stepText('stop_hz')" :note="notes.step_stop" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
+                       @clear-note="clearNote('step_stop')" @commit="commitStepFreq('stop_hz', 'step_stop', $event)" @step="(e, d) => stepStepFreq('stop_hz', 'step_stop', e, d)"></num-field>
+            <label>{{ W('step_step') }}</label>
+            <num-field :text="stepText('step_hz')" :note="notes.step_step" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
+                       @clear-note="clearNote('step_step')" @commit="commitStepFreq('step_hz', 'step_step', $event)" @step="(e, d) => stepStepFreq('step_hz', 'step_step', e, d)"></num-field>
+            <label>{{ W('step_per_step') }}</label>
+            <div class="row"><input class="w-int" type="number" data-field="step_per_step" :min="stepView.per_step_min" :max="stepView.per_step_max" v-steady="stepView.per_step"
+                   :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStepPerStep($event.target.value)"><span>{{ W('times_suffix').trim() }}</span></div>
+            <label>{{ W('step_combine') }}</label>
+            <select data-field="step_combine" :value="stepView.combine" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStep({combine: $event.target.value})">
+              <option v-for="c in stepView.combines" :key="c.code" :value="c.code">{{ c.text }}</option></select>
+            <label>{{ W('step_trace') }}</label>
+            <select data-field="step_trace" :value="stepView.trace" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStep({trace: Number($event.target.value)})">
+              <option v-for="t in stepView.traces" :key="t.value" :value="t.value">{{ t.text }}</option></select>
+          </div>
+          <div class="fnote" v-if="notes.step_per_step">{{ notes.step_per_step.text }}</div>
+          <div class="dim" data-field="step_estimate">{{ stepView.estimate }}</div>
+          <div class="row"><button data-field="step_run" :disabled="!!stepView.reason" :title="W('step_run_tip') + (stepView.reason ? ' — ' + stepView.reason : '')" @click="stepRun">{{ W('step_run') }}</button></div>
+          <div class="fnote" v-if="notes.step">{{ notes.step.text }}</div>
+        </section>
+
         <section class="sec">
           <h3>{{ W('references') }}</h3>
-          <div class="dim" v-if="!sw || !['tg', 's11'].includes(sw.mode)">{{ T('ERRORS', 'mode_not_normalizable') }}</div>
-          <div class="row">
-            <input class="w-name" v-model="refName" :placeholder="W('ref_name_placeholder')">
-            <button :disabled="!connected || !sw || !['tg', 's11'].includes(sw.mode)" @click="takeRef('wide')" :title="W('take_wide_tip')">{{ W('take_wide') }}</button>
-            <button :disabled="!connected || !sw || !['tg', 's11'].includes(sw.mode)" @click="takeRef('fine')" :title="W('take_fine_tip')">{{ W('take_fine') }}</button>
+          <!-- Qt の tab_source と同じ並び: 基準の状態・名前と平均・TG の2つの取り方・S11 の範囲とオープン → ショート（1段ずつ。
+               次に押すボタンを強調し、測ったオープンの時刻と範囲を出す: 設計E §6.5）・一覧（選んで下のボタン）。
+               使えない理由・次の1段・状態の文はサーバーの screen_s11（Qt と同じ） -->
+          <div class="ref-state">{{ ui.ref_state }}</div>
+          <div class="form">
+            <label>{{ W('name') }}</label>
+            <input class="w-name" data-field="ref_name" v-model="refName" :placeholder="W('take_name_placeholder')">
+            <label>{{ W('average') }}</label>
+            <input class="w-int" data-field="ref_avg" type="number" min="1" max="64" v-model.number="refAvg">
           </div>
+          <div class="row">
+            <button data-act="take_wide" :disabled="!!ui.tg_take_reason" @click="takeRef('wide')"
+                    :title="W('take_wide_tip') + (ui.tg_take_reason ? ' — ' + ui.tg_take_reason : '')">{{ W('take_wide') }}</button>
+            <button data-act="take_fine" :disabled="!!ui.tg_take_reason" @click="takeRef('fine')"
+                    :title="W('take_fine_tip') + (ui.tg_take_reason ? ' — ' + ui.tg_take_reason : '')">{{ W('take_fine') }}</button>
+          </div>
+          <div class="form">
+            <label>{{ W('s11_range') }}</label>
+            <select data-field="s11_range" v-model="s11Range" :disabled="!!s11.range_reason"
+                    :title="W('s11_range_tip') + (s11.range_reason ? ' — ' + s11.range_reason : '')">
+              <option value="wide">{{ W('s11_range_wide') }}</option>
+              <option value="fine">{{ W('s11_range_fine') }}</option>
+            </select>
+          </div>
+          <div class="row">
+            <button data-act="s11_open" :class="{next: s11.next === 'open' && !s11.open_reason}" :disabled="!!s11.open_reason"
+                    @click="takeS11('open')" :title="W('s11_open_tip') + (s11.open_reason ? ' — ' + s11.open_reason : '')">{{ W('s11_open') }}</button>
+            <button data-act="s11_short" :class="{next: s11.next === 'short' && !s11.short_reason}" :disabled="!!s11.short_reason"
+                    @click="takeS11('short')" :title="(s11.short_tip || '') + (s11.short_reason ? ' — ' + s11.short_reason : '')">{{ W('s11_short') }}</button>
+          </div>
+          <div class="dim" data-field="s11_state" v-if="s11.state_text">{{ s11.state_text }}</div>
           <div class="fnote" v-if="notes.refs">{{ notes.refs.text }}</div>
-          <div class="row"><button @click="loadRefs">{{ W('reload') }}</button>
-            <button @click="refAction('reference_select', {id: null})">{{ W('select_none') }}</button></div>
-          <table class="mtable wrap">
+          <table class="mtable ref-list">
             <tbody>
-              <tr v-if="!refs.length"><td class="dim">{{ W('no_refs') }}</td></tr>
-              <tr v-for="r in refs" :key="r.id" :class="{sel: r.selected}">
-                <td>{{ r.selected ? '● ' : '' }}{{ r.name }}</td><td class="dim">{{ r.mode }}・{{ r.taken_at }}</td>
-                <td class="ops"><div class="cell-row"><button @click="refAction('reference_select', {id: r.id})">{{ W('select') }}</button>
-                  <button @click="renameRef(r)">{{ W('name') }}</button>
-                  <button @click="refAction('reference_delete', {id: r.id})">{{ W('remove') }}</button></div></td>
+              <tr v-for="r in refs" :key="r.id" :class="{sel: r.id === refSel}" @click="refSel = r.id" @dblclick="refSel = r.id; refUse()">
+                <td>{{ refRowText(r) }}</td>
               </tr>
             </tbody>
           </table>
+          <div class="row">
+            <button data-act="ref_use" :disabled="!refSel" :title="refSel ? '' : T('REASON_TEXTS', 'select_reference')" @click="refUse">{{ W('use') }}</button>
+            <button data-act="ref_unuse" :disabled="!refAnySelected" :title="refAnySelected ? '' : T('REASON_TEXTS', 'no_reference_selected')"
+                    @click="refAction('reference_select', {id: null})">{{ W('not_use') }}</button>
+            <button data-act="ref_rename" :disabled="!refSel" :title="refSel ? '' : T('REASON_TEXTS', 'select_reference')" @click="refRename">{{ W('rename_dots') }}</button>
+            <button data-act="ref_delete" :disabled="!refSel" :title="refSel ? '' : T('REASON_TEXTS', 'select_reference')" @click="refDelete">{{ W('erase_dots') }}</button>
+          </div>
         </section>
         <section class="sec">
           <h3>NF</h3>

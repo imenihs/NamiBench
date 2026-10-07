@@ -8,6 +8,8 @@
   （設計G §3.3。marker/analysis.py の point_flags）
 - 画面が描く帯（display_marks）: 同じ規則を、いまの表示範囲に切った区間で返す。画面は計算し直さずに描く
 - REF の自動（usable_max）: 1本のトレースのうち、使ってよい点（値がある・表示範囲の中・下の印が無い）の最大値
+- 内部の漏れ（internal_leaks・設計L §1.4）: SG・TG を使っているとき、機種のプロファイルの漏れの周波数のうち表示範囲に
+  入るもの。グラフの上端の印・ピークの一覧の印・マウスの位置の読み値に使う。測った山を漏れとみなす幅は leak_tolerance_hz
 - 純粋な計算だけ。Qt・スレッド・入出力を持たない
 """
 from __future__ import annotations
@@ -101,6 +103,51 @@ def display_marks(mode, profile: Optional[dict], start_hz: int, stop_hz: int) ->
         if hi > lo:
             out.append({"kind": kind, "start_hz": int(lo), "stop_hz": int(hi)})
     return sorted(out, key=lambda d: d["start_hz"])
+
+
+# 内部の漏れの周波数を示すモード（設計L §1.4: SG・TG を使っているとき）。S11 は機器から見れば TG と同じ掃引
+_LEAK_MODES = (Mode.SG, Mode.TG, Mode.S11)
+
+
+def internal_leaks(mode, profile: Optional[dict], sg_hz: Optional[int], start_hz: int, stop_hz: int) -> list[dict]:
+    """内部の漏れの周波数のうち、表示範囲 start_hz〜stop_hz に入るもの [{freq_hz, kind, offset_hz}]（周波数の順）。
+
+    機種のプロファイルの internal_spurs_hz（T2）: fixed はそのままの周波数、sg_offset は SG の周波数からのずれ。
+    SG・TG・S11 のときだけ（SA・NF では空）。sg_offset は SG モードだけ（TG は掃引に同期して動くので、受けている
+    周波数から常にずれだけ離れていて掃引に乗らない）。ゼロスパン（横軸が時間）では空。
+    """
+    m = _mode(mode)
+    if m not in _LEAK_MODES or stop_hz <= start_hz:
+        return []
+    spurs = (profile or {}).get("internal_spurs_hz") or {}
+    found: dict[int, dict] = {}
+    for f in spurs.get("fixed") or []:
+        found.setdefault(int(f), {"freq_hz": int(f), "kind": "fixed", "offset_hz": None})
+    if m == Mode.SG and sg_hz is not None:
+        for off in spurs.get("sg_offset") or []:
+            f = int(sg_hz) + int(off)
+            found.setdefault(f, {"freq_hz": f, "kind": "sg_offset", "offset_hz": int(off)})
+    return [found[f] for f in sorted(found) if start_hz <= f <= stop_hz]
+
+
+def leak_tolerance_hz(rbw_hz: int, step_hz: int) -> int:
+    """測った山を内部の漏れとみなす周波数の幅（±）。RBW と点の間隔の和。
+
+    山の点は格子の点なので本当の周波数から最大で点の間隔の半分ずれ、RBW 180kHz ではフィルタの形が非対称で山が
+    +50〜100kHz ずれて見える（T2）。両方の半分ずつに、漏れの発振器そのものの周波数のずれ（未測定）の分を足して、
+    RBW と点の間隔の和にした（設計に値は無い）。
+    """
+    return int(rbw_hz) + max(0, int(step_hz))
+
+
+def leak_at(freq_hz: float, leaks: list[dict], tolerance_hz: float) -> Optional[dict]:
+    """freq_hz から tolerance_hz 以内にある一番近い漏れ（無ければ None）。"""
+    best = None
+    for lk in leaks or []:
+        d = abs(float(freq_hz) - float(lk["freq_hz"]))
+        if d <= tolerance_hz and (best is None or d < best[0]):
+            best = (d, lk)
+    return best[1] if best else None
 
 
 def usable_max(values_db, freqs, flags: Optional[dict], start_hz: Optional[int] = None,

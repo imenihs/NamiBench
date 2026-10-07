@@ -48,7 +48,9 @@ class PeakViewTest(unittest.TestCase):
         v = peak_view.result_view(r)
         self.assertEqual(v["found"], "2 個・最大 −0.4 dB")
         self.assertEqual(v["diff_header"], L["col_below_max_db"])
-        self.assertEqual(v["rows"][0], {"freq_hz": 120_000_000, "freq": "120", "level": "-30.43 dB", "diff": "-30.0"})
+        # 内部の漏れの印（設計L §1.4）は漏れでない行では空
+        self.assertEqual(v["rows"][0], {"freq_hz": 120_000_000, "freq": "120", "level": "-30.43 dB", "diff": "-30.0",
+                                        "leak": "", "leak_tip": ""})
         self.assertEqual(v["rows"][1]["freq"], "170.3")
         # 周波数オフセット（設計O）は表示の周波数に足す。登録に使う周波数（freq_hz）はそのまま
         v = peak_view.result_view(r, 10_000 * MHZ)

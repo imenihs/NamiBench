@@ -266,14 +266,15 @@ class InstrumentViewTest(InstrumentCase):
 
     def test_restored_at_startup(self):
         self.call("set_view", level_unit="dBmV", ext_db=-3.5, freq_offset_hz=123_000_000, draw_style="fill",
-                  function_lines=False, zero_span_s=60)
+                  function_lines=False, zero_span_s=60, leak_marks=False)
         self.call("palette_set", colors={"accent": "#0055aa"})
         self.inst.shutdown()
         self.inst = self.make_instrument()
         st = self.call("get_state")
         self.assertEqual({k: st["view"][k] for k in view_units.DEFAULTS},
                          {"level_unit": "dBmV", "ext_db": -3.5, "freq_offset_hz": 123_000_000, "draw_style": "fill",
-                          "layout": "spectrum", "function_lines": False, "zero_span_s": 60})
+                          "layout": "spectrum", "function_lines": False, "zero_span_s": 60,
+                          "leak_marks": False})
         self.assertEqual(st["palette"]["colors"]["accent"], "#0055aa")
         self.assertEqual(st["palette"]["changed"], ["accent"])
 

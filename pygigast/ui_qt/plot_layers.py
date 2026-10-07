@@ -1,6 +1,7 @@
 """グラフの上に描くもの（設計F §5・E §6.4・E §6.6・G §3.5）。
 
-- TraceLayer: 測定中のトレース 1〜4（J §4.4 の色・選んだ線と重なりの順: F §9）と参照トレース（ファイル。点線で一番下）、
+- TraceLayer: 測定中のトレース 1〜4（J §4.4 の色・選んだ線と重なりの順: F §9。ステップ掃引を全部重ねた結果は段ごとの
+  線をトレースの色の細く薄い線で下に重ねる: 設計L §1.3）と参照トレース（ファイル。点線で一番下）、
   凡例（動作・平均の種類・回数。線の見本はそのトレースの線）、
   値なしの点は線を切る、前置き不足・校正の範囲外の点は控えめな色、比（dB）のときの 0dB の線（E §6.6）、
   基準の範囲外の区間の帯（E §6.4）
@@ -20,6 +21,7 @@ from PySide6.QtGui import QColor
 from . import texts
 from ..core import report_layout as rl
 from ..core.palette import FILE_TRACE_ORDER
+from ..core.step_sweep import LINE_ALPHA
 from ..core.report_layout import legend_text
 from .screen_model import nearest_point, trace_x
 from .theme import trace_color
@@ -27,6 +29,8 @@ from .theme import trace_color
 LIVE_TRACES = (1, 2, 3, 4)
 # マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Web の graph.js と同じ）
 FUNCTION_LINE_ALPHA = 89
+# ステップ掃引を全部重ねるときの段ごとの線（設計L §1.3）: トレースの色の不透明度 約 35% の細い線（Web の graph.js・PNG と同じ）
+STEP_LINE_ALPHA = int(round(LINE_ALPHA * 255))
 # カーソルの名前の位置（グラフの高さ・幅に対する割合。縦線は下から、横線は左から）。オフセットのカーソルの縦線は、
 # 近い線の名前が重ならないよう1本ごとに高さをずらす。名前の背景の濃さ。PNG（png_export）と Web の graph.js も同じ値
 CURSOR_LABEL_V = 0.92
@@ -37,6 +41,20 @@ XY_LABEL_H = 0.05
 CURSOR_LABEL_FILL = 180
 XY_LABEL_FILL = 200
 XY_IDS = ("X1", "X2", "Y1", "Y2")
+
+
+def step_lines(steps: Optional[dict]) -> tuple[np.ndarray, np.ndarray]:
+    """段ごとの線（イベント trace の steps: {x0, dx, values[段, 点]}）を、値なしで区切った1本の (x, y) にする。"""
+    if not steps:
+        return np.array([]), np.array([])
+    rows = np.asarray(steps["values"], dtype=np.float64)
+    if rows.ndim != 2 or rows.size == 0:
+        return np.array([]), np.array([])
+    n = rows.shape[1]
+    x = float(steps["x0"]) + float(steps["dx"]) * np.arange(n, dtype=np.float64)
+    xs = np.concatenate([np.append(x, np.nan) for _ in range(rows.shape[0])])
+    ys = np.concatenate([np.append(r, np.nan) for r in rows])
+    return xs, ys
 
 
 def x_of(payload: dict) -> np.ndarray:
@@ -111,8 +129,10 @@ class TraceLayer:
             curve = self.pi.plot(connect="finite")
             # 印の付いた点（前置き不足・校正の範囲外）は同じ線の上に控えめな色で重ねる
             mark = self.pi.plot(connect="finite")
-            self.live[n] = {"curve": curve, "mark": mark, "payload": None, "visible": n == 1, "has_values": False,
-                            "line": rl.TRACE_LINE_DEFAULT}
+            # ステップ掃引を全部重ねたときの段ごとの線（設計L §1.3）。トレースの線の下に細く薄く重ねる
+            steps = self.pi.plot(connect="finite")
+            self.live[n] = {"curve": curve, "mark": mark, "steps": steps, "payload": None, "visible": n == 1,
+                            "has_values": False, "line": rl.TRACE_LINE_DEFAULT}
             self._style_live(n)
         self.zero_line = pg.InfiniteLine(pos=0.0, angle=0, movable=False, pen=pg.mkPen(pal["zero_db"], width=1.5))
         self.zero_line.setZValue(-5)
@@ -161,14 +181,24 @@ class TraceLayer:
         z = line_z(code, n)
         e["curve"].setZValue(z)
         e["mark"].setZValue(z + 0.5)
+        e["steps"].setPen(pg.mkPen(_alpha(trace_color(n, self.pal), STEP_LINE_ALPHA), width=1))
+        e["steps"].setZValue(z - 0.5)
+
+    def live_unit_ok(self, n: int) -> bool:
+        """1つの目盛りに違う単位を混ぜない（E §6.4・設計R §3）。縦軸と単位の違う測定中のトレースは描かない。"""
+        t = self.live[n]["payload"]
+        return t is None or t.get("unit", self.unit) == self.unit
 
     def _draw_live(self, n: int) -> None:
         e = self.live[n]
         t = e["payload"]
-        if t is None or not e["visible"] or not e["has_values"]:
+        if t is None or not e["visible"] or not e["has_values"] or not self.live_unit_ok(n):
             e["curve"].setData([], [])
             e["mark"].setData([], [])
+            e["steps"].setData([], [])
             return
+        sx, sy = step_lines(t.get("steps"))
+        e["steps"].setData(sx, sy, connect="finite")
         x = x_of(t)
         y = np.asarray(t["values"], dtype=np.float64)
         m = marked_points(t, y.size)
@@ -198,7 +228,8 @@ class TraceLayer:
                 # 凡例の回数・動作は状態の方が新しいことがある（設定を変えた直後）
                 e["payload"] = {**e["payload"], "action": s["action"], "count": s["current_count"],
                                 "count_target": s["count_target"], "average_type": s["average_type_effective"],
-                                "axis_differs": s["axis_differs"], "line": e["line"]}
+                                "axis_differs": s["axis_differs"], "line": e["line"],
+                                "step_sweep": s.get("step_sweep")}
             if changed:
                 self._draw_live(n)
             if e["visible"] and e["has_values"] and e["payload"] is None:
@@ -207,8 +238,9 @@ class TraceLayer:
         return missing
 
     def live_payload(self, n: int) -> Optional[dict]:
+        """描いている測定中のトレースの中身（表示していない・縦軸と単位が違うものは None）。"""
         e = self.live.get(n)
-        if e is None or not e["visible"] or not e["has_values"]:
+        if e is None or not e["visible"] or not e["has_values"] or not self.live_unit_ok(n):
             return None
         return e["payload"]
 
@@ -264,6 +296,8 @@ class TraceLayer:
         self.unit = unit
         for tid in self.files:
             self._draw_file(tid)
+        for n in LIVE_TRACES:
+            self._draw_live(n)  # 縦軸と単位の違う測定中のトレースは描かない（設計R §3）
         self._update_legend()
 
     def _draw_file(self, tid: str) -> None:
@@ -419,6 +453,9 @@ class MarkerLayer:
         # マーカーの機能の線を出すか（G §3.6。コアの表示の設定 view.function_lines を look.apply_view が入れる）
         self.function_lines = True
         self.function_items: list[pg.InfiniteLine] = []
+        # 縦軸の単位（画面が入れる）。単位の違うトレースに載ったマーカー・カーソル・機能の線は描かない（設計R §3:
+        # そのトレースを描いていないため。表には出る）
+        self.unit: Optional[str] = None
 
     def _take(self, pool: str, make) -> object:
         """使い回しの部品を1つ取る（足りなければ作ってグラフに足す）。"""
@@ -500,6 +537,8 @@ class MarkerLayer:
                 kind = r.get("kind")
                 if r.get("id") in XY_IDS:
                     continue
+                if self.unit and r.get("unit") and r["unit"] != self.unit:
+                    continue  # 縦軸と単位の違う（描いていない）トレースのもの
                 sel = r.get("id") == selected or r.get("parent") == selected and selected is not None
                 col = scol if sel else mcol
                 if kind == "marker" and r.get("freq_hz") is not None and r.get("value") is not None:

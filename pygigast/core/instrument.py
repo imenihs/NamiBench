@@ -7,7 +7,7 @@
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
 校正作業（設計K）は instrument_cal.py。
 rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
-機能は instrument_listen.py。
+機能は instrument_listen.py、SG のステップ掃引（設計L §1.3）は instrument_step.py。
 機種のプロファイルと掃引条件モデルは、つないだ機器に合わせて切り替える（設計Q §2.1・§6.4: GigaSt と
 シミュレータは GigaSt のプロファイル、RTL-SDR は sweep_kind "fft" のプロファイル）。
 """
@@ -37,6 +37,7 @@ from .instrument_listen import ListenMixin
 from .instrument_progress import ProgressReporter, SweepProgressMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
+from .instrument_step import RUN_STATE as STEP_RUN_STATE, StepSweepMixin
 from .instrument_view import ViewMixin
 from .instrument_zerospan import ZeroSpanMixin, zero_span_request
 from .level.calibration import Calibration, CalibrationStore, default_root
@@ -175,7 +176,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin,
-                 DevicesMixin, ViewMixin, SweepProgressMixin):
+                 DevicesMixin, ViewMixin, StepSweepMixin, SweepProgressMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -245,6 +246,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         self._init_rtlsdr()
         self._init_listen()
         self._init_devices()
+        self._init_step(saved if isinstance(saved, dict) else None)  # SG のステップ掃引（設計L §1.3）
 
         self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
         self._running = True
@@ -296,6 +298,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
             **self._files_state_to_save(),
             **self._diff_state_to_save(),
             **self._view_state_to_save(),
+            **self._step_state_to_save(),
         }
 
     def _error(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> CommandError:
@@ -397,6 +400,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
                 self._cal_abort(CommandError("invalid_sweep", None, {"message": item[2]}))
             if self._ref_job is not None:
                 self._abort_ref_job(CommandError("invalid_sweep", None, {"message": item[2]}))
+            if self._step_job is not None:
+                self._step_stop(CommandError("invalid_sweep", None, {"message": item[2]}))
             self._set_run("stopped", reason="invalid_sweep")
         elif kind == "worker_error":
             self._notice("device_error", {"message": item[1], "trace": item[2]})
@@ -467,6 +472,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
             "rtltcp": self._rtltcp_state(),
             "rtlsdr": self._rtlsdr_state(),
             "listen": self._listen_state(),
+            "step_sweep": self._step_state(),  # SG のステップ掃引の設定と動き（設計L §1.3）
             **self._view_snapshot(),
         }
 
@@ -484,7 +490,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         elif job is not None:
             adopted, sweeping = job.adopted, True
         else:
-            adopted, sweeping = self._adopted, self._run in ("continuous", "single", "stopping")
+            adopted, sweeping = self._adopted, self._run in ("continuous", "single", "stopping", STEP_RUN_STATE)
         output = self._SOURCE_OF_MODE.get(adopted.mode, "none")
         src = self._profile.get("source") or {}
         if self._conn != "connected" or not sweeping or not src.get(output):
@@ -516,6 +522,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         busy = self._worker.busy_since
         if self._cal_push_job():
             return  # 校正の間は、いまの条件とは別の条件で決めた回数だけ測る（設計K §4.1）
+        if self._step_push_job():
+            return  # ステップ掃引の間は、いまの段の条件で残りの回数だけ測る（設計L §1.3）
         job = self._ref_job
         if job is not None:
             # 基準を取っている間は、いまの条件とは別の条件で決めた回数だけ測る（設計E §6.2）
@@ -554,6 +562,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
             # 基準を取るための掃引。トレース・記録には入れない（設計E §6.2）
             self._on_ref_sweep(raw)
             return
+        if self._step_on_sweep(raw):
+            return  # ステップ掃引の掃引（結果のトレースへ重ね、いまのトレースにも入れる: 設計L §1.3）
         self._sweep_count += 1
         frame = self._build_frame(raw)
         self._rtltcp_on_sweep(raw, frame)  # 相手がいなければ何もしない（設計Q §4.3）
@@ -594,6 +604,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         self._worker.start()
         self._load_calibration(ident.serial)
         self._load_saved_reference()
+        self._s11_open_follow(self._adopted)  # 電源を入れ直す前に測ったオープンはショートと組まない（設計E §6.5）
         self._conn = "connected"
         self._cal_refresh()  # 校正の画面が開いていれば、つないだ機器の校正を「前の値」にする（つないだ後に見る）
         self._rtltcp_update_header()
@@ -682,6 +693,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
     def _drop_device(self) -> None:
         if self._cal_job is not None:
             self._cal_abort(CommandError("disconnected"))
+        if self._step_job is not None:
+            self._step_stop(CommandError("disconnected"))  # そこまでの結果は残る（設計L §1.3）
         self._listen_end("device_lost")
         self._rtlsdr_on_drop()
         if self._worker is not None:
@@ -740,6 +753,11 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
     # ------------------------------------------------------------------ 命令
 
     def _cmd__shutdown(self) -> None:
+        if self._step_job is not None:
+            # SG の周波数を始める前に戻してから状態を残す（次の起動でステップ掃引の段の周波数にならない）
+            from .storage import Cancelled
+
+            self._step_stop(Cancelled())
         self._shutdown_rtltcp()
         self._drop_device()
         self._shutdown_files()
@@ -767,6 +785,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         self._last_estimate = new.estimated_sweep_s
         if changed:
             self._on_sweep_condition(old, new, step_sweep=step_sweep)
+            self._s11_open_follow(new)  # 測ってあるオープンとショートが組めなくなったら捨てて知らせる（設計E §6.5）
             if self._run == "single":
                 self._single_done = 0
             self._push_job()

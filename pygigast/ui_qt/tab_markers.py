@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -31,8 +32,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.trace import formats
 from ..core.units import ParseError, format_freq, format_time_us, parse_db, parse_freq_hz
-from . import peak_view, screen_model, sizes, texts, widget_sync
+from . import peak_view, screen_model, screen_s11, sizes, texts, widget_sync
 from .fields import (BANDWIDTH_CHOICES, BANDWIDTH_RANGE, FLOOR_CHOICES, FLOOR_RANGE, REF_CHOICES, THRESHOLD_RANGE,
                      DbField, FreqField, LocalDbChoiceField)
 from .marker_rows import function_lines_on
@@ -208,8 +210,9 @@ class MarkerTab(QWidget):
         self.pk_detach = QPushButton(L["detach"])
         self.pk_detach.setToolTip(texts.w("detach_item", part=L["part_peaks"]))
         v.addLayout(sizes.buttons_row(self.pk_find, self.pk_detach))
-        self.pk_table = QTableWidget(0, 4)
-        self.pk_table.setHorizontalHeaderLabels([L["col_freq_mhz"], L["level"], L["col_height_db"], ""])
+        # 列: 周波数・レベル・基準からの差・P に登録・内部の漏れの可能性の印（設計P §9.6・L §1.4。無い行は空）
+        self.pk_table = QTableWidget(0, 5)
+        self.pk_table.setHorizontalHeaderLabels([L["col_freq_mhz"], L["level"], L["col_height_db"], "", ""])
         self.pk_table.verticalHeader().hide()
         self.pk_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.pk_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -269,8 +272,13 @@ class MarkerTab(QWidget):
         self.func_note.setVisible(time)
         self._apply_time_axis(time, freq_only)
         unit = self.win.display_unit()
-        # しきい値の一覧は REF と同じく、いまの縦軸の単位で出す（G §3.6）
-        self.th_level.set_unit(unit)
+        # しきい値の一覧は REF と同じく縦軸の単位で出す（G §3.6）。選んでいるマーカーがあればそのトレースの単位
+        # （|Γ|・SWR のトレースなら、その値の一覧と範囲: 設計R §3）
+        th_unit = (marker or {}).get("unit") or unit
+        spec = screen_s11.threshold_spec(th_unit)
+        self.th_level.set_unit(th_unit)
+        if self.th_level.set_spec(spec["choices"], spec["signed"], spec["lo"], spec["hi"], spec["decimals"]):
+            self.th_level.set_value(spec["default"])  # 単位の種類が変わったら、その単位の初期値から
         off = texts.freq_offset_of(self.win.state)  # 周波数の欄は換算後の周波数（設計O）
         self.freq.set_offset(off)
         for k in ("x1_hz", "x2_hz"):
@@ -280,8 +288,8 @@ class MarkerTab(QWidget):
             set_enabled(self.track, reason)
         else:
             kind = texts.MARKER_KINDS.get(marker["kind"], marker["kind"])
-            val = f"{marker['level']:.2f} {marker.get('unit') or unit}" if marker.get("level") is not None else \
-                texts.MARKER_STATUS.get(marker.get("status"), "")
+            val = screen_s11.value_text(marker["level"], marker.get("unit") or unit) if marker.get("level") is not None \
+                else texts.MARKER_STATUS.get(marker.get("status"), "")
             self.sel_label.setText(texts.w("selected_text", id=marker["id"], kind=kind, trace=marker["trace"], value=val))
             if marker.get("freq_hz") is not None:
                 self.freq.set_hz(int(marker["freq_hz"]))
@@ -309,7 +317,8 @@ class MarkerTab(QWidget):
             self.dx.setText("")
         else:
             self.dx.setText(f"ΔX = {format_time_us(xy['dx_hz']) if time else format_freq(int(xy['dx_hz']))}")
-        self.dy.setText(f"ΔY = {xy['dy']:+.2f} dB" if xy.get("dy") is not None else "")
+        self.dy.setText(f"ΔY = {formats.delta_cell(xy['dy'], unit)}" + ("" if formats.is_linear_unit(unit) else " dB")
+                        if xy.get("dy") is not None else "")
         # 空の行を出さない（U-15）
         self.dx.setVisible(bool(self.dx.text()))
         self.dy.setVisible(bool(self.dy.text()))
@@ -460,6 +469,10 @@ class MarkerTab(QWidget):
                 b.clicked.connect(lambda _=False, f=p["freq_hz"]: self.win.call(
                     "marker_register_peak", trace=trace, freq_hz=int(f), polarity=polarity))
                 self.pk_table.setCellWidget(i, 3, b)
+                leak = QTableWidgetItem(p.get("leak") or "")
+                leak.setToolTip(p.get("leak_tip") or "")
+                leak.setForeground(QColor(self.win.pal["warn"]))
+                self.pk_table.setItem(i, 4, leak)
             self.pk_note.setText(view["found"])
 
         self.win.call("peak_list", on_ok=show, trace=trace, floor_margin_db=self.pk_margin.value(),

@@ -41,10 +41,13 @@ def build(win: "MainWindow") -> dict:
             item.update({**texts.legend_parts(p), "color": f"trace{p['trace']}",
                          "line": win.traces.line_of(int(p["trace"]))})
             item["flags"] = marked_points(p, ax["points"]).tolist()
+            if p.get("steps"):
+                item["steps"] = p["steps"]  # ステップ掃引を全部重ねた段ごとの線（画面と同じ: 設計L §1.3）
         traces.append(item)
     sw = st.get("sweep") or {}
     return rl.build_data(
         st, ref_level=win.ref_level(), db_per_div=win.db_div(), unit=win.display_unit(),
         mode_name=texts.MODE_NAMES.get(sw.get("mode"), sw.get("mode")), traces=traces,
-        markers=marker_rows.png_rows(win.marker_row_list, lines=marker_rows.function_lines_on(st)), warnings=screen_model.png_warnings(st),
+        markers=marker_rows.png_rows(win.marker_row_list, lines=marker_rows.function_lines_on(st),
+                                     axis_unit=win.display_unit()), warnings=screen_model.png_warnings(st),
         app_version=APP_VERSION, norm_reasons=texts.NORM_REASONS)

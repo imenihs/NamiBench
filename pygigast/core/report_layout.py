@@ -40,7 +40,8 @@ import math
 from typing import Any, Iterable, Optional, Union
 
 from . import zero_span as zs
-from .units import format_freq, level_text, time_axis_unit
+from .trace import formats
+from .units import format_freq, level_text, minus_sign, time_axis_unit
 
 META_KEY = "pygigast"
 
@@ -288,10 +289,16 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
         length = float(xa.get("length_s") or 0)
         shown = "掃引1回" if not length else f"表示 {length:g} 秒（掃引の間は空白）"
         cond.append(f"ゼロスパン {shown}・1点 {float(xa.get('point_time_s') or 0) * 1e3:.3f} ms（推定）")
-    if c.get("ref_level") is not None:
-        cond.append(f"REF {level_text(c['ref_level'])} {unit}")
-    if c.get("db_per_div") is not None:
-        cond.append(f"{_num(c['db_per_div'])} dB/div")
+    if formats.is_linear_unit(unit) and c.get("db_per_div") is not None:
+        # |Γ|・SWR の縦軸は下端が決まっていて REF を持たない（設計R §3）: 範囲と1目盛を書く
+        div = float(c["db_per_div"])
+        bottom = formats.LINEAR_AXES[unit]["bottom"]
+        cond.append(f"{unit} {_num(bottom)}〜{_num(bottom + DIVISIONS * div)}（{_num(div)} {unit}/div）")
+    else:
+        if c.get("ref_level") is not None:
+            cond.append(f"REF {level_text(c['ref_level'])} {unit}")
+        if c.get("db_per_div") is not None:
+            cond.append(f"{_num(c['db_per_div'])} dB/div")
     rows["conditions"] = ("text", cond)
 
     corr: list[str] = []
@@ -372,14 +379,16 @@ def marker_table_rows(data: dict) -> list[list[str]]:
             name = "  " + name
         f, v = m.get("freq_hz"), m.get("value")
         df, dv = m.get("delta_freq_hz"), m.get("delta_value")
+        u = m.get("unit") or unit
         out.append([
             name,
             str(m["trace"]) if m.get("trace") is not None else "",
             f"{f / scale:.{d}f}" if f is not None else "",
-            f"{v:.2f} {m.get('unit') or unit}" if v is not None else "",
+            # 値と Δ値の書き方は画面の表と同じ（|Γ|・SWR: 設計R §3。formats.value_cell・delta_cell）
+            formats.value_cell(v, u),
             str(m.get("ref") or ""),
             f"{df / scale:+.{d}f}" if df is not None else "",
-            f"{dv:+.2f}" if dv is not None else "",
+            formats.delta_cell(dv, u, db_offset=m.get("kind") == "level_cursor" and bool(m.get("child"))),
             str(m.get("note") or ""),
         ])
     return out
@@ -406,8 +415,12 @@ def fit_table(rows: list[list[str]], height: float, line_h: float) -> tuple[list
 
 # ---------------------------------------------------------------- 目盛
 
-def y_labels(ref: float, div: float) -> list[str]:
-    """縦軸の数字（上から。REF が一番上: J §4.1）。画面の目盛・REF の欄と同じ形（units.level_text）。"""
+def y_labels(ref: float, div: float, unit: Optional[str] = None) -> list[str]:
+    """縦軸の数字（上から。REF が一番上: J §4.1）。画面の目盛・REF の欄と同じ形（units.level_text）。
+    |Γ|・SWR は1目盛を書き分けられる桁（設計R §3。formats.tick_decimals）。"""
+    if formats.is_linear_unit(unit):
+        d = formats.tick_decimals(unit, div)
+        return [minus_sign(f"{ref - i * div:.{d}f}") for i in range(DIVISIONS + 1)]
     return [level_text(ref - i * div) for i in range(DIVISIONS + 1)]
 
 
@@ -541,7 +554,7 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
     if stop <= start:
         stop = start + 1.0
     off = int(c.get("freq_offset_hz") or 0)
-    ylabels = y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0)))
+    ylabels = y_labels(float(c.get("ref_level", 0.0)), float(c.get("db_per_div", 10.0)), c.get("unit"))
     unit = c.get("unit", "dBm")
     if time:
         # ゼロスパン: 横軸は時間（推定。画面と同じ: 設計N §1）。周波数オフセットは横軸に出さない（設計O）
