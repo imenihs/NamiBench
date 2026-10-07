@@ -321,7 +321,13 @@ class EdgePage:
         self.profile = tempfile.mkdtemp(prefix="gs_edge_")
         self.proc = subprocess.Popen(
             [str(EDGE), "--headless=new", "--disable-gpu", "--remote-debugging-port=0", f"--user-data-dir={self.profile}",
-             "--no-first-run", "--no-default-browser-check", "about:blank"],
+             "--no-first-run", "--no-default-browser-check",
+             # 本番のブラウザの画面は見えているタブで、描画（requestAnimationFrame）が回る。ヘッドレスの窓は、PC が重いと
+             # 隠れた窓・裏のタブとみなされて描画と時計を止められることがある（全体の試験で settle が 60 秒返らなかった）。
+             # 本番と同じ「見えているタブ」の前提にそろえる
+             "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
+             "--disable-renderer-backgrounding", "--disable-features=CalculateNativeWinOcclusion",
+             "about:blank"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         port_file = Path(self.profile) / "DevToolsActivePort"
         end = time.monotonic() + 30
@@ -377,8 +383,13 @@ class EdgePage:
             time.sleep(0.1)
 
     def settle(self) -> None:
-        """Vue が描き直し、2回描画が回るまで待つ。"""
-        self.ev("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50))))")
+        """Vue が描き直し、2回描画が回るまで待つ。描画が 10 秒回らなければ、そのときのページの見え方を添えて落とす
+        （黙って 60 秒待って通信の時間切れにしない: 原因が分かるように）。"""
+        r = self.ev("new Promise((r) => { const t = setTimeout(() => r(`描画が回らない（visibilityState=${document.visibilityState}"
+                    ", hasFocus=${document.hasFocus()}）`), 10000); requestAnimationFrame(() => requestAnimationFrame("
+                    "() => setTimeout(() => { clearTimeout(t); r('ok'); }, 50))); })")
+        if r != "ok":
+            raise AssertionError(r)
 
     def shot(self, path: Path) -> None:
         s = self.send("Page.captureScreenshot", format="png")
