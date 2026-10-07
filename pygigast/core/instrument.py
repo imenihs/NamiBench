@@ -34,6 +34,7 @@ from .instrument_diff import DiffMixin
 from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
 from .instrument_listen import ListenMixin
+from .instrument_progress import ProgressReporter, SweepProgressMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_view import ViewMixin
@@ -110,6 +111,9 @@ class _DeviceWorker(threading.Thread):
         self._cancel = threading.Event()
         self._closing = False
         self.busy_since: Optional[float] = None
+        # 1画面の進み具合を機器の口から受けて置く。制御スレッドが読みに来る（設計J §4.13）
+        self.progress = ProgressReporter(post)
+        device.progress_sink = self.progress
 
     def set_job(self, gen: int, adopted: Optional[AdoptedSweep], count: Optional[int] = None) -> None:
         with self._cv:
@@ -137,6 +141,7 @@ class _DeviceWorker(threading.Thread):
                 self._cancel = threading.Event()
                 cancel = self._cancel
             self.busy_since = time.monotonic()
+            self.progress.begin(gen, adopted)
             try:
                 raw = self.device.measure(adopted, cancel)
                 with self._cv:
@@ -161,6 +166,7 @@ class _DeviceWorker(threading.Thread):
                 break
             finally:
                 self.busy_since = None
+                self.progress.end()
         try:
             self.device.close()
         except Exception:  # noqa: BLE001
@@ -169,7 +175,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin,
-                 DevicesMixin, ViewMixin):
+                 DevicesMixin, ViewMixin, SweepProgressMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -206,6 +212,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         self._subs: list[EventCallback] = []
         self._subs_lock = threading.Lock()
         self._version = 0
+        self._init_sweep_progress()  # 上段の掃引の進み具合（設計J §4.13）
 
         # 接続: disconnected / connected / reconnecting
         self._conn = "disconnected"
@@ -328,6 +335,9 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
         while self._running:
             # 再接続を待つ間・機器の一覧を見ている間は、0.5s ごとにポートの一覧を見る（設計B §7.3・J §4.7）
             timeout = RECONNECT_POLL_S if self._conn == "reconnecting" or self._devices_polling() else None
+            sp = self._sweep_progress_wait()  # 掃引の進み具合を読む・送る時刻（設計J §4.13）
+            if sp is not None:
+                timeout = sp if timeout is None else min(timeout, sp)
             try:
                 item = self._q.get(timeout=timeout)
             except queue.Empty:
@@ -340,6 +350,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
             if self._conn == "reconnecting" and time.monotonic() >= self._next_reconnect:
                 self._try_reconnect()
             self._poll_devices()
+            self._sweep_progress_poll()
 
     def _handle(self, item: tuple) -> None:
         kind = item[0]
@@ -374,6 +385,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
             item[1]()
         elif kind == "sweep":
             self._on_sweep(item[1], item[2])
+        elif kind == "sweep_progress":
+            pass  # 出す画面を測り始めた: 起きるだけ（量は繰り返しの終わりに読む: 設計J §4.13）
         elif kind == "discarded":
             self._on_discarded(item[1], item[2], item[3])
         elif kind == "disconnected":
@@ -390,6 +403,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
             self._drop_device()
             self._set_conn("disconnected")
         elif kind == "idle":
+            self._sweep_progress_hide()  # 機器が測っていない（設計J §4.13）
             if self._run == "stopping":
                 self._set_run("stopped")
         elif kind == "worker_exit":
@@ -495,6 +509,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
     def _push_job(self) -> None:
         """いまの動作と条件を機器スレッドへ渡す。前の条件の掃引の結果は世代で見分けて捨てる。"""
         self._gen += 1
+        # いまの掃引は画面を更新しなくなるので進み具合を隠す。次の掃引が始まれば 0 から出す（設計J §4.13）
+        self._sweep_progress_hide()
         if self._worker is None:
             return
         busy = self._worker.busy_since
@@ -528,6 +544,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
     def _on_sweep(self, gen: int, raw: RawSweep) -> None:
         if gen != self._gen:
             return  # 条件が変わる前の掃引（設計B §7.2.1: 結果は捨てる）
+        self._sweep_progress_screen_done(gen)  # 画面が更新される: 進み具合は 100%（設計J §4.13）
         self._last_sweep_s = raw.duration_s
         if self._cal_job is not None:
             # 校正のための掃引。トレース・記録には入れない（設計K §4.1）
@@ -671,6 +688,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
             self._worker.close()
             self._worker = None
         self._device = None
+        self._sweep_progress_hide()
 
     def _on_disconnected(self, message: str) -> None:
         self._drop_device()

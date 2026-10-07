@@ -121,13 +121,22 @@
         </select>
       </div>
       <span class="grow"></span>
-      <div class="runbtns">
-        <button class="run-btn" :class="{running: run.state === 'continuous'}" :disabled="!connected"
-                :title="W('run_cont_tip') + keyHint('run_cont')" @click="trigger('run_cont')">{{ T('MENU_ITEMS', 'run_cont') }}</button>
-        <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!connected"
-                :title="W('run_single_tip') + keyHint('run_single')" @click="trigger('run_single')">{{ T('MENU_ITEMS', 'run_single') }}</button>
-        <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
-                :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
+      <!-- 連続・単発・停止と、真上の名前の行（小の段）の掃引の進み具合（J §4.13。Qt の run_buttons.RunButtons と同じ）。
+           出さないときも場所は空けたまま（visibility）。形はサーバーの screen_model.sweep_progress_view -->
+      <div class="runbox">
+        <div class="field-head sweep-progress" data-tier="S" :class="{off: !sweepProgress.visible}">
+          <div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="sweepProgress.percent"
+               :title="W('sweep_progress_tip')"><div class="sp-fill" :style="{width: sweepProgress.percent + '%'}"></div></div>
+          <span class="sp-text dim" :title="W('sweep_progress_tip')">{{ sweepProgress.text }}</span>
+        </div>
+        <div class="runbtns">
+          <button class="run-btn" :class="{running: run.state === 'continuous'}" :disabled="!connected"
+                  :title="W('run_cont_tip') + keyHint('run_cont')" @click="trigger('run_cont')">{{ T('MENU_ITEMS', 'run_cont') }}</button>
+          <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!connected"
+                  :title="W('run_single_tip') + keyHint('run_single')" @click="trigger('run_single')">{{ T('MENU_ITEMS', 'run_single') }}</button>
+          <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
+                  :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
+        </div>
       </div>
       <!-- TG・S11 のとき「基準を取る」といまの基準（J §4.2: 基準を取るは1クリックで届く所に） -->
       <div class="refquick" v-if="refQuick.visible">
