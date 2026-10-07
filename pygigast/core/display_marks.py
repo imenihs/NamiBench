@@ -109,20 +109,57 @@ def display_marks(mode, profile: Optional[dict], start_hz: int, stop_hz: int) ->
 _LEAK_MODES = (Mode.SG, Mode.TG, Mode.S11)
 
 
-def internal_leaks(mode, profile: Optional[dict], sg_hz: Optional[int], start_hz: int, stop_hz: int) -> list[dict]:
+def b3_shifts(profile: Optional[dict]) -> dict[int, int]:
+    """b3=1 を送ると動く固定の漏れ（プロファイルの internal_spurs_hz.fixed_b3_shift_hz）: b3=0 の周波数 → 動く量（Hz）。
+
+    GigaSt は 956MHz（SP 内部のスプリアス）が b3=1 で 946MHz に動く（T2）。1480MHz と SG + 1480MHz は動かない。
+    """
+    raw = ((profile or {}).get("internal_spurs_hz") or {}).get("fixed_b3_shift_hz") or {}
+    out = {}
+    for k, v in raw.items():
+        try:
+            out[int(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def fixed_leaks(profile: Optional[dict], b3_both: bool) -> list[dict]:
+    """固定の周波数の漏れ [{freq_hz, kind: "fixed", offset_hz: None}]（範囲で切らない）。
+
+    b3_both: 送った掃引が b3=0 と b3=1 の両方を合わせたもの（イメージ除去のスピード・正確）なら True。b3 で動く漏れは
+    両方を合わせると消えるので出さない。False は b3=1 だけを送ったもの（イメージ除去なし・ステップ掃引の間: 設計B §7.2）
+    で、b3 で動く漏れは b3=1 の位置（956MHz → 946MHz）。b3 で動かない漏れはどちらでもそのままの周波数。
+    """
+    spurs = (profile or {}).get("internal_spurs_hz") or {}
+    shifts = b3_shifts(profile)
+    out = []
+    for f in spurs.get("fixed") or []:
+        f = int(f)
+        if f in shifts:
+            if b3_both:
+                continue
+            f += shifts[f]
+        out.append({"freq_hz": f, "kind": "fixed", "offset_hz": None})
+    return out
+
+
+def internal_leaks(mode, profile: Optional[dict], sg_hz: Optional[int], start_hz: int, stop_hz: int,
+                   b3_both: bool = False) -> list[dict]:
     """内部の漏れの周波数のうち、表示範囲 start_hz〜stop_hz に入るもの [{freq_hz, kind, offset_hz}]（周波数の順）。
 
-    機種のプロファイルの internal_spurs_hz（T2）: fixed はそのままの周波数、sg_offset は SG の周波数からのずれ。
-    SG・TG・S11 のときだけ（SA・NF では空）。sg_offset は SG モードだけ（TG は掃引に同期して動くので、受けている
-    周波数から常にずれだけ離れていて掃引に乗らない）。ゼロスパン（横軸が時間）では空。
+    機種のプロファイルの internal_spurs_hz（T2）: fixed はそのままの周波数（b3 で動くものは fixed_leaks の決まり）、
+    sg_offset は SG の周波数からのずれ。SG・TG・S11 のときだけ（SA・NF では空）。sg_offset は SG モードだけ（TG は
+    掃引に同期して動くので、受けている周波数から常にずれだけ離れていて掃引に乗らない）。ゼロスパン（横軸が時間）では空。
+    b3_both は送った掃引が b3 の両方を合わせたものか（fixed_leaks）。
     """
     m = _mode(mode)
     if m not in _LEAK_MODES or stop_hz <= start_hz:
         return []
     spurs = (profile or {}).get("internal_spurs_hz") or {}
     found: dict[int, dict] = {}
-    for f in spurs.get("fixed") or []:
-        found.setdefault(int(f), {"freq_hz": int(f), "kind": "fixed", "offset_hz": None})
+    for lk in fixed_leaks(profile, b3_both):
+        found.setdefault(lk["freq_hz"], lk)
     if m == Mode.SG and sg_hz is not None:
         for off in spurs.get("sg_offset") or []:
             f = int(sg_hz) + int(off)

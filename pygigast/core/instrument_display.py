@@ -272,7 +272,10 @@ class DisplayMixin:
     def _leaks_state(self) -> dict:
         """内部の漏れの周波数（表示範囲の中）と、測った山を漏れとみなす幅（設計L §1.4・display_marks）。"""
         a = self._adopted
-        leaks = dm.internal_leaks(a.mode, self._profile, a.sg_hz, int(a.start_hz), int(a.stop_hz)) \
+        # b3 で動く漏れは、いま送っている b3 で決まる（display_marks.fixed_leaks）。イメージ除去のスピード・正確は b3 の
+        # 両方を合わせる（動く漏れは消える）。なし・ステップ掃引の間（いつも「なし」で送る）は b3=1 だけ
+        b3_both = getattr(self, "_step_job", None) is None and a.image_reject_used != "off"
+        leaks = dm.internal_leaks(a.mode, self._profile, a.sg_hz, int(a.start_hz), int(a.stop_hz), b3_both) \
             if a.axis.step_hz > 0 else []
         return {"leaks": leaks, "tolerance_hz": dm.leak_tolerance_hz(a.rbw_hz, a.axis.step_hz)}
 
@@ -1092,9 +1095,11 @@ class DisplayMixin:
         self._no_dips_on_power(v, polarity)
         pl = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db, polarity)
         # 内部の漏れの周波数から幅の内にある行は、その漏れを添える（設計P §9.6・L §1.4。SG・TG のときだけ）。
-        # ステップ掃引の結果のトレースは、段ごとの SG からのずれの漏れも持つ（instrument_step._step_leaks）
+        # ステップ掃引の結果のトレースは、それを測った条件の漏れ（段ごとの SG からのずれ・b3=1 の位置:
+        # instrument_step._step_leaks）。ほかのトレースはいまの条件の漏れ
         lk = self._leaks_state()
-        leaks = lk["leaks"] + self._step_leaks(self._traces[trace])
+        step_leaks = self._step_leaks(self._traces[trace])
+        leaks = lk["leaks"] if step_leaks is None else step_leaks
         # 探すのは dB（盛り上がり・基準からの N dB）。レベルは表示の形式の値で返す（|Γ|・SWR: 設計R §3）
         return {"trace": trace, "unit": v.unit, "base": pl.base, "base_level": v.display(pl.base_level),
                 "polarity": pl.polarity,
