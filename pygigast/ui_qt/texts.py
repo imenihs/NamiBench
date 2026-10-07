@@ -173,8 +173,19 @@ RBW_LIMITS = {
 }
 
 
-def condition_lines(st: dict) -> list[str]:
-    """上段の下に出し続ける条件の注意（U-02・U-08）。PNG の帯の注意と同じ文（I §3.2 の 6）。"""
+def rbw_warning_lines(st: dict) -> list[str]:
+    """いまの RBW で信用できない条件の文（WARNINGS）。コアの sweep.warnings は、どれも実際に使う RBW と Span・Step
+    から作る RBW の知らせ（core/sweep/model.py の _warnings）なので、全部 RBW の欄に付ける（U-25）。"""
+    return [WARNINGS.get(w, w) for w in (st.get("sweep") or {}).get("warnings") or []]
+
+
+def condition_lines(st: dict, with_rbw: bool = False) -> list[str]:
+    """上段の下に出し続ける条件の注意（U-02・U-08）。
+
+    RBW の知らせは上段の下に出さず、RBW の欄そのものに付ける（欄を注意の色にし、文は欄のツールチップ: U-25・
+    2026-10-07 ユーザー決定「tooltip とかで教えるようにしよう」。screen_model.rbw_field_view）。
+    with_rbw=True は PNG の帯の注意（I §3.2 の 6）: 画像は報告なので、RBW の知らせも同じ並びに文で残す。
+    """
     sw = st.get("sweep") or {}
     if not sw:
         return []
@@ -183,7 +194,8 @@ def condition_lines(st: dict) -> list[str]:
     if off:
         # 周波数オフセットで換算中であることを出し続ける（設計O: 換算中であることを示す）
         out.append(VIEW_TEXTS["freq_offset_on"].replace("{off}", offset_text(off)))
-    out += [WARNINGS.get(w, w) for w in sw.get("warnings", [])]
+    if with_rbw:
+        out += rbw_warning_lines(st)
     if sw.get("tail_gap"):
         out.append(TEMPLATES["cond_tail_gap"])
     rtl = st.get("rtlsdr") or {}
@@ -464,6 +476,13 @@ def legend_parts(t: dict) -> dict:
     if label:
         out["label"] = label
     return out
+
+
+def file_heading_tip(f: dict) -> str:
+    """開いたファイルの見出し（名前）のツールチップ: 場所・日時と機器・メモ（無い行は出さない）。見出しは名前だけ。"""
+    who = " ".join(str(f.get(k) or "") for k in ("device_model", "device_serial") if f.get(k))
+    when = "  ".join(s for s in (str(f.get("created_at") or ""), who) if s)
+    return "\n".join(s for s in (str(f.get("path") or ""), when, str(f.get("note") or "")) if s)
 
 
 def file_trace_label(f: dict, tid: str) -> str:

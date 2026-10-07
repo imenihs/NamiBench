@@ -127,6 +127,20 @@ def install(app, c: dict[str, str] = DARK) -> None:
     Z.install(app)
 
 
+def set_warn(w, on: bool) -> None:
+    """欄そのものを注意の色にする（その欄に注意がある: U-25。文は欄のツールチップ）。
+
+    変えるのは文字と枠の色だけで、枠の太さ・余白・高さは変えない（注意が出ても欄の大きさと並びが動かない）。
+    Web の `.warn` を付けた欄（style.css）と同じ見え方。
+    """
+    on = bool(on)
+    if bool(w.property("warn")) == on:
+        return
+    w.setProperty("warn", on)
+    w.style().unpolish(w)
+    w.style().polish(w)
+
+
 def stylesheet(c: dict[str, str] = DARK) -> str:
     c = {**c, "axis_text": _dim_color(c)}
     # 段ごとの高さ（S-01）。min-height と max-height は中身の高さなので、上下の余白と枠を引く
@@ -161,6 +175,9 @@ def stylesheet(c: dict[str, str] = DARK) -> str:
                                 color: {c['text_dim']}; }}
         QToolButton#spanLock:checked {{ border: 1px solid {c['accent']}; color: {c['accent']}; }}
         QLabel#warn {{ color: {c['warn']}; }}
+        QComboBox[warn="true"], QLineEdit[warn="true"], QAbstractSpinBox[warn="true"] {{ color: {c['warn']};
+            border: 1px solid {c['warn']}; }}
+        QComboBox[warn="true"] QAbstractItemView {{ color: {c['text']}; }}
         QLabel#dim {{ color: {c['text_dim']}; }}
         QStatusBar QLabel {{ padding: 0 6px; }}
         QGroupBox {{ border: 1px solid {c['axis']}; margin-top: 10px; padding-top: 4px; }}

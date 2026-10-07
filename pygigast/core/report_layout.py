@@ -590,6 +590,8 @@ def layout(data: dict, size: tuple[int, int], note: str = "", app_version: str =
         "unit": unit,
         # 枠と軸の文字の置き場所・横軸の数字の間引き（AXES の決まり。Qt と Web が同じ値で描く）
         "axes": graph_axes(w, px, lh, px * LAYOUT["margin"], ylabels, unit, xlabels),
+        # 基準の範囲外の帯（測った周波数 Hz。画面と同じく注意の色で薄く塗る: 設計E §6.4。ゼロスパンは無い）
+        "norm_bands_hz": [] if time else list((data.get("normalization") or {}).get("out_of_range_hz") or []),
         "meta": png_metadata(data, note, app_version),
         "meta_key": META_KEY,
     }
@@ -621,6 +623,17 @@ def calibration_of(state: dict) -> Optional[dict]:
     return {"source": (cal.get("source") or {}).get("file_name") or "校正データ", "at": cal.get("created_at")}
 
 
+def norm_out_of_range(state: dict) -> list[list[int]]:
+    """基準の範囲外の区間（測った周波数 Hz の [下, 上]。設計E §6.4: 値なしの区間を色の帯で示す）。
+
+    画面（Qt・Web）のグラフと PNG（Qt・Web）が同じ区間を描く。基準を使っていないとき・ゼロスパン（横軸が時間）は無い。
+    """
+    norm = state.get("normalization") or {}
+    if not norm.get("used") or (state.get("sweep") or {}).get("step_hz") == 0:
+        return []
+    return [[int(lo), int(hi)] for lo, hi in norm.get("out_of_range_hz") or []]
+
+
 def normalization_of(state: dict, reasons: Optional[dict] = None) -> Optional[dict]:
     norm = state.get("normalization") or {}
     if not norm.get("used"):
@@ -629,7 +642,9 @@ def normalization_of(state: dict, reasons: Optional[dict] = None) -> Optional[di
     reason = norm.get("reason") or ""
     return {"name": sel.get("name", ""), "at": _when(sel.get("taken_at")),
             "applied": bool(norm.get("applied")), "before_power_cycle": bool(norm.get("power_cycled")),
-            "reason": (reasons or {}).get(reason, reason) if not norm.get("applied") else ""}
+            "reason": (reasons or {}).get(reason, reason) if not norm.get("applied") else "",
+            # グラフに描く帯（画面と同じ: 設計E §6.4）。tEXt にも残る
+            "out_of_range_hz": norm_out_of_range(state)}
 
 
 def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, mode_name: str,

@@ -247,6 +247,9 @@
       if (s.step_hz !== 0 && ctx.offset && ctx.offset.hz) g.setXOffset(ctx.offset.hz, ctx.offset.text);
       // |Γ|・SWR の縦軸は下端が決まっていて、目盛の数字は1目盛を書き分けられる桁（設計R §3。画面と同じ）
       g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit, ctx.amp.linear, ctx.amp.decimals);
+      // 基準の範囲外の帯（画面と同じ: 設計E §6.4。区間はサーバーの report_layout.layout。Qt の PNG と同じ）。
+      // 設計J §4.8 の帯は描かずに帯の文で入れる（I §3.2 の 6）
+      g.setBands((lay.norm_bands_hz || []).map(([lo, hi]) => ({ start_hz: lo, stop_hz: hi, label: "", fill: c.warn })));
       g.setTraces(ctx.traces(c));
       g.setMarkers((ctx.markers || {}).markers || [], null);
       // マーカーの機能の線（G §3.6）: 画面で出しているときだけ PNG にも描く

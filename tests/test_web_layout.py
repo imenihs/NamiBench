@@ -681,6 +681,34 @@ class WebLayoutTest(unittest.TestCase):
     def test_1920x1080(self):
         self.check_size(*SIZES[1])
 
+    def test_rbw_warning_keeps_layout(self):
+        """RBW の欄の注意（U-25: 欄を注意の色にして文はツールチップ）が出ても出なくても、主画面の全部のタブの崩れは
+        0 件で、欄の大きさと場所・グラフの位置は変わらない（Qt の LayoutTest.test_rbw_warning_keeps_layout と同じ）。"""
+        box = ("(() => { const a = document.querySelector('[data-tier=L] .field-select').getBoundingClientRect();"
+               " const g = document.querySelector('.graph').getBoundingClientRect();"
+               " return [a.left, a.top, a.width, a.height, g.top]; })()")
+        self.app.call("set_sweep", start_hz=495_000_000, stop_hz=505_000_000, rbw_hz=180_000)
+        self.sweep_once()
+        try:
+            for w, h in SIZES:
+                open_app(self.page, self.app, w, h)
+                found: list[str] = []
+                boxes = []
+                for rbw, warn in ((180_000, False), (15_000, True)):
+                    self.app.call("set_sweep", rbw_hz=rbw)
+                    self.page.wait(f"gsApp.rbwField.warn === {'true' if warn else 'false'}", f"RBW {rbw} の注意")
+                    for where, root in views(self.page, tabs_only=True):
+                        found += self.page.problems(root, f"{w}×{h} RBW {rbw} {where}")
+                    self.page.ev("gsApp.tab = 'trace'; 1")
+                    self.page.settle()
+                    boxes.append(self.page.ev(box))
+                self.assertEqual(sorted(set(found)), [])
+                self.assertEqual(boxes[0], boxes[1], f"{w}×{h}")
+                self.assertEqual(self.page.errors, [])
+        finally:
+            self.app.call("set_sweep", start_hz=400_000_000, stop_hz=600_000_000, rbw_hz=180_000)
+            self.sweep_once()
+
     def test_top_freq_samples_fit(self):
         """見本の値を上段の周波数の欄に入れても、文字が欄からはみ出さない（scrollWidth <= clientWidth）。"""
         open_app(self.page, self.app, *SIZES[0])

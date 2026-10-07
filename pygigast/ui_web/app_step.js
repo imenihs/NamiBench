@@ -34,11 +34,8 @@
         const step = exp + 6 >= 0 ? 10 ** (exp + 6) : 1;
         this.setStep({ [key]: cur + dir * step }, field);
       },
-      setStepPerStep(text) {
-        const v = Number(text);
-        if (!Number.isInteger(v)) { this.note("step_per_step", root.GSTexts.get("ERRORS", "not_integer")); return; }
-        this.setStep({ per_step: v }, "step_per_step");
-      },
+      // 1段の回数（欄は int-field: 数でない・範囲の外の値は欄が送らずに戻す。Qt の QSpinBox と同じ）
+      setStepPerStep(v) { this.setStep({ per_step: v }, "step_per_step"); },
       stepRun() { this.cmd("step_sweep_start", {}, { field: "step" }); },
       // 内部の漏れの印（グラフの上端の ▼。色は配色の「注意」）
       leakMarks() { return ((this.ui && this.ui.leaks) || []).map((m) => ({ ...m, fill: this.palette.warn })); },

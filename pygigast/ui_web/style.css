@@ -195,6 +195,10 @@ label.disabled { color: var(--axis); cursor: default; }
 .lock-icon { display: inline-block; }
 
 .cond { color: var(--warn); padding: 0 var(--inset) var(--gap); font-size: var(--font-s); }
+/* 注意のある欄（U-25: 警告はその欄に。文はツールチップ）: 文字と枠を注意の色にする。枠の太さ・余白は変えない
+   （欄の大きさと並びを動かさない）。開いた一覧の行は普段の色（Qt の theme.set_warn と同じ見え方） */
+select.warn, input.warn { border-color: var(--warn); }
+select.warn option:not(:disabled), select.warn optgroup { color: var(--text); }
 
 /* ---- 中央 ---- */
 .main { flex: 1; min-height: 0; display: flex; }
@@ -260,6 +264,8 @@ label.disabled { color: var(--axis); cursor: default; }
 .sec, .tsec { display: flex; flex-direction: column; gap: var(--gap); align-items: flex-start; min-width: min-content; }
 .file { display: flex; flex-direction: column; gap: var(--gap); align-self: stretch; padding: var(--inset); border: 1px solid var(--grid); }
 .file-head { display: flex; gap: var(--gap); align-items: center; flex-wrap: wrap; }
+/* 見出しは名前だけ（詳しくはツールチップ）。名前が残りの幅を取り、外すは右端（Qt の tab_traces と同じ並び） */
+.file-name { flex: 1 1 auto; min-width: 0; }
 
 /* ---- 下端 ---- */
 .tasks { display: flex; flex-direction: column; gap: var(--gap); padding: var(--gap) var(--inset); border-top: 1px solid var(--grid); }

@@ -16,6 +16,7 @@ from typing import Optional
 import numpy as np
 
 from ..core import zero_span as zs
+from ..core.report_layout import norm_out_of_range
 from ..core.units import format_freq, format_time_us, time_axis_unit
 from . import marker_rows, nf_view, screen_s11, source_view, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
@@ -87,6 +88,23 @@ def rbw_limit_text(st: dict) -> Optional[str]:
     usable = sw.get("rbw_usable_hz") or []
     only = format_freq(usable[0]) if len(usable) == 1 else ""
     return texts.RBW_LIMITS.get(code, code).replace("{rbw}", only)
+
+
+def rbw_field_view(st: dict) -> dict:
+    """上段の RBW の欄の注意とツールチップ（Qt と Web が同じものを出す）。
+
+    いまの RBW で信用できない条件があるとき（コアの sweep.warnings）は、欄そのものを注意の色にし、文は欄の
+    ツールチップにだけ出す（U-25: 警告はその欄に。U-24・U-26: 画面を文で飾らない。2026-10-07 ユーザー決定
+    「出さないと仕方ない気がするので tooltip とかで教えるようにしよう」）。欄の大きさは変えない（色だけ）。
+    ツールチップは 知らせ → 選べない RBW の理由（設計C §5.14）→ 窓の説明（設計Q §6.4）の順。
+    形: {"warn": 注意があるか, "lines": 知らせの文, "tip": 欄のツールチップ}
+    """
+    lines = texts.rbw_warning_lines(st)
+    pref = (st.get("sweep") or {}).get("rbw_hz")
+    w = rbw_window_of(st, pref)
+    note = next((g["note"] for g in rbw_groups(st) if g["window"] == w), "")
+    tip = "\n".join(t for t in (*lines, rbw_limit_text(st) or "", note) if t)
+    return {"warn": bool(lines), "lines": lines, "tip": tip}
 
 
 def rbw_window_of(st: dict, hz: Optional[int]) -> Optional[str]:
@@ -363,8 +381,15 @@ def marks_view(st: dict) -> list[dict]:
 
 
 def png_warnings(st: dict) -> list[str]:
-    """PNG の帯の注意（I §3.2 の 6）: 上段の条件の注意と、グラフに出ている帯の説明（範囲つき）。"""
-    return texts.condition_lines(st) + [m["tip"] for m in marks_view(st)]
+    """PNG の帯の注意（I §3.2 の 6）: 上段の条件の注意・RBW の欄の知らせ（画面では欄のツールチップ。画像は報告なので
+    文で残す）と、グラフに出ている帯の説明（範囲つき）。"""
+    return texts.condition_lines(st, with_rbw=True) + [m["tip"] for m in marks_view(st)]
+
+
+def file_trace_shown_at_open(tr: dict) -> bool:
+    """重ねた直後に参照トレースを出すか: 保存したときに表示していたトレースだけ（隠していたものはチェックで出せる）。
+    tr は状態の files[].traces[] の1つ（info は保存したときのトレースの設定）。Qt と Web が同じ決まりを使う。"""
+    return bool((tr.get("info") or {}).get("visible", True))
 
 
 def ref_auto_view(st: dict, shown: list[str], unit: str, db_per_div: float,
@@ -609,6 +634,7 @@ def ui_view(st: dict) -> dict:
         "status": texts.status_items(st),
         "cond": texts.condition_lines(st),
         "rbw": rbw_groups(st),
+        "rbw_field": rbw_field_view(st),  # RBW の欄の注意の色とツールチップ（U-25）
         "sweep_reasons": sweep_reasons(st),
         "image_reject": image_reject_view(st),  # イメージ除去の選択肢（設計F §7.4）
         "mode_reasons": mode_reasons(st),
@@ -620,6 +646,7 @@ def ui_view(st: dict) -> dict:
         "normalization": texts.normalization_text(st.get("normalization") or {}),
         "ref_quick": ref_quick_view(st),
         "marks": marks_view(st),
+        "norm_bands": norm_out_of_range(st),  # 基準の範囲外の帯（設計E §6.4。Qt の画面・PNG と同じ区間）
         "palette": palette_view(st),
         "sg_state": texts.sg_state_text(st),  # SG 周波数の欄のそば（J §4.12）
         "trace_status": {str(t.get("number")): trace_status(t) for t in st.get("traces") or []},

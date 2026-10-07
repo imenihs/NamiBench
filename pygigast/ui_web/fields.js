@@ -293,6 +293,79 @@
       </span>`,
   };
 
+  // ---- 整数の欄（Qt の単位付きの QSpinBox と同じ: 単位は欄の中に「3 回」の形で出す。幅は整数の幅: J §4.11）
+  // 打つのは数だけでよい（単位の字はあってもなくてもよい・全角の数字も読む）。確定は Enter・欄を離れる。Esc は打つ前に
+  // 戻す。↑↓・ホイール（スクロールする場所ではフォーカスがあるときだけ）は 1 ずつ、下限・上限で止める。数でない・範囲の
+  // 外の値は送らずに打つ前の値に戻す（Qt の QSpinBox が受け付けない文字を入れさせず、確定で直前の値に戻すのと同じ）
+  function parseIntIn(text, suffix, lo, hi) {
+    let t = String(text == null ? "" : text).normalize("NFKC").trim();
+    const suf = String(suffix || "").trim();
+    if (suf) t = t.split(suf).join("").trim();
+    if (!/^[+-]?\d+$/.test(t)) return null;
+    const v = Number(t);
+    if ((lo != null && v < lo) || (hi != null && v > hi)) return null;
+    return v;
+  }
+  function stepInt(value, dir, lo, hi) {
+    let v = (value == null ? (lo != null ? lo : 0) : value) + dir;
+    if (lo != null) v = Math.max(v, lo);
+    if (hi != null) v = Math.min(v, hi);
+    return v;
+  }
+  const IntField = {
+    name: "int-field",
+    directives: { steady: Steady },
+    props: {
+      value: { type: Number, default: null },
+      min: { type: Number, default: null },
+      max: { type: Number, default: null },
+      suffix: { type: String, default: "" },  // 単位（前の空白も含めて Qt の setSuffix と同じ文字: 「 回」）
+      disabled: { type: Boolean, default: false },
+      title: String,
+    },
+    emits: ["commit"],
+    data() { return { editing: false, draft: "" }; },
+    computed: {
+      shown() { return this.value == null ? "" : `${this.value}${this.suffix}`; },
+    },
+    methods: {
+      onInput(e) { this.editing = true; this.draft = e.target.value; },
+      send(v) {
+        steadyEcho(this.$refs.input);
+        if (v === this.value) { this.$refs.input.value = this.shown; return; }
+        this.$emit("commit", v);
+      },
+      commit() {
+        if (!this.editing) return;
+        this.editing = false;
+        const v = parseIntIn(this.draft, this.suffix, this.min, this.max);
+        this.draft = this.shown;
+        if (v === null) { this.$refs.input.value = this.shown; return; }
+        this.send(v);
+      },
+      onKey(e) {
+        if (e.key === "Enter") { e.preventDefault(); this.commit(); return; }
+        if (e.key === "Escape") { this.editing = false; this.draft = this.shown; e.target.value = this.shown; return; }
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          this.step(e.key === "ArrowUp" ? 1 : -1);
+        }
+      },
+      onWheel(e) {
+        if (this.disabled || wheelIgnored(this.$el)) return;
+        e.preventDefault();
+        this.step(e.deltaY < 0 ? 1 : -1);
+      },
+      step(dir) {
+        this.editing = false;
+        this.send(stepInt(this.value, dir, this.min, this.max));
+      },
+    },
+    template: `
+      <input ref="input" class="w-int int-input" v-steady="editing ? draft : shown" :disabled="disabled" :title="title"
+             spellcheck="false" @input="onInput" @keydown="onKey" @blur="commit" @wheel="onWheel">`,
+  };
+
   // ---- dB の打てるドロップダウン（G §3.6。REF レベルの欄（J §4.1）と同じ動き。Qt の ui_qt/fields.py の
   // DbChoiceField と同じ決まり）: 一覧から選ぶ・数を打つ・欄の上のホイールで 1dB・↑↓ はカーソルの桁。
   // 範囲の外の値は欄の下に範囲を知らせて元の値に戻す（↑↓・ホイールは端で止める）。値は小数 decimals 桁に丸める
@@ -418,7 +491,8 @@
   }
 
   root.GSFields = {
-    NumField, CountField, DbField, Steady, COUNT_CHOICES, COUNT_MAX, countText, parseCount, stepCount,
+    NumField, CountField, IntField, DbField, Steady, COUNT_CHOICES, COUNT_MAX, countText, parseCount, stepCount,
+    parseIntIn, stepInt,
     BANDWIDTH_CHOICES, FLOOR_CHOICES, REF_CHOICES, DB_RANGES, roundTo, dbText, dbChoiceText, rangeNote, parseDbIn,
     stepDb, wheelIgnored, inScrollPlace, selectWidth, fitColumns, textWidth, rootPx,
   };

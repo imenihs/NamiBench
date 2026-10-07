@@ -23,7 +23,7 @@ from ..core import report_layout as rl
 from ..core.palette import FILE_TRACE_ORDER
 from ..core.step_sweep import LINE_ALPHA
 from ..core.report_layout import legend_text
-from .screen_model import nearest_point, trace_x
+from .screen_model import file_trace_shown_at_open, nearest_point, trace_x
 from .theme import trace_color
 
 LIVE_TRACES = (1, 2, 3, 4)
@@ -41,6 +41,9 @@ XY_LABEL_H = 0.05
 CURSOR_LABEL_FILL = 180
 XY_LABEL_FILL = 200
 XY_IDS = ("X1", "X2", "Y1", "Y2")
+# 基準の範囲外の帯（設計E §6.4）の塗りと縁の濃さ（0〜255。注意の色）。PNG（png_export）も同じ値で描く
+BAND_FILL_ALPHA = 35
+BAND_EDGE_ALPHA = 90
 
 
 def step_lines(steps: Optional[dict]) -> tuple[np.ndarray, np.ndarray]:
@@ -283,8 +286,8 @@ class TraceLayer:
         meta = self.file_meta.get(tid)
         if e is None or e["init"] or meta is None:
             return
-        info = next((t.get("info") or {} for t in meta.get("traces") or [] if t["id"] == tid), {})
-        e["shown"] = bool(info.get("visible", True))
+        tr = next((t for t in meta.get("traces") or [] if t["id"] == tid), {})
+        e["shown"] = file_trace_shown_at_open(tr)  # Web と同じ決まり（screen_model）
         e["init"] = True
 
     def file_unit_ok(self, tid: str) -> bool:
@@ -394,8 +397,9 @@ class TraceLayer:
         self._bands = []
         self._band_ranges = list(ranges or [])
         for lo, hi in ranges or []:
-            b = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=pg.mkBrush(_alpha(self.pal["warn"], 35)),
-                                    pen=pg.mkPen(_alpha(self.pal["warn"], 90)))
+            b = pg.LinearRegionItem(values=(lo, hi), movable=False,
+                                    brush=pg.mkBrush(_alpha(self.pal["warn"], BAND_FILL_ALPHA)),
+                                    pen=pg.mkPen(_alpha(self.pal["warn"], BAND_EDGE_ALPHA)))
             b.setZValue(-8)
             self.pi.addItem(b, ignoreBounds=True)
             self._bands.append(b)
