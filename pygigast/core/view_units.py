@@ -32,9 +32,13 @@ FREQ_OFFSET_LIMIT_HZ = 1_000_000_000_000  # 1THz
 DRAW_STYLES = ("line", "fill")
 LAYOUTS = ("spectrum",)  # ウォーターフォール・密度は設計P（まだ無い）
 
+# ゼロスパンの表示する長さ（秒。設計N §1）。0 は1回の掃引を時間軸で出す。ほかは掃引を続けて横軸を時間で流す
+ZERO_SPAN_LENGTHS_S = (0, 1, 10, 60)
+
 # function_lines: マーカーの機能（N dB 帯域幅・しきい値との交点）の結果をグラフに薄い線で出すか（G §3.6）
+# zero_span_s: ゼロスパンの表示する長さ（ZERO_SPAN_LENGTHS_S のどれか。既定は流す表示の 10 秒）
 DEFAULTS = {"level_unit": "dBm", "ext_db": 0.0, "freq_offset_hz": 0, "draw_style": "line", "layout": "spectrum",
-            "function_lines": True}
+            "function_lines": True, "zero_span_s": 10}
 
 
 def level_shift(base_unit: Optional[str], opts: dict) -> tuple[float, Optional[str]]:
@@ -60,8 +64,10 @@ def shift_values(values_db: np.ndarray, shift: float) -> np.ndarray:
 
 
 def check_options(level_unit=None, ext_db=None, freq_offset_hz=None, draw_style=None, layout=None,
-                  function_lines=None) -> Optional[str]:
+                  function_lines=None, zero_span_s=None) -> Optional[str]:
     """命令の値を確かめる。だめなら欄の名前を返す（None は全部よい）。"""
+    if zero_span_s is not None and (isinstance(zero_span_s, bool) or zero_span_s not in ZERO_SPAN_LENGTHS_S):
+        return "zero_span_s"
     if function_lines is not None and not isinstance(function_lines, bool):
         return "function_lines"
     if level_unit is not None and level_unit not in LEVEL_UNITS:

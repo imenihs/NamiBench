@@ -17,7 +17,7 @@ from .texts_ui import *  # noqa: F401,F403 — 画面の部品の語の表（メ
 from .texts_ui import DISPLAY_MARKS, TEMPLATES
 from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタンの語（LABELS）。Web へも同じ表で配る
 from .texts_labels import LABELS
-from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「直結を 0dB にする」の語（J §4.7・§4.2）
+from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「基準を取る」の語（J §4.7・§4.2）
 from .texts_devices import device_name, port_shown
 from .texts_web import *  # noqa: F401,F403 — ブラウザから使うときの語（A §4.3.2）
 from .texts_web import WEB_ERRORS
@@ -27,6 +27,10 @@ from .texts_settings import SETTINGS_ERRORS, VIEW_TEXTS
 from .texts_web_settings import *  # noqa: F401,F403 — ブラウザだけの設定の画面・キーの割り当ての語
 from .texts_cal import *  # noqa: F401,F403 — 校正の画面の語（設計K）
 from .texts_cal import CAL_ERRORS, CAL_TASK_CANCELLED, CAL_TASK_DONE, CAL_TASK_FAILED, CAL_TASK_NAMES
+from .texts_zerospan import *  # noqa: F401,F403 — ゼロスパンの時間軸と流す表示の語（設計N §1）
+from .texts_zerospan import ZERO_SPAN_ERRORS
+from .texts_s11 import *  # noqa: F401,F403 — 反射（S11）と表示の形式（|Γ|・SWR）の語（設計E §6.5・設計R §3）
+from .texts_s11 import S11_ERRORS, S11_NOTICES, S11_OPEN_DISCARD_REASONS, S11_TASK_NAMES, SWR_LIMIT_NOTE
 from .texts_nf import *  # noqa: F401,F403 — NF 測定の語（設計M）
 from .texts_nf import ENR_TABLE_REASONS, NF_ERRORS, NF_MARKER_NOTES, NF_TEXTS
 
@@ -143,6 +147,8 @@ WARNINGS = {
     "rbw180k_narrow_span": "RBW 180kHz で Span 0.3MHz 未満: 平らな上面しか見えません（レベルは正しい）",
     "rbw30k_fine_step": "RBW 30kHz で Step 2kHz 未満: 形が狭く出ます（レベルは正しい）",
     "rbw15k_unstable": "RBW 15kHz は1回の掃引ではレベルと形が揺れます。平均を使ってください",
+    # ゼロスパンで RBW 15kHz（設計N §1・C §5.3。D4: 15〜30dB の落ち込みが散発する）
+    "rbw15k_zero_span": "RBW 15kHz のゼロスパンは 15〜30dB の落ち込みが散発します（RBW 180kHz なら安定）",
 }
 
 
@@ -216,6 +222,7 @@ NOTICES = {
     "rtltcp_stopped": "rtl_tcp の送出を止めました",
     "listen_stopped": "聞くのをやめました",
     "auto_connected": "前回の機器に繋ぎました",
+    **S11_NOTICES,
 }
 
 DISCARD_REASONS = {
@@ -309,6 +316,10 @@ def notice_text(n: dict) -> str:
         text = tpl("auto_connected", name=d["name"])
     elif code == "listen_stopped":
         r = LISTEN_STOP_REASONS.get(d.get("reason"), d.get("reason") or "")
+        if r:
+            text += tpl("paren", text=r)
+    elif code == "s11_open_discarded":
+        r = S11_OPEN_DISCARD_REASONS.get(d.get("reason"), d.get("reason") or "")
         if r:
             text += tpl("paren", text=r)
     return text
@@ -481,11 +492,14 @@ MARKER_NOTES = {
     "reference_coarse": "基準が粗い（±0.5dB 程度）",
     "reference_power_cycled": "電源の入れ直し前の基準",
     "rbw15k_unstable": "RBW 15kHz の1回の掃引",
+    "rbw15k_zero_span": "RBW 15kHz のゼロスパン（落ち込みが散発）",
     "rbw180k_narrow_span": "RBW 180kHz で狭い Span",
     "rbw30k_fine_step": "RBW 30kHz で細かい Step",
     "no_value": "値なし",
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
     "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
+    # SWR の上限に当てた点（設計R §3。値は上限の SWR）
+    "swr_limit": SWR_LIMIT_NOTE,
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
     **DISPLAY_MARKS,
 }
@@ -646,6 +660,9 @@ def task_label(t: dict) -> str:
     """進み具合の1行（何件目/全体・経過時間。時間は約束しない: U-20）。"""
     kind = t.get("task") or t.get("kind") or ""
     text = TASK_NAMES.get(kind, kind)
+    std = (t.get("detail") or {}).get("standard") if kind == "reference_take" else None
+    if std in S11_TASK_NAMES:
+        text = S11_TASK_NAMES[std]  # S11 のオープン・ショート（設計E §6.5）
     if t.get("total"):
         text += tpl("task_progress", done=t.get("done", 0), total=t["total"])
     text += tpl("task_elapsed", s=int(t.get("elapsed_s") or 0))
@@ -654,6 +671,7 @@ def task_label(t: dict) -> str:
     return text
 
 
+ERRORS.update(ZERO_SPAN_ERRORS)
 ERRORS.update({
     "no_trace_data": "そのトレースにまだ値がありません",
     "table_full": "マーカーはそれぞれ 8 本までです",
@@ -686,6 +704,7 @@ ERRORS.update({
     "rtlsdr_fit_running": "いま利得を合わせています",
     **WEB_ERRORS,
     **SETTINGS_ERRORS,
+    **S11_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
 })
 # 校正の画面（設計K）が断った理由。すでにある語は変えない
@@ -867,7 +886,7 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
             text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
                                                                                          name=res.get("name", ""))
             if res.get("ref_level") is not None:
-                # 0dB が見えるよう REF レベルを動かした（「直結を 0dB にする」: 黙って変えない J §4）
+                # 0dB が見えるよう REF レベルを動かした（上段の「基準を取る」: 黙って変えない J §4）
                 text += tpl("ref_zero_shown", ref=f"{res['ref_level']:+g}".replace("-", "−"))
         return text, path
     if code == "task_cancelled":

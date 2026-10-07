@@ -418,7 +418,7 @@ class App:
     rtl=True は偽物の DLL の RTL-SDR に繋ぐ（受信・聞くの欄が出る: Qt の LayoutRtlTest と同じ）。
     """
 
-    def __init__(self, lan: bool = True, rtl: bool = False) -> None:
+    def __init__(self, lan: bool = True, rtl: bool = False, zero_span: bool = False) -> None:
         from pygigast.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
         from pygigast.api.web import server as web
         from pygigast.core.devices.base import load_profile
@@ -464,6 +464,19 @@ class App:
         d["content"]["colors"]["text_dim"] = d["content"]["colors"]["panel_bg"]
         d["name"] = "読みにくい配色"
         self.call("palette_import", text=json.dumps(d))
+        if zero_span:
+            # ゼロスパン（設計N §1）: 流す表示に時間のマーカー（ピーク）と X1・X2 を置く
+            self.call("set_view", zero_span_s=10)
+            self.call("set_sweep", center_hz=100_000_000, span_hz=0)
+            n0 = self.call("get_state")["run"]["sweep_count"]
+            self.call("run", mode="single")
+            end = time.monotonic() + 30
+            while self.call("get_state")["run"]["sweep_count"] <= n0 or self.call("get_state")["run"]["state"] != "stopped":
+                if time.monotonic() > end:
+                    raise RuntimeError("掃引が終わらない")
+                time.sleep(0.05)
+            self.call("marker_add", kind="M", trace=1)
+            self.call("set_xy", x1_hz=-8_000_000, x2_hz=-1_000_000)
         self.srv = _Serve(web.create_app(self.api, lan=lan))
 
     def call(self, command: str, **kw):
@@ -677,7 +690,7 @@ class WebLayoutTest(unittest.TestCase):
         self.assertEqual(over, [])
 
     def test_top_bar_one_row(self):
-        """上段が1行に収まる幅では1行（RBW が Center と同じ行）: SA の 1600×900 と 1920×1080、TG（直結を 0dB にすると
+        """上段が1行に収まる幅では1行（RBW が Center と同じ行）: SA の 1600×900 と 1920×1080、TG（基準を取ると
         いまの基準の文を出す）の 1920×1080。どれも数えた問題は 0。上段は Qt と同じ部品だけ（ユーザーの決定 2026-10-03:
         「Qt と違う UI を採用している時点でおかしい」）。"""
         same_row = ("(() => { const c = document.querySelector('[data-tier=L] .field.big .field-input').getBoundingClientRect();"
@@ -689,7 +702,7 @@ class WebLayoutTest(unittest.TestCase):
                 self.app.call("set_mode", mode=mode)
                 open_app(self.page, self.app, w, h)
                 if mode == "tg":
-                    self.page.wait("!!(gsApp.refQuick.visible && document.querySelector('.refquick-state'))", "直結を 0dB にする")
+                    self.page.wait("!!(gsApp.refQuick.visible && document.querySelector('.refquick-state'))", "基準を取る")
                 c_top, r_top = self.page.ev(same_row)
                 self.assertAlmostEqual(c_top, r_top, delta=0.5, msg=f"{mode} {w}×{h}: 上段が2行になった")
                 self.page.ev("gsApp.tab = 'trace'; 1")
@@ -871,6 +884,103 @@ class WebLayoutTest(unittest.TestCase):
         self.assertTrue(any("伸びている" in p for p in found), found)
         self.assertTrue(any("の文字 12px（段の値 13px）" in p for p in found), found)
         self.assertEqual(self.page.problems(".app", "戻した後"), [])
+
+
+class WebLayoutZeroSpanTest(unittest.TestCase):
+    """ゼロスパン（設計N §1）の主画面の右のタブ: 時間の欄（X1・X2）・区間の行・表示する長さの欄も同じ決まりで数える。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App(lan=False, zero_span=True)
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def check_size(self, w: int, h: int) -> None:
+        open_app(self.page, self.app, w, h)
+        found: list[str] = []
+        for where, root in views(self.page, tabs_only=True):
+            found += self.page.problems(root, f"{w}×{h} ゼロスパン {where}")
+        self.assertEqual(self.page.ev("gsApp.ui.x_axis.kind"), "time")
+        self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_1280x720(self):
+        self.check_size(*SIZES[0])
+
+    def test_1920x1080(self):
+        self.check_size(*SIZES[1])
+
+
+@unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
+class WebLayoutS11Test(unittest.TestCase):
+    """S11（設計E §6.5・設計R §3）の画面を、決めた解像度で開いて数える（Qt の LayoutTest.test_s11_screens と同じ場面）:
+    オープンを測った後の信号源のタブと上段、基準を取って SWR にしたトレースの表（表示の形式・描かない理由）・
+    マーカーのタブ（SWR のしきい値）・|Γ|・SWR の縦軸の上段。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App()
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def wait_tasks(self) -> None:
+        end = time.monotonic() + 30
+        while self.app.call("get_state")["tasks"]:
+            self.assertLess(time.monotonic(), end, "基準を取り終えない")
+            time.sleep(0.05)
+
+    def check_size(self, w: int, h: int) -> None:
+        a, p = self.app, self.page
+        a.call("set_trace", number=1, format="db")
+        a.call("set_trace", number=2, visible=False)
+        a.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000)
+        a.call("set_mode", mode="s11")
+        a.call("reference_take", kind="fine", standard="open")
+        self.wait_tasks()
+        open_app(p, a, w, h)
+        found: list[str] = []
+        p.ev("gsApp.tab = 'source'; 1")
+        p.wait("!!document.querySelector('[data-field=\"s11_state\"]')", "オープンを測った")
+        p.settle()
+        found += p.problems(".app", f"{w}×{h} S11 オープンの後 source")
+        a.call("reference_take", standard="short")
+        self.wait_tasks()
+        a.call("run", mode="single")
+        a.call("set_trace", number=1, format="swr")
+        a.call("set_trace", number=2, visible=True, action="update")
+        mid = a.call("get_state")["markers"]["markers"][0]["id"]
+        a.call("marker_peak", id=mid, polarity="dip")
+        a.call("marker_function", id=mid, threshold={"level": 2.0, "side": "below"}, bandwidth_db=[])
+        p.wait("gsApp.axisUnit === 'SWR' && !!document.querySelector('.tunit')", "縦軸が SWR")
+        p.ev("gsApp.modal = null; gsApp.confirmBox = null; 1")
+        for tab in ("trace", "marker", "source"):
+            p.ev(f"gsApp.tab = '{tab}'; gsApp.selectedMarker = '{mid}'; 1")
+            p.settle()
+            found += p.problems(".app", f"{w}×{h} S11（SWR） {tab}")
+        self.assertEqual(p.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_1280x720(self):
+        self.check_size(*SIZES[0])
+
+    def test_1920x1080(self):
+        self.check_size(*SIZES[1])
 
 
 class TopFreqSampleTest(unittest.TestCase):

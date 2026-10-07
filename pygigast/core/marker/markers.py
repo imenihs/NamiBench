@@ -73,10 +73,22 @@ class LevelOffset:
 
 @dataclass(frozen=True)
 class ThresholdSetting:
-    """しきい値との交点の設定。side は analysis.SIDE_BELOW / SIDE_ABOVE。"""
+    """しきい値との交点の設定。side は analysis.SIDE_BELOW / SIDE_ABOVE。
+
+    fmt はしきい値を決めたときのトレースの表示の形式（設計R §3: db・gamma・swr）。形式を変えたら、同じ反射の大きさを
+    いまの形式の値に直して探す・出す（SWR 2 で決めたしきい値は |Γ| では 0.33。数字のまま別の意味にしない）。
+    power は電力のトレース（dBm・dBμV など）で決めたしきい値か。電力の単位・外部補正を替えたときに同じだけずらすのは
+    これだけ（設計書 O §1.4。比の dB・|Γ|・SWR のしきい値は電力の単位に関係しない）。
+    """
 
     level: float
     side: str
+    fmt: str = an.formats.DB
+    power: bool = False
+
+    def level_in(self, fmt: str) -> float:
+        """fmt の形式で言ったしきい値。"""
+        return an.formats.convert_value(self.level, self.fmt, fmt)
 
 
 @dataclass
@@ -573,17 +585,26 @@ class MarkerTable:
         return rows
 
     @staticmethod
-    def _level_offset_rows(m: Marker, r: dict) -> list[dict]:
+    def _level_offset_rows(m: Marker, r: dict, v: Optional[TraceView]) -> list[dict]:
+        """レベルのオフセットのカーソル。ずれは dB（設計G §3.5 の ±ΔdB）。表示の形式が |Γ|・SWR のトレースでは、
+        元のマーカーの dB からずらした位置を形式の値で出す（設計R §3）。"""
         rows = []
+        base_db = an.db_at(v, r["idx"]) if v is not None and r.get("idx") is not None else None
         for i, off in enumerate(m.level_offsets, start=1):
             for s in off.sign.signs():
                 d = s * off.delta_db
+                if r["level"] is None:
+                    level = None
+                elif v is not None and v.fmt != an.formats.DB and base_db is not None:
+                    level = v.display(base_db + d)
+                else:
+                    level = r["level"] + d
                 rows.append({
                     "id": f"{m.id}.l{i}{'+' if s > 0 else '-'}",
                     "sign": off.sign.value,
                     "offset_db": d,
-                    "status": ST_OK if r["level"] is not None else ST_PARENT_UNAVAILABLE,
-                    "level": None if r["level"] is None else r["level"] + d,
+                    "status": ST_OK if level is not None else ST_PARENT_UNAVAILABLE,
+                    "level": level,
                     "unit": r["unit"],
                 })
         return rows
@@ -602,12 +623,17 @@ class MarkerTable:
         bws: list[dict] = []
         results: list[an.Band] = []
         for n in m.bandwidth_n_db:
+            line_level = None
             if v is None or r["idx"] is None:
                 b = an.Band(r["status"], an.Edge(r["status"]), an.Edge(r["status"]))
             else:
                 b = an.n_db_bandwidth(v, r["idx"], n, m.polarity)  # 谷のマーカーは N dB 上がる点（設計G §3.8）
+                base = an.db_at(v, r["idx"])
+                if base is not None:
+                    # 自動の線（G §3.6）の横線: 探した dB の高さを表示の形式の値で（|Γ|・SWR でも同じ高さ: 設計R §3）
+                    line_level = v.display(base + (n if m.polarity == an.DIP else -n))
             results.append(b)
-            bws.append({"n_db": n, **self._band_dict(b)})
+            bws.append({"n_db": n, **self._band_dict(b), "line_level": line_level})
         shape = None
         if len(results) == 2 and all(b.status == an.OK and b.width_hz for b in results):
             # シェープファクタ = 大きい N の帯域幅 ÷ 小さい N の帯域幅（例 60dB ÷ 3dB）
@@ -615,11 +641,15 @@ class MarkerTable:
             shape = pairs[1][1].width_hz / pairs[0][1].width_hz
         thr = None
         if m.threshold is not None:
+            # いまのトレースの表示の形式で言ったしきい値（決めたときの形式と違えば直す: 設計R §3）
+            fmt = v.fmt if v is not None else m.threshold.fmt
+            level = m.threshold.level_in(fmt)
             if v is None or r["idx"] is None:
                 b = an.Band(r["status"], an.Edge(r["status"]), an.Edge(r["status"]))
             else:
-                b = an.threshold_band(v, r["idx"], m.threshold.level, m.threshold.side)
-            thr = {"level": m.threshold.level, "side": m.threshold.side, **self._band_dict(b)}
+                b = an.threshold_band(v, r["idx"], level, m.threshold.side)
+            shown = level if fmt == m.threshold.fmt else round(level, an.formats.threshold_decimals(fmt))
+            thr = {"level": shown, "side": m.threshold.side, **self._band_dict(b)}
         return bws, shape, thr
 
     def snapshot(self, views: Views) -> dict:
@@ -650,7 +680,7 @@ class MarkerTable:
                 "ref": m.ref,
                 "delta": None if m.ref is None else self._delta(r, reads.get(m.ref)),
                 "freq_offsets": self._freq_offset_rows(m, r, v),
-                "level_offsets": self._level_offset_rows(m, r),
+                "level_offsets": self._level_offset_rows(m, r, v),
                 "bandwidth": bws,
                 "shape_factor": shape,
                 "threshold": thr,
@@ -743,7 +773,8 @@ def marker_to_def(m: Marker) -> dict:
         "freq_offsets": [{"sign": o.sign.value, "delta_hz": int(o.delta_hz)} for o in m.freq_offsets],
         "level_offsets": [{"sign": o.sign.value, "delta_db": float(o.delta_db)} for o in m.level_offsets],
         "bandwidth_n_db": [float(x) for x in m.bandwidth_n_db],
-        "threshold": None if m.threshold is None else {"level": m.threshold.level, "side": m.threshold.side},
+        "threshold": None if m.threshold is None else {"level": m.threshold.level, "side": m.threshold.side,
+                                                       "format": m.threshold.fmt, "power": m.threshold.power},
         "polarity": m.polarity,
     }
 
@@ -765,5 +796,13 @@ def marker_from_def(d: dict) -> Marker:
         freq_offsets=[FreqOffset(Sign(o["sign"]), int(o["delta_hz"])) for o in d.get("freq_offsets", [])],
         level_offsets=[LevelOffset(Sign(o["sign"]), float(o["delta_db"])) for o in d.get("level_offsets", [])],
         bandwidth_n_db=tuple(float(x) for x in d.get("bandwidth_n_db", [])),
-        threshold=None if th is None else ThresholdSetting(float(th["level"]), str(th["side"])),
+        threshold=None if th is None else _threshold_from_def(th),
     )
+
+
+def _threshold_from_def(th: dict) -> ThresholdSetting:
+    """しきい値の置き方を戻す。形式の無い前の版は dB、電力かどうかの無い前の版は dB の形式なら電力として扱う
+    （前の版は電力の単位を替えると、しきい値を電力として同じだけずらしていた）。"""
+    fmt = th.get("format") if an.formats.is_format(th.get("format")) else an.formats.DB
+    power = th["power"] if isinstance(th.get("power"), bool) else fmt == an.formats.DB
+    return ThresholdSetting(float(th["level"]), str(th["side"]), fmt, power)

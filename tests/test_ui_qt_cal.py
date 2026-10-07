@@ -56,6 +56,21 @@ class CalUiTest(UiBase):
         d.close()
         self.wait(lambda: self.state()["calibration_work"] is None, what="閉じたら作業も閉じる")
 
+    def test_opens_while_sweeping(self):
+        # 掃引中は作業ができる前の状態（作業なし）が次々に届く。それで窓を閉じない（窓は作業ができてから出す）
+        self.connect_sim()
+        self.cmd("run", mode="continuous")
+        for _ in range(5):
+            self.menu_action("cal_freq").trigger()
+            d = self.win.cal_window
+            d.apply_state({**self.win.state, "calibration_work": None})  # 作業ができる前の状態が先に届いた
+            self.wait(lambda: d.isVisible() and d.v is not None, what="窓が出る")
+            self.pump(0.3)
+            self.assertTrue(d.isVisible())
+            d.close()
+            self.wait(lambda: self.state()["calibration_work"] is None, what="閉じたら作業も閉じる")
+        self.cmd("stop")
+
     def test_frequency_response_flow(self):
         self.connect_sim()
         d = self.open("freq")
@@ -191,6 +206,27 @@ class CalUiTest(UiBase):
         d.btn_measure.click()
         self.wait(lambda: d.v["points"][0]["status"] == "measured", timeout=30, what="確かめて入れる")
         self.assertTrue(any(cal_view.C["confirm_big"].split("{")[0] in t for t in self.confirm_asked))
+
+    def test_pending_from_another_screen_is_asked_on_open(self):
+        # Web で確かめ待ちまで進めた作業を、Qt の窓を開いたときに聞く（同じ作業を映す: K §4.6）
+        self.connect_sim()
+        p = self.root / "gigast.txt"
+        p.write_bytes(build_legacy_bytes())
+        self.cmd("import_legacy_calibration", path=str(p), serial="SIM00001")
+        work = self.cmd("cal_open", kind="freq")["calibration_work"]
+        idx = work["current"]
+        raw = work["points"][idx]
+        before, f = raw["before_db"], raw["measure_hz"]
+        self.dev.config.signals = [(f, -20.0 - before + 1.0 + 20.0 * f / 12e9)]
+        self.cmd("cal_measure")
+        self.wait(lambda: (self.state()["calibration_work"] or {}).get("pending") is not None, timeout=30,
+                  what="確かめ待ち")
+        self.confirm_answer = True
+        n0 = len(self.confirm_asked)
+        self.menu_action("cal_freq").trigger()
+        self.wait(lambda: len(self.confirm_asked) > n0, what="開いたら聞く")
+        self.assertIn(cal_view.C["confirm_big"].split("{")[0], self.confirm_asked[-1])
+        self.wait(lambda: self.state()["calibration_work"].get("pending") is None, what="答えた")
 
     def test_rbw_nf_and_legacy_pages(self):
         self.connect_sim()

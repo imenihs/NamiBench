@@ -124,6 +124,9 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
         "points_setting": a.points_setting,
         "tail_gap": bool(a.tail_gap),
         "warnings": list(a.warnings),
+        # 1点あたりの時間の見積もり（秒）。ゼロスパンの区間の各点の時刻 = 掃引の開始時刻 +（前置き + 点番号）× これ
+        # （設計N §1。機器が時刻を返さないので推定）。前の版の条件には無い（読むときは 0）
+        "point_time_s": float(a.point_time_s),
     }
 
 
@@ -153,6 +156,7 @@ def adopted_from_dict(d: dict) -> AdoptedSweep:
         points_setting=d.get("points_setting"),
         tail_gap=bool(d.get("tail_gap", False)),
         warnings=tuple(d.get("warnings", ())),
+        point_time_s=float(d.get("point_time_s") or 0.0),
     )
 
 

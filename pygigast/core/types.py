@@ -173,6 +173,9 @@ class AdoptedSweep:
     image_reject_estimates: tuple[tuple[str, float], ...] = ()
     # 正確を選んだときの区間（画面・状態に出す: 設計F §7.3）
     accurate_segments: tuple[SweepSegment, ...] = ()
+    # 1点あたりの時間の見積もり（秒。機種のプロファイル: 設計B §7.2）。ゼロスパンの時間軸の各点の時刻に使う（設計N §1）。
+    # 機器が時刻を返さないので推定。FFT の機器は 0
+    point_time_s: float = 0.0
 
     @property
     def center_hz(self) -> int:

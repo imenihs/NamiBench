@@ -1,4 +1,4 @@
-"""機器の一覧（設計J §4.7）と上段の「直結を 0dB にする」（設計J §4.2・E §6.2）の語と、画面に出す形。
+"""機器の一覧（設計J §4.7）と上段の「基準を取る」（設計J §4.2・E §6.2）の語と、画面に出す形。
 
 コアが返す状態のコード（available・in_use_here …）を利用者の言葉にする（U-22）。texts.py が取り込み、
 /api/v1/texts で Web へも同じ表を配る。行の文（名前・状態・詳細・次の手）は Qt と Web が同じ関数で作る
@@ -65,8 +65,9 @@ TEMPLATES.update({
     "status_conn_none": "● 未接続（機器 → 機器に接続… で選べます）",
     "status_conn_who": " {name}（{port}）",
     "status_conn_who_name": " {name}",
-    # 上段の「直結を 0dB にする」（4-3b）
-    "ref_direct_name": "直結 {time}",
+    # 上段の「基準を取る」（4-3b）。名前の既定はモードと時刻（S11 の「S11 HH:MM」と同じ形）。基準は直結に限らない
+    # （ケーブル・アッテネータ・治具を入れたまま被測定物だけを外して取る）ので「直結」と名付けない
+    "ref_direct_name": "TG {time}",
     "ref_quick_now": "基準: {name}（{time}）",
     "ref_quick_name": "基準: {name}",
     "ref_quick_none": "基準なし（dBm で表示）",
@@ -75,10 +76,9 @@ TEMPLATES.update({
 })
 
 REF_QUICK_LABELS = {
-    "button": "直結を 0dB にする",
-    "tip": "TG 出力と SP 入力をケーブルで直結してから押す。TG の範囲を 1MHz 刻みで1回測り、その値を 0dB の基準にして、すぐ1回測って見せます",
+    "button": "基準を取る",
+    "tip": "TG の範囲を 1MHz 刻みで1回測り、0dB の基準にする",
     "cancel": "やめる",
-    "s11_reason": "S11 の基準はオープン・ショートの2段で取ります（まだ使えません）",
     "taking_reason": "基準を取っています",
 }
 

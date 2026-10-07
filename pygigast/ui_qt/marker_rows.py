@@ -1,15 +1,20 @@
 """マーカー表の行（設計G §3.3・§3.5）。コアのマーカー表（状態の `markers`）を、表・PNG・コピーの行にする。
 
 行の形は png_export の `markers` と同じ（name・kind・trace・freq_hz・value・ref・delta_freq_hz・
-delta_value・child・note）に、画面が使う id・parent・unit・status を足したもの。
+delta_value・child・note）に、画面が使う id・parent・unit・status・x_kind を足したもの。
 表示・コピー・PNG の3つが同じ行から作られるので、どこで見ても同じ中身になる（U-09）。
+
+ゼロスパン（x_kind "time"）では、位置（freq_hz・delta_freq_hz）はマイクロ秒の時間（設計N §1）。列は「時間 (ms)」で、
+区間の最大・最小・平均の行（kind "interval"）を XY カーソルの後に足す。
 """
 from __future__ import annotations
 
 from typing import Optional
 
 from ..core.units import format_freq
+from ..core.trace.formats import delta_cell, value_cell
 from . import texts
+from .texts_zerospan import ZERO_SPAN_TEXTS as ZT
 from ..core.report_layout import freq_decimals as _freq_decimals
 
 COLUMNS = texts.MARKER_COLUMNS
@@ -79,8 +84,43 @@ def function_line(level: Optional[float], b: dict) -> Optional[dict]:
     return {"level": float(level), "freqs_hz": freqs}
 
 
+def columns(x_kind: str = "freq") -> tuple:
+    """マーカー表の列の名前。時間軸（ゼロスパン）は位置の列が時間（設計N §1）。"""
+    if x_kind != "time":
+        return COLUMNS
+    cols = list(COLUMNS)
+    cols[COL_FREQ], cols[COL_DFREQ] = ZT["col_time"], ZT["col_dtime"]
+    return tuple(cols)
+
+
+def rows_x_kind(rows: list[dict]) -> str:
+    return "time" if any(r.get("x_kind") == "time" for r in rows) else "freq"
+
+
+def interval_rows(iv: Optional[dict]) -> list[dict]:
+    """区間の最大・最小・平均（パワー平均）の行（設計N §1）。表示中のトレースごとに3行。位置は最大・最小の点の時間。
+
+    区間（X1〜X2・表示範囲）は「基準」の列に出す（注意の列は注意だけ: U-25。点が無いときだけ「値なし」）。
+    """
+    if not iv:
+        return []
+    rng = ZT["range_xy"] if iv.get("range") == "xy" else ZT["range_window"]
+    out = []
+    for r in iv.get("rows") or []:
+        n = r.get("trace")
+        for key, name, x, v in (("max", ZT["row_max"], r.get("max_us"), r.get("max")),
+                                ("min", ZT["row_min"], r.get("min_us"), r.get("min")),
+                                ("avg", ZT["row_avg"], None, r.get("avg"))):
+            ok = v is not None
+            out.append({"id": f"I{n}.{key}", "parent": None, "name": name, "kind": "interval", "trace": n,
+                        "freq_hz": x if ok else None, "value": v, "unit": r.get("unit"), "ref": rng,
+                        "delta_freq_hz": None, "delta_value": None, "child": False,
+                        "note": "" if ok else texts.MARKER_STATUS["no_value"], "status": "ok" if ok else "no_value"})
+    return out
+
+
 def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
-    """マーカー表の行（親の下に子の行: オフセットのカーソル・機能の結果）と XY カーソル。"""
+    """マーカー表の行（親の下に子の行: オフセットのカーソル・機能の結果）と XY カーソル、ゼロスパンなら区間の行。"""
     rows: list[dict] = []
     for m in (snap or {}).get("markers", []):
         mid = m["id"]
@@ -122,12 +162,15 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
         level = m.get("level") if status == "ok" else None
         for b in m.get("bandwidth") or []:
             n_db = float(b["n_db"])
+            # 横線の高さはコアが表示の形式の値で出す（|Γ|・SWR でも探した dB の高さ: 設計R §3）。無ければ値 ∓ N
+            line_level = b["line_level"] if "line_level" in b else (
+                None if level is None else level + (n_db if dip else -n_db))
             rows.append({
                 "id": f"{mid}.bw{b['n_db']:g}", "parent": mid, "name": texts.w("row_bw", m=mid, n=f"{b['n_db']:g}"),
                 "kind": "function", "trace": m.get("trace"), "freq_hz": None, "value": None,
                 "unit": m.get("unit"), "ref": None, "delta_freq_hz": None, "delta_value": None, "child": True,
                 "note": _band_note(b), "status": b.get("status"),
-                "line": function_line(None if level is None else level + (n_db if dip else -n_db), b),
+                "line": function_line(None if level is None else line_level, b),
             })
         if m.get("shape_factor") is not None:
             rows.append({
@@ -147,6 +190,11 @@ def rows_from_snapshot(snap: Optional[dict]) -> list[dict]:
                 "line": function_line(None if level is None else th["level"], th),
             })
     rows += xy_rows((snap or {}).get("xy") or {})
+    xk = (snap or {}).get("x_kind") or "freq"
+    if xk == "time":
+        rows += interval_rows((snap or {}).get("interval"))
+    for r in rows:
+        r["x_kind"] = xk
     return rows
 
 
@@ -176,23 +224,27 @@ def format_rows(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int
 
     freq_offset_hz は表示の周波数オフセット（設計O）。周波数の列は測った周波数に足した値（Δ周波数は変わらない）。
     """
-    off = int(freq_offset_hz or 0)
+    time = rows_x_kind(rows) == "time"
+    off = 0 if time else int(freq_offset_hz or 0)  # 時間軸に周波数オフセットは当てない（設計O・N §1）
     if off:
         rows = [{**r, "freq_hz": r["freq_hz"] + off} if r.get("freq_hz") is not None else r for r in rows]
     freqs = [r.get("freq_hz") for r in rows] + [r.get("delta_freq_hz") for r in rows]
     d = _freq_decimals(f for f in freqs if f is not None)
+    # 位置の列: 周波数は MHz（全部の行で桁をそろえる）、時間は ms の小数3桁（マイクロ秒まで）
+    scale, d = (1e3, 3) if time else (1e6, d)
     out = []
     for r in rows:
         f, v, df, dv = r.get("freq_hz"), r.get("value"), r.get("delta_freq_hz"), r.get("delta_value")
         unit = r.get("unit") or default_unit
+        # 値の桁と Δ値の書き方は単位で決める（|Γ| は小数3桁・|Γ|・SWR の差は単位を添える: 設計R §3。PNG の表と同じ関数）
         out.append([
             ("  " if r.get("child") else "") + str(r.get("name", "")),
             str(r["trace"]) if r.get("trace") is not None else "",
-            f"{f / 1e6:.{d}f}" if f is not None else "",
-            f"{v:.2f} {unit}" if v is not None else "",
+            f"{f / scale:.{d}f}" if f is not None else "",
+            value_cell(v, unit),
             str(r.get("ref") or ""),
-            f"{df / 1e6:+.{d}f}" if df is not None else "",
-            f"{dv:+.2f}" if dv is not None else "",
+            f"{df / scale:+.{d}f}" if df is not None else "",
+            delta_cell(dv, unit, db_offset=r.get("kind") == "level_cursor" and bool(r.get("child"))),
             str(r.get("note") or ""),
         ])
     return out
@@ -200,17 +252,24 @@ def format_rows(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int
 
 def to_tsv(rows: list[dict], default_unit: str = "dBm", freq_offset_hz: int = 0) -> str:
     """タブ区切りの表（見出し付き。子の行と機能の結果も含める: G §3.3・§3.5）。"""
-    lines = ["\t".join(COLUMNS)]
+    lines = ["\t".join(columns(rows_x_kind(rows)))]
     for cells in format_rows(rows, default_unit, freq_offset_hz):
         cells = [c.strip() for c in cells]
         lines.append("\t".join(cells))
     return "\n".join(lines) + "\n"
 
 
-def png_rows(rows: list[dict], lines: bool = True) -> list[dict]:
-    """PNG に渡す行。lines は機能の線（G §3.6）を描くか（画面で出していないなら PNG にも描かない）。"""
-    keys = ("name", "kind", "trace", "freq_hz", "value", "unit", "ref", "delta_freq_hz", "delta_value", "child", "note")
-    return [{k: r.get(k) for k in keys} | {"line": r.get("line") if lines else None} for r in rows]
+def png_rows(rows: list[dict], lines: bool = True, axis_unit: Optional[str] = None) -> list[dict]:
+    """PNG に渡す行。lines は機能の線（G §3.6）を描くか（画面で出していないなら PNG にも描かない）。
+
+    axis_unit を渡すと、縦軸と単位の違う（描いていない）トレースの行に hidden を付ける（表には出し、グラフには
+    描かない: 画面と同じ。設計R §3）。
+    """
+    keys = ("id", "name", "kind", "trace", "freq_hz", "value", "unit", "ref", "delta_freq_hz", "delta_value", "child",
+            "note", "x_kind")
+    return [{k: r.get(k) for k in keys} | {"line": r.get("line") if lines else None,
+                                           "hidden": bool(axis_unit and r.get("unit") and r["unit"] != axis_unit)}
+            for r in rows]
 
 
 # ------------------------------------------------------------------ 行を消す・セルを直す（G §3.7。Qt と Web で同じ決まり）
@@ -259,14 +318,16 @@ def row_ops(r: dict, snap: Optional[dict]) -> list[Optional[dict]]:
     """
     rid = r["id"]
     if r.get("kind") == "marker" and not r.get("parent"):
+        # ゼロスパンの位置は時間なので、周波数の条件（Center・Start/Stop）にはできない（設計N §1。理由: U-08）
+        freq_only = ZT["freq_only"] if r.get("x_kind") == "time" else None
         return [
             {"name": "row_center", "text": texts.LABELS["row_center"], "cmd": "marker_to",
-             "args": {"id": rid, "target": "center"}, "why": None},
+             "args": {"id": rid, "target": "center"}, "why": freq_only},
             {"name": "row_ref", "text": texts.LABELS["row_ref"], "cmd": "marker_to",
              "args": {"id": rid, "target": "ref"}, "why": None},
             {"name": "row_span", "text": texts.MENU_ITEMS["marker_span"], "cmd": "marker_to",
              "args": {"id": rid, "target": "span"},
-             "why": None if r.get("ref") else texts.REASON_TEXTS["delta_ref"]},
+             "why": freq_only or (None if r.get("ref") else texts.REASON_TEXTS["delta_ref"])},
             None,
             {"name": "row_remove", "text": texts.w("row_remove", m=rid), "cmd": "marker_remove", "args": {"id": rid},
              "why": None},
@@ -288,17 +349,20 @@ def edit_spec(r: dict, col: int, rows: list[dict], snap: Optional[dict]) -> Opti
     （向き付き）／X1・X2: 周波数、X2 の Δ周波数（X1 + Δ）／Y1・Y2: 値、Y2 の Δ値（Y1 + Δ）。マーカーの値は直せない
     """
     rid, kind = r["id"], r.get("kind")
+    # ゼロスパンの位置は時間（ms で打つ。設計N §1）。周波数オフセットは引かない
+    pos = "time" if r.get("x_kind") == "time" else "freq"
+    shifted = pos == "freq"
 
     def spec(cmd, args, arg, parse, base=0, minus_offset=False):
         return {"cmd": cmd, "args": args, "arg": arg, "parse": parse, "base": base, "minus_offset": minus_offset}
 
     if kind == "marker" and not r.get("parent"):
         if col == COL_FREQ:
-            return spec("marker_set", {"id": rid}, "freq_hz", "freq", minus_offset=True)
+            return spec("marker_set", {"id": rid}, "freq_hz", pos, minus_offset=shifted)
         if col == COL_DFREQ and r.get("ref"):
             ref = next((x for x in rows if x["id"] == r["ref"]), None)
             if ref is not None and ref.get("freq_hz") is not None:
-                return spec("marker_set", {"id": rid}, "freq_hz", "freq", base=int(ref["freq_hz"]))
+                return spec("marker_set", {"id": rid}, "freq_hz", pos, base=int(ref["freq_hz"]))
         return None
     if r.get("offset"):
         typ, idx = r["offset"]
@@ -308,9 +372,9 @@ def edit_spec(r: dict, col: int, rows: list[dict], snap: Optional[dict]) -> Opti
         return None
     xy = (snap or {}).get("xy") or {}
     if rid in ("X1", "X2") and col == COL_FREQ:
-        return spec("set_xy", {}, XY_KEYS[rid], "freq", minus_offset=True)
+        return spec("set_xy", {}, XY_KEYS[rid], pos, minus_offset=shifted)
     if rid == "X2" and col == COL_DFREQ and xy.get("x1_hz") is not None:
-        return spec("set_xy", {}, "x2_hz", "freq", base=int(xy["x1_hz"]))
+        return spec("set_xy", {}, "x2_hz", pos, base=int(xy["x1_hz"]))
     if rid in ("Y1", "Y2") and col == COL_VALUE:
         return spec("set_xy", {}, XY_KEYS[rid], "db")
     if rid == "Y2" and col == COL_DVALUE and xy.get("y1") is not None:
@@ -320,9 +384,11 @@ def edit_spec(r: dict, col: int, rows: list[dict], snap: Optional[dict]) -> Opti
 
 def edit_command(spec: dict, text: str, freq_offset_hz: int = 0) -> tuple[str, dict]:
     """打った文字を命令にする（読めない文字は ParseError）。Web の app.js も同じ計算をする。"""
-    from ..core.units import parse_db, parse_freq_hz
+    from ..core.units import parse_db, parse_freq_hz, parse_time_us
 
-    if spec["parse"] == "freq":
+    if spec["parse"] == "time":
+        value = int(spec["base"]) + parse_time_us(text)
+    elif spec["parse"] == "freq":
         v = parse_freq_hz(text) - (freq_offset_hz if spec["minus_offset"] else 0)
         value = int(spec["base"]) + v
     else:

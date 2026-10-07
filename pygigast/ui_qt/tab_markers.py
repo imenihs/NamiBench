@@ -5,6 +5,8 @@
 - マーカーの機能: N dB 帯域幅（N を2つでシェープファクタ）・しきい値との交点。dB の欄は打てるドロップダウン（G §3.6）。
   結果の線をグラフに出すかの切り替え（コアの表示の設定 view.function_lines）
 - XY カーソル: X1・X2（周波数）・Y1・Y2（レベル）。トレースに載らない
+- ゼロスパン（設計N §1）: マーカーと X1・X2 の欄は時間（ms）。周波数を前提にする欄（Center へ・Start/Stop へ・
+  周波数のオフセット・マーカーの機能）は理由付きで止める（U-08。理由は screen_model.zero_span_view: Web と同じ）
 - ピークの一覧と「P に登録」・「上位 N 個に P を置く」。山／谷はマーカー表の上の切り替えと同じ選択（G §3.8）。
   基準は電力でノイズフロア・基準との比で最大（P §9.7。欄の名前・差の列・見つけた数の行は peak_view で Web と同じ）
 - 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05。機能と XY カーソルはチェックボックスが名前）
@@ -29,8 +31,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.units import ParseError, format_freq, parse_db, parse_freq_hz
-from . import peak_view, sizes, texts, widget_sync
+from ..core.trace import formats
+from ..core.units import ParseError, format_freq, format_time_us, parse_db, parse_freq_hz
+from . import peak_view, screen_model, screen_s11, sizes, texts, widget_sync
 from .fields import (BANDWIDTH_CHOICES, BANDWIDTH_RANGE, FLOOR_CHOICES, FLOOR_RANGE, REF_CHOICES, THRESHOLD_RANGE,
                      DbField, FreqField, LocalDbChoiceField)
 from .marker_rows import function_lines_on
@@ -77,6 +80,7 @@ class MarkerTab(QWidget):
         form.addRow(self.sel_label)
         self.freq = FreqField(L["freq"], self._set_freq, big=False)
         form.addRow(self.freq.name, self.freq)
+        self._sel_form = form
         self.trace = QComboBox()
         for n in (1, 2, 3, 4):
             self.trace.addItem(texts.w("trace_n", n=n), n)
@@ -158,6 +162,10 @@ class MarkerTab(QWidget):
         self.function_lines.setChecked(True)
         self.function_lines.toggled.connect(lambda on: win.call("set_view", function_lines=bool(on)))
         gl.addWidget(self.function_lines)
+        self.func_note = QLabel("")  # ゼロスパンでは使わない理由（U-08）。使えるときは出さない（U-15）
+        self.func_note.setObjectName("dim")
+        self.func_note.hide()
+        gl.addWidget(self.func_note)
         self.g_func = g
         lay.addWidget(g)
 
@@ -251,12 +259,24 @@ class MarkerTab(QWidget):
         self._marker = marker
         self._snap = snap
         reason = None if marker else REASON_NO_MARKER
-        for w in (self.freq, self.trace, self.ref, self.to_center, self.to_ref, self.to_span, self.remove,
-                  self.g_offset, self.func_body):
+        # ゼロスパン（設計N §1）: 位置は時間。周波数を前提にする欄は理由付きで止める
+        freq_only = screen_model.zero_span_view(self.win.state)["freq_only"]
+        time = freq_only is not None
+        for w in (self.freq, self.trace, self.ref, self.to_ref, self.remove, self.g_offset):
             set_enabled(w, reason)
+        set_enabled(self.to_center, reason or freq_only)
+        set_enabled(self.func_body, reason or freq_only)
+        self.func_note.setText(freq_only or "")
+        self.func_note.setVisible(time)
+        self._apply_time_axis(time, freq_only)
         unit = self.win.display_unit()
-        # しきい値の一覧は REF と同じく、いまの縦軸の単位で出す（G §3.6）
-        self.th_level.set_unit(unit)
+        # しきい値の一覧は REF と同じく縦軸の単位で出す（G §3.6）。選んでいるマーカーがあればそのトレースの単位
+        # （|Γ|・SWR のトレースなら、その値の一覧と範囲: 設計R §3）
+        th_unit = (marker or {}).get("unit") or unit
+        spec = screen_s11.threshold_spec(th_unit)
+        self.th_level.set_unit(th_unit)
+        if self.th_level.set_spec(spec["choices"], spec["signed"], spec["lo"], spec["hi"], spec["decimals"]):
+            self.th_level.set_value(spec["default"])  # 単位の種類が変わったら、その単位の初期値から
         off = texts.freq_offset_of(self.win.state)  # 周波数の欄は換算後の周波数（設計O）
         self.freq.set_offset(off)
         for k in ("x1_hz", "x2_hz"):
@@ -266,8 +286,8 @@ class MarkerTab(QWidget):
             set_enabled(self.track, reason)
         else:
             kind = texts.MARKER_KINDS.get(marker["kind"], marker["kind"])
-            val = f"{marker['level']:.2f} {marker.get('unit') or unit}" if marker.get("level") is not None else \
-                texts.MARKER_STATUS.get(marker.get("status"), "")
+            val = screen_s11.value_text(marker["level"], marker.get("unit") or unit) if marker.get("level") is not None \
+                else texts.MARKER_STATUS.get(marker.get("status"), "")
             self.sel_label.setText(texts.w("selected_text", id=marker["id"], kind=kind, trace=marker["trace"], value=val))
             if marker.get("freq_hz") is not None:
                 self.freq.set_hz(int(marker["freq_hz"]))
@@ -276,7 +296,7 @@ class MarkerTab(QWidget):
             # 一覧を開いている間は組み替えない（閉じたときに最新の状態で入れる）
             widget_sync.set_items(self.ref, [(L["none"] if i is None else i, i) for i in ids])
             widget_sync.set_data(self.ref, marker.get("ref") if marker.get("ref") else None)
-            set_enabled(self.to_span, None if marker.get("ref") else texts.REASON_TEXTS["delta_ref"])
+            set_enabled(self.to_span, freq_only or (None if marker.get("ref") else texts.REASON_TEXTS["delta_ref"]))
             set_enabled(self.track, None if marker["kind"] == "P" else REASON_TRACK_M)
             widget_sync.set_checked(self.track, bool(marker.get("peak_track")))
             if self._fn_pending == 0:  # 送った機能の戻りを待つ間は書き直さない（_send_function）
@@ -291,11 +311,31 @@ class MarkerTab(QWidget):
                 f.set_unit(unit)
             if v is not None:
                 f.set_hz(int(v)) if isinstance(f, FreqField) else f.set_value(float(v))
-        self.dx.setText(f"ΔX = {format_freq(int(xy['dx_hz']))}" if xy.get("dx_hz") is not None else "")
-        self.dy.setText(f"ΔY = {xy['dy']:+.2f} dB" if xy.get("dy") is not None else "")
+        if xy.get("dx_hz") is None:
+            self.dx.setText("")
+        else:
+            self.dx.setText(f"ΔX = {format_time_us(xy['dx_hz']) if time else format_freq(int(xy['dx_hz']))}")
+        self.dy.setText(f"ΔY = {formats.delta_cell(xy['dy'], unit)}" + ("" if formats.is_linear_unit(unit) else " dB")
+                        if xy.get("dy") is not None else "")
         # 空の行を出さない（U-15）
         self.dx.setVisible(bool(self.dx.text()))
         self.dy.setVisible(bool(self.dy.text()))
+
+    def _apply_time_axis(self, time: bool, freq_only) -> None:
+        """マーカー・X1・X2 の欄を時間（ms）か周波数にする。オフセットの「周波数」は時間軸では選べない（U-08）。"""
+        self.freq.set_time_axis(time)
+        for k in ("x1_hz", "x2_hz"):
+            self.xy_fields[k].set_time_axis(time)
+        label = self._sel_form.labelForField(self.freq)
+        if label is not None:
+            label.setText(texts.ZERO_SPAN_TEXTS["time"] if time else L["freq"])
+        model = self.off_type.model()
+        item = model.item(0) if hasattr(model, "item") else None
+        if item is not None:
+            item.setEnabled(not time)
+            item.setToolTip(freq_only or "")
+        if time and self.off_type.currentData() == "freq":
+            self.off_type.setCurrentIndex(1)
 
     def _apply_functions(self, marker: dict) -> None:
         bws = marker.get("bandwidth") or []
@@ -324,10 +364,10 @@ class MarkerTab(QWidget):
             return
 
         def done(r: dict) -> None:
-            # 最も近い点に移したら、入れた値と違うことを一度だけ知らせる（G §3.1・M-02）
+            # 最も近い点に移したら、入れた値と違うことを一度だけ知らせる（G §3.1・M-02）。ゼロスパンは時間
             if r.get("snapped") and r.get("freq_hz") is not None:
-                self.freq.flash_note(texts.w("marker_snapped", freq=format_freq(
-                    int(r["freq_hz"]) + texts.freq_offset_of(self.win.state))))
+                self.freq.flash_note(texts.w("marker_snapped", freq=screen_model.x_text(self.win.state,
+                                                                                         int(r["freq_hz"]))))
 
         self.win.call("marker_set", on_ok=done, field=self.freq, id=self._marker["id"], freq_hz=int(hz))
 
@@ -382,10 +422,10 @@ class MarkerTab(QWidget):
         if not on:
             self.win.call("set_xy", **{key: None})
             return
-        sw = self.win.state.get("sweep") or {}
         if key.endswith("_hz"):
-            # 置く位置の既定: 表示の 1/4 と 3/4（掴んで動かせる）
-            start, span = sw.get("start_hz", 0), sw.get("span_hz", 0)
+            # 置く位置の既定: 表示の 1/4 と 3/4（掴んで動かせる）。ゼロスパンは時間の軸の 1/4 と 3/4（設計N §1）
+            xa = screen_model.x_axis_view(self.win.state)
+            start, span = int(xa["x0"]), int(xa["x1"]) - int(xa["x0"])
             v = int(start + span * (1 if key == "x1_hz" else 3) // 4)
         else:
             ref, div = self.win.ref_level(), self.win.db_div()

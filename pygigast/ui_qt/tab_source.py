@@ -2,7 +2,8 @@
 
 - SG: 周波数・周波数を変えたら最大・最小保持を消すか（設計F §8）・出力中の表示（ステップ掃引は次の回）
 - ノーマライズの基準（TG・S11）: いまの基準の状態（名前・精度・経過時間・電源の入れ直し前）・一覧と選択・名前・消す・
-  「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 のオープン/ショート
+  TG の「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 の範囲とオープン → ショート
+  （1段ずつ。次に押すボタンを強調し、測ったオープンの時刻と範囲を出す: 設計E §6.5。中身は screen_s11.s11_view）
 - NF（設計M）: ENR（dB の小数）・ENR の表（CSV を読み込む・外す）・NF の増幅度（校正データの倍率）・つなぎ方の窓を開く。
   中身は nf_view.nf_view（Web と同じ）。ENR が無いときの知らせは ENR の欄に、表の範囲の知らせは表の行に付ける（U-25）
 - 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）、ボタンは文字の幅で左から詰める（S-03）
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, Optional
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QLabel,
     QLineEdit,
@@ -25,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import nf_view, sizes, texts, widget_sync
+from . import nf_view, screen_s11, sizes, texts, widget_sync
 from .fields import DbField, FreqField
 from .texts_nf import NF_TEXTS as N
 from .tab_traces import body, outer, set_enabled
@@ -33,11 +35,7 @@ from .tab_traces import body, outer, set_enabled
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-REASON_REF_MODE = texts.ERRORS["mode_not_normalizable"]
-REASON_NOT_CONNECTED = texts.REASON_TEXTS["needs_connection"]
-REASON_TAKING = texts.REASON_TEXTS["taking_reference"]
-# まだ作っていないもの（S11 のオープン・ショート: 設計E §6.5、ステップ掃引: 設計L、NF: 設計M）
-REASON_S11 = texts.NOT_YET["s11"]
+# まだ作っていないもの（ステップ掃引: 設計L）
 REASON_STEP = texts.NOT_YET["step"]
 REASON_NO_SELECTION = texts.REASON_TEXTS["select_reference"]
 L = texts.LABELS
@@ -126,11 +124,25 @@ class SourceTab(QWidget):
         self.take_wide.clicked.connect(lambda: self._take("wide"))
         self.take_fine.clicked.connect(lambda: self._take("fine"))
         v.addLayout(sizes.buttons_row(self.take_wide, self.take_fine))
+        # S11 の基準: オープン → ショートを1段ずつ（設計E §6.5）。範囲はオープンで決め、ショートは同じ範囲で測る
+        form = sizes.form()
+        self.s11_range = QComboBox()
+        self.s11_range.addItem(L["s11_range_wide"], "wide")
+        self.s11_range.addItem(L["s11_range_fine"], "fine")
+        self.s11_range.setToolTip(L["s11_range_tip"])
+        form.addRow(L["s11_range"], self.s11_range)
+        v.addLayout(form)
         self.s11_open = QPushButton(L["s11_open"])
         self.s11_short = QPushButton(L["s11_short"])
-        set_enabled(self.s11_open, REASON_S11)
-        set_enabled(self.s11_short, REASON_S11)
+        self.s11_open.clicked.connect(lambda: self._take_s11("open"))
+        self.s11_short.clicked.connect(lambda: self._take_s11("short"))
         v.addLayout(sizes.buttons_row(self.s11_open, self.s11_short))
+        # 測ったオープンの時刻と範囲（次はショート）。測っていなければ出さない
+        self.s11_state = QLabel("")
+        self.s11_state.setObjectName("dim")
+        self.s11_state.setWordWrap(True)
+        self.s11_state.hide()
+        v.addWidget(self.s11_state)
         self.ref_list = QListWidget()
         # 一覧は数行が見える高さを下限にする（スクロールの中で潰れて行が見えなくならない）
         self.ref_list.setMinimumHeight(REF_LIST_MIN_H)
@@ -152,6 +164,7 @@ class SourceTab(QWidget):
         lay.addStretch(1)
         outer(self, inner)
         self._refs: list[dict] = []
+        self._open_kind: Optional[str] = None
 
     # ---------------------------------------------------------------- NF（設計M）
 
@@ -265,31 +278,34 @@ class SourceTab(QWidget):
             self.f_sg.set_hz(sw["sg_hz"])
         widget_sync.set_checked(self.sg_clear_holds, (st.get("trace_options") or {}).get("sg_clears_holds", True))
         self.sg_state.setText(texts.sg_state_text(self.win.state))
-        n = st.get("normalization") or {}
-        sel = n.get("selected")
-        text = texts.normalization_text(n)
-        if not text:
-            # 無いこと自体が情報（U-15）
-            text = texts.w("ref_selected", name=sel["name"], when=_when(sel.get("taken_at"))) if sel else L["ref_none"]
-        self.ref_state.setText(text)
+        self.ref_state.setText(screen_s11.ref_state_text(st))  # Web と同じ文
         conn = st["connection"]
         serial = (conn.get("identity") or {}).get("serial")
         if serial != self._serial:
             self._serial = serial
             self.refresh()
-        mode = sw["mode"]
-        taking = any(t.get("kind") == "reference_take" for t in st.get("tasks") or [])
-        reason = None
-        if conn["state"] != "connected":
-            reason = REASON_NOT_CONNECTED
-        elif mode not in ("tg", "s11"):
-            reason = REASON_REF_MODE
-        elif taking:
-            reason = REASON_TAKING
-        tip_w = L["take_wide_tip"]
-        tip_f = L["take_fine_tip"]
-        set_enabled(self.take_wide, reason, tip_w)
-        set_enabled(self.take_fine, reason, tip_f)
+        # TG の「広く取る」「いまの条件で細かく取る」（S11 はオープン・ショートの2段で取る: 設計E §6.5）
+        reason = screen_s11.tg_take_reason(st)
+        set_enabled(self.take_wide, reason, L["take_wide_tip"])
+        set_enabled(self.take_fine, reason, L["take_fine_tip"])
+        v = screen_s11.s11_view(st)
+        set_enabled(self.s11_range, v["range_reason"], L["s11_range_tip"])
+        set_enabled(self.s11_open, v["open_reason"], L["s11_open_tip"])
+        set_enabled(self.s11_short, v["short_reason"], v["short_tip"])
+        # 次に押すボタンを強調する（1段ずつ: U-03 の形で示す）
+        for b, step in ((self.s11_open, "open"), (self.s11_short, "short")):
+            on = v["next"] == step and v[step + "_reason"] is None
+            if bool(b.property("primary")) != on:
+                b.setProperty("primary", on)
+                b.style().unpolish(b)
+                b.style().polish(b)
+        self.s11_state.setText(v["state_text"])
+        self.s11_state.setVisible(bool(v["state_text"]))
+        if v["open_kind"] != self._open_kind:
+            # オープンを測ったら、範囲の欄はその範囲を出す（ショートは同じ範囲で測る）
+            self._open_kind = v["open_kind"]
+            if v["open_kind"]:
+                widget_sync.set_data(self.s11_range, v["open_kind"])
         self._update_buttons()
         self._apply_nf(st)
 
@@ -331,6 +347,12 @@ class SourceTab(QWidget):
     def _take(self, kind: str) -> None:
         name = self.take_name.text().strip() or None
         self.win.call("reference_take", kind=kind, name=name, averages=self.take_avg.value())
+
+    def _take_s11(self, standard: str) -> None:
+        """S11 のオープン・ショート（設計E §6.5）。オープンは選んだ範囲、ショートはオープンと同じ範囲（コアが合わせる）。"""
+        name = self.take_name.text().strip() or None
+        kw = {"kind": self.s11_range.currentData()} if standard == "open" else {}
+        self.win.call("reference_take", standard=standard, name=name, averages=self.take_avg.value(), **kw)
 
     def _select(self) -> None:
         rid = self._current_id()

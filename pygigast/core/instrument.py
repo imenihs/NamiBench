@@ -38,6 +38,7 @@ from .instrument_nf import NfMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_view import ViewMixin
+from .instrument_zerospan import ZeroSpanMixin, zero_span_request
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
 from .settings import Settings
@@ -168,8 +169,8 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin,
-                 ViewMixin, NfMixin):
+class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin,
+                 DevicesMixin, ViewMixin, NfMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -227,6 +228,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
         self._last_stop_reason: Optional[str] = None
 
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
+        self._init_zero_span()  # ゼロスパンの流す表示（設計N §1）
         self._init_display(saved if isinstance(saved, dict) else None)
         self._init_nf(saved if isinstance(saved, dict) else None)  # NF の ENR（設計M）
         # 表示の設定・配色・プリセット（設計O・J §4.4）。トレースの値を出す前に要る
@@ -263,6 +265,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
                 # 前回の値。前の版の覚え書きの image_cancel は読み替え、どちらも無ければ機種の初期値（設計F §7.3）
                 image_reject=ir.read_choice(st),
             )
+            req = zero_span_request(req)
             try:
                 restored = self._model.apply(req, base)
             except ValueError:
@@ -578,6 +581,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
         self._worker.start()
         self._load_calibration(ident.serial)
         self._load_saved_reference()
+        self._s11_open_follow(self._adopted)  # 電源を入れ直す前に測ったオープンはショートと組まない（設計E §6.5）
         self._conn = "connected"
         self._cal_refresh()  # 校正の画面が開いていれば、つないだ機器の校正を「前の値」にする（つないだ後に見る）
         self._rtltcp_update_header()
@@ -751,9 +755,14 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, CalMixin, RtlTcpMixin, Rtl
         self._nf_on_mode(old.mode, new.mode)  # NF に初めて入ったら外部機器とつなぎ方を1回知らせる（設計M）
         if changed:
             self._on_sweep_condition(old, new, step_sweep=step_sweep)
+            self._s11_open_follow(new)  # 測ってあるオープンとショートが組めなくなったら捨てて知らせる（設計E §6.5）
             if self._run == "single":
                 self._single_done = 0
             self._push_job()
+        if (old.axis.step_hz == 0) != (new.axis.step_hz == 0):
+            # 横軸が周波数 ⇔ 時間（ゼロスパン）に変わった: マーカー表を切り替えて出し直す（設計N §1）
+            self._rebuild_views()
+            self._refresh_markers()
         self._changed()
 
     def _apply(self, request: SweepRequest) -> dict:
