@@ -37,6 +37,9 @@
   --window-margin: 12px;
   /* チェックボックス・ラジオの印（S-06） */
   --indicator: 14px;
+  /* 上段の掃引の進み具合（J §4.13）: 細い棒の高さと、割合の文字の幅（「100%」が入る「0」の字の数） */
+  --progress-bar-h: 6px;
+  --progress-text-ch: 5;
   /* 入力欄の幅（S-02）: 整数・値（周波数・レベル）・名前・色 */
   --w-int: 78px;
   --w-value: 169px;
@@ -156,6 +159,14 @@ label.disabled { color: var(--axis); cursor: default; }
 .mode-btn { min-width: 0; width: var(--mode-w, auto); }
 .mode-btn.on { background: var(--accent); color: var(--graph-bg); }
 .run-btn.running { background: var(--running); }
+/* 連続・単発・停止と、真上の名前の行の掃引の進み具合（J §4.13）。行の幅はボタンの並びの幅（行は幅を決めない）。
+   出さないときも場所は空けたまま。棒は割合の文字の左の残りに伸ばす */
+.runbox { display: flex; flex-direction: column; }
+.sweep-progress { width: 0; min-width: 100%; }
+.sweep-progress.off { visibility: hidden; }
+.sp-bar { flex: 1 1 0; min-width: 0; height: var(--progress-bar-h); border: 1px solid var(--axis); background: var(--graph-bg); }
+.sp-fill { height: 100%; background: var(--accent); }
+.sp-text { flex: none; width: calc(var(--progress-text-ch) * 1ch); text-align: right; font-size: var(--font-s); white-space: nowrap; }
 
 /* 値の欄（fields.js の num-field）。上段は名前の行（小の段の高さ）＋値。標準の段は欄だけ（名前は左の列） */
 .field { position: relative; display: flex; flex-direction: column; }

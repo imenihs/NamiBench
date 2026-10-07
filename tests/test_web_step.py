@@ -124,7 +124,8 @@ class WebStepServerTest(unittest.TestCase):
         with urllib.request.urlopen(self.srv.base + "/api/v1/state", timeout=20) as resp:
             st = json.loads(resp.read())
         self.assertEqual(st["ui"]["step"]["combine"], "all")
-        self.assertEqual([m["freq_hz"] for m in st["ui"]["leaks"]], [956 * MHZ, 1480 * MHZ, 1980 * MHZ])
+        # イメージ除去「スピード」（初期値）では b3 で動く 956MHz は消える（印は動かない2つだけ）
+        self.assertEqual([m["freq_hz"] for m in st["ui"]["leaks"]], [1480 * MHZ, 1980 * MHZ])
         code, r = self.post("step_sweep_start", {})
         self.assertEqual(code, 200)
         self.wait_idle()
@@ -220,15 +221,21 @@ class WebStepPageTest(unittest.TestCase):
                   " && !gsApp.st.step_sweep.running)", "段ごとの線")
         page.wait("gsApp.status.includes('ステップ掃引が終わりました（4/4 段）')", "終わりの知らせ")
         self.assertEqual(page.ev("gsApp.graphTraces(gsApp.palette).filter((t) => t.steps).length"), 1)
-        # 漏れの印（3つ）と消すチェック
-        page.wait("gsApp.$graph.leaks.length === 3", "漏れの印")
+        # 漏れの印と消すチェック。イメージ除去「スピード」（初期値）は b3 で動く 956MHz が消えるので2つ（1480・1980MHz）、
+        # 「なし」（b3=1 だけ）は 946MHz にも付く（Qt と同じ）
+        page.wait("JSON.stringify(gsApp.$graph.leaks.map((m) => m.freq_hz)) === '[1480000000,1980000000]'", "漏れの印")
+        self.app.call("set_sweep", image_reject="off")
+        page.wait("JSON.stringify(gsApp.$graph.leaks.map((m) => m.freq_hz)) === '[946000000,1480000000,1980000000]'",
+                  "946MHz の印")
+        self.app.call("set_sweep", image_reject="fast")
+        page.wait("gsApp.$graph.leaks.length === 2", "スピードに戻す")
         page.ev("gsApp.tab = 'view'; 1")
         page.settle()
         found += page.problems(".app", f"{w}×{h} 表示")
         page.ev("document.querySelector('[data-field=leak_marks]').click(); 1")
         page.wait("gsApp.$graph.leaks.length === 0", "印を消す")
         page.ev("document.querySelector('[data-field=leak_marks]').click(); 1")
-        page.wait("gsApp.$graph.leaks.length === 3", "印を戻す")
+        page.wait("gsApp.$graph.leaks.length === 2", "印を戻す")
         # ピークの一覧の列
         self.app.call("run", mode="single")
         time.sleep(0.8)

@@ -2,6 +2,8 @@
 
 - 計算（display_marks）: SG・TG のときだけ、機種のプロファイルの漏れの周波数（固定・SG からのずれ）のうち表示範囲に
   入るもの。TG は固定だけ（SG からのずれは掃引に乗らない）。SA・NF・ゼロスパンでは無い。漏れとみなす幅は RBW＋点の間隔
+- b3 で動く漏れ（956MHz は b3=1 で 946MHz: T2）: b3=1 だけを送った掃引（イメージ除去なし・ステップ掃引の間と結果）は
+  946MHz、b3 の両方を合わせた掃引（スピード・正確）は消えるので印を付けない。動かない漏れはいつもそのまま
 - 本体: 状態の internal_leaks・ピークの一覧の行の leak（シミュレータの 1480MHz と SG+1480MHz）・表示の設定 leak_marks
 - 画面の中身（Qt と Web で同じ）: グラフの印（消す設定）・ピークの一覧の列の文字とツールチップ・マウスの位置の読み値
 """
@@ -21,18 +23,34 @@ PROFILE = load_profile(GIGAST_PROFILE_PATH)
 
 class LeakCalcTest(unittest.TestCase):
     def test_modes(self):
+        # b3=1 だけを送った掃引（イメージ除去なし・ステップ掃引）: 956MHz のスプリアスは 946MHz に出る（T2）
         sg = dm.internal_leaks("sg", PROFILE, 500 * MHZ, 0, 3000 * MHZ)
         self.assertEqual([(x["freq_hz"], x["kind"]) for x in sg],
-                         [(956 * MHZ, "fixed"), (1480 * MHZ, "fixed"), (1980 * MHZ, "sg_offset")])
+                         [(946 * MHZ, "fixed"), (1480 * MHZ, "fixed"), (1980 * MHZ, "sg_offset")])
         self.assertEqual(sg[2]["offset_hz"], 1480 * MHZ)
         tg = dm.internal_leaks("tg", PROFILE, 500 * MHZ, 0, 3000 * MHZ)
-        self.assertEqual([x["freq_hz"] for x in tg], [956 * MHZ, 1480 * MHZ])
+        self.assertEqual([x["freq_hz"] for x in tg], [946 * MHZ, 1480 * MHZ])
         self.assertEqual([x["freq_hz"] for x in dm.internal_leaks("s11", PROFILE, None, 0, 3000 * MHZ)],
-                         [956 * MHZ, 1480 * MHZ])
+                         [946 * MHZ, 1480 * MHZ])
         for mode in ("sa", "nf", None):
             self.assertEqual(dm.internal_leaks(mode, PROFILE, 500 * MHZ, 0, 3000 * MHZ), [])
         self.assertEqual(dm.internal_leaks("sg", PROFILE, 500 * MHZ, 500 * MHZ, 500 * MHZ), [])  # ゼロスパン
         self.assertEqual(dm.internal_leaks("sg", {}, 500 * MHZ, 0, 3000 * MHZ), [])  # 漏れを持たない機種
+
+    def test_b3_positions(self):
+        # b3 で動く漏れ（956MHz）は送った b3 で決まる。動かない漏れ（1480MHz・SG + 1480MHz）はいつもそのまま
+        self.assertEqual(dm.b3_shifts(PROFILE), {956 * MHZ: -10 * MHZ})
+        only_b3_1 = [x["freq_hz"] for x in dm.internal_leaks("sg", PROFILE, 500 * MHZ, 900 * MHZ, 2000 * MHZ,
+                                                             b3_both=False)]
+        both = [x["freq_hz"] for x in dm.internal_leaks("sg", PROFILE, 500 * MHZ, 900 * MHZ, 2000 * MHZ,
+                                                        b3_both=True)]
+        self.assertEqual(only_b3_1, [946 * MHZ, 1480 * MHZ, 1980 * MHZ])
+        self.assertEqual(both, [1480 * MHZ, 1980 * MHZ])  # 両方の b3 を合わせると動く漏れは消える
+        self.assertEqual([x["freq_hz"] for x in dm.fixed_leaks(PROFILE, b3_both=False)], [946 * MHZ, 1480 * MHZ])
+        self.assertEqual([x["freq_hz"] for x in dm.fixed_leaks(PROFILE, b3_both=True)], [1480 * MHZ])
+        # 動く量を持たないプロファイル（前の形）は今までどおり
+        old = {"internal_spurs_hz": {"fixed": [956 * MHZ], "sg_offset": []}}
+        self.assertEqual([x["freq_hz"] for x in dm.fixed_leaks(old, b3_both=True)], [956 * MHZ])
 
     def test_range_edges(self):
         # 表示範囲の端ちょうどは入る・1Hz 外は入らない
@@ -62,7 +80,7 @@ class LeakViewTest(unittest.TestCase):
 
     def test_marks_and_toggle(self):
         marks = source_view.leak_marks_view(self.state())
-        self.assertEqual([m["freq_hz"] for m in marks], [956 * MHZ, 1480 * MHZ, 1980 * MHZ])
+        self.assertEqual([m["freq_hz"] for m in marks], [946 * MHZ, 1480 * MHZ, 1980 * MHZ])
         self.assertEqual(marks[1]["tip"], "内部の漏れの可能性 1480 MHz")
         self.assertEqual(marks[2]["tip"], "内部の漏れの可能性 1980 MHz（SG + 1480 MHz）")
         self.assertEqual(marks[0]["near_hz"], 1_180_000)
@@ -103,7 +121,9 @@ class InstrumentLeakTest(InstrumentCase):
         self.call("set_mode", mode="sg", sg_hz=500 * MHZ)
         st = self.single()
         lk = st["internal_leaks"]
-        self.assertEqual([x["freq_hz"] for x in lk["leaks"]], [956 * MHZ, 1480 * MHZ, 1980 * MHZ])
+        # イメージ除去「スピード」（初期値）は b3 の両方を合わせるので、b3 で動く 956MHz のスプリアスは消える（印も無い）
+        self.assertEqual(st["sweep"]["image_reject_used"], "fast")
+        self.assertEqual([x["freq_hz"] for x in lk["leaks"]], [1480 * MHZ, 1980 * MHZ])
         self.assertEqual(lk["tolerance_hz"], st["sweep"]["rbw_hz"] + st["sweep"]["step_hz"])
         pl = self.call("peak_list", trace=1, floor_margin_db=10.0)
         by = {round(p["freq_hz"] / MHZ): p for p in pl["peaks"]}
@@ -140,6 +160,9 @@ class InstrumentLeakTest(InstrumentCase):
         for f in (1880, 1980, 2080):
             self.assertEqual(flagged.get(f), "sg_offset", (f, flagged))
         self.assertEqual(flagged.get(1480), "fixed")
+        # ステップ掃引はいつも b3=1 だけで送る: 結果のトレースの 946MHz の山も漏れ（いまの選択がスピードでも）
+        self.assertEqual(flagged.get(946), "fixed", flagged)
+        self.assertNotIn(956, flagged)
         # 結果のトレースでないものは、いまのモードの決まりに従う（SA では漏れの印を付けない）
         pl = self.call("peak_list", trace=1, floor_margin_db=10.0)
         self.assertTrue(all(p["leak"] is None for p in pl["peaks"]))
@@ -150,8 +173,57 @@ class InstrumentLeakTest(InstrumentCase):
         self.assertIn(1880 * MHZ, f)
         self.call("set_mode", mode="tg")
         f = [x["freq_hz"] for x in self.call("get_state")["internal_leaks"]["leaks"]]
-        self.assertEqual(f, [956 * MHZ, 1480 * MHZ])
+        self.assertEqual(f, [1480 * MHZ])  # スピード（b3 の両方）では 956MHz は消える
+        self.call("set_sweep", image_reject="off")
+        f = [x["freq_hz"] for x in self.call("get_state")["internal_leaks"]["leaks"]]
+        self.assertEqual(f, [946 * MHZ, 1480 * MHZ])
         self.assertTrue(np.all(np.asarray(f) >= 300 * MHZ))
+
+
+class MovingSpurTest(InstrumentCase):
+    """SP 内部のスプリアス 956MHz は b3=1 で 946MHz に動く（T2）。印と一覧の漏れは、送った b3 の位置に付ける。"""
+
+    def setUp(self):
+        super().setUp()
+        self.connect(900 * MHZ, 1100 * MHZ)
+        self.call("set_mode", mode="sg", sg_hz=500 * MHZ)
+
+    def peaks(self, trace=1):
+        pl = self.call("peak_list", trace=trace, floor_margin_db=10.0)
+        return {round(p["freq_hz"] / MHZ): p for p in pl["peaks"]}
+
+    def test_image_reject_off_marks_946(self):
+        self.call("set_sweep", image_reject="off")
+        st = self.single()
+        self.assertEqual([x["freq_hz"] for x in st["internal_leaks"]["leaks"]], [946 * MHZ])
+        by = self.peaks()
+        self.assertIn(946, by)
+        self.assertEqual(by[946]["leak"]["freq_hz"], 946 * MHZ)
+        self.assertEqual(source_view.leak_marks_view(st)[0]["tip"], "内部の漏れの可能性 946 MHz")
+
+    def test_image_reject_both_has_no_moving_spur(self):
+        for choice in ("fast", "accurate"):
+            self.call("set_sweep", image_reject=choice)
+            st = self.single()
+            self.assertEqual(st["internal_leaks"]["leaks"], [], choice)
+            by = self.peaks()
+            self.assertFalse({946, 956} & set(by), (choice, sorted(by)))  # 山そのものが消える
+
+    def test_step_sweep_uses_b3_1_positions(self):
+        # 利用者の選択はスピードでも、ステップ掃引の間は b3=1 だけで送るので 946MHz に印（している間の状態）
+        running = []
+        self.inst.subscribe(lambda k, p: running.append(p["internal_leaks"]["leaks"])
+                            if k == "state" and p["step_sweep"]["running"] else None)
+        self.call("set_step_sweep", start_hz=450 * MHZ, stop_hz=550 * MHZ, step_hz=50 * MHZ, combine="max", trace=2)
+        r = self.call("step_sweep_start")
+        self.wait_task(r["task_id"])
+        self.assertTrue(running)
+        self.assertEqual([x["freq_hz"] for x in running[-1]], [946 * MHZ])
+        # 終わったら選択（スピード）に戻り、動く漏れの印は無くなる
+        self.assertEqual(self.call("get_state")["internal_leaks"]["leaks"], [])
+        # 結果のトレースは b3=1 で測ったもの: 946MHz の山に漏れの印
+        by = self.peaks(trace=2)
+        self.assertEqual(by[946]["leak"]["freq_hz"], 946 * MHZ)
 
 
 if __name__ == "__main__":

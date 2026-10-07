@@ -84,6 +84,11 @@ def progress_view(p: dict) -> dict:
     return p
 
 
+def sweep_progress_view(p: dict) -> dict:
+    """掃引の進み具合（設計J §4.13）に、上段に出す形（Qt と同じ screen_model.sweep_progress_view）を `ui` として足す。"""
+    return {**p, "ui": screen_model.sweep_progress_view(p)}
+
+
 def error_view(err: dict) -> dict:
     """失敗の形（A §4.3）の error に `text` を足す。"""
     e = err.get("error") or {}

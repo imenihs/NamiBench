@@ -268,7 +268,7 @@ class _Client:
         while True:
             await self._wake.wait()
             self._wake.clear()
-            for kind in ("state", "markers"):
+            for kind in ("state", "markers", "sweep_progress"):
                 item = self._latest.pop(kind, None)
                 if item is not None:
                     await self.ws.send_text(item[1])
@@ -297,6 +297,9 @@ class _Hub:
         self._pending: dict[str, dict] = {}
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._markers_seq = 0
+        # 掃引の進み具合（設計J §4.13）。最新の1つだけを送り、途中から繋いだ画面にも送る
+        self._progress_seq = 0
+        self.last_progress: Optional[str] = None
         self.last_state: Optional[dict] = None
         # 測定中のトレース 1〜4 の最新の中身（間引く前）。マウスの位置の読み値（設計G §2）に使う
         self.latest_traces: dict[str, dict] = {}
@@ -363,6 +366,8 @@ class _Hub:
             payload = view.progress_view(payload)
         elif kind == "devices":
             payload = view.devices_view(payload)
+        elif kind == "sweep_progress":
+            payload = view.sweep_progress_view(payload)
         text = dumps({"kind": kind, "payload": payload})
         if kind == "state":
             ver = int(payload.get("version", 0))
@@ -373,6 +378,11 @@ class _Hub:
             self._markers_seq += 1
             for c in self.clients:
                 c.put_latest("markers", self._markers_seq, text)
+        elif kind == "sweep_progress":
+            self._progress_seq += 1
+            self.last_progress = text
+            for c in self.clients:
+                c.put_latest("sweep_progress", self._progress_seq, text)
         else:
             for c in self.clients:
                 c.put_notice(text)
@@ -640,6 +650,8 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
             st = await _await(api.get_state())
             client.put_latest("state", int(st.get("version", 0)),
                               dumps({"kind": "state", "payload": view.state_view(st)}))
+            if hub.last_progress is not None:
+                client.put_latest("sweep_progress", 0, hub.last_progress)  # 届いていれば後の知らせが上書きする
             # 途中から繋いだ画面にも、いま出ているトレースを描かせる
             ids: list = [t["number"] for t in st.get("traces", []) if t.get("has_values") and t.get("visible")]
             ids += [tr["id"] for f in st.get("files", []) for tr in f.get("traces", [])]

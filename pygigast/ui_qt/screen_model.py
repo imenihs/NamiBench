@@ -337,6 +337,23 @@ def ref_quick_view(st: dict) -> dict:
             "progress_text": texts.task_label({**task, "task": task.get("kind")}) if task else ""}
 
 
+# ---------------------------------------------------------------- 上段の掃引の進み具合（設計J §4.13）
+
+def sweep_progress_view(p: Optional[dict]) -> dict:
+    """イベント sweep_progress から、連続・単発・停止の真上の行に出す棒と割合の文字を作る。
+
+    出すかはコアが決める（1画面の見積もりが 1 秒を超える掃引をしている間だけ show）。割合は切り捨てで、
+    100% は画面が更新される掃引の全部が届いたときだけ。出さないときも場所は空けたまま（画面の側）。
+    """
+    p = p or {}
+    total = int(p.get("total") or 0)
+    if not p.get("show") or total <= 0:
+        return {"visible": False, "percent": 0, "text": ""}
+    done = max(0, min(int(p.get("done") or 0), total))
+    percent = done * 100 // total
+    return {"visible": True, "percent": percent, "text": tpl("sweep_progress", percent=percent)}
+
+
 # ---------------------------------------------------------------- 範囲の外・意味の無い区間の帯（設計J §4.8）
 
 # 帯の色（配色トークン: J §4.4）。値が意味を持たない区間は「注意」、読める（低く出るだけ）負の側は控えめな色

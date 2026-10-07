@@ -24,11 +24,12 @@ from collections import deque
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 import numpy as np
 import serial
 
+from ...display_marks import b3_shifts
 from ...types import DeviceDisconnected, DeviceIdentity, Mode
 from ..base import Device
 from ..gigast import protocol
@@ -57,9 +58,8 @@ class SynthConfig:
     noise_ad: tuple[int, int] = (90, 130)
     lo_leak_dbm: float = 1.9  # 0Hz の局発の漏れ（T4・§6.8 の実測に近い値）
     spur_dbm: float = -27.0  # 内部スプリアスのレベル
-    # b3 を立てると動くスプリアス（T2: 956MHz は b3 で 946MHz へ動き、1480MHz は動かない）
-    moving_spurs_hz: tuple[int, ...] = (956_000_000,)
-    b3_spur_shift_hz: int = -10_000_000
+    # b3 を立てると動くスプリアスと動く量は機種のプロファイル（internal_spurs_hz.fixed_b3_shift_hz）から取る
+    # （T2: 956MHz は b3 で 946MHz へ動き、1480MHz は動かない。画面の漏れの印と同じ値を使う）
     sg_dbm: float = -15.0  # SG・TG の出力（直結で受けたときのレベル）
     b3_level_db: float = -1.0  # b3=1 は b3=0 より約1dB 低い（T2）
     nf_hot_db: float = 3.0  # NF の HOT でノイズフロアが上がる量
@@ -132,9 +132,10 @@ class Synth:
         width = ds.sample * ds.sample_inc_units * protocol.UNIT_HZ
         tones: list[tuple[int, float]] = [(0, c.lo_leak_dbm)]
         tones += [(fs, lv + (c.b3_level_db if b3 else 0.0)) for fs, lv in c.signals]
+        shifts = b3_shifts(self.profile)
         for fs in self.profile["internal_spurs_hz"]["fixed"]:
-            if b3 and fs in c.moving_spurs_hz:
-                fs += c.b3_spur_shift_hz
+            if b3 and int(fs) in shifts:
+                fs = int(fs) + shifts[int(fs)]
             tones.append((fs, c.spur_dbm))
         if ds.mode_bits & protocol.MODE_SG:
             tones.append((ds.sg_hz, c.sg_dbm + (c.b3_level_db if b3 else 0.0)))
@@ -445,11 +446,12 @@ class SimulatorDevice(SweepRunner, Device):
             estimated_s=lim.estimated_s * s,
         )
 
-    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str]) -> Exchange:
+    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str],
+                  on_received: Optional[Callable[[int], None]] = None) -> Exchange:
         if self._transport is None:
             raise DeviceDisconnected("切断中")
         try:
-            return self._transport.exchange(request, expected, lim, note)
+            return self._transport.exchange(request, expected, lim, note, on_received)
         except DeviceDisconnected:
             self._transport = None
             raise

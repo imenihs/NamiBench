@@ -218,6 +218,8 @@ TEMPLATES = {
     "source_sg": "SG 出力中 {freq}",
     "source_tg": "TG 出力中",
     "waiting_sweep_end": "いまの掃引の終わりを待っています（残り約 {s} 秒）",
+    # 上段の掃引の進み具合（設計J §4.13）
+    "sweep_progress": "{percent}%",
     "rtl_gain_step": "{db} dB",
     "rtl_ppm_done": "ppm を {old} → {new} にしました（{measured} に見えた信号を {true} として）",
     "rtl_level_done": "利得 {gain} dB のレベルの補正を {offset} dB にしました（{measured} を {true} dBm として）",

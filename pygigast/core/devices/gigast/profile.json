@@ -65,7 +65,9 @@
   "internal_spurs_hz": {
     "fixed": [956000000, 1480000000],
     "sg_offset": [1480000000],
-    "basis": "estimated_from_one_unit"
+    "fixed_b3_shift_hz": {"956000000": -10000000},
+    "basis": "estimated_from_one_unit",
+    "b3_note": "fixed entries are b3=0 positions; fixed_b3_shift_hz moves an entry when b3=1 is sent (956 MHz appears at 946 MHz). Entries without a shift do not move with b3 (1480 MHz, SG + 1480 MHz)"
   },
   "raw": {
     "encoding": "gigast_ad_u16",

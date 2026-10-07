@@ -134,11 +134,14 @@ class Transport:
         # いまの要求の見積もりの終わり（clock の時刻）。残り時間を出すのに使う（設計B §7.2 の停止）
         self.busy_until: Optional[float] = None
 
-    def exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str] = None) -> Exchange:
+    def exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str] = None,
+                 on_received: Optional[Callable[[int], None]] = None) -> Exchange:
         """受信バッファを捨て、32バイトを送り、ちょうど expected バイトを受け取る。
 
         - 上限時間を超えたら受信バッファを捨てて SweepDiscarded（reason は上限の名前）
         - 読み書きの例外は DeviceDisconnected
+        - on_received は届いたバイトの数（ここまでの合計）を、届くたびに受け取る（掃引の進み具合: 設計J §4.13。
+          GigaSt は測った点から順に送り返すので、届いた数がそのまま機器の進み具合になる）
         """
         buf = bytearray()
         first: Optional[float] = None
@@ -161,6 +164,8 @@ class Transport:
                         first = now - t0
                     buf += chunk
                     last = now
+                    if on_received is not None:
+                        on_received(len(buf))
                     if len(buf) >= expected:
                         break
                 if first is None and now - t0 > lim.first_byte_s:

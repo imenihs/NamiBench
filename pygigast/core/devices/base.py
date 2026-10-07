@@ -8,9 +8,12 @@ import abc
 import json
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from ..types import AdoptedSweep, DeviceIdentity, RawSweep
+
+# 1画面の進み具合を受け取る関数 (済んだ量, 全体の量)（設計J §4.13）
+ProgressSink = Callable[[int, int], None]
 
 
 def load_profile(path: Path) -> dict:
@@ -20,7 +23,21 @@ def load_profile(path: Path) -> dict:
 
 
 class Device(abc.ABC):
-    """機器の口。実装は機器ごと（GigaSt・シミュレータ・将来の SDR）。"""
+    """機器の口。実装は機器ごと（GigaSt・シミュレータ・将来の SDR）。
+
+    progress_sink: measure の中で、1画面のうち機器が実際に済ませた量を知らせる先（設計J §4.13）。呼ぶ側（機器
+    スレッド）が入れる。量は機器が返した実際の量で数え、時間からは出さない（機器が止まったら量も止まる）。
+    全体の量は1画面に入る掃引の全部（イメージ除去の回・帯ごとの区間・NF の HOT/COLD）で、最後に済んだ量が
+    全体の量に届いてから measure が戻る。
+    """
+
+    progress_sink: Optional[ProgressSink] = None
+
+    def report_progress(self, done: int, total: int) -> None:
+        """進み具合を知らせる（知らせる先が無ければ何もしない）。"""
+        sink = self.progress_sink
+        if sink is not None:
+            sink(done, total)
 
     @abc.abstractmethod
     def profile(self) -> dict:
