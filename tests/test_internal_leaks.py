@@ -1,0 +1,158 @@
+"""内部の漏れの印（設計L §1.4・P §9.6）の試験。
+
+- 計算（display_marks）: SG・TG のときだけ、機種のプロファイルの漏れの周波数（固定・SG からのずれ）のうち表示範囲に
+  入るもの。TG は固定だけ（SG からのずれは掃引に乗らない）。SA・NF・ゼロスパンでは無い。漏れとみなす幅は RBW＋点の間隔
+- 本体: 状態の internal_leaks・ピークの一覧の行の leak（シミュレータの 1480MHz と SG+1480MHz）・表示の設定 leak_marks
+- 画面の中身（Qt と Web で同じ）: グラフの印（消す設定）・ピークの一覧の列の文字とツールチップ・マウスの位置の読み値
+"""
+import unittest
+
+import numpy as np
+
+from pygigast.core import display_marks as dm
+from pygigast.core.devices.base import load_profile
+from pygigast.core.instrument import GIGAST_PROFILE_PATH
+from pygigast.ui_qt import peak_view, screen_model, source_view, texts
+from tests.instrument_helpers import InstrumentCase
+
+MHZ = 1_000_000
+PROFILE = load_profile(GIGAST_PROFILE_PATH)
+
+
+class LeakCalcTest(unittest.TestCase):
+    def test_modes(self):
+        sg = dm.internal_leaks("sg", PROFILE, 500 * MHZ, 0, 3000 * MHZ)
+        self.assertEqual([(x["freq_hz"], x["kind"]) for x in sg],
+                         [(956 * MHZ, "fixed"), (1480 * MHZ, "fixed"), (1980 * MHZ, "sg_offset")])
+        self.assertEqual(sg[2]["offset_hz"], 1480 * MHZ)
+        tg = dm.internal_leaks("tg", PROFILE, 500 * MHZ, 0, 3000 * MHZ)
+        self.assertEqual([x["freq_hz"] for x in tg], [956 * MHZ, 1480 * MHZ])
+        self.assertEqual([x["freq_hz"] for x in dm.internal_leaks("s11", PROFILE, None, 0, 3000 * MHZ)],
+                         [956 * MHZ, 1480 * MHZ])
+        for mode in ("sa", "nf", None):
+            self.assertEqual(dm.internal_leaks(mode, PROFILE, 500 * MHZ, 0, 3000 * MHZ), [])
+        self.assertEqual(dm.internal_leaks("sg", PROFILE, 500 * MHZ, 500 * MHZ, 500 * MHZ), [])  # ゼロスパン
+        self.assertEqual(dm.internal_leaks("sg", {}, 500 * MHZ, 0, 3000 * MHZ), [])  # 漏れを持たない機種
+
+    def test_range_edges(self):
+        # 表示範囲の端ちょうどは入る・1Hz 外は入らない
+        got = dm.internal_leaks("tg", PROFILE, None, 1480 * MHZ, 1500 * MHZ)
+        self.assertEqual([x["freq_hz"] for x in got], [1480 * MHZ])
+        self.assertEqual(dm.internal_leaks("tg", PROFILE, None, 1480 * MHZ + 1, 1500 * MHZ), [])
+        # SG からのずれが固定の周波数と重なっても1つ（SG 0Hz は無いので 1480 と 2960 で確かめる）
+        got = dm.internal_leaks("sg", {"internal_spurs_hz": {"fixed": [1480 * MHZ], "sg_offset": [0]}},
+                                1480 * MHZ, 0, 3000 * MHZ)
+        self.assertEqual(len(got), 1)
+
+    def test_tolerance_and_match(self):
+        self.assertEqual(dm.leak_tolerance_hz(180_000, 1_000_000), 1_180_000)
+        self.assertEqual(dm.leak_tolerance_hz(15_000, 0), 15_000)
+        leaks = dm.internal_leaks("sg", PROFILE, 500 * MHZ, 0, 3000 * MHZ)
+        tol = 200_000
+        self.assertEqual(dm.leak_at(1480 * MHZ + tol, leaks, tol)["freq_hz"], 1480 * MHZ)
+        self.assertIsNone(dm.leak_at(1480 * MHZ + tol + 1, leaks, tol))
+        self.assertEqual(dm.leak_at(1980 * MHZ - 5, leaks, tol)["kind"], "sg_offset")
+        self.assertIsNone(dm.leak_at(500 * MHZ, leaks, tol))
+
+
+class LeakViewTest(unittest.TestCase):
+    def state(self, **view):
+        leaks = dm.internal_leaks("sg", PROFILE, 500 * MHZ, 0, 3000 * MHZ)
+        return {"internal_leaks": {"leaks": leaks, "tolerance_hz": 1_180_000}, "view": view}
+
+    def test_marks_and_toggle(self):
+        marks = source_view.leak_marks_view(self.state())
+        self.assertEqual([m["freq_hz"] for m in marks], [956 * MHZ, 1480 * MHZ, 1980 * MHZ])
+        self.assertEqual(marks[1]["tip"], "内部の漏れの可能性 1480 MHz")
+        self.assertEqual(marks[2]["tip"], "内部の漏れの可能性 1980 MHz（SG + 1480 MHz）")
+        self.assertEqual(marks[0]["near_hz"], 1_180_000)
+        self.assertEqual(source_view.leak_marks_view(self.state(leak_marks=False)), [])
+        # 周波数オフセット（設計O）: 説明は横軸と同じ換算後の周波数。印の位置は測った周波数のまま
+        marks = source_view.leak_marks_view(self.state(freq_offset_hz=10 * MHZ))
+        self.assertEqual((marks[1]["freq_hz"], marks[1]["tip"]), (1480 * MHZ, "内部の漏れの可能性 1490 MHz"))
+        self.assertIn("leaks", screen_model.ui_view(self.state()))
+
+    def test_mouse_reading_near_a_mark(self):
+        marks = source_view.leak_marks_view(self.state())
+        x = 1480 * MHZ + 3 * MHZ
+        # 印の幅（1.18MHz）の外でも、1画素が 1MHz なら 5 画素（5MHz）の内なので拾う
+        r = screen_model.mouse_reading([], x, -50.0, leaks=marks, px_hz=1 * MHZ)
+        self.assertEqual(r["lines"][-1], "内部の漏れの可能性 1480 MHz")
+        r = screen_model.mouse_reading([], x, -50.0, leaks=marks, px_hz=0.1 * MHZ)
+        self.assertNotIn("内部の漏れの可能性 1480 MHz", r["lines"])
+        r = screen_model.mouse_reading([], x, -50.0, zero_span=True, leaks=marks, px_hz=1 * MHZ)
+        self.assertEqual(len(r["lines"]), 1)  # ゼロスパンは横軸が周波数ではない
+
+    def test_peak_rows(self):
+        leak = {"freq_hz": 1980 * MHZ, "kind": "sg_offset", "offset_hz": 1480 * MHZ}
+        r = {"trace": 1, "unit": "dBm", "base": "noise_floor", "base_level": -76.0, "polarity": "peak",
+             "peaks": [{"freq_hz": 1980 * MHZ, "level": -27.0, "diff_db": 49.0, "leak": leak},
+                       {"freq_hz": 500 * MHZ, "level": -16.0, "diff_db": 60.0, "leak": None}]}
+        rows = peak_view.result_view(r)["rows"]
+        self.assertEqual((rows[0]["leak"], rows[0]["leak_tip"]),
+                         (texts.LABELS["peak_leak"], "内部の漏れの可能性 1980 MHz（SG + 1480 MHz）"))
+        self.assertEqual((rows[1]["leak"], rows[1]["leak_tip"]), ("", ""))
+
+
+class InstrumentLeakTest(InstrumentCase):
+    def setUp(self):
+        super().setUp()
+        self.connect(300 * MHZ, 2100 * MHZ)
+
+    def test_state_and_peak_list(self):
+        self.call("set_mode", mode="sg", sg_hz=500 * MHZ)
+        st = self.single()
+        lk = st["internal_leaks"]
+        self.assertEqual([x["freq_hz"] for x in lk["leaks"]], [956 * MHZ, 1480 * MHZ, 1980 * MHZ])
+        self.assertEqual(lk["tolerance_hz"], st["sweep"]["rbw_hz"] + st["sweep"]["step_hz"])
+        pl = self.call("peak_list", trace=1, floor_margin_db=10.0)
+        by = {round(p["freq_hz"] / MHZ): p for p in pl["peaks"]}
+        leaks = {f for f, p in by.items() if p["leak"]}
+        self.assertTrue({1480, 1980} <= leaks, by.keys())
+        self.assertNotIn(500, leaks)  # SG の信号そのものは漏れではない
+        self.assertEqual(by[1980]["leak"]["kind"], "sg_offset")
+
+    def test_sa_has_no_leaks(self):
+        st = self.single()
+        self.assertEqual(st["internal_leaks"]["leaks"], [])
+        pl = self.call("peak_list", trace=1, floor_margin_db=10.0)
+        self.assertTrue(all(p["leak"] is None for p in pl["peaks"]))
+
+    def test_view_option(self):
+        self.assertIs(self.call("get_state")["view"]["leak_marks"], True)
+        r = self.call("set_view", leak_marks=False)
+        self.assertIs(r["view"]["leak_marks"], False)
+        with self.assertRaises(Exception) as cm:
+            self.call("set_view", leak_marks="no")
+        self.assertEqual((cm.exception.code, cm.exception.field), ("bad_value", "leak_marks"))
+        self.call("undo")  # 表示の設定は元に戻せる（設計J §3）
+        self.assertIs(self.call("get_state")["view"]["leak_marks"], True)
+
+    def test_step_sweep_result_has_every_step_leak(self):
+        # ステップ掃引の結果は段ごとの SG + 1480MHz の漏れを持つ（SA に戻しても、そのトレースは SG で測ったもの）
+        self.call("set_mode", mode="sg", sg_hz=500 * MHZ)
+        self.call("set_step_sweep", start_hz=400 * MHZ, stop_hz=600 * MHZ, step_hz=100 * MHZ, combine="max", trace=2)
+        r = self.call("step_sweep_start")
+        self.wait_task(r["task_id"])
+        self.call("set_mode", mode="sa")
+        pl = self.call("peak_list", trace=2, floor_margin_db=10.0)
+        flagged = {round(p["freq_hz"] / MHZ): p["leak"]["kind"] for p in pl["peaks"] if p["leak"]}
+        for f in (1880, 1980, 2080):
+            self.assertEqual(flagged.get(f), "sg_offset", (f, flagged))
+        self.assertEqual(flagged.get(1480), "fixed")
+        # 結果のトレースでないものは、いまのモードの決まりに従う（SA では漏れの印を付けない）
+        pl = self.call("peak_list", trace=1, floor_margin_db=10.0)
+        self.assertTrue(all(p["leak"] is None for p in pl["peaks"]))
+
+    def test_leaks_follow_sg(self):
+        self.call("set_mode", mode="sg", sg_hz=400 * MHZ)
+        f = [x["freq_hz"] for x in self.call("get_state")["internal_leaks"]["leaks"]]
+        self.assertIn(1880 * MHZ, f)
+        self.call("set_mode", mode="tg")
+        f = [x["freq_hz"] for x in self.call("get_state")["internal_leaks"]["leaks"]]
+        self.assertEqual(f, [956 * MHZ, 1480 * MHZ])
+        self.assertTrue(np.all(np.asarray(f) >= 300 * MHZ))
+
+
+if __name__ == "__main__":
+    unittest.main()

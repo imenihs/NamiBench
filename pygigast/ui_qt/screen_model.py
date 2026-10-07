@@ -17,7 +17,7 @@ import numpy as np
 
 from ..core import zero_span as zs
 from ..core.units import format_freq, format_time_us, time_axis_unit
-from . import marker_rows, screen_s11, texts
+from . import marker_rows, screen_s11, source_view, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
 
@@ -106,7 +106,9 @@ def sweep_reasons(st: dict) -> dict:
                 "image_reject": RTL_LABELS["image_reject_fft"]}
     sw = st.get("sweep") or {}
     reject = None
-    if sw.get("mode") == "nf":
+    if (st.get("step_sweep") or {}).get("running"):
+        reject = texts.REASON_TEXTS["image_reject_step"]  # ステップ掃引の間は使わない（設計L §1.3）
+    elif sw.get("mode") == "nf":
         reject = texts.REASON_TEXTS["image_reject_nf"]
     elif sw.get("step_hz") == 0:
         reject = texts.REASON_TEXTS["image_reject_zero_span"]
@@ -598,6 +600,9 @@ def ui_view(st: dict) -> dict:
         **s11_ui(st),
         # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う
         "freq_offset_text": texts.offset_text(texts.freq_offset_of(st)) if texts.freq_offset_of(st) else "",
+        # SG のステップ掃引の欄と、内部の漏れの印（設計L §1.3・§1.4）
+        "step": source_view.step_view(st),
+        "leaks": source_view.leak_marks_view(st),
     }
 
 
@@ -662,7 +667,7 @@ def point_note_codes(payload: dict, i: int) -> list[str]:
 
 
 def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = False,
-                  freq_offset_hz: int = 0) -> dict:
+                  freq_offset_hz: int = 0, leaks: Optional[list[dict]] = None, px_hz: float = 0.0) -> dict:
     """グラフの上のマウスの位置の読み値（設計G §2: マウスの縦の位置ではなく波形の値を出す）。
 
     payloads は画面が表示している測定中のトレース（イベント trace の形）、x・y はマウスの位置の軸の値。
@@ -672,10 +677,15 @@ def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = Fa
     周波数の文字は表示の周波数オフセット（設計O）を足した値。freq_hz は測った周波数のまま。
     """
     off = int(freq_offset_hz or 0)
+    # 内部の漏れの印の近く（設計L §1.4）なら、その説明を添える（leaks は source_view.leak_marks_view。px_hz は
+    # グラフの1画素の周波数の幅で、狭い印もマウスで拾えるようにする）
+    leak = None if zero_span else source_view.leak_near(leaks or [], x, px_hz)
     hit = nearest_point(payloads, x, y)
     if hit is None:
         pos = int(round(x))
         lines = [format_time_us(pos) if zero_span else format_freq(pos + off)]
+        if leak:
+            lines.append(leak["tip"])
         return {"trace": None, "freq_hz": None if zero_span else pos, "time_us": pos if zero_span else None,
                 "level": None, "unit": None, "notes": [], "lines": lines, "text": "\n".join(lines)}
     k, i = hit
@@ -690,5 +700,7 @@ def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = Fa
     value_text = screen_s11.value_text(level, unit) if level is not None else texts.MARKER_STATUS["no_value"]
     lines = [format_time_us(pos) if zero else format_freq(pos + off),
              tpl("trace_note", n=p.get("trace"), text=value_text), *marker_rows.note_texts(codes)]
+    if leak and not zero:
+        lines.append(leak["tip"])
     return {"trace": p.get("trace"), "freq_hz": None if zero else pos, "time_us": pos if zero else None,
             "level": level, "unit": unit, "notes": codes, "lines": lines, "text": "\n".join(lines)}

@@ -30,6 +30,8 @@ class MouseReading(QObject):
         self._payloads = payloads
         self._zero_span = zero_span
         self.offset_fn: Callable[[], int] = lambda: 0  # 周波数オフセット（設計O。画面が差し替える）
+        # 内部の漏れの印（設計L §1.4。source_view.leak_marks_view の形。画面が差し替える）
+        self.leaks_fn: Callable[[], list] = lambda: []
         self._scene_pos: QPointF | None = None
         self.text = ""  # いま出している文（出していなければ空）
         self._timer = QTimer(self)
@@ -67,7 +69,9 @@ class MouseReading(QObject):
                 QToolTip.hideText()
             return
         p = vb.mapSceneToView(pos)
-        r = screen_model.mouse_reading(self._payloads(), p.x(), p.y(), self._zero_span(), self.offset_fn())
+        px_hz = abs(float(vb.viewPixelSize()[0]))  # 1画素の周波数の幅（狭い印もマウスで拾う）
+        r = screen_model.mouse_reading(self._payloads(), p.x(), p.y(), self._zero_span(), self.offset_fn(),
+                                       leaks=self.leaks_fn(), px_hz=px_hz)
         self.text = r["text"]
         at = self.plot.mapToGlobal(self.plot.mapFromScene(pos)) + OFFSET
         QToolTip.showText(at, self.text, self.plot)

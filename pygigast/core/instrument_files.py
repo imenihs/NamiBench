@@ -273,6 +273,8 @@ class FilesMixin:
             self._abort_ref_job(Cancelled())
         elif getattr(self, "_cal_job", None) is not None and self._cal_job.task is t:
             self._cal_abort(Cancelled())  # 校正の測定（設計K）。測りかけの値は入れない
+        elif self._step_cancel(t):
+            pass  # SG のステップ掃引（設計L §1.3）。そこまでの結果は残る
         else:
             self._changed()
         return {"task_id": task_id, "cancelling": True}
@@ -382,6 +384,8 @@ class FilesMixin:
             raise self._error("reference_in_progress")
         if getattr(self, "_cal_job", None) is not None:
             raise self._error("calibration_in_progress")
+        if getattr(self, "_step_job", None) is not None:
+            raise self._error("step_sweep_in_progress")  # SG のステップ掃引（設計L §1.3）
 
     def _s11_open_state(self) -> Optional[dict]:
         """測ってあるオープン（S11 の基準の1段目: 設計E §6.5）。画面が「次はショート」を示すのに使う。"""
@@ -621,7 +625,9 @@ class FilesMixin:
                   "average_after": t.average_after.value, "hold_after": t.hold_after.value,
                   "last_update_time": t.last_update_time, "unit": unit_for(t.quantity, t.profile),
                   # 表示の形式と測ったモード（設計R §3。開いたとき同じ形式で重ねる・書き出す）
-                  "format": t.effective_format, "measurement": None if t.mode is None else t.mode.value},
+                  "format": t.effective_format, "measurement": None if t.mode is None else t.mode.value,
+                  # SG のステップ掃引の結果なら、その設定と済んだ段の数（何の測定か分かる形で残す: M-08）
+                  **({"step_sweep": dict(t.step_info)} if t.step_info else {})},
             flags={k: np.array(v, dtype=bool) for k, v in t.flags.items()},
             profile=copy.deepcopy(t.profile),
         )

@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from ... import __version__
 from ..local import CommandError, LocalApi
 from ...core import report_layout as rl
-from ...ui_qt import screen_model, texts
+from ...ui_qt import screen_model, source_view, texts
 from . import view
 from .access import KIND_OPERATE, Access
 from .guard import Guard
@@ -76,6 +76,8 @@ def to_jsonable(v: Any) -> Any:
     if isinstance(v, (list, tuple, set, frozenset)):
         return [to_jsonable(x) for x in v]
     if isinstance(v, np.ndarray):
+        if v.ndim > 1:
+            return [to_jsonable(r) for r in v]  # [段, 点] など（ステップ掃引の段ごとの線）
         if v.dtype.kind == "f":
             return [None if not math.isfinite(x) else x for x in v.astype(np.float64).tolist()]
         return v.tolist()
@@ -120,7 +122,15 @@ def encode_trace(payload: dict) -> bytes:
     点ごとの印は [始まり, 終わり) の組の並びにして見出しに入れる。不等間隔の周波数軸は見出しに Hz の整数で入れる。
     """
     values = np.asarray(payload.get("values", ()), dtype="<f4")
-    header = {k: v for k, v in payload.items() if k not in ("values", "flags")}
+    header = {k: v for k, v in payload.items() if k not in ("values", "flags", "steps")}
+    steps = payload.get("steps")
+    tail = b""
+    if steps is not None:
+        # ステップ掃引の段ごとの線（設計L §1.3）: 値の後に [段, 点] の float32 を続け、見出しに形と横の位置を入れる
+        rows = np.asarray(steps["values"], dtype="<f4")
+        header["steps"] = {"x0": steps["x0"], "dx": steps["dx"], "count": int(rows.shape[0]),
+                           "points": int(rows.shape[1]) if rows.ndim == 2 else 0}
+        tail = rows.tobytes()
     flags_out: dict = {}
     for k, v in (payload.get("flags") or {}).items():
         if k == "points":
@@ -135,7 +145,7 @@ def encode_trace(payload: dict) -> bytes:
     header["value_count"] = int(values.size)
     hb = dumps(header).encode("utf-8")
     hb += b" " * ((-len(hb)) % 4)
-    return struct.pack("<I", len(hb)) + hb + values.tobytes()
+    return struct.pack("<I", len(hb)) + hb + values.tobytes() + tail
 
 
 def encode_audio(payload: dict) -> bytes:
@@ -463,14 +473,18 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         try:
             req = json.loads(await request.body() or b"{}")
             x, y = float(req["x"]), float(req["y"])
-            if not (math.isfinite(x) and math.isfinite(y)):
+            # グラフの1画素の周波数の幅（内部の漏れの印をマウスで拾う幅: 設計L §1.4。無ければ 0）
+            px_hz = float(req.get("px_hz") or 0.0)
+            if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(px_hz)):
                 raise ValueError("not finite")
         except (ValueError, KeyError, TypeError) as e:
             return fail("bad_value", None, {"message": str(e)})
         payloads = await hub.shown_traces()
         zero = ((hub.last_state or {}).get("sweep") or {}).get("step_hz") == 0
+        leaks = source_view.leak_marks_view(hub.last_state)
         return JSONResponse(to_jsonable(screen_model.mouse_reading(payloads, x, y, zero,
-                                                                   texts.freq_offset_of(hub.last_state))))
+                                                                   texts.freq_offset_of(hub.last_state),
+                                                                   leaks=leaks, px_hz=px_hz)))
 
     from .routes_access import add_access_routes
 

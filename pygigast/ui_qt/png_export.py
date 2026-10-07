@@ -34,6 +34,7 @@ from PySide6.QtGui import (
 
 from .. import __version__ as APP_VERSION
 from ..core import report_layout as rl
+from ..core.step_sweep import LINE_ALPHA as _STEP_LINE_ALPHA
 from . import plot_layers as pl
 
 # 規則は report_layout にある。前からこの名前で使っている呼び出し元（画面・試験）のために同じ名前で見せる
@@ -389,6 +390,9 @@ class _Painter:
         flags = tr.get("flags")
         flags = list(flags.tolist() if hasattr(flags, "tolist") else flags) if flags is not None else None
         col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")
+        if tr.get("steps"):
+            # ステップ掃引を全部重ねた段ごとの線（周波数軸のときだけ届く: 設計L §1.3）
+            self._draw_step_lines(tr["steps"], col, fx, fy)
         # そのトレースの線（設計F §9）。基準の幅は Web の PNG と同じ（report_layout.png_line_base）
         line = rl.stroke(tr.get("line"), self.lay["line_base_px"])
         # 範囲の1点外側までは描いて、枠の端まで線をつなぐ
@@ -415,6 +419,31 @@ class _Painter:
             self.p.setPen(_stroke_pen(self.c("text_dim") if fl else col, line))
             self.p.setBrush(Qt.BrushStyle.NoBrush)
             self.p.drawPath(path)
+
+    def _draw_step_lines(self, steps: dict, col: QColor, fx, fy) -> None:
+        """ステップ掃引を全部重ねた段ごとの線（設計L §1.3）: トレースの色の不透明度 約 35% の細い線（画面と同じ）。"""
+        c = QColor(col)
+        c.setAlphaF(_STEP_LINE_ALPHA)
+        pen = QPen(c, max(1.0, self.lay["line_base_px"] * 0.5))
+        self.p.setPen(pen)
+        self.p.setBrush(Qt.BrushStyle.NoBrush)
+        x0, dx = float(steps["x0"]), float(steps["dx"])
+        for row in steps["values"]:
+            paths: list[QPainterPath] = []
+            path: Optional[QPainterPath] = None
+            for i, v in enumerate(row):
+                v = float(v)
+                if math.isnan(v):
+                    path = None  # 値の無い点で線を切る
+                    continue
+                pt = QPointF(fx(x0 + i * dx), fy(v))
+                if path is None:
+                    path = QPainterPath(pt)
+                    paths.append(path)
+                else:
+                    path.lineTo(pt)
+            for p in paths:
+                self.p.drawPath(p)
 
     def _draw_markers(self, plot: QRectF, fx, fy, start, stop, top, bottom) -> None:
         self.p.setFont(self.small)

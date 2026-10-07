@@ -248,6 +248,7 @@ class DisplayMixin:
             "has_values": t.values is not None,
             "axis_differs": t.action == TraceAction.FIXED and t.axis_differs(self._adopted.axis),
             "last_update_time": t.last_update_time,
+            "step_sweep": t.step_info,  # SG のステップ掃引の結果なら設定と済んだ段の数（設計L §1.3）
         }
 
     def _display_snapshot(self) -> dict:
@@ -260,11 +261,20 @@ class DisplayMixin:
             # 機器の範囲の外・意味の無い区間の帯（設計J §4.8）。画面は計算し直さずに描く
             "display_marks": dm.display_marks(self._adopted.mode, self._profile, int(self._adopted.start_hz),
                                               int(self._adopted.stop_hz)),
+            # 内部の漏れの周波数（設計L §1.4。SG・TG のときだけ）と、測った山を漏れとみなす幅
+            "internal_leaks": self._leaks_state(),
             "ref_auto": self._ref_auto_state(),
             "trace_options": dict(self._trace_opts),
             # いま出している測定の量（"power"・"ratio"。まだ掃引が無ければ None）。単位の欄が実際の単位を出す（J §4.10）
             "display_quantity": None if self._shown_quantity is None else self._shown_quantity.value,
         }
+
+    def _leaks_state(self) -> dict:
+        """内部の漏れの周波数（表示範囲の中）と、測った山を漏れとみなす幅（設計L §1.4・display_marks）。"""
+        a = self._adopted
+        leaks = dm.internal_leaks(a.mode, self._profile, a.sg_hz, int(a.start_hz), int(a.stop_hz)) \
+            if a.axis.step_hz > 0 else []
+        return {"leaks": leaks, "tolerance_hz": dm.leak_tolerance_hz(a.rbw_hz, a.axis.step_hz)}
 
     def _trace_display(self, t) -> tuple[float, Optional[str], str]:
         """測っているトレースの (足す dB, 出す単位, 表示の形式)。|Γ|・SWR の形式では単位はその名前で、ずらさない。"""
@@ -588,9 +598,14 @@ class DisplayMixin:
                 "no_calibration": self._no_calibration,
                 "points": pts,
             },
+            "step_sweep": t.step_info,
         }
         if self._adopted.axis.step_hz == 0 and t.axis.step_hz == 0:
-            return self._zs_payload(t, payload)  # 横軸は時間（設計N §1）
+            # 横軸は時間（設計N §1）。ステップ掃引の段ごとの線は点の番号の位置なので、時間軸の表示には載せない
+            return self._zs_payload(t, payload)
+        if t.steps is not None:
+            # 全部重ねるときの段ごとの線（設計L §1.3。主の値と同じ単位・形式: instrument_step.py）
+            payload["steps"] = self._step_rows_payload(t, shift, fmt)
         return payload
 
     # ------------------------------------------------------------------ 条件の変更
@@ -764,6 +779,7 @@ class DisplayMixin:
         if format is not _UNSET:
             self._check_format(t, format)
             kw["fmt"] = format
+        self._step_check_trace(number, kw)  # ステップ掃引が結果を入れている間は動作を変えない（設計L §1.3）
         if "count" in kw and kw["count"] is not None and (isinstance(kw["count"], bool) or not isinstance(kw["count"], int)):
             raise self._error("not_integer", "count")
         before = self._undo_snapshot()
@@ -1075,10 +1091,15 @@ class DisplayMixin:
         v = self._view(trace)
         self._no_dips_on_power(v, polarity)
         pl = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db, polarity)
+        # 内部の漏れの周波数から幅の内にある行は、その漏れを添える（設計P §9.6・L §1.4。SG・TG のときだけ）。
+        # ステップ掃引の結果のトレースは、段ごとの SG からのずれの漏れも持つ（instrument_step._step_leaks）
+        lk = self._leaks_state()
+        leaks = lk["leaks"] + self._step_leaks(self._traces[trace])
         # 探すのは dB（盛り上がり・基準からの N dB）。レベルは表示の形式の値で返す（|Γ|・SWR: 設計R §3）
         return {"trace": trace, "unit": v.unit, "base": pl.base, "base_level": v.display(pl.base_level),
                 "polarity": pl.polarity,
-                "peaks": [{"freq_hz": r.freq_hz, "level": v.display(r.level), "diff_db": r.diff_db} for r in pl.rows]}
+                "peaks": [{"freq_hz": r.freq_hz, "level": v.display(r.level), "diff_db": r.diff_db,
+                           "leak": dm.leak_at(r.freq_hz, leaks, lk["tolerance_hz"])} for r in pl.rows]}
 
     def _cmd_marker_to(self, id, target: str) -> dict:  # noqa: A002
         """マーカーから条件を変える（設計G §3.4）。Center・Span は設計C §5.11 の規則を通る。"""

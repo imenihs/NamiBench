@@ -1,6 +1,7 @@
 """右のタブ「信号源」（設計J §4.5・L・E §6）。
 
-- SG: 周波数・周波数を変えたら最大・最小保持を消すか（設計F §8）・出力中の表示（ステップ掃引は次の回）
+- SG: 周波数・周波数を変えたら最大・最小保持を消すか（設計F §8）・出力中の表示
+- ステップ掃引（設計L §1.3）: SG の欄のすぐ下（step_panel.py）
 - ノーマライズの基準（TG・S11）: いまの基準の状態（名前・精度・経過時間・電源の入れ直し前）・一覧と選択・名前・消す・
   TG の「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 の範囲とオープン → ショート
   （1段ずつ。次に押すボタンを強調し、測ったオープンの時刻と範囲を出す: 設計E §6.5。中身は screen_s11.s11_view）
@@ -28,13 +29,13 @@ from PySide6.QtWidgets import (
 
 from . import screen_s11, sizes, texts, widget_sync
 from .fields import FreqField
+from .step_panel import StepPanel
 from .tab_traces import body, outer, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-# まだ作っていないもの（ステップ掃引: 設計L、NF: 設計M）
-REASON_STEP = texts.NOT_YET["step"]
+# まだ作っていないもの（NF: 設計M）
 REASON_NF = texts.NOT_YET["nf"]
 REASON_NO_SELECTION = texts.REASON_TEXTS["select_reference"]
 L = texts.LABELS
@@ -70,10 +71,10 @@ class SourceTab(QWidget):
         self.sg_state = QLabel("")
         self.sg_state.setObjectName("dim")
         form.addRow(self.sg_state)
-        self.step_sweep = QPushButton(L["step_sweep"])
-        set_enabled(self.step_sweep, REASON_STEP)
-        form.addRow(sizes.buttons_row(self.step_sweep))
         lay.addWidget(g)
+        # SG のステップ掃引（設計L §1.3）。SG の周波数を動かす機能なので SG の欄のすぐ下
+        self.step = StepPanel(win)
+        lay.addWidget(self.step)
 
         g = QGroupBox(L["references"])
         v = sizes.vbox(g)
@@ -159,6 +160,10 @@ class SourceTab(QWidget):
             self.f_sg.set_hz(sw["sg_hz"])
         widget_sync.set_checked(self.sg_clear_holds, (st.get("trace_options") or {}).get("sg_clears_holds", True))
         self.sg_state.setText(texts.sg_state_text(self.win.state))
+        # ステップ掃引の間は SG の周波数を掃引が動かす（欄は理由付きで変えられない: U-08）
+        set_enabled(self.f_sg, texts.REASON_TEXTS["step_running"] if (st.get("step_sweep") or {}).get("running")
+                    else None)
+        self.step.apply_state(st)
         self.ref_state.setText(screen_s11.ref_state_text(st))  # Web と同じ文
         conn = st["connection"]
         serial = (conn.get("identity") or {}).get("serial")

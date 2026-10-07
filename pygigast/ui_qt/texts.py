@@ -31,6 +31,8 @@ from .texts_zerospan import *  # noqa: F401,F403 — ゼロスパンの時間軸
 from .texts_zerospan import ZERO_SPAN_ERRORS
 from .texts_s11 import *  # noqa: F401,F403 — 反射（S11）と表示の形式（|Γ|・SWR）の語（設計E §6.5・設計R §3）
 from .texts_s11 import S11_ERRORS, S11_NOTICES, S11_OPEN_DISCARD_REASONS, S11_TASK_NAMES, SWR_LIMIT_NOTE
+from .texts_step import *  # noqa: F401,F403 — SG のステップ掃引・内部の漏れの印の語（設計L §1.3・§1.4）
+from .texts_step import STEP_ERRORS, step_end_text, step_legend, step_task_label
 
 
 def tpl(key: str, **kw) -> str:
@@ -270,6 +272,7 @@ RUN_STATES = {
     "stopping": "停止中（掃引の終わりを待っています）",
     "reference": "基準を取っています",
     "calibration": "校正で測っています",
+    "step_sweep": "ステップ掃引",
 }
 
 
@@ -443,8 +446,11 @@ def legend_parts(t: dict) -> dict:
         out["count_target"] = t.get("count_target")
     else:
         out["count"] = None
-    if t.get("axis_differs"):
-        out["label"] = TEMPLATES["axis_differs"]
+    # SG のステップ掃引の結果（設計L §1.3）・いまの軸と違う（固定のトレース: F §5.3）
+    label = " ".join(s for s in (step_legend(t.get("step_sweep")),
+                                 TEMPLATES["axis_differs"] if t.get("axis_differs") else "") if s)
+    if label:
+        out["label"] = label
     return out
 
 
@@ -580,6 +586,7 @@ TASK_NAMES = {
     "finish_unfinished": "記録をまとめています",
     "rtlsdr_fit_gain": "利得を合わせています",
     "reference_take": "基準を取っています",
+    "step_sweep": "ステップ掃引",
 }
 
 TASK_DONE = {
@@ -611,6 +618,8 @@ TASK_CANCELLED = {
     "finish_unfinished": "まとめるのをやめました。作業ファイルは残っています",
     "rtlsdr_fit_gain": "利得を合わせるのをやめました（利得は押す前の段に戻しました）",
     "reference_take": "基準を取るのをやめました（基準は変わりません）",
+    # 閉じる確認に出す（やめたときの知らせは texts_step.step_end_text: 済んだ段の数と残したトレース）
+    "step_sweep": "重ねた結果は保存していなければ残りません",
 }
 
 STORAGE_ERRORS = {
@@ -645,6 +654,8 @@ TASK_CANCELLED.update(CAL_TASK_CANCELLED)
 def task_label(t: dict) -> str:
     """進み具合の1行（何件目/全体・経過時間。時間は約束しない: U-20）。"""
     kind = t.get("task") or t.get("kind") or ""
+    if kind == "step_sweep":
+        return step_task_label(t)  # いまの段/全体の段（設計L §1.3）
     text = TASK_NAMES.get(kind, kind)
     std = (t.get("detail") or {}).get("standard") if kind == "reference_take" else None
     if std in S11_TASK_NAMES:
@@ -693,8 +704,9 @@ ERRORS.update({
     **S11_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
 })
-# 校正の画面（設計K）が断った理由。すでにある語は変えない
+# 校正の画面（設計K）・SG のステップ掃引（設計L §1.3）が断った理由。すでにある語は変えない
 ERRORS.update({k: v for k, v in CAL_ERRORS.items() if k not in ERRORS})
+ERRORS.update({k: v for k, v in STEP_ERRORS.items() if k not in ERRORS})
 
 
 # ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語
@@ -746,7 +758,7 @@ def source_text(st: dict) -> str:
     """信号源が出ていることの表示（U-05: 状態は画面が示す）。掃引している間だけ出す。"""
     if not st or not st.get("run") or not st.get("sweep"):
         return ""
-    running = st["run"]["state"] in ("continuous", "single", "stopping", "reference")
+    running = st["run"]["state"] in ("continuous", "single", "stopping", "reference", "step_sweep")
     if st["run"]["state"] == "calibration" and (st.get("connection") or {}).get("state") == "connected":
         # 校正の掃引は、いまの条件とは別の条件（RBW の校正は SG で 500MHz: 設計K §4.3）。機器へ渡した方を出す
         src = st.get("source") or {}
@@ -848,6 +860,9 @@ def status_items(st: dict) -> list[dict]:
 def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
     """長い処理の終わりの知らせ（H §4.1）。(文, 保存したファイルのパス or None)。"""
     kind = d.get("task", "")
+    if kind == "step_sweep":
+        # 終わり方・済んだ段の数・残した結果のトレース（設計L §1.3・U-19）
+        return step_end_text(code, d, storage_error_text(d.get("error") or {})), None
     if code == "task_done":
         res = d.get("result") or {}
         text = TASK_DONE.get(kind, kind)

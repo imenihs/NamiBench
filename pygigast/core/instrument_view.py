@@ -124,11 +124,11 @@ class ViewMixin:
             self._notice("level_unit_changed", {"unit": new.get("level_unit"), "previous": old.get("level_unit")})
 
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
-                      layout=_UNSET, function_lines=_UNSET, zero_span_s=_UNSET) -> dict:
-        """zero_span_s はゼロスパンの表示する長さ（秒。0 は1回の掃引: 設計N §1）。"""
+                      layout=_UNSET, function_lines=_UNSET, zero_span_s=_UNSET, leak_marks=_UNSET) -> dict:
+        """zero_span_s はゼロスパンの表示する長さ（秒。0 は1回の掃引: 設計N §1）。leak_marks は内部の漏れの印（設計L §1.4）。"""
         kw = {k: v for k, v in (("level_unit", level_unit), ("ext_db", ext_db), ("freq_offset_hz", freq_offset_hz),
                                 ("draw_style", draw_style), ("layout", layout), ("function_lines", function_lines),
-                                ("zero_span_s", zero_span_s))
+                                ("zero_span_s", zero_span_s), ("leak_marks", leak_marks))
               if v is not _UNSET}
         for k in view_units.DEFAULTS:
             if k in kw and kw[k] is None:

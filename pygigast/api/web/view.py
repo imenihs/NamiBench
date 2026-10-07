@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from ... import __version__
 from ...core import report_layout as rl
-from ...ui_qt import cal_view, marker_rows, peak_view, screen_model, texts
+from ...ui_qt import cal_view, marker_rows, peak_view, screen_model, source_view, texts
 
 
 def default_unit(st: Optional[dict]) -> str:
@@ -124,6 +124,9 @@ def result_view(command: str, args: dict, result: Any, freq_offset_hz: int = 0) 
         t["alternative_done"] = texts.alternative_done_text(a["center_hz"], a["span_hz"])
     if command == "list_devices" and "devices" in result:
         return devices_view(result)
+    if command == "set_step_sweep" and result.get("adjusted"):
+        # ステップ掃引の設定を直した知らせ（欄ごと。Qt の step_panel と同じ source_view.adjusted_notes: 設計L §1.3）
+        t["step_notes"] = source_view.adjusted_notes(result)
     if command == "peak_list" and "peaks" in result:
         # 見つけた数の行・差の列の名前・行の文字（Qt のピークの一覧と同じ peak_view.result_view: P §9.7）
         t["peak_list"] = peak_view.result_view(result, freq_offset_hz)
