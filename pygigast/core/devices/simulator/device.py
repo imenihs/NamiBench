@@ -24,7 +24,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 import numpy as np
 import serial
@@ -445,11 +445,12 @@ class SimulatorDevice(SweepRunner, Device):
             estimated_s=lim.estimated_s * s,
         )
 
-    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str]) -> Exchange:
+    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str],
+                  on_received: Optional[Callable[[int], None]] = None) -> Exchange:
         if self._transport is None:
             raise DeviceDisconnected("切断中")
         try:
-            return self._transport.exchange(request, expected, lim, note)
+            return self._transport.exchange(request, expected, lim, note, on_received)
         except DeviceDisconnected:
             self._transport = None
             raise

@@ -271,6 +271,7 @@ class RtlSdrInstrumentDevice(Device):
             fc = align_to_axis(int(want), sweep, int(f["min_hz"]), int(f["max_hz"]))
         self.inner.fixed_center_hz = fc
         self.current_fixed = fc
+        self.inner.progress_sink = self.progress_sink  # 進み具合は中身の機器の口が数える（設計J §4.13）
         return self.inner.measure(sweep, cancel)
 
     def fit_gain(self, sweep: AdoptedSweep, cancel=None, progress=None) -> dict:

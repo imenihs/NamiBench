@@ -379,6 +379,8 @@ class RtlSdrDevice(Device):
         hits = 0.0
         max_ratio = 0.0
         retunes = 0
+        # 進み具合は周波数を動かした段（位置）の数で知らせる（設計J §4.13。読み終えた位置だけを数える）
+        self.report_progress(0, len(pl.centers))
         for i, c in enumerate(pl.centers):
             if i > 0 and _cancelled(cancel):
                 raise SweepDiscarded("cancelled", {"positions_done": i})
@@ -398,6 +400,7 @@ class RtlSdrDevice(Device):
             hits += r
             max_ratio = max(max_ratio, r)
             asm.add(c, spectrum.averaged_power(spectrum.iq_from_u8(buf), p.n, p.window, p.averages))
+            self.report_progress(i + 1, len(pl.centers))
         if _cancelled(cancel):
             raise SweepDiscarded("cancelled", {"positions_done": len(pl.centers)})
         duration = time.monotonic() - t0

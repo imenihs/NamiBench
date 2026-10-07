@@ -78,12 +78,14 @@ def _cancelled(cancel: Optional[threading.Event]) -> bool:
 class SweepRunner:
     """要求の組み立て・複数回の掃引・前置きの切り落とし（実機とシミュレータで共通）。
 
-    実装は _exchange（32バイトを送り、ちょうどのバイト数を受け取る）と _profile を持つ。
+    実装は _exchange（32バイトを送り、ちょうどのバイト数を受け取る）と _profile を持ち、Device と合わせて使う
+    （進み具合は Device.report_progress で知らせる）。
     """
 
     _profile: dict
 
-    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str]) -> Exchange:
+    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str],
+                  on_received: Optional[Callable[[int], None]] = None) -> Exchange:
         raise NotImplementedError
 
     def _limits(self, ds: DeviceSweep) -> Limits:
@@ -95,6 +97,7 @@ class SweepRunner:
         - 送る前に全部の要求を検証する（範囲外は1つも送らずに InvalidSweep）
         - cancel が立っていたら次の要求を送らない。送った要求は終わりまで受けてから cancelled で捨てる
         - 1画面の要求（イメージ除去の全部の区間の回・NF の2回）のどれかが捨てられたら画面ごと捨てる（設計F §7.2）
+        - 進み具合は、1画面の全部の要求の点の数（前置きを含む）を全体とし、届いた点の数で知らせる（設計J §4.13）
         """
         plan = []
         for name, k, b3, b2 in _requests(sweep):
@@ -102,20 +105,29 @@ class SweepRunner:
             plan.append((name, k, protocol.device_sweep(sweep, self._profile, b3, b2, seg)))
         if _cancelled(cancel):
             raise SweepDiscarded("cancelled", {"sent": 0})
+        total = sum(ds.points for _name, _k, ds in plan)
+        self.report_progress(0, total)
+        done = 0  # 前の要求までに届いた点の数
         started_at = time.time()
         t0 = time.monotonic()
         got: dict[str, np.ndarray] = {}
         for i, (name, k, ds) in enumerate(plan):
             if i > 0 and _cancelled(cancel):
                 raise SweepDiscarded("cancelled", {"sent": i})
+
+            def on_received(n: int, base: int = done, points: int = ds.points) -> None:
+                # 届いたバイトを点に直す（1点 2 バイト。末尾4バイトは点ではない）
+                self.report_progress(base + min(n // 2, points), total)
+
             try:
-                ex = self._exchange(protocol.pack(ds), ds.expected_bytes, self._limits(ds), name)
+                ex = self._exchange(protocol.pack(ds), ds.expected_bytes, self._limits(ds), name, on_received)
             except SweepDiscarded as e:
                 if len(plan) > 1:
                     e.detail.setdefault("pass", name)
                     e.detail.setdefault("pair_discarded", True)
                     e.detail.setdefault("passes", len(plan))
                 raise
+            done += ds.points
             data = np.frombuffer(ex.response, dtype="<u2", count=ds.points)
             # 前置きの点を切り落とす（設計C §5.6。区間ごとの前置き: 設計F §7.2）。uint16 のまま持つ（換算は機器の口の外: 設計D）
             pre = sweep.preroll_points if k is None else sweep.segments[k].preroll_points
@@ -231,11 +243,12 @@ class GigaStDevice(SweepRunner, Device):
         """いまの要求の見積もりの終わり（time.monotonic の時刻）。停止待ちの残り時間の表示に使う。"""
         return None if self._transport is None else self._transport.busy_until
 
-    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str]) -> Exchange:
+    def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str],
+                  on_received: Optional[Callable[[int], None]] = None) -> Exchange:
         if self._transport is None:
             raise DeviceDisconnected("開いていない")
         try:
-            return self._transport.exchange(request, expected, lim, note)
+            return self._transport.exchange(request, expected, lim, note, on_received)
         except DeviceDisconnected:
             # 読み書きの例外でポートは閉じた。再接続は Reconnector で同じシリアル番号を待つ
             self._transport = None

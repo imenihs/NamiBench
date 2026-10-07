@@ -83,6 +83,8 @@
         icNote: false,  // イメージ除去の正確・スピードを選んだときだけ一度出す注意（ずっとは出さない。ツールチップにもある）
         fileHidden: {},
         progress: {},
+        // 上段の掃引の進み具合（J §4.13。サーバーの screen_model.sweep_progress_view: Qt と同じ）
+        sweepProgress: { visible: false, percent: 0, text: "" },
         waiting: "",
         detached: {},
         off: { type: "freq", sign: "±", delta: "" },
@@ -449,6 +451,8 @@
           for (const [n, text] of Object.entries(v.traces || {})) this.traceNote(Number(n), text);
           this.onViewNotice(v); // 単位が変わった（欄の下）・比の表示に変わった（窓）: J §4.10。app_settings.js
           this.note(null, v.text);
+        } else if (kind === "sweep_progress") {
+          this.sweepProgress = p.ui;
         } else if (kind === "progress") {
           if (p.kind === "task") this.progress = { ...this.progress, [p.task_id]: p };
           else if (p.kind === "waiting_sweep_end") {

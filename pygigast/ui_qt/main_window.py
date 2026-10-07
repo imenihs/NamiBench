@@ -61,6 +61,7 @@ from .theme import DARK, stylesheet
 from .time_axis import apply_x_axis
 from .presets_dialog import PresetsDialog, save_new
 from .ref_quick import RefQuick
+from .run_buttons import RunButtons
 from .topbar import TopBar
 
 DB_PER_DIV_CHOICES = (1.0, 2.0, 5.0, 10.0)
@@ -313,13 +314,16 @@ class MainWindow(QMainWindow):
             sizes.set_tier(c, "L")
             widget_sync.fit_combo(c)
         top.addStretch(1)
+        # 連続・単発・停止は真上の行に掃引の進み具合を持つ並びに入れる（設計J §4.13）
+        self.run_box = RunButtons()
         self.btn_cont = QPushButton(texts.MENU_ITEMS["run_cont"])
         self.btn_single = QPushButton(texts.MENU_ITEMS["run_single"])
         self.btn_stop = QPushButton(texts.MENU_ITEMS["stop"])
         for b in (self.btn_cont, self.btn_single, self.btn_stop):
             b.setProperty("run", True)  # 上段で最も大きいボタン（字と最小幅: J §4.3・§4.11）
             sizes.set_tier(b, "L")
-            top.addWidget(b)
+            self.run_box.add_button(b)
+        top.addWidget(self.run_box)
         # ボタンとメニューは同じ項目を呼ぶ（J §4.3.1）
         self.btn_cont.clicked.connect(lambda: self.actions["run_cont"].trigger())
         self.btn_single.clicked.connect(lambda: self.actions["run_single"].trigger())
@@ -941,6 +945,8 @@ class MainWindow(QMainWindow):
                     self.cal_window.on_progress(payload)
             elif payload.get("kind") == "waiting_sweep_end":
                 self.status_note(texts.waiting_text(payload["remaining_s"]))
+        elif kind == "sweep_progress":
+            self.run_box.set_progress(screen_model.sweep_progress_view(payload))
         elif kind == "audio":
             self.listen.on_audio(payload)
         elif kind == "devices":
