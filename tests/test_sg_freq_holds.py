@@ -86,7 +86,11 @@ class InstrumentSgFreqTest(InstrumentCase):
         self.call("set_trace", number=2, action="max_hold")
         self.call("set_trace", number=3, action="min_hold")
         self.call("set_trace", number=4, action="max_hold", count=2, hold_after="stop")
-        self.single()  # 回数の最大（3回）
+        # 3画面（単発は1画面ずつなので回数を直接決める: 設計F §5.2.1）
+        self.clear_events()
+        self.call("run", mode="single", count=3)
+        self.wait_for(lambda k, p: k == "state" and p["run"]["state"] == "stopped"
+                      and p["run"]["last_stop_reason"] == "single_done")
 
     def counts(self):
         return {t["number"]: (t["current_count"], t["has_values"]) for t in self.call("get_state")["traces"]}

@@ -362,7 +362,7 @@ class TraceLineQtTest(UiBase):
         self.connect_and_sweep()
         self.wait(lambda: self.win.traces.live_payload(2) is not None, what="トレース2")
         before = self.state()["traces"][1]["current_count"]
-        self.assertEqual(before, 4)
+        self.assertEqual(before, 1)  # 単発は1画面（設計F §5.2.1）
         layer = self.win.traces
         self.choose(2, "thick")
         self.choose(1, "thin")
