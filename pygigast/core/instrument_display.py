@@ -18,7 +18,7 @@ from . import display_marks as dm
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
-from .marker.markers import Y_KIND_POWER, Marker
+from .marker.markers import Y_KIND_NF, Y_KIND_POWER, Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
@@ -38,7 +38,21 @@ NORMALIZED_MODES = (Mode.TG, Mode.S11)
 # REF レベルの dB/div の選択肢（設計J §4.1）
 DB_PER_DIV_CHOICES = (1, 2, 5, 10)
 
-UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB"}
+UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB", Quantity.NF: "dB"}
+
+# 縦軸（REF レベル・dB/div: 設計J §4.1）はモードの量ごとに持つ。NF は NF の dB の縦軸で、既定は REF 20dB・2dB/div
+# （設計M §1: 旧アプリの NF モードと同じ見やすさ。0〜20dB が見える）。ほかのモードは今までどおり1つ
+AMP_KIND_LEVEL = "level"
+AMP_KIND_NF = "nf"
+# |Γ|・SWR の1目盛（swr_per_div・gamma_per_div: 設計R §3）は S11 の縦軸。NF の縦軸にも同じ欄を持つ（使わない）
+AMPLITUDE_DEFAULTS = {AMP_KIND_LEVEL: {"ref_level": None, "unit": None, "db_per_div": None,
+                                       "swr_per_div": None, "gamma_per_div": None},
+                      AMP_KIND_NF: {"ref_level": 20.0, "unit": None, "db_per_div": 2,
+                                    "swr_per_div": None, "gamma_per_div": None}}
+
+
+def amp_kind_of(mode) -> str:
+    return AMP_KIND_NF if mode == Mode.NF else AMP_KIND_LEVEL
 
 # 比の縦軸の単位 → 表示の形式（測ったトレースが無いときの縦軸の種類: _axis_kind）
 _RATIO_AXIS_FORMATS = {"dB": formats.DB, formats.UNIT_GAMMA: formats.GAMMA, formats.UNIT_SWR: formats.SWR}
@@ -185,9 +199,9 @@ class DisplayMixin:
         self._marker_snap: dict = self._markers.snapshot({})
         self._undo: list[dict] = []
         self._redo: list[dict] = []
-        # 縦軸（設計J §4.1）。None は画面が決める既定。|Γ|・SWR の縦軸の1目盛（設計R §3: 下端は決まった値）
-        self._amplitude = {"ref_level": None, "unit": None, "db_per_div": None,
-                           "swr_per_div": None, "gamma_per_div": None}
+        # 縦軸（設計J §4.1）。None は画面が決める既定。|Γ|・SWR の縦軸の1目盛（設計R §3: 下端は決まった値）。
+        # モードの量ごとに持つ（NF は NF の dB の縦軸: AMPLITUDE_DEFAULTS）。いまのモードの縦軸が _amplitude
+        self._amp_store = {k: dict(v) for k, v in AMPLITUDE_DEFAULTS.items()}
         self._ref = None  # 選んでいるノーマライズの基準（normalize.Reference）
         self._norm_state: dict = {"used": False}
         self._norm_key: Optional[tuple] = None
@@ -209,10 +223,11 @@ class DisplayMixin:
         # 読めない行・読めない XY は飛ばす（MarkerTable.from_defs）。時間軸の表は time_markers・time_xy
         self._marker_tables["freq"].from_defs({"markers": st.get("markers") or [], "xy": st.get("xy") or {}})
         self._marker_tables["time"].from_defs({"markers": st.get("time_markers") or [], "xy": st.get("time_xy") or {}})
-        amp = st.get("amplitude") or {}
-        for k in self._amplitude:
-            if k in amp:
-                self._amplitude[k] = amp[k]
+        for kind, key in ((AMP_KIND_LEVEL, "amplitude"), (AMP_KIND_NF, "amplitude_nf")):
+            amp = st.get(key) or {}
+            for k in self._amp_store[kind]:
+                if k in amp:
+                    self._amp_store[kind][k] = amp[k]
         self._marker_snap = self._markers.snapshot({})
         # 起動したときの横軸（前回がゼロスパンなら時間: 設計N §1）。画面はマーカー表の列の名前に使う
         self._marker_snap["x_kind"] = self._x_kind()
@@ -222,9 +237,15 @@ class DisplayMixin:
             "traces": [trace_settings(t) for t in self._traces],
             **{k: v for k, v in self._marker_tables["freq"].to_defs().items() if k in ("markers", "xy")},
             **{"time_" + k: v for k, v in self._marker_tables["time"].to_defs().items() if k in ("markers", "xy")},
-            "amplitude": dict(self._amplitude),
+            "amplitude": dict(self._amp_store[AMP_KIND_LEVEL]),
+            "amplitude_nf": dict(self._amp_store[AMP_KIND_NF]),
             "trace_options": dict(self._trace_opts),
         }
+
+    @property
+    def _amplitude(self) -> dict:
+        """いまのモードの縦軸（NF は NF の縦軸: AMPLITUDE_DEFAULTS）。書き換えるとそのモードの縦軸が変わる。"""
+        return self._amp_store[amp_kind_of(self._adopted.mode)]
 
     # ------------------------------------------------------------------ 状態
 
@@ -348,6 +369,8 @@ class DisplayMixin:
         """生の値 → dBm（設計D §5.3）→ リニア W の Frame（設計F §5.1）。RTL-SDR は instrument_rtlsdr.py。"""
         if raw.encoding == _RTLSDR_ENCODING:
             return self._build_rtlsdr_frame(raw)
+        if raw.adopted.mode == Mode.NF:
+            return self._build_nf_frame(raw)  # HOT・COLD の組から NF（設計M: instrument_nf.py）
         a = raw.adopted
         levels = self._converter.to_dbm(a, raw.raw)
         self._no_calibration = levels.no_calibration
@@ -475,12 +498,19 @@ class DisplayMixin:
         """いまの縦軸の単位の種類（XY カーソルの Y を置いたときに記録する: markers.Y_KINDS）。
 
         縦軸は、表示していて値のある一番番号の小さいトレースの単位（画面の screen_s11.axis_unit と同じ決まり）。
-        そのトレースが比なら表示の形式（"db"・"gamma"・"swr"）、電力なら "power"。値のあるトレースが無ければ
-        縦軸の単位（振幅の単位: 比の dB なら "db"、無い・電力の単位なら "power"）。without_traces が偽なら None。
+        そのトレースが比なら表示の形式（"db"・"gamma"・"swr"）、NF なら "nf"（設計M）、電力なら "power"。値のある
+        トレースが無ければ、NF モードは "nf"、ほかは縦軸の単位（振幅の単位: 比の dB なら "db"、無い・電力の単位なら
+        "power"）。without_traces が偽なら None。
         """
         t = next((t for t in self._traces if t.visible and t.values is not None and t.quantity is not None), None)
         if t is None:
-            return _RATIO_AXIS_FORMATS.get(self._amplitude.get("unit"), Y_KIND_POWER) if without_traces else None
+            if not without_traces:
+                return None
+            if self._adopted.mode == Mode.NF:
+                return Y_KIND_NF  # NF の縦軸（設計M）。掃引の前でも電力・比の値として扱わない
+            return _RATIO_AXIS_FORMATS.get(self._amplitude.get("unit"), Y_KIND_POWER)
+        if t.quantity == Quantity.NF:
+            return Y_KIND_NF
         if t.quantity != Quantity.RATIO:
             return Y_KIND_POWER
         return self._trace_display(t)[2]
@@ -489,18 +519,18 @@ class DisplayMixin:
         """縦軸が比の dB・|Γ|・SWR のどれかのとき、XY カーソルの Y のうち別の比の形式で置いたものを、同じ反射の
         大きさのいまの形式の値に直す（設計R §3・設計書 O §1.4: 絵の意味はそのまま、数字の単位だけが替わる）。
 
-        直すのは、置いたときの単位が比の形式だった Y だけ（電力の縦軸で置いた Y・前の版の分からない Y は比の形式の
-        値ではないので直さない）。縦軸が電力の間は何もしない（比の形式の Y はそのまま持ち、比の縦軸に戻ったときに
-        置いたときの形式から直す）。値のあるトレースが無い間も何もしない（掃引を捨てた直後の間に、残っている振幅の
-        単位で形式を行き来させない）。電力の単位の替え方は _set_view_opts。
+        直すのは、置いたときの単位が比の形式だった Y だけ（電力の縦軸で置いた Y・NF の縦軸で置いた Y・前の版の分からない
+        Y は比の形式の値ではないので直さない）。縦軸が電力・NF の間は何もしない（比の形式の Y はそのまま持ち、比の
+        縦軸に戻ったときに置いたときの形式から直す）。値のあるトレースが無い間も何もしない（掃引を捨てた直後の間に、
+        残っている振幅の単位で形式を行き来させない）。電力の単位の替え方は _set_view_opts。
         """
         fn = self._axis_kind(without_traces=False)
-        if fn in (None, Y_KIND_POWER):
+        if fn in (None, Y_KIND_POWER, Y_KIND_NF):
             return
         xy = self._markers.xy
         for k in ("y1", "y2"):
             v, fp = getattr(xy, k), getattr(xy, k + "_kind")
-            if v is None or fp in (None, Y_KIND_POWER) or fp == fn:
+            if v is None or fp in (None, Y_KIND_POWER, Y_KIND_NF) or fp == fn:
                 continue
             setattr(xy, k, formats.convert_value(v, fp, fn))
             setattr(xy, k + "_kind", fn)
@@ -663,6 +693,8 @@ class DisplayMixin:
             s["view"] = dict(self._view_opts)
         if "amplitude" in keys:
             s["amplitude"] = dict(self._amplitude)
+            # モードの量ごとの縦軸を全部（プリセットは別のモードの縦軸を書き換えうる: AMPLITUDE_DEFAULTS）
+            s["amplitude_store"] = {k: dict(v) for k, v in self._amp_store.items()}
         if "palette" in keys:
             s["palette"] = self._palette.to_saved()
         return s
@@ -677,6 +709,8 @@ class DisplayMixin:
         for k in ("view", "amplitude"):
             if k in s:
                 out.append(tuple(sorted(s[k].items())))
+        if "amplitude_store" in s:
+            out.append(tuple(sorted((k, tuple(sorted(v.items()))) for k, v in s["amplitude_store"].items())))
         if "palette" in s:
             out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items()))))
         return tuple(out)
@@ -693,7 +727,10 @@ class DisplayMixin:
         if "view" in s:
             # 縦軸も一緒に戻すときは、縦軸は持っている値にする（ずらさない）
             self._set_view_opts(s["view"], shift_levels="amplitude" not in s)
-        if "amplitude" in s:
+        if "amplitude_store" in s:
+            for k, v in s["amplitude_store"].items():
+                self._amp_store[k].update(v)
+        elif "amplitude" in s:
             self._amplitude.update(s["amplitude"])
         if "palette" in s:
             from .palette import Palette

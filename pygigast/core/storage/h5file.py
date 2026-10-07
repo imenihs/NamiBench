@@ -7,7 +7,8 @@
     /segments/0000/       条件が同じ区間（連番）
         属性: conditions（採用済みの掃引条件の JSON: 設計C §5.8）, start_hz, step_hz, points,
               quantity, value_kind, raw_encoding, raw_layout, normalization（JSON。無ければ "null"）,
-              raw_extra（JSON。換算に要る機器の値。RTL-SDR の利得など。要らない形では属性ごと無い）
+              raw_extra（JSON。換算に要る機器の値。RTL-SDR の利得など。要らない形では属性ごと無い）,
+              nf（JSON。NF の区間だけ: 使った ENR・増幅度。あとで NF を計算し直せるように: 設計M・H §3）
         raw      [掃引, 点] uint16   chunk (256, 512)・gzip 1。生の値の形（raw_encoding）で型が決まる:
                                      gigast_ad_u16 は AD 値の uint16、rtlsdr_power_w はリニアの電力の float32
                                      （値の無い点は NaN）。型はデータセット自身が持つので、読む側は属性を見ずに読める
@@ -198,6 +199,8 @@ class SegmentMeta:
     raw_extra: Optional[dict] = None  # 換算に要る機器の値（RawEncoding.extra_keys）。要らない形は None
     # イメージ除去の区間の並び [{"point0", "points", "passes", "b3"}, …]（raw_layout が image_reject_segments のとき）
     raw_segments: Optional[list] = None
+    # NF の区間の ENR・増幅度（{"enr": {...}, "amp_raw": ...}。NF でない区間は None: 設計M）
+    nf: Optional[dict] = None
 
     def key(self) -> str:
         """同じ区間かを比べるための文字列（どれか1つでも違えば新しい区間: 設計H §3）。"""
@@ -393,6 +396,7 @@ def segment_meta_for(
     value_kind: ValueKind | str = ValueKind.REAL,
     normalization: Optional[dict] = None,
     calibration: Optional[dict] = None,
+    nf: Optional[dict] = None,
 ) -> SegmentMeta:
     a = raw.adopted
     n = points_within_stop(a)
@@ -410,6 +414,7 @@ def segment_meta_for(
         calibration=calibration,
         raw_extra=raw_extra_for(raw),
         raw_segments=rs.regions_of(raw.raw_segments, n) if lay == LAYOUT_IMAGE_REJECT else None,
+        nf=nf if lay == LAYOUT_NF else None,
     )
 
 
@@ -479,6 +484,8 @@ def _write_segment(g: h5py.Group, src: SegmentSource, prog: Progress, done: int)
     if m.raw_extra is not None:
         # 要らない形（GigaSt）では属性を作らない（この属性の無い今までのファイルと同じ中身のまま）
         g.attrs["raw_extra"] = dumps(m.raw_extra)
+    if m.nf is not None:
+        g.attrs["nf"] = dumps(m.nf)  # NF の区間だけ（ほかの区間の中身は今までと同じ）
 
     dt = m.dtype
     seg_ds: list[h5py.Dataset] = []
@@ -627,11 +634,12 @@ def save_snapshot(
     quantity: Quantity | str = Quantity.POWER,
     value_kind: ValueKind | str = ValueKind.REAL,
     normalization: Optional[dict] = None,
+    nf: Optional[dict] = None,
 ) -> Path:
     """1回分の保存（Ctrl+S。設計H §4）: 最後の掃引1回の区間＋トレース＋マーカー（設計H §7.1）。"""
     segs: list[SegmentSource] = []
     if raw is not None:
-        meta = segment_meta_for(raw, quantity=quantity, value_kind=value_kind, normalization=normalization)
+        meta = segment_meta_for(raw, quantity=quantity, value_kind=value_kind, normalization=normalization, nf=nf)
         r1, r2 = split_raw(raw)
         segs.append(MemorySegment(meta, np.array([raw.started_at]), r1[None, :], None if r2 is None else r2[None, :]))
     return write_h5(path, header, segs, traces, markers)
@@ -778,6 +786,7 @@ class H5Record:
                     calibration=_loads(a["calibration"]) if "calibration" in a else None,
                     raw_extra=_loads(a["raw_extra"]) if "raw_extra" in a else None,
                     raw_segments=regions,
+                    nf=_loads(a["nf"]) if "nf" in a else None,
                     index=i,
                     n_sweeps=n,
                     t_first=float(t[0]) if n else math.nan,
@@ -990,6 +999,7 @@ class _H5RangeSegment(SegmentSource):
             calibration=s.calibration,
             raw_extra=s.raw_extra,
             raw_segments=rs.clip(s.raw_segments, pt[0], pt[1]) if s.raw_segments is not None else None,
+            nf=s.nf,
         )
         self.n_sweeps = sw[1] - sw[0]
 

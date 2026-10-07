@@ -42,7 +42,7 @@ class LevelStateTest(tws_settings._Base):
         st = self.connect_and_sweep(100 * MHZ, 200 * MHZ)
         lv = st["ui"]["level"]
         self.assertEqual((lv["ratio"], lv["current"]), (False, "dBm"))
-        self.assertEqual([c["code"] for c in lv["choices"]], ["dBm", "dBuV", "dBmV", "ratio"])
+        self.assertEqual([c["code"] for c in lv["choices"]], ["dBm", "dBuV", "dBmV", "nf", "ratio"])
         self.assertEqual(self.post("set_mode", {"mode": "tg"})[0], 200)
         code, r = self.post("reference_take", {"kind": "wide", "name": "直結 A"})
         self.assertEqual(code, 200, r)

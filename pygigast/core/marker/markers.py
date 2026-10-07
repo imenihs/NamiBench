@@ -129,7 +129,7 @@ class XYCursors:
 
     x は周波数（Hz の int）、y はレベル（縦軸の単位の数値）。None は置いていない。
     y1_kind・y2_kind は y を置いたときの縦軸の単位の種類（Y_KINDS: "power"＝電力の単位・"db"・"gamma"・"swr"＝比の
-    表示の形式。None は分からない前の版）。y は置いたときの単位にだけ従って直す: 電力の値は電力の縦軸のときに電力の
+    表示の形式・"nf"＝NF の dB。None は分からない前の版）。y は置いたときの単位にだけ従って直す: 電力の値は電力の縦軸のときに電力の
     単位・外部補正の分だけずらし、比の形式の値は比の縦軸の形式が替わったときに同じ反射の大きさへ直す
     （設計書 O §1.4・設計R §3）。
     """
@@ -142,9 +142,11 @@ class XYCursors:
     y2_kind: Optional[str] = None
 
 
-# XY カーソルの y を置いたときの縦軸の単位の種類（電力・比の表示の形式）
+# XY カーソルの y を置いたときの縦軸の単位の種類（電力・比の表示の形式・NF の dB）。NF の縦軸（設計M）で置いた y は
+# 電力の単位でずらさず、比の形式としても直さない
 Y_KIND_POWER = "power"
-Y_KINDS = (Y_KIND_POWER, an.formats.DB, an.formats.GAMMA, an.formats.SWR)
+Y_KIND_NF = "nf"
+Y_KINDS = (Y_KIND_POWER, an.formats.DB, an.formats.GAMMA, an.formats.SWR, Y_KIND_NF)
 
 
 @dataclass(frozen=True)

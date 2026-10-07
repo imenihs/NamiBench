@@ -151,7 +151,7 @@ class UnitViewTest(unittest.TestCase):
             u = screen_model.unit_view(self.st(q))
             self.assertEqual((u["ratio"], u["current"], u["label"]), (False, "dBuV", "dBμV"))
             self.assertEqual([(c["code"], c["enabled"]) for c in u["choices"]],
-                             [("dBm", True), ("dBuV", True), ("dBmV", True), ("ratio", False)])
+                             [("dBm", True), ("dBuV", True), ("dBmV", True), ("nf", False), ("ratio", False)])
             self.assertEqual(u["choices"][-1]["tip"], texts.VIEW_TEXTS["level_unit_ratio_item_tip"])
             self.assertEqual(u["tip"], texts.VIEW_TEXTS["level_unit_tip"])
 

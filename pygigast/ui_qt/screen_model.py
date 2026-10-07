@@ -17,7 +17,7 @@ import numpy as np
 
 from ..core import zero_span as zs
 from ..core.units import format_freq, format_time_us, time_axis_unit
-from . import marker_rows, screen_s11, source_view, texts
+from . import marker_rows, nf_view, screen_s11, source_view, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
 
@@ -142,6 +142,8 @@ def mode_reasons(st: dict) -> dict:
 
 # 単位の欄で「基準との比」を表す値（単位の設定のコードではない。選んで送るものではない）
 RATIO_UNIT = "ratio"
+# 単位の欄で「NF の dB」を表す値（設計M。RATIO_UNIT と同じく選ぶものではない）
+NF_UNIT = "nf"
 
 
 def unit_view(st: dict) -> dict:
@@ -159,11 +161,20 @@ def unit_view(st: dict) -> dict:
     units = v.get("level_units") or {"dBm": "dBm"}
     label = units.get(code, code)
     ratio = st.get("display_quantity") == "ratio"
-    reason = V["level_unit_ratio_reason"].replace("{unit}", label) if ratio else None
-    choices = [{"code": c, "text": t, "enabled": not ratio, "tip": reason or ""} for c, t in units.items()]
+    nf = st.get("display_quantity") == "nf"  # NF の dB を出している間（設計M）も電力の単位は使わない
+    N = texts.NF_TEXTS
+    if ratio:
+        reason = V["level_unit_ratio_reason"].replace("{unit}", label)
+    elif nf:
+        reason = N["level_unit_nf_reason"].replace("{unit}", label)
+    else:
+        reason = None
+    choices = [{"code": c, "text": t, "enabled": not (ratio or nf), "tip": reason or ""} for c, t in units.items()]
+    choices.append({"code": NF_UNIT, "text": N["level_unit_nf_item"], "enabled": False,
+                    "tip": N["level_unit_nf_item_tip"]})
     choices.append({"code": RATIO_UNIT, "text": V["level_unit_ratio_item"], "enabled": False,
                     "tip": V["level_unit_ratio_item_tip"]})
-    return {"ratio": ratio, "current": RATIO_UNIT if ratio else code, "unit": code, "label": label,
+    return {"ratio": ratio, "current": RATIO_UNIT if ratio else NF_UNIT if nf else code, "unit": code, "label": label,
             "choices": choices, "tip": "\n".join(t for t in (V["level_unit_tip"], reason) if t)}
 
 
@@ -596,6 +607,7 @@ def ui_view(st: dict) -> dict:
         "sg_state": texts.sg_state_text(st),  # SG 周波数の欄のそば（J §4.12）
         "trace_status": {str(t.get("number")): trace_status(t) for t in st.get("traces") or []},
         "level": unit_view(st),  # 単位の欄（J §4.10）
+        "nf": nf_view.nf_view(st),  # NF の欄（設計M・J §4.5）
         # 反射（S11）の手順・表示の形式・縦軸（設計E §6.5・設計R §3。screen_s11.py）
         **s11_ui(st),
         # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う

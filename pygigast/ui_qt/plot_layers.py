@@ -62,8 +62,13 @@ def x_of(payload: dict) -> np.ndarray:
     return trace_x(payload)
 
 
+# 控えめな色で描く点の印（点ごとの印の名前）。NF の HOT と COLD の差が小さい点（設計M §1）も
+DIM_POINT_FLAGS = ("transient", "nf_small_difference")
+
+
 def marked_points(payload: dict, n: int) -> np.ndarray:
-    """控えめな色で描く点: 前置き不足（設計C §5.6）と校正の範囲外（設計D §5.3）。"""
+    """控えめな色で描く点: 前置き不足（設計C §5.6）と校正の範囲外（設計D §5.3）と、NF の HOT と COLD の差が
+    0.5dB 未満の点（設計M §1: 値は出して印を付ける）。"""
     fl = payload.get("flags") or {}
     mark = np.zeros(n, dtype=bool)
     head = int(fl.get("transient_head_points") or 0)
@@ -74,9 +79,10 @@ def marked_points(payload: dict, n: int) -> np.ndarray:
         if oc.shape == (n,):
             mark |= oc
     pts = fl.get("points") or {}
-    tr = pts.get("transient")
-    if tr is not None and np.asarray(tr).shape == (n,):
-        mark |= np.asarray(tr, dtype=bool)
+    for name in DIM_POINT_FLAGS:
+        a = pts.get(name)
+        if a is not None and np.asarray(a).shape == (n,):
+            mark |= np.asarray(a, dtype=bool)
     return mark
 
 
