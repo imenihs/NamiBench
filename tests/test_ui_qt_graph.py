@@ -304,6 +304,31 @@ class SpanLockTest(_Base):
         tol = 2e9 / self.vb.width() * 3
         self.assertAlmostEqual(sw["center_hz"], 650e6, delta=tol)
 
+    def test_marker_span_releases_lock_and_notes(self):
+        """固定 ON でマーカーの「デルタの2点を Start・Stop に」: 固定を外して2点を Start・Stop にし、Span の欄に1回
+        知らせる（C §5.13）。"""
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.set_sweep(start_hz=100_000_000, stop_hz=1_100_000_000)
+        self.api.call("run", mode="single").result(5)
+        end = time.monotonic() + 10
+        while time.monotonic() < end and not any(t.get("has_values") for t in self.api.get_state().result(5)["traces"]):
+            self.pump(0.05)
+        for f in (300_000_000, 700_000_000):
+            self.api.call("marker_add", kind="M", trace=1, freq_hz=f).result(5)
+        self.api.call("marker_set", id="M2", ref="M1").result(5)
+        self.win.span_lock.click()
+        self.pump()
+        self.assertEqual(self.sweep()["span_lock_hz"], 1_000_000_000)
+        marks = {m["id"]: m["freq_hz"] for m in self.api.get_state().result(5)["markers"]["markers"]}
+        self.win.marker_to("M2", "span")
+        self.pump()
+        sw = self.sweep()
+        self.assertEqual((sw["start_hz"], sw["stop_hz"]), tuple(sorted((marks["M1"], marks["M2"]))))
+        self.assertIsNone(sw["span_lock_hz"])
+        self.assertEqual(self.win.span_lock.text(), "Span 固定")
+        self.assertEqual(self.win.f_span.note.text(), "Span 固定を外しました")
+        self.assertFalse(self.win.f_span.note_action.isVisible())
+
     def test_start_with_lock_and_keep_typed_button(self):
         """固定 ON で Start を打つ: Stop が動いて Span を守る。上限を超えたら Start の欄に反対の結果のボタン。"""
         self.lock(start_hz=1_000_000_000, stop_hz=1_044_571_000)
@@ -340,14 +365,17 @@ class MenuAndKeyTest(_Base):
         acts = self.win.actions
         expect = {"save": "Ctrl+S", "open": "Ctrl+O", "export": "Ctrl+E", "png_save": "Ctrl+P",
                   "png_copy": "Ctrl+Shift+C", "undo": "Ctrl+Z", "redo": "Ctrl+Y", "run_cont": "F5",
-                  "run_single": "F6", "stop": "F7", "pause": "Pause", "mode_sa": "Ctrl+1", "mode_nf": "Ctrl+5",
+                  "run_single": "F6", "stop": "F7", "pause": "Pause", "mode_sa": "Ctrl+1", "mode_s11": "Ctrl+3",
+                  "mode_nf": "Ctrl+5",
                   "marker_peak": "P", "marker_here": "M"}
         for code, key in expect.items():
             self.assertEqual(acts[code].shortcut().toString(), key, code)
         # まだ無い機能は消さずに無効にし、理由をツールチップに出す（U-08）
-        for code in ("cal_freq", "self_test", "mode_s11"):
+        for code in ("self_test", "mode_nf"):
             self.assertFalse(acts[code].isEnabled(), code)
             self.assertIn("—", acts[code].toolTip(), code)
+        # S11（反射）は使える（設計E §6.5・設計L §1.1）
+        self.assertTrue(acts["mode_s11"].isEnabled())
         # ボタンのツールチップにもキーを出す（U-12）
         self.assertIn("F5", self.win.btn_cont.toolTip())
         self.assertIn("Ctrl+1", self.win.mode_buttons["sa"].toolTip())

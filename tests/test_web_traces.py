@@ -216,3 +216,77 @@ console.log(JSON.stringify(out));
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FileUnitWebTest(unittest.TestCase):
+    """単位が縦軸と違う参照トレース（E §6.4）: Web も重ねず、チェックを無効にして理由を出す（Qt の
+    tests/test_ui_qt_files.py の test_file_with_other_unit_is_not_overlaid と同じ動き・同じ語）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.test_web_layout import App, EdgePage, edge_available
+
+        if not edge_available():
+            raise unittest.SkipTest("Microsoft Edge が無い")
+        cls.app = App(lan=False)
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def wait_idle(self, what):
+        import time
+
+        end = time.monotonic() + 30
+        while self.app.call("get_state").get("tasks"):
+            self.assertLess(time.monotonic(), end, what)
+            time.sleep(0.05)
+
+    def test_other_unit_is_not_overlaid(self):
+        import time
+
+        from tests.test_web_layout import open_app
+
+        p = Path(self.app.tmp.name) / "p.h5"
+        self.app.call("save", path=str(p))
+        end = time.monotonic() + 30
+        while not p.exists():
+            self.assertLess(time.monotonic(), end, "保存")
+            time.sleep(0.05)
+        self.wait_idle("保存")
+        self.app.call("open", paths=[str(p)])
+        self.wait_idle("開く")
+        open_app(self.page, self.app, 1280, 720)
+        self.page.wait("gsApp.files.length === 1 && gsApp.$traces.has(gsApp.files[0].traces[0].id)", "参照トレース")
+        tid = self.page.ev("gsApp.files[0].traces[0].id")
+        self.page.wait(f"gsApp.shownFiles(gsApp.palette).some((f) => f.id === '{tid}')", "重ねる")
+        sel = "section[data-sec=files] label.inline"
+        self.assertFalse(self.page.ev(f"document.querySelector('{sel} input').disabled"))
+        # 行の文字は Qt の一覧と同じ（file_trace_check）
+        info = self.app.call("get_state")["files"][0]["traces"][0]
+        self.assertEqual(self.page.ev(f"document.querySelector('{sel}').textContent.trim()"),
+                         qt_texts.w("file_trace_check", number=info["number"], unit=info["unit"], points=info["points"]))
+        # 縦軸を比（dB）にすると、電力（dBm）の参照トレースは重ねない（グラフ・凡例・PNG・REF の自動から外れる）。
+        # 縦軸の単位は表示している測定中のトレースの単位（Qt と同じ screen_s11.axis_unit）: TG で基準を取って比にする
+        self.app.call("set_mode", mode="tg")
+        self.app.call("reference_take", kind="fine")
+        self.wait_idle("基準を取る")
+        self.app.call("run", mode="single")
+        self.page.wait("gsApp.axisUnit === 'dB'", "縦軸が dB")
+        self.page.settle()
+        self.assertEqual(self.page.ev("gsApp.shownFiles(gsApp.palette).length"), 0)
+        self.assertFalse(self.page.ev("gsApp.legendItems().some((it) => it.text.startsWith('p.h5'))"))
+        self.assertTrue(self.page.ev(f"document.querySelector('{sel} input').disabled"))
+        title = self.page.ev(f"document.querySelector('{sel}').title")
+        self.assertEqual(title, qt_texts.w("file_unit_differs", axis="dB", unit=info["unit"]))
+        self.assertIn("単位が縦軸", title)
+        # 電力に戻すと重ねる
+        self.app.call("set_mode", mode="sa")
+        self.app.call("run", mode="single")
+        self.page.wait(f"gsApp.shownFiles(gsApp.palette).some((f) => f.id === '{tid}')", "また重ねる")

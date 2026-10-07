@@ -125,7 +125,14 @@ class ReferenceTest(InstrumentCase):
         n = self.wait_task(r["task_id"])
         self.assertEqual(n["code"], "task_done", n)
         t = self.wait_for(lambda k, p: k == "trace" and p["quantity"] == "ratio")
-        self.assertLess(abs(float(np.nanmedian(t["values"]))), 1.0)
+        # シミュレータの被測定物は 145MHz で整合する共振（設計E §6.5 の試験用）: 共振から離れた所は全反射に近く 0dB 付近、
+        # 共振は深い谷（方向性の漏れで約 −30dB に止まる）
+        v = np.asarray(t["values"], dtype=float)
+        f = t["axis"]["start_hz"] + t["axis"]["step_hz"] * np.arange(t["axis"]["points"])
+        self.assertLess(abs(float(np.nanmedian(v[f < 70_000_000]))), 1.0)
+        i = int(np.nanargmin(v))
+        self.assertLess(abs(int(f[i]) - 145_000_000), 3_000_000)
+        self.assertLess(float(v[i]), -15.0)
 
 
 class SaveOpenExportTest(InstrumentCase):

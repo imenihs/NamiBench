@@ -6,6 +6,8 @@
   - 単位・外部補正を変えたら、REF レベル・XY カーソルの Y・しきい値も同じだけずらす（画面の絵は変わらず、
     数字だけ新しい単位になる。実機の計測器と同じ）。いまの縦軸が比（ノーマライズ中の dB）のときはずらさない
 - 配色（palette）: ユーザー設定の1つ。ライト・ダークは初期値に戻す命令（確認は画面: 変えた色の数は状態にある）
+- 保存した配色（J §4.4.1）: 名前を付けて保存・読み込み・名前・消す・書き出しと取り込み（中身の文字でやりとりする）。
+  読み込みは元に戻すに積む。保存していない変更の数は状態の palette.unsaved（読み込む前の確認は画面）
 - プリセット（O §1.2）: モード・掃引条件・振幅・トレースの設定・表示の設定。校正とノーマライズの基準・
   マーカーは入れない。呼び出しは1回の命令で、元に戻せる
 - 表示の設定・配色・プリセットの呼び出しは「元に戻す」に積む（設計J §3・§4.4）。積むのは変えた部分だけ
@@ -14,16 +16,23 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+from pathlib import PurePath
 from typing import Optional
 
 from . import colormaps, view_units
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict
-from .palette import BASES, Palette, normalize_color
+from .instrument_zerospan import zero_span_request
+from .marker.markers import Y_KIND_POWER
+from .palette import BASES, IMPORT_MAX_CHARS, Palette, PaletteStore, normalize_color
 from .presets import PresetError, PresetStore
 from .sweep import image_reject as ir
 from .types import Mode, Quantity, SweepRequest
 
 _UNSET = object()
+
+# プリセットに入れる縦軸（設計J §4.1）。|Γ|・SWR の縦軸の1目盛も入れる（設計R §3。前の版のプリセットに無ければ初期値）
+PRESET_AMPLITUDE_KEYS = ("ref_level", "db_per_div", "unit", "swr_per_div", "gamma_per_div")
 
 
 class ViewMixin:
@@ -33,6 +42,7 @@ class ViewMixin:
         self._view_opts = view_units.restore((st or {}).get("view"))
         self._palette = Palette.from_saved(self._settings.get("theme"))
         self._presets = PresetStore(self._root / "presets")
+        self._palettes = PaletteStore(self._root / "palettes")
 
     def _view_state_to_save(self) -> dict:
         return {"view": dict(self._view_opts)}
@@ -81,21 +91,28 @@ class ViewMixin:
             # 縦軸の単位を決めてあれば（マーカーから REF に・など）、電力の単位を新しい単位の名前にする
             self._amplitude["unit"] = view_units.level_shift(unit_for(Quantity.POWER, self._profile), new)[1]
         if delta and self._last_quantity == Quantity.POWER:
+            # ずらすのは、いまの縦軸が電力のときだけ（比を出している間は単位も外部補正も当てず、何もずらさない:
+            # 設計書 O §1.4）。そのうえで、それぞれの値を決めたときの単位に従う: REF・ピークのしきい値は電力の縦軸の値、
+            # XY カーソルの Y は電力の縦軸で置いたもの（前の版の分からないものを含む）、マーカーのしきい値は電力の
+            # トレースで決めたものだけ。比の dB・|Γ|・SWR で決めた値は電力の単位に関係しない（設計R §3）
             if shift_levels:
                 ref = self._amplitude.get("ref_level")
                 self._amplitude["ref_level"] = round((0.0 if ref is None else float(ref)) + delta, 2)
-            xy = self._markers.xy
-            for k in ("y1", "y2"):
-                if getattr(xy, k) is not None:
-                    setattr(xy, k, round(getattr(xy, k) + delta, 2))
-            for m in self._markers.markers():
-                if m.threshold is not None:
-                    m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
-            if self._markers.peak_threshold is not None:
-                self._markers.peak_threshold = round(self._markers.peak_threshold + delta, 2)
+            # 周波数軸と時間軸（ゼロスパン: 設計N §1）のマーカー表の両方
+            for table in self._marker_tables.values():
+                xy = table.xy
+                for k in ("y1", "y2"):
+                    if getattr(xy, k) is not None and getattr(xy, k + "_kind") in (Y_KIND_POWER, None):
+                        setattr(xy, k, round(getattr(xy, k) + delta, 2))
+                if table.peak_threshold is not None:
+                    table.peak_threshold = round(table.peak_threshold + delta, 2)
+                for m in table.markers():
+                    if m.threshold is not None and m.threshold.power:
+                        m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
             same_range = all(old.get(k) == new.get(k) for k in ("wf_color_lo", "wf_color_hi"))
-            if shift_levels and same_range:
-                # ウォーターフォールの手で決めた色の範囲も同じだけずらす（絵は変わらず数字だけ新しい単位に: 設計O §1.4）
+            if shift_levels and same_range and self._wf_range_is_power():
+                # ウォーターフォールの手で決めた色の範囲も同じだけずらす（絵は変わらず数字だけ新しい単位に: 設計O §1.4）。
+                # 色の範囲が電力の値のときだけ（比の dB・|Γ|・SWR の行の範囲は電力の単位に関係しない: 設計R §3）
                 for k in ("wf_color_lo", "wf_color_hi"):
                     self._view_opts[k] = round(float(self._view_opts[k]) + delta, 2)
         # 値の単位が変わるので、トレース・マーカー・REF の自動を出し直す
@@ -114,14 +131,16 @@ class ViewMixin:
             self._notice("level_unit_changed", {"unit": new.get("level_unit"), "previous": old.get("level_unit")})
 
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
-                      layout=_UNSET, function_lines=_UNSET, wf_trace=_UNSET, wf_color_auto=_UNSET,
-                      wf_color_lo=_UNSET, wf_color_hi=_UNSET, wf_rows=_UNSET, density_half=_UNSET,
-                      bandplan_shown=_UNSET, bookmarks_shown=_UNSET) -> dict:
+                      layout=_UNSET, function_lines=_UNSET, zero_span_s=_UNSET, leak_marks=_UNSET, wf_trace=_UNSET,
+                      wf_color_auto=_UNSET, wf_color_lo=_UNSET, wf_color_hi=_UNSET, wf_rows=_UNSET,
+                      density_half=_UNSET, bandplan_shown=_UNSET, bookmarks_shown=_UNSET) -> dict:
+        """zero_span_s はゼロスパンの表示する長さ（秒。0 は1回の掃引: 設計N §1）。leak_marks は内部の漏れの印（設計L §1.4）。
+        wf_*・density_half はウォーターフォールと密度表示（設計P §9.2・§9.3）、*_shown はバンドプランとブックマーク（P §6）。"""
         given = {"level_unit": level_unit, "ext_db": ext_db, "freq_offset_hz": freq_offset_hz, "draw_style": draw_style,
-                 "layout": layout, "function_lines": function_lines, "wf_trace": wf_trace,
-                 "wf_color_auto": wf_color_auto, "wf_color_lo": wf_color_lo, "wf_color_hi": wf_color_hi,
-                 "wf_rows": wf_rows, "density_half": density_half, "bandplan_shown": bandplan_shown,
-                 "bookmarks_shown": bookmarks_shown}
+                 "layout": layout, "function_lines": function_lines, "zero_span_s": zero_span_s,
+                 "leak_marks": leak_marks, "wf_trace": wf_trace, "wf_color_auto": wf_color_auto,
+                 "wf_color_lo": wf_color_lo, "wf_color_hi": wf_color_hi, "wf_rows": wf_rows,
+                 "density_half": density_half, "bandplan_shown": bandplan_shown, "bookmarks_shown": bookmarks_shown}
         kw = {k: v for k, v in given.items() if v is not _UNSET}
         for k in view_units.DEFAULTS:
             if k in kw and kw[k] is None:
@@ -187,6 +206,107 @@ class ViewMixin:
         self._changed()
         return {"palette": self._palette.state(), "lost": lost}
 
+    # ------------------------------------------------------------------ 独自の配色の保存と読み込み（設計J §4.4.1）
+    # 名前を付けた配色の一覧（アプリのデータの palettes フォルダ。Qt と Web で共有）。読み込むと、いまの配色をそれに
+    # 置き換える（元に戻すに積む）。何が失われるかの確認は画面（状態の palette.unsaved）。ファイルへの書き出しと
+    # ファイルからの取り込みは中身（JSON の文字）でやりとりし、パスを受け取らない（Web の口と同じ形: A §4.3.2）
+
+    def _palette_error(self, e: PresetError) -> CommandError:
+        return CommandError(e.code, "name" if "_name_" in e.code else "id", e.detail)
+
+    def _palette_changed(self) -> None:
+        """どの配色から始めたか（origin）が変わった: 設定に書き、状態を配る（色が同じなら元に戻すには積まない）。"""
+        self._save_palette_setting()
+        self._changed()
+
+    def _cmd_palette_list(self) -> dict:
+        """保存した配色の一覧。行ごとに読みやすさの知らせ（コード。文は画面: U-25）。"""
+        rows, broken = self._palettes.list(with_content=True)
+        out = [{"id": r["id"], "name": r["name"], "saved_at": r["saved_at"],
+                "warnings": Palette.from_saved(r["content"]).warnings()} for r in rows]
+        origin = self._palette.origin
+        return {"palettes": out, "broken": broken, "origin_id": origin["id"] if origin else None}
+
+    def _cmd_palette_save(self, name: str, overwrite_id: Optional[str] = None) -> dict:
+        """いまの配色に名前を付けて保存する（overwrite_id でその配色を置き換える）。いまの配色はこの配色から始めた扱い。"""
+        try:
+            r = self._palettes.save(name, self._palette.content(), {}, overwrite_id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        except OSError as e:
+            raise CommandError("palette_unwritable", None, {"message": str(e)}) from e
+        self._palette.set_origin(r["id"], r["name"])
+        self._palette_changed()
+        return {"id": r["id"], "name": r["name"]}
+
+    def _cmd_palette_load(self, id: str) -> dict:  # noqa: A002 — 命令の引数名（プリセットと同じ）
+        """いまの配色を、保存した配色で置き換える（1回の命令。Ctrl+Z で戻せる）。"""
+        try:
+            d = self._palettes.get(id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        new = PaletteStore.palette_of(d)
+        new.set_origin(d["id"], d["name"])
+        before = self._undo_snapshot(("palette",))
+        self._palette = new
+        self._record_undo(before)
+        self._palette_changed()
+        return {"name": d["name"], "palette": self._palette.state()}
+
+    def _cmd_palette_rename(self, id: str, name: str) -> dict:  # noqa: A002
+        try:
+            r = self._palettes.rename(id, name)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        if self._palette.origin and self._palette.origin["id"] == id:
+            self._palette.origin["name"] = r["name"]
+            self._palette_changed()
+        return r
+
+    def _cmd_palette_delete(self, id: str) -> dict:  # noqa: A002
+        try:
+            self._palettes.delete(id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        if self._palette.origin and self._palette.origin["id"] == id:
+            # 始めた配色が無くなった: いまの色は初期値から変えた色として数える（保存していない変更）
+            self._palette.set_origin(None)
+            self._palette_changed()
+        return {}
+
+    def _cmd_palette_export(self, id: str) -> dict:  # noqa: A002
+        """保存した配色1つのファイルの中身（JSON の文字）と既定のファイル名。書くのは画面（Qt はファイル、Web はダウンロード）。"""
+        try:
+            d = self._palettes.get(id)
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        return {"name": d["name"], "file_name": PaletteStore.file_name(d["name"]), "text": self._palettes.file_text(d)}
+
+    def _cmd_palette_import(self, text: str, file_name: str = "") -> dict:
+        """ファイルの中身（JSON の文字）を新しい配色として一覧に足す（いまの配色は変えない）。
+
+        名前はファイルの中の名前（無ければファイル名）。同じ名前があれば「名前 (2)」にする（黙って上書きしない）。
+        戻り値の warnings は取り込んだ配色の読みやすさの知らせ（その場で出す: 設計J §4.4.1）。
+        """
+        if not isinstance(text, str) or len(text) > IMPORT_MAX_CHARS:
+            raise CommandError("palette_file_unreadable", "text")
+        try:
+            d = self._palettes.parse(json.loads(text))
+        except ValueError:
+            d = None
+        if d is None:
+            raise CommandError("palette_file_unreadable", "text")
+        p = PaletteStore.palette_of(d)
+        stem = PurePath(str(file_name or "")).stem
+        try:
+            name = self._palettes.free_name(d["name"] if d["name"].strip() else stem)
+            r = self._palettes.save(name, p.content(), {})
+        except PresetError as e:
+            raise self._palette_error(e) from e
+        except OSError as e:
+            raise CommandError("palette_unwritable", None, {"message": str(e)}) from e
+        return {"id": r["id"], "name": r["name"], "warnings": p.warnings()}
+
     # ------------------------------------------------------------------ プリセット（設計O §1.2）
 
     def _preset_content(self) -> dict:
@@ -198,7 +318,7 @@ class ViewMixin:
                       "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
                       "image_reject": a.image_reject, "sg_hz": a.sg_hz, "span_lock_hz": a.span_lock_hz},
             "traces": [trace_settings(t) for t in self._traces],
-            "amplitude": {k: self._amplitude.get(k) for k in ("ref_level", "db_per_div", "unit")},
+            "amplitude": {k: self._amplitude.get(k) for k in PRESET_AMPLITUDE_KEYS},
             "view": dict(self._view_opts),
         }
 
@@ -244,6 +364,7 @@ class ViewMixin:
             image_reject=ir.read_choice(sw),
             span_lock=bool(sw.get("span_lock_hz")), one_shot=True,
         )
+        req = zero_span_request(req)  # ゼロスパンで残したプリセットはゼロスパンで戻す（設計N §1）
         try:
             new = self._model.apply(req, base)
         except ValueError:
@@ -272,7 +393,7 @@ class ViewMixin:
         before = self._undo_snapshot(("sweep", "view", "amplitude"))
         self._set_view_opts(view_units.restore(c.get("view")), shift_levels=False)
         amp = c.get("amplitude") or {}
-        for k in ("ref_level", "db_per_div", "unit"):
+        for k in PRESET_AMPLITUDE_KEYS:
             self._amplitude[k] = amp.get(k)
         for td in c.get("traces") or []:
             try:

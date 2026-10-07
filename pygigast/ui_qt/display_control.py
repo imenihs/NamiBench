@@ -1,6 +1,7 @@
 """メイン画面のうち、設計P の表示（ウォーターフォール・密度・記録の再生・バンドプラン）をつなぐ所。
 
-- 表示の組み合わせ（コアの表示の設定 layout）に合わせて、グラフの下にウォーターフォールか密度表示を出す（P §2）
+- 表示の組み合わせ（コアの表示の設定 layout）に合わせて、グラフの下にウォーターフォールか密度表示を出す（P §2）。
+  ゼロスパン（横軸が時間）の間は出さない（display_view.shown_layout。設定は変えず、メニューと表示のタブは理由付き）
 - ウォーターフォールの行: 掃引ごとのイベント `waterfall` を上に足す。最初・単位が変わった・広げた・時間の範囲を選んだ・
   再生に入った／出たときは命令 `waterfall_rows` で取り直す（P §9.2）。最新に付いていく間は1行 ROW_PX 画素、時間の
   範囲を選んだ・再生中は範囲を縦いっぱいに出す（行が多ければコアが最大値でまとめる: P §8）
@@ -88,7 +89,7 @@ class DisplayControl:
 
     def apply_state(self, st: dict) -> None:
         win = self.win
-        lay = display_view.layout_of(st)
+        lay = display_view.shown_layout(st)
         win.parts.set_layout(lay)
         if not self._restored:
             self._restored = True
@@ -128,6 +129,7 @@ class DisplayControl:
             self.fetch()
         self.waterfall.set_cursor(pb.get("t") if active else self._past_time(st))
         self.bar.apply(display_view.playback_view(st))
+        self.density.set_reason(display_view.density_reason(st))
         bv = display_view.bandplan_view(st)
         self.bands.set_items(bv["bands"], bv["bookmarks"])
         if self.playback:
@@ -136,10 +138,13 @@ class DisplayControl:
             label, why = D["latest"], (texts.REASON_TEXTS["wf_following"] if self.follow else None)
         self.waterfall.set_follow_button(label, why)
         a = win.actions
+        chosen = display_view.layout_of(st)
+        lay_why = display_view.layout_reasons(st)
         for code, key in (("view_waterfall", "waterfall"), ("view_density", "density")):
             if code in a:
                 a[code].setCheckable(True)
-                a[code].setChecked(lay == key)
+                a[code].setChecked(chosen == key)
+                menus.set_reason(a[code], lay_why[key])  # ゼロスパンの間は選べない（理由付き: U-08）
         why = None if self.playback else texts.REASON_TEXTS["not_playing"]
         for code in ("playback_extract", "playback_export_csv"):
             if code in a:
@@ -150,8 +155,8 @@ class DisplayControl:
             if act is not None:
                 menus.set_reason(act, reasons[key])
 
-    def apply_y(self, ref: float, div: float, unit: str) -> None:
-        self.density.set_y(ref, div, unit)
+    def apply_y(self, ref: float, div: float, unit: str, decimals: int = 1) -> None:
+        self.density.set_y(ref, div, unit, decimals)
 
     @staticmethod
     def _past_time(st: dict) -> Optional[float]:

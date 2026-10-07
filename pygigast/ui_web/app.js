@@ -69,8 +69,6 @@
         // dB の打てるドロップダウンの一覧と打てる範囲（G §3.6。fields.js に Qt の fields.py と同じ値で置く）
         dbLists: { bw: GSFields.BANDWIDTH_CHOICES, floor: GSFields.FLOOR_CHOICES, ref: GSFields.REF_CHOICES },
         dbRanges: GSFields.DB_RANGES,
-        refs: [],
-        refName: "",
         hover: null,
         hoverLines: null,
         ampLocal: null,
@@ -98,7 +96,8 @@
         const s = this.sw || {};
         return this.ui.image_reject || { items: [], value: s.image_reject, reason: this.sweepReasons.image_reject || null };
       },
-      divChoices() { return DB_PER_DIV_CHOICES; },
+      // 1目盛の選択肢（dB/div か、|Γ|・SWR の /div: 設計R §3。サーバーの screen_s11.axis_view）
+      divChoices() { return this.axis.div_choices; },
       sw() { return (this.st && this.st.sweep) || null; },
       run() { return (this.st && this.st.run) || {}; },
       conn() { return (this.st && this.st.connection) || {}; },
@@ -108,16 +107,12 @@
         const a = (this.st && this.st.amplitude) || {};
         const l = this.ampLocal || {};
         const pick = (k, d) => (l[k] !== undefined ? l[k] : a[k] != null ? a[k] : d);
-        return { ref: pick("ref_level", 0), div: pick("db_per_div", 10), unit: a.unit };
+        // |Γ|・SWR の縦軸は下端が決まっていて、一番上 = 下端 + 10 目盛（設計R §3。app_s11.js）
+        if (this.axis.linear) return this.linearAmp(a, pick);
+        return { ref: pick("ref_level", 0), div: pick("db_per_div", 10), unit: a.unit, linear: false, decimals: 1 };
       },
-      axisUnit() {
-        void this.traceVersion;
-        for (const n of [1, 2, 3, 4]) {
-          const t = this.$traces && this.$traces.get(String(n));
-          if (t && this.traceShown(n)) return t.unit;
-        }
-        return this.amp.unit || this.ui.unit || "dBm";
-      },
+      // 縦軸の単位 = 表示している測定中のトレースの最初の単位（Qt と同じ screen_s11.axis_unit。サーバーが ui.axis に入れる）
+      axisUnit() { return this.axis.unit || this.amp.unit || this.ui.unit || "dBm"; },
       // Center・Start・Stop は周波数オフセットを足して出す（設計O。Span は幅、SG は機器が出す周波数なので足さない）。
       // 再生中は再生の表示の範囲（設計P §5: app_display.js の fv）
       freqText() {
@@ -145,7 +140,7 @@
         for (let v = 20; v >= -120; v -= 10) out.push({ value: v, text: U.minusSign(v > 0 ? `+${v}` : `${v}`) + " " + this.axisUnit });
         return out;
       },
-      // 上段の「直結を 0dB にする」（J §4.2。出すか・理由・文はサーバーの screen_model.ref_quick_view）
+      // 上段の「基準を取る」（J §4.2。出すか・理由・文はサーバーの screen_model.ref_quick_view）
       refQuick() { return this.ui.ref_quick || { visible: false }; },
       spanLockText() {
         const s = this.sw;
@@ -159,6 +154,8 @@
         if (s.step_hz === 0) return X.get("REASON_TEXTS", "zero_span_axis");
         return null;
       },
+      // マーカーを置けない理由（ゼロスパンでも時間の位置に置ける: 設計N §1）
+      markerReason() { return this.sw ? null : X.get("REASON_TEXTS", "no_sweep"); },
       statusItems() {
         const items = this.ui.status ? [...this.ui.status] : [];
         if (!this.wsOpen && this.textsReady) items.push({ key: "ws", text: X.fmt("status_ws_down"), cls: "warn" });
@@ -209,6 +206,7 @@
       if (this.part) document.title = `pyGigaSt — ${this.partTitle}`;
       this.watchKeyStore();
       this.watchPolarityStore();
+      this.watchThSpec();
       this.textsReady = true;
       this.$nextTick(() => this.makeGraph());
       this.fitColumns();
@@ -245,7 +243,8 @@
       },
       clearNote(field) { const n = { ...this.notes }; delete n[field]; this.notes = n; },
       showAdjustments(t, alt) {
-        const fields = { start_hz: "start", stop_hz: "stop", center_hz: "center", span_hz: "span", rbw_hz: "rbw", sg_hz: "sg", points: "points" };
+        // Span 固定を外した知らせは Span の欄に出す（固定の切り替えは Span の欄にある: 設計C §5.13。Qt と同じ）
+        const fields = { start_hz: "start", stop_hz: "stop", center_hz: "center", span_hz: "span", span_lock: "span", rbw_hz: "rbw", sg_hz: "sg", points: "points" };
         for (const a of t.adjustments) {
           const f = fields[a.field];
           let action = null;
@@ -303,12 +302,13 @@
         this.ampTimer = setTimeout(() => { this.ampLocal = null; this.applyY(); }, 1000);
       },
       commitRef(text) {
+        if (this.refBlocked()) return;
         let v;
         try { v = U.parseDb(String(text).replace(this.axisUnit, "")); } catch (e) { this.note("ref", W("bad_value")); return; }
         this.setAmp({ ref_level: Math.round(v * 100) / 100 });
       },
-      stepRef(exp, dir) { this.setAmp({ ref_level: Math.round((this.amp.ref + dir * 10 ** exp) * 100) / 100 }); },
-      setDiv(v) { this.setAmp({ db_per_div: Number(v) }); },
+      stepRef(exp, dir) { if (this.refBlocked()) return; this.setAmp({ ref_level: Math.round((this.amp.ref + dir * 10 ** exp) * 100) / 100 }); },
+      setDiv(v) { this.setAmp({ [this.axis.div_key || "db_per_div"]: Number(v) }); },
       refAutoReason() { return this.refAutoView().reason; },
       refAuto() {
         const v = this.refAutoView();
@@ -320,6 +320,7 @@
       // ここは表示中で縦軸と単位が同じトレースの最大を取り、最大値が上から1目盛下に来る REF を 0.1dB へ切り上げる
       refAutoView() {
         void this.traceVersion;
+        if (this.axis.ref_reason) return { level: null, reason: this.axis.ref_reason };
         const shown = [];
         for (const n of [1, 2, 3, 4]) if (this.$traces.get(String(n)) && this.traceShown(n)) shown.push(String(n));
         for (const f of this.shownFiles(this.palette)) if (this.$traces.get(f.id)) shown.push(f.id);
@@ -354,7 +355,8 @@
         q.busy = true;
         const t0 = performance.now();
         try {
-          const r = await call("mouse_reading", { x: m.x, y: m.y });
+          // px_hz: 1画素の周波数の幅（内部の漏れの印をマウスで拾う幅: 設計L §1.4。Qt と同じ）
+          const r = await call("mouse_reading", { x: m.x, y: m.y, px_hz: this.$graph ? this.$graph.pxHz() : 0 });
           if (this.hover && !this.hover.buttons) this.hoverLines = r.lines || null;
         } catch (e) {
           this.hoverLines = null; // 読めないときは出さない（グラフの操作は妨げない）
@@ -420,7 +422,10 @@
         if (!this.running && this.run.state !== "stopping") this.waiting = "";
         this.onStateRtl(p);
         this.onStateDevices(p);
+        this.onStateCal(p);
+        this.onStateS11(p);
         this.applyLook();
+        this.watchPaletteOrigin();
         this.applyX();
         this.applyY();
         this.applyDisplay();  // ウォーターフォール・密度・再生（設計P: app_display.js）
@@ -442,6 +447,7 @@
           this.onDevices(p);
         } else if (kind === "notice") {
           this.onNoticeFiles(p);
+          this.onNoticeS11(p);
           const v = p.view || { text: p.code, traces: {} };
           for (const [n, text] of Object.entries(v.traces || {})) this.traceNote(Number(n), text);
           this.onViewNotice(v); // 単位が変わった（欄の下）・比の表示に変わった（窓）: J §4.10。app_settings.js
@@ -492,31 +498,45 @@
         const g = this.$graph;
         const s = this.fv;  // 再生中は再生の表示の範囲（設計P §5）
         if (!g || !s) return;
-        if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true);
-        else g.setX(s.start_hz, s.stop_hz, false);
+        // ゼロスパンは時間（推定）の軸（範囲・名前はサーバーの ui.x_axis: Qt と同じ screen_model.x_axis_view）
+        const xa = this.ui.x_axis;
+        if (xa && xa.kind === "time") g.setX(xa.x0, xa.x1, xa);
+        else g.setX(s.start_hz, s.stop_hz, null);
         g.setXOffset(s.step_hz === 0 ? 0 : this.freqOff, this.ui.freq_offset_text || "");
       },
       applyY() {
-        if (this.$graph) this.$graph.setY(this.amp.ref, this.amp.div, this.axisUnit);
-        if (this.$dens) this.$dens.setY(this.amp.ref, this.amp.div, this.axisUnit);
+        if (this.$graph) this.$graph.setY(this.amp.ref, this.amp.div, this.axisUnit, this.amp.linear, this.amp.decimals);
+        // 密度の縦はグラフの縦軸と同じ範囲（|Γ|・SWR は下端 + 10 目盛: 設計R §3）
+        if (this.$dens) this.$dens.setY(this.amp.ref, this.amp.div, this.axisUnit, this.amp.decimals);
       },
+      // 縦軸と単位が同じか（1つの目盛りに違う単位を混ぜない: E §6.4・設計R §3。Qt の TraceLayer と同じ）
+      onAxis(t) { return !t || !t.unit || t.unit === this.axisUnit; },
       traceShown(n) {
         const t = ((this.st && this.st.traces) || []).find((x) => x.number === n);
         return !!(t && t.visible && t.has_values);
       },
       shownFiles(colors) {
         // 重ねている参照トレース（見えているもの）と色。凡例の文字は Qt と同じ（サーバーの ui.file_legend）。PNG の凡例にも
-        // 同じものを渡す
+        // 同じものを渡す。単位が縦軸と違うものは重ねない（色の順は変えない: Qt の plot_layers.file_drawn と同じ）
         const out = [];
         const names = this.ui.file_legend || {};
         let i = 0;
         for (const f of this.files) {
           for (const tr of f.traces) {
             const color = FILE_COLORS[i++ % FILE_COLORS.length];
-            if (!this.fileHidden[tr.id]) out.push({ id: tr.id, colorKey: color, color: colors[color], label: names[tr.id] || X.fmt("file_trace_label", { name: f.name, number: tr.number }) });
+            // 縦軸と単位の違う参照トレースは重ねない（チェックは理由付きで無効: fileUnitReason。Qt の file_unit_ok と同じ）
+            if (!this.fileHidden[tr.id] && !this.fileUnitReason(tr.id)) out.push({ id: tr.id, colorKey: color, color: colors[color], label: names[tr.id] || X.fmt("file_trace_label", { name: f.name, number: tr.number }) });
           }
         }
         return out;
+      },
+      // 1つの目盛りに比（dB）と電力（dBm など）を混ぜない（E §6.4）。単位が縦軸と違う参照トレースは重ねず、チェックを
+      // 無効にして理由を出す（U-08。Qt の tab_traces.update_file_checks と同じ語）。値がまだ届いていないものは null
+      fileUnitReason(id) {
+        void this.traceVersion;
+        const t = this.$traces && this.$traces.get(id);
+        if (!t || !t.unit || t.unit === this.axisUnit) return null;
+        return W("file_unit_differs", { axis: this.axisUnit, unit: t.unit });
       },
       // 線の名前（設計F §9: 状態の traces[].line・参照トレースは reference）から描き方（core/report_layout.LINE_STYLES）
       lineStyle(code) {
@@ -537,7 +557,7 @@
         const live = [];
         for (const n of [1, 2, 3, 4]) {
           const t = this.$traces.get(String(n));
-          if (!t || !this.traceShown(n)) continue;
+          if (!t || !this.traceShown(n) || !this.onAxis(t)) continue;
           const style = this.lineStyle(this.traceLine(n));
           live.push([style.z, n, this.graphTrace(t, colors["trace" + n], colors, false, style)]);
         }
@@ -545,13 +565,12 @@
         return out.concat(live.map((x) => x[2]));
       },
       graphTrace(t, color, colors, isFile, style) {
-        const ax = t.axis;
-        const x = ax.freqs_hz ? (i) => ax.freqs_hz[i] : (i) => ax.start_hz + ax.step_hz * i;
-        const zero = this.sw && this.sw.step_hz === 0 && !isFile;
         return {
-          x: zero ? (i) => i : x, y: t.values, color, minHold: t.action === "min_hold",
+          x: GSZeroSpan.traceX(t.axis), y: t.values, color, minHold: t.action === "min_hold",
           head: isFile ? 0 : (t.flags && t.flags.transient_head_points) || 0, fill: !isFile && this.drawFill,
           dimColor: colors.text_dim, style,
+          // ステップ掃引を全部重ねた段ごとの線（設計L §1.3。{x0, dx, rows}。無ければ null）
+          steps: !isFile && t.steps && t.steps.rows ? t.steps : null,
         };
       },
       // グラフの中の凡例（Qt と同じ中身と並び: 表示中のトレースを番号順、その後に参照トレース）
@@ -559,7 +578,7 @@
         const legend = this.ui.legend || {};
         const out = [];
         for (const n of [1, 2, 3, 4]) {
-          if (this.$traces.get(String(n)) && this.traceShown(n)) out.push({ text: legend[String(n)] || "", color: this.palette["trace" + n], style: this.lineStyle(this.traceLine(n)) });
+          if (this.$traces.get(String(n)) && this.traceShown(n) && this.onAxis(this.$traces.get(String(n)))) out.push({ text: legend[String(n)] || "", color: this.palette["trace" + n], style: this.lineStyle(this.traceLine(n)) });
         }
         for (const f of this.shownFiles(this.palette)) {
           if (this.$traces.get(f.id)) out.push({ text: f.label, color: f.color, style: this.lineStyle("reference") });
@@ -573,6 +592,7 @@
           this.rafPending = false;
           if (!this.$graph) return;
           this.$graph.setBands(this.marks());
+          this.$graph.setLeaks(this.leakMarks());  // 内部の漏れの印（設計L §1.4。app_step.js）
           // バンドプランの帯とブックマークの印（設計P §6。中身はサーバーの display_view.bandplan_view）
           this.$graph.setBandplan(this.bpView.bands, this.bpView.bookmarks);
           this.$graph.setTraces(this.graphTraces(this.palette));
@@ -584,6 +604,7 @@
         if (!this.$graph) return;
         this.$graph.setMarkers(this.markers.markers || [], this.selectedMarker);
         this.$graph.setXY(this.markers.xy);
+        this.$graph.setCursorRows(this.markerRows);
         // マーカーの機能の線（G §3.6）。出すかはコアの表示の設定 view.function_lines（Qt と共有。無ければ出す）
         this.$graph.setFunctionLines(this.viewOpts.function_lines === false ? [] : this.markerRows);
       },
@@ -608,6 +629,7 @@
         this.sweep({ center_hz: center, span_hz: span, edited: ["center_hz", "span_hz"] }, "span");
       },
       onLevelWheel(steps, ctrl) {
+        if (this.axis.linear) { this.stepLinearDiv(steps); return; }  // |Γ|・SWR はいつも1目盛を変える（Qt と同じ）
         if (ctrl) {
           let i = DB_PER_DIV_CHOICES.indexOf(this.amp.div);
           if (i < 0) i = 3;
@@ -618,6 +640,7 @@
         }
       },
       onLevelDrag(start, frac) {
+        if (this.axis.linear) return;  // |Γ|・SWR の縦軸は下端が決まっていて動かさない（設計R §3）
         // つかんだ目盛がマウスに付いてくる: 下へ引くと、より上の値が見える（REF が上がる）
         if (start) { this.dragRef0 = this.amp.ref; return; }
         this.setAmp({ ref_level: GSUnits.dragRefLevel(this.dragRef0, frac, this.amp.div, GSGraph.DIVISIONS) });
@@ -627,16 +650,16 @@
         let best = null;
         for (const n of [1, 2, 3, 4]) {
           const t = this.$traces.get(String(n));
-          if (!t || !this.traceShown(n) || !t.axis.step_hz) continue;
-          const i = Math.round((x - t.axis.start_hz) / t.axis.step_hz);
-          if (i < 0 || i >= t.values.length || !Number.isFinite(t.values[i])) continue;
+          if (!t || !this.traceShown(n) || !this.onAxis(t)) continue;
+          const i = GSZeroSpan.indexAt(t.axis, x);
+          if (i === null || i < 0 || i >= t.values.length || !Number.isFinite(t.values[i])) continue;
           const d = Math.abs(t.values[i] - y);
           if (best === null || d < best[1]) best = [n, d];
         }
         return best ? best[0] : null;
       },
       async markerAdd(x, y) {
-        if (this.freqOpsReason) return;
+        if (this.markerReason) return;
         const trace = this.nearestTrace(x, y);
         if (trace === null) { this.note(null, X.get("ERRORS", "no_trace_data")); return; }
         // 向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き。Qt と同じ）
@@ -646,22 +669,24 @@
       onGraphClick(x, y) { this.markerAdd(x, y); },
       onGraphContext(x, y, cx, cy) {
         const why = this.freqOpsReason;
+        const mwhy = this.markerReason;
         const hz = Math.round(x);
         const level = Math.round(y * 10) / 10;
-        const at = why ? "" : X.fmt("paren", { text: U.formatFreq(this.shownHz(hz)) });
+        // 位置の文字: 換算後の周波数（設計O）、ゼロスパンは時間（設計N §1）
+        const at = this.sw ? X.fmt("paren", { text: this.xText(x) }) : "";
         const items = [
-          { label: W("ctx_center") + at, why, run: () => this.sweep({ center_hz: hz }, "center") },
-          { label: W("ctx_marker") + at, why, run: () => this.markerAdd(x, y) },
+          { label: W("ctx_center") + (why ? "" : at), why, run: () => this.sweep({ center_hz: hz }, "center") },
+          { label: W("ctx_marker") + at, why: mwhy, run: () => this.markerAdd(x, y) },
           { label: X.get("DISPLAY_TEXTS", "ctx_bookmark"), why, run: () => this.addBookmarkAt(hz) },
-          { label: W("ctx_ref", { level: level.toFixed(1), unit: this.axisUnit }), run: () => this.setAmp({ ref_level: level }) },
-          { label: W("ctx_x1"), why, run: () => this.cmd("set_xy", { x1_hz: hz }) },
-          { label: W("ctx_x2"), why, run: () => this.cmd("set_xy", { x2_hz: hz }) },
+          { label: W("ctx_ref", { level: level.toFixed(1), unit: this.axisUnit }), why: this.axis.ref_reason, run: () => this.setAmp({ ref_level: level }) },
+          { label: W("ctx_x1"), why: mwhy, run: () => this.cmd("set_xy", { x1_hz: hz }) },
+          { label: W("ctx_x2"), why: mwhy, run: () => this.cmd("set_xy", { x2_hz: hz }) },
         ];
         const sel = this.selectedMarker;
         if (sel) {
-          // 選んでいるマーカーへの操作（Qt の右クリックと同じ: G §3.4・設計Q §6.8）
+          // 選んでいるマーカーへの操作（Qt の右クリックと同じ: G §3.4・設計Q §6.8）。ゼロスパンの位置は Center にできない
           items.push(
-            { label: W("ctx_m_center", { m: sel }), run: () => this.cmd("marker_to", { id: sel, target: "center" }) },
+            { label: W("ctx_m_center", { m: sel }), why: this.zsView.freq_only, run: () => this.cmd("marker_to", { id: sel, target: "center" }) },
             { label: W("ctx_m_ref", { m: sel }), run: () => this.cmd("marker_to", { id: sel, target: "ref" }) },
             { label: W("ctx_m_listen", { m: sel, start: X.get("LISTEN_LABELS", "start") }), why: this.listenStartReason, run: () => this.listenStart() },
           );
@@ -716,9 +741,12 @@
         const spec = r && r.edits && r.edits[String(ec.col)];
         if (!spec) return;
         let v;
-        try { v = spec.parse === "freq" ? U.parseFreqHz(text) : U.parseDb(text); } catch (e) { this.note(null, W("bad_value")); return; }
-        // marker_rows.edit_command と同じ計算（表の周波数は周波数オフセット込みなので差し引く）
+        try {
+          v = spec.parse === "freq" ? U.parseFreqHz(text) : spec.parse === "time" ? U.parseTimeUs(text) : U.parseDb(text);
+        } catch (e) { this.note(null, W("bad_value")); return; }
+        // marker_rows.edit_command と同じ計算（表の周波数は周波数オフセット込みなので差し引く。時間はそのまま: 設計N §1）
         if (spec.parse === "freq") v = Math.round(spec.base + v - (spec.minus_offset ? (this.freqOff || 0) : 0));
+        else if (spec.parse === "time") v = Math.round(spec.base + v);
         else v = spec.base + v;
         this.cmd(spec.cmd, { ...spec.args, [spec.arg]: v });
       },
@@ -751,8 +779,9 @@
         const m = this.selMarker;
         if (!m) return;
         let delta;
-        try { delta = this.off.type === "freq" ? U.parseFreqHz(this.off.delta) : U.parseDb(this.off.delta); } catch (e) { this.note("offset", W("bad_value")); return; }
-        const r = await this.cmd("marker_offset_add", { id: m.id, type: this.off.type, sign: this.off.sign, delta }, { field: "offset" });
+        const type = this.offType();  // ゼロスパンでは周波数のオフセットは選べない（設計N §1。Qt と同じくレベルにする）
+        try { delta = type === "freq" ? U.parseFreqHz(this.off.delta) : U.parseDb(this.off.delta); } catch (e) { this.note("offset", W("bad_value")); return; }
+        const r = await this.cmd("marker_offset_add", { id: m.id, type, sign: this.off.sign, delta }, { field: "offset" });
         if (r) this.off.delta = "";
       },
       // マーカーの機能（G §3.5・§3.6。Qt の tab_markers と同じ: チェックで入れる・切る、dB の欄で N・しきい値を変える）。
@@ -808,13 +837,16 @@
       commitXY(key, text) {
         if (String(text).trim() === "") { this.cmd("set_xy", { [key]: null }); return; }
         try {
-          const v = key.endsWith("_hz") ? this.deviceHz(U.parseFreqHz(text)) : U.parseDb(text);
+          // X はゼロスパンでは時間（ms で打つ: 設計N §1）
+          const xv = () => (this.zsView.time ? U.parseTimeUs(text) : this.deviceHz(U.parseFreqHz(text)));
+          const v = key.endsWith("_hz") ? xv() : U.parseDb(text);
           this.cmd("set_xy", { [key]: v }, { field: "xy" });
         } catch (e) { this.note("xy", W("bad_value")); }
       },
       xyText(key) {
         const v = (this.markers.xy || {})[key];
         if (v == null) return "";
+        if (key.endsWith("_hz") && this.zsView.time) return U.formatTimeUs(v);
         return key.endsWith("_hz") ? U.freqFieldText(this.shownHz(v)) : `${v.toFixed(2)}`;
       },
       // ------------------------------------------------------------ トレース
@@ -845,24 +877,7 @@
       },
       toggleFileTrace(id) { this.fileHidden = { ...this.fileHidden, [id]: !this.fileHidden[id] }; this.redraw(); },
 
-      // ------------------------------------------------------------ 基準（信号源のタブ: 設計E §6）
-      async loadRefs() {
-        const r = await this.cmd("reference_list", {}, { field: "refs", quiet: ["device_not_selected"] });
-        this.refs = (r && r.references) || [];
-      },
-      async takeRef(kind) {
-        await this.cmd("reference_take", { kind, name: this.refName || null }, { field: "refs" });
-      },
-      takeDirect() {
-        // 広く取り、すぐ1回測って 0dB を見せる（縦軸の外ならコアが REF を動かして知らせる: show_zero）
-        const d = new Date();
-        const p = (n) => String(n).padStart(2, "0");
-        this.cmd("reference_take", { kind: "wide", name: X.fmt("ref_direct_name", { time: `${p(d.getHours())}:${p(d.getMinutes())}` }), show_zero: true });
-      },
-      async refAction(name, args) { await this.cmd(name, args, { field: "refs" }); this.loadRefs(); },
-      renameRef(r) {
-        this.openModal(W("rename_ref_title"), [{ key: "name", label: W("name"), value: r.name }], (v) => this.refAction("reference_rename", { id: r.id, name: v.name }));
-      },
+      // 基準（信号源のタブ: 設計E §6）・S11 のオープン/ショート・表示の形式は app_s11.js
 
       // ------------------------------------------------------------ 列の幅（J §4.11・S-02）
       // トレースの表の列 A（動作・平均の種類）と列 B（回数・N 回の後）は、その列に出うる一番長い中身の幅に1つにそろえる
@@ -873,8 +888,10 @@
         try { if (document.fonts) await document.fonts.ready; } catch (e) { /* 字を待てなくても測る */ }
         const F = GSFields;
         const types = Object.values(X.dict("AVERAGE_TYPES"));
+        // 3行目の表示の形式（設計R §3）も列 A（S11 の「リターンロス（dB）」を含む。Qt の format_width_samples と同じ）
+        const fmts = [...Object.values(X.dict("TRACE_FORMATS")), ...Object.values(X.dict("S11_FORMAT_NAMES"))];
         const colA = Math.max(F.selectWidth(Object.values(X.dict("TRACE_ACTIONS"))),
-          F.selectWidth([W("default"), ...types.map((t) => W("default_with", { type: t })), ...types]));
+          F.selectWidth([W("default"), ...types.map((t) => W("default_with", { type: t })), ...types]), F.selectWidth(fmts));
         // 回数の欄は打てる欄＋▼: 一番長い回数の文字＋欄の左右の余白（6px×2）と枠（1px×2）＋▼（22px、欄に 1px 重ねる）
         const counts = [F.countText(null), ...F.COUNT_CHOICES.map((n) => F.countText(n)), F.countText(F.COUNT_MAX)];
         const countW = Math.max(...counts.map((t) => F.textWidth(t, F.rootPx("--font-m")))) + 2 * 6 + 2 + 21;
@@ -919,7 +936,6 @@
           // 描く順と線（設計F §9）は画面と同じ。線の幅は PNG の基準の幅（png.js が lineBase で渡す）
           traces: (c) => this.graphTraces(c), markers: this.markers,
           files: this.shownFiles(colors).map((f) => ({ label: f.label, color: f.colorKey })), note,
-          offset: { hz: this.freqOff, text: this.ui.freq_offset_text || "" },
         }, this.pngSizeWH());
       },
       // 画像を作る前にメモ（1行）を打てる（I §3.2 の 5）
@@ -1041,7 +1057,11 @@
   merge(base, GSAppFiles);
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
-  merge(base, GSAppDisplay);
+  merge(base, window.GSAppCal || {});  // 校正の画面（app_cal.js）
+  merge(base, window.GSAppZeroSpan || {});  // ゼロスパンの時間軸（app_zerospan.js: 設計N §1）
+  merge(base, window.GSAppS11 || {});  // 信号源のタブの基準・S11・表示の形式（app_s11.js）
+  merge(base, window.GSAppStep || {});  // SG のステップ掃引・内部の漏れの印（app_step.js）
+  merge(base, GSAppDisplay);  // ウォーターフォール・密度・再生・バンドプラン（app_display.js: 設計P）
   // キーの割り当て（app_keys.js）と設定の画面・プリセット・表示の設定（app_settings.js）
   merge(base, window.GSAppKeys || {});
   merge(base, window.GSAppSettings || {});

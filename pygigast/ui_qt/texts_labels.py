@@ -15,6 +15,8 @@ LABELS = {
     "span_lock_tip": "ON: Span は Span の欄に打ったときだけ変わる（Center・Start・Stop・ドラッグでは幅を保ち、範囲を超える分は位置が動く）\nOFF: Center を変えたら Center を保ち、範囲を超える分だけ Span を縮める",
     # 周波数軸のホイールは Span 固定中は何もせず、その場で1回知らせる（C §5.12）
     "span_lock_wheel": "Span 固定中です（幅は Span の欄で変えます）",
+    # マーカーの「デルタの2点を Start・Stop に」が Span 固定を外したとき、Span の欄に一度知らせる（C §5.13）
+    "span_lock_released": "Span 固定を外しました",
     "ref_level": "REF レベル",
     "ref_auto": "自動",
     "ref_auto_tip": "表示中のトレースの最大値が上から1目盛下に来るよう REF レベルを合わせる（局発の漏れ・TG の範囲外・掃引の始めの不安定な点・値の無い点は使わない）",
@@ -44,7 +46,6 @@ LABELS = {
     "side_split_tip": "ドラッグで右のパネルの幅を変える",
     # ---- グラフ
     "graph_tip": "グラフの中を横にドラッグ: その範囲を Start/Stop に\nホイール: カーソルの位置を中心に拡大・縮小\nクリック: マーカーを置く\n右クリック: この位置への操作\n左の目盛の上でホイール: REF を1目盛（Ctrl で dB/div）・ドラッグ: REF を連続で",
-    "axis_zero_span": "点（ゼロスパン）",
     "axis_freq": "周波数 ({unit})",
     "axis_level": "レベル ({unit})",
     "ctx_center": "ここを Center に",
@@ -88,7 +89,6 @@ LABELS = {
     "files": "参照トレース",
     "no_files": "開いたファイルはありません",
     "close_file": "外す",
-    "file_trace_row": "{id}（トレース {number}・{points} 点・{unit}）",
     # ---- マーカーのタブ
     "selected_marker": "選んでいるマーカー",
     "marker": "マーカー",
@@ -132,7 +132,7 @@ LABELS = {
     "references": "ノーマライズの基準",
     "ref_name_placeholder": "空なら「TG 日時」",
     "take_wide": "広く取る",
-    "take_wide_tip": "TG の範囲を 1MHz 刻みで取る（TG 出力と SP 入力を直結してから）",
+    "take_wide_tip": "TG の範囲を 1MHz 刻みで取る",
     "take_fine": "いまの条件で細かく取る",
     "take_fine_tip": "いまの Start・Stop・Step でその範囲だけ取り、いまの基準へ上書き合成する",
     "reload": "一覧を読み直す",
@@ -145,7 +145,6 @@ LABELS = {
     "cancel": "やめる",
     # 確かめる窓のボタン（押したら何が起きるかの語。「はい・いいえ」「OK」にしない）
     "confirm_ok": "続ける",
-    "do_import": "取り込む",
     "do_discard": "捨てる",
     "do_restore": "戻す",
     "do_clear_all": "全部消す",
@@ -171,10 +170,6 @@ LABELS = {
     "export_start": "Start",
     "export_stop": "Stop",
     "export_all_placeholder": "全部",
-    "legacy_need_device": "校正を当てる機器を決めるため、先に機器に接続してください。",
-    "legacy_title": "旧校正ファイル（gigast.txt / ba205.txt）",
-    "legacy_note": "取り込む先: {serial}",
-    "legacy_done": "旧校正ファイルを取り込みました",
     "record_finish_title": "記録をまとめる",
     "dll_folder_web": "pyGigaSt の PC の画面で変えます",
     "no_clipboard_text": "この接続ではブラウザがコピーを許しません。欄の文字を選んでコピーしてください",

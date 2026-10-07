@@ -1,4 +1,4 @@
-// ファイル（保存・開く・書き出し・記録のまとめ・旧校正ファイル）と、Web の口の認証・見るだけ・接続のしかた（設計A §4.3.2）。
+// ファイル（保存・開く・書き出し・記録のまとめ・旧校正ファイルを選んで送る）と、Web の口の認証・見るだけ・接続のしかた（設計A §4.3.2）。
 // Web の口はサーバーの PC のパスを受け取らない: 作るファイルは名前だけ渡してサーバーのアプリのデータのフォルダに
 // 作らせ、終わったら file_id でダウンロードする。開くファイルはブラウザからアップロードして upload_id で渡す。
 // 文言はここに書かない（texts の表とサーバーの error.text だけ）。app.js が読み込んで合わせる。
@@ -18,12 +18,13 @@
     return `gigast_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
 
-  // ファイルを選ばせる（選ばなければ空の並び）
-  function pickFiles(multiple) {
+  // ファイルを選ばせる（選ばなければ空の並び）。accept は選べるファイルの種類（".json" など。省くと全部）
+  function pickFiles(multiple, accept) {
     return new Promise((resolve) => {
       const input = document.createElement("input");
       input.type = "file";
       input.multiple = !!multiple;
+      if (accept) input.accept = accept;
       input.addEventListener("change", () => resolve(Array.from(input.files || [])));
       input.click();
     });
@@ -89,6 +90,17 @@
         this.note(null, this.readOnlyReason);
         return true;
       },
+      // ---- ブラウザの中だけで扱うファイル（サーバーにファイルを作らない: 配色の書き出しと取り込み J §4.4.1）
+      chooseFiles(multiple, accept) { return pickFiles(multiple, accept); },
+      downloadText(name, text, type) {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([text], { type: type || "application/json" }));
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      },
       // ---- 作るファイル（終わったらダウンロード）
       async makeFile(command, args) {
         const r = await this.cmd(command, args);
@@ -112,17 +124,20 @@
       },
       // 範囲の欄は上段の Start・Stop と同じく換算後の周波数（周波数オフセット: 設計O）で出し、機器の周波数へ戻して送る。
       // 空なら全部（空の見本で示す）。欄の幅は値の種類（ファイル名は名前・周波数は値: J §4.11）
+      // ゼロスパンは表示している時間の範囲を書くので、周波数の範囲の欄は理由付きで使えない（設計N §1・U-08。Qt と同じ）
       exportDialog() {
         const U = root.GSUnits;
         const s = this.sw || {};
+        const zero = this.zsView.freq_only;
         this.openModal(W("export_title"), [
           { key: "name", label: W("file_name"), value: nowName() + ".csv" },
-          { key: "start", label: W("export_start"), width: "w-value", placeholder: W("export_all_placeholder"),
-            value: s.start_hz != null ? U.freqFieldText(this.shownHz(s.start_hz)) : "" },
-          { key: "stop", label: W("export_stop"), width: "w-value", placeholder: W("export_all_placeholder"),
-            value: s.stop_hz != null ? U.freqFieldText(this.shownHz(s.stop_hz)) : "" },
+          { key: "start", label: W("export_start"), width: "w-value", placeholder: W("export_all_placeholder"), disabled: zero,
+            value: s.start_hz != null && !zero ? U.freqFieldText(this.shownHz(s.start_hz)) : "" },
+          { key: "stop", label: W("export_stop"), width: "w-value", placeholder: W("export_all_placeholder"), disabled: zero,
+            value: s.stop_hz != null && !zero ? U.freqFieldText(this.shownHz(s.stop_hz)) : "" },
         ], (v) => {
           const args = { name: v.name };
+          if (zero) { this.makeFile("export_csv", args); return; }
           try {
             if (v.start.trim()) args.start_hz = this.deviceHz(U.parseFreqHz(v.start));
             if (v.stop.trim()) args.stop_hz = this.deviceHz(U.parseFreqHz(v.stop));
@@ -153,18 +168,15 @@
           await this.cmd("open", { uploads: ids });
         } catch (e) { this.note(null, e.text || X.get("ERRORS", e.code, e.code)); }
       },
-      async legacyDialog() {
-        if (this.readOnlyBlocks("import_legacy_calibration")) return;
-        const serial = (this.conn.identity || {}).serial;
-        if (!serial) { this.note(null, W("legacy_need_device")); return; }
-        this.openModal(W("legacy_title"), [], async () => {
-          const files = await pickFiles(false);
-          if (!files.length) return;
-          try {
-            const [id] = await this.uploadAll(files);
-            await this.cmd("import_legacy_calibration", { upload_id: id, serial }, { ok: () => this.note(null, W("legacy_done")) });
-          } catch (e) { this.note(null, e.text || X.get("ERRORS", e.code, e.code)); }
-        }, W("legacy_note", { serial }));
+      // ファイルを1つ選んで送り、upload_id を返す（旧校正ファイル: 校正の画面 app_cal.js）。選ばなければ null
+      async pickUpload() {
+        if (this.readOnlyBlocks("cal_legacy_load")) return null;
+        const files = await pickFiles(false);
+        if (!files.length) return null;
+        try {
+          const [id] = await this.uploadAll(files);
+          return id;
+        } catch (e) { this.note(null, e.text || X.get("ERRORS", e.code, e.code)); return null; }
       },
       // ---- 接続のしかた（操作できる接続のブラウザから: A §4.3.2 の 2）
       connectReason() {

@@ -4,12 +4,18 @@
   `waterfall`）。画面に持つ行はここが持ち（上限は表示の設定 wf_rows）、途中から繋いだ画面・広げた画面は命令
   `waterfall_rows` で取り直す。上限を超えた古い行は、記録中なら作業ファイルから読み直す（P §3・H §3.1）
 - 色の範囲: 自動（ノイズフロアの中央値〜最大値を数秒ごとに追う）か、手で決めた下限・上限（表示の設定）。Qt と Web は
-  ここが決めた範囲で描く（P §8: 同じ色の範囲）
+  ここが決めた範囲で描く（P §8: 同じ色の範囲）。|Γ|・SWR の行（設計R §3）は縦軸と同じ範囲（下端〜下端 + 10 目盛）で
+  色を付ける（縦軸は下端が決まり1目盛だけを選ぶ。「ノイズフロア」に当たるものが無いので自動は使わない）
 - 行をクリック → その時刻の掃引を「過去のトレース」としてスペクトルに出す（参照トレースと同じ仕組み・id は "W.1"）。
   再生中は時刻のカーソルをそこへ動かす（instrument_playback.py）
-- 密度: 表示の組み合わせが「＋密度」のときだけ作る（イベント `density`）。縦の範囲はいまの縦軸（REF・dB/div）、
-  横は掃引の列。N 回で重みが半分（表示の設定 density_half）。何秒分の密度か（N × 掃引の間隔）も送る（P §4）
-- 値は測った単位の dB で持ち、画面へ出すときに表示の単位（dBμV・外部補正: 設計O）へずらす
+- 密度: 表示の組み合わせが「＋密度」のときだけ作る（イベント `density`）。縦の範囲はいまの縦軸（REF・dB/div、
+  |Γ|・SWR は下端〜下端 + 10 目盛）、横は掃引の列。N 回で重みが半分（表示の設定 density_half）。何秒分の密度か
+  （N × 掃引の間隔）も送る（P §4）
+- 値は測った単位の dB で持ち、画面へ出すときに表示の値にする: dB の形式は表示の単位（dBμV・外部補正: 設計O）へ
+  ずらし、|Γ|・SWR の形式はその値（行にするトレースの表示の形式: 設計R §3。形式を変えたら持っている行も新しい形式で
+  出し直す）
+- ゼロスパン（横軸が時間: 設計N §1）の掃引は行にしない（周波数の横軸に載らない。表示の組み合わせは画面が理由付きで
+  スペクトルのみにする: ui_qt/display_view.py）
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ from .instrument_display import db_values, unit_for
 from .level.convert import dbm_to_watt
 from .report_layout import DIVISIONS
 from .storage.h5file import TraceData
+from .trace import formats
 from .types import FreqAxis, Quantity, ValueKind
 from .view_units import level_shift
 
@@ -54,6 +61,9 @@ class WaterfallMixin:
             maxlen=wf.DENSITY_REPLAY_HALVES * int(o["density_half"]))
         self._density_amp: Optional[tuple] = None
         self._wf_rec_src = None  # 記録中の作業ファイルを読む RecordSource（書き込みスレッドだけが触る）
+        self._wf_last: Optional[wf.Row] = None  # いちばん新しく入れた行（ライブ・再生とも。単位と色の範囲を決める）
+        self._wf_format_key: Optional[tuple] = None  # 行にするトレースの番号と表示の形式（変わったら出し直す）
+        self._wf_range_sent: Optional[dict] = None
 
     def _shutdown_waterfall(self) -> None:
         src = self._wf_rec_src
@@ -64,26 +74,68 @@ class WaterfallMixin:
             except RuntimeError:
                 pass
 
+    # ------------------------------------------------------------------ 表示の値（単位・形式）
+
+    def _wf_format_setting(self) -> str:
+        """行にするトレースの表示の形式の設定（|Γ|・SWR は S11 の比の行だけに当たる: formats.effective）。"""
+        t = self._traces[int(self._view_opts["wf_trace"])]
+        return getattr(t, "format", None) or formats.DB
+
+    def _wf_shown(self, row: wf.Row) -> tuple[float, Optional[str], str]:
+        """行を出すときの (足す dB, 単位, 形式)。|Γ|・SWR はずらさず、単位はその名前（instrument_display._shown と同じ）。"""
+        extra = row.extra or {}
+        q = extra.get("quantity")
+        fmt = formats.effective(self._wf_format_setting(), (row.cond or {}).get("mode"),
+                                Quantity(q) if q else None)
+        shift, unit = level_shift(row.unit, self._view_opts)
+        if fmt != formats.DB:
+            return 0.0, formats.unit_of(fmt, unit), fmt
+        return shift, unit, fmt
+
+    def _wf_values(self, row: wf.Row) -> np.ndarray:
+        """行の表示の値（float32）。"""
+        shift, _unit, fmt = self._wf_shown(row)
+        if fmt != formats.DB:
+            return formats.from_db(row.values, fmt).astype(np.float32)
+        return row.values + np.float32(shift) if shift else row.values
+
+    def _wf_unit_now(self) -> Optional[str]:
+        row = self._wf_last or self._wf_history.latest()
+        return self._wf_shown(row)[1] if row is not None else None
+
+    def _wf_range_is_power(self) -> bool:
+        """手で決めた色の範囲が電力の値か（単位・外部補正を変えたときにずらすか: instrument_view）。"""
+        row = self._wf_last or self._wf_history.latest()
+        if row is None:
+            return True
+        return (row.extra or {}).get("quantity", "power") == Quantity.POWER.value and self._wf_shown(row)[2] == formats.DB
+
+    def _linear_axis_range(self, unit: str) -> tuple[float, float]:
+        """|Γ|・SWR の縦軸の範囲（下端〜下端 + 10 目盛。1目盛は振幅の状態: 設計R §3）。"""
+        per = formats.per_div_of(unit, self._amplitude)
+        return float(formats.LINEAR_AXES[unit]["bottom"]), formats.linear_top(unit, per, DIVISIONS)
+
     # ------------------------------------------------------------------ 状態
 
     def _wf_range(self) -> dict:
         o = self._view_opts
+        unit = self._wf_unit_now()
+        if formats.is_linear_unit(unit):
+            # |Γ|・SWR: 縦軸と同じ範囲（自動も手で決めた範囲も使わない。表示の設定の値は dB 系の行のために残す）
+            lo, hi = self._linear_axis_range(unit)
+            return {"lo": lo, "hi": hi, "auto": False, "axis": True}
         if o["wf_color_auto"] and self._wf_auto.range is not None:
             lo, hi = self._wf_auto.range
         else:
             lo, hi = float(o["wf_color_lo"]), float(o["wf_color_hi"])
-        return {"lo": lo, "hi": hi, "auto": bool(o["wf_color_auto"])}
-
-    def _wf_shift(self, row: wf.Row) -> tuple[float, Optional[str]]:
-        return level_shift(row.unit, self._view_opts)
+        return {"lo": lo, "hi": hi, "auto": bool(o["wf_color_auto"]), "axis": False}
 
     def _waterfall_state(self) -> dict:
         h = self._wf_history
         latest = h.latest()
         return {"range": self._wf_range(), "epoch": self._wf_epoch, "seq": self._wf_seq, "rows": len(h),
                 "limit": h.limit, "t_first": h.first_time(), "t_last": latest.t_end if latest else None,
-                "unit": self._wf_shift(latest)[1] if latest else None,
-                "density": self._density_info()}
+                "unit": self._wf_unit_now(), "density": self._density_info()}
 
     def _density_info(self) -> dict:
         interval = wf.sweep_interval_s(list(self._wf_times))
@@ -93,17 +145,15 @@ class WaterfallMixin:
     # ------------------------------------------------------------------ 1回の掃引
 
     def _wf_row_from_trace(self, frame, pos: Optional[tuple[int, int]] = None) -> Optional[wf.Row]:
-        """選んだトレースの、いま表示している範囲の点から行を作る（条件が変わったら並びの番号を変える）。"""
+        """選んだトレースの、いま表示している範囲の点から行を作る（条件が変わったら並びの番号を変える）。
+        ゼロスパン（横軸が時間）の掃引は行にしない（設計N §1）。"""
         n = int(self._view_opts["wf_trace"])
         t = self._traces[n]
-        if t.values is None or t.axis is None or t.quantity is None:
+        if t.values is None or t.axis is None or t.quantity is None or t.axis.step_hz == 0:
             return None
         freqs = t.axis.freqs()
         db = db_values(t.values, t.quantity)
-        if t.axis.step_hz == 0:
-            mask = np.ones(freqs.shape, dtype=bool)
-        else:
-            mask = (freqs >= int(t.display_start_hz)) & (freqs <= int(t.display_stop_hz))
+        mask = (freqs >= int(t.display_start_hz)) & (freqs <= int(t.display_stop_hz))
         if not mask.any():
             return None
         vals = db[mask]
@@ -128,25 +178,56 @@ class WaterfallMixin:
         if row is None:
             return
         self._wf_times.append(float(frame.time))
-        shift, unit = self._wf_shift(row)
-        shown = row.values + np.float32(shift) if shift else row.values
-        changed = bool(self._view_opts["wf_color_auto"]) and self._wf_auto.feed(shown, time.monotonic())
+        self._wf_last = row
+        self._wf_follow_format()
+        _shift, unit, fmt = self._wf_shown(row)
+        changed = False
+        if fmt == formats.DB and self._view_opts["wf_color_auto"]:
+            changed = self._wf_auto.feed(self._wf_values(row), time.monotonic())
         if live:
             self._wf_history.add(row)
             self._wf_seq += 1
+            self._wf_range_sent = self._wf_range()
             self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "unit": unit,
-                                     "range": self._wf_range(), "rows": [self._wf_row_out(row)], "append": True})
+                                     "range": self._wf_range_sent, "rows": [self._wf_row_out(row)], "append": True})
         elif changed:
-            self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "unit": unit,
-                                     "range": self._wf_range(), "rows": [], "append": True})
+            self._wf_emit_range()
         self._density_src.append(row)
         if self._view_opts["layout"] == "density":
             self._density_feed(row)
 
     def _wf_row_out(self, row: wf.Row) -> dict:
-        shift, _unit = self._wf_shift(row)
-        vals = row.values + np.float32(shift) if shift else row.values
-        return {**row.head(shift), "values": vals.astype(np.float32)}
+        shift, _unit, _fmt = self._wf_shown(row)
+        return {**row.head(shift), "values": self._wf_values(row).astype(np.float32)}
+
+    def _wf_emit_range(self) -> None:
+        """色の範囲だけを送る（行は足さない）。"""
+        self._wf_range_sent = self._wf_range()
+        self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "unit": self._wf_unit_now(),
+                                 "range": self._wf_range_sent, "rows": [], "append": True})
+
+    def _wf_reset_rows(self) -> None:
+        """行の値の単位・形式が変わった: 画面は行を取り直す。"""
+        self._wf_epoch += 1
+        self._wf_range_sent = self._wf_range()
+        self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "reset": True,
+                                 "range": self._wf_range_sent, "rows": []})
+
+    def _wf_follow_format(self) -> bool:
+        """行にするトレースの表示の形式（dB・|Γ|・SWR: 設計R §3）が変わったら、持っている行を新しい形式で出し直す。"""
+        key = (int(self._view_opts["wf_trace"]), self._wf_format_setting())
+        if self._wf_format_key is None:
+            self._wf_format_key = key
+            return False
+        if key == self._wf_format_key:
+            return False
+        self._wf_format_key = key
+        self._wf_auto.reset()
+        self._wf_reset_rows()
+        if self._view_opts.get("layout") == "density":
+            self._density.key = None
+            self._density_rebuild()
+        return True
 
     # ------------------------------------------------------------------ 表示の設定が変わった
 
@@ -160,19 +241,20 @@ class WaterfallMixin:
             self._wf_auto.reset()
         if unit_changed or old.get("wf_trace") != new.get("wf_trace"):
             # 行の値の単位が変わった・行にするトレースが変わった: 画面は行を取り直す
-            self._wf_epoch += 1
-            self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "reset": True,
-                                     "range": self._wf_range(), "rows": []})
+            self._wf_format_key = (int(new["wf_trace"]), self._wf_format_setting())
+            self._wf_reset_rows()
         elif any(old.get(k) != new.get(k) for k in ("wf_color_auto", "wf_color_lo", "wf_color_hi")):
-            self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "range": self._wf_range(),
-                                     "rows": [], "append": True})
+            self._wf_emit_range()
         if new.get("layout") == "density" and (old.get("layout") != "density" or unit_changed
                                                or old.get("density_half") != new.get("density_half")):
             self._density.key = None
             self._density_rebuild()
 
     def _waterfall_on_changed(self) -> None:
-        """状態が変わるたびに呼ぶ。縦軸（REF・dB/div）が変わったら密度を作り直す（縦の範囲が変わる）。"""
+        """状態が変わるたびに呼ぶ。行にするトレースの表示の形式が変わったら行を出し直し、色の範囲（|Γ|・SWR は縦軸の
+        1目盛で変わる）が変わったら送り直す。密度は縦軸（REF・dB/div・|Γ|・SWR の1目盛）が変わったら作り直す。"""
+        if not self._wf_follow_format() and self._wf_range_sent is not None and self._wf_range() != self._wf_range_sent:
+            self._wf_emit_range()
         if self._view_opts.get("layout") != "density":
             return
         amp = self._density_level_range()
@@ -181,22 +263,32 @@ class WaterfallMixin:
 
     # ------------------------------------------------------------------ 密度（P §4・§9.3）
 
-    def _density_level_range(self) -> tuple[float, float]:
+    def _density_level_range(self) -> tuple[float, float, float]:
+        """密度の縦の範囲と升目の高さ（下, 上, 升目）。いまの縦軸と同じ範囲（|Γ|・SWR は下端〜下端 + 10 目盛）。"""
+        unit = self._wf_unit_now()
+        if formats.is_linear_unit(unit):
+            lo, hi = self._linear_axis_range(unit)
+            return lo, hi, formats.per_div_of(unit, self._amplitude) / wf.DENSITY_LINEAR_BINS_PER_DIV
         amp = self._amplitude
         ref = 0.0 if amp.get("ref_level") is None else float(amp["ref_level"])
         div = float(amp.get("db_per_div") or 10.0)
-        return ref - DIVISIONS * div, ref
+        return ref - DIVISIONS * div, ref, wf.DENSITY_BIN_DB
+
+    def _density_key(self, row: wf.Row) -> tuple:
+        lo, hi, bin_size = self._density_level_range()
+        shift, unit, fmt = self._wf_shown(row)
+        return (row.seg, row.columns, row.start_hz, row.step_hz, lo, hi, bin_size,
+                int(self._view_opts["density_half"]), shift, fmt)
 
     def _density_feed(self, row: wf.Row, emit: bool = True) -> None:
-        lo, hi = self._density_level_range()
-        self._density_amp = (lo, hi)
-        shift, _unit = self._wf_shift(row)
-        key = (row.seg, row.columns, row.start_hz, row.step_hz, lo, hi, int(self._view_opts["density_half"]), shift)
-        if self._density.setup(key, row.columns, lo, hi, int(self._view_opts["density_half"])):
+        lo, hi, bin_size = self._density_level_range()
+        self._density_amp = (lo, hi, bin_size)
+        key = self._density_key(row)
+        if self._density.setup(key, row.columns, lo, hi, int(self._view_opts["density_half"]), bin_size):
             for r in list(self._density_src)[:-1]:
                 if r.seg == row.seg and r.columns == row.columns:
-                    self._density.add(r.values + np.float32(shift))
-        self._density.add(row.values + np.float32(shift))
+                    self._density.add(self._wf_values(r))
+        self._density.add(self._wf_values(row))
         if emit:
             self._emit_density(row)
 
@@ -209,36 +301,31 @@ class WaterfallMixin:
         self._density_feed_replay(rows[-1])
 
     def _density_feed_replay(self, row: wf.Row) -> None:
-        lo, hi = self._density_level_range()
-        self._density_amp = (lo, hi)
-        shift, _unit = self._wf_shift(row)
+        lo, hi, bin_size = self._density_level_range()
+        self._density_amp = (lo, hi, bin_size)
         half = int(self._view_opts["density_half"])
-        key = (row.seg, row.columns, row.start_hz, row.step_hz, lo, hi, half, shift)
-        self._density.setup(key, row.columns, lo, hi, half)
+        self._density.setup(self._density_key(row), row.columns, lo, hi, half, bin_size)
         for r in self._density_src:
             if r.seg == row.seg and r.columns == row.columns:
-                self._density.add(r.values + np.float32(shift))
+                self._density.add(self._wf_values(r))
         self._emit_density(row)
 
-    def _emit_density(self, row: wf.Row) -> None:
+    def _density_payload(self, row: wf.Row) -> dict:
         d = self._density
         stop = row.start_hz + row.step_hz * max(0, row.columns - 1)
-        self._emit("density", {"image": d.image(), "bins": d.bins, "cols": d.n_cols, "start_hz": int(row.start_hz),
-                               "stop_hz": int(stop), "level_lo": d.level_lo, "level_hi": d.level_hi,
-                               "bin_db": wf.DENSITY_BIN_DB, "zero_span": row.zero_span, "sweeps": d.added,
-                               **self._density_info()})
+        return {"image": d.image(), "bins": d.bins, "cols": d.n_cols, "start_hz": int(row.start_hz),
+                "stop_hz": int(stop), "level_lo": d.level_lo, "level_hi": d.level_hi, "bin_db": d.bin,
+                "unit": self._wf_shown(row)[1], "zero_span": row.zero_span, "sweeps": d.added, **self._density_info()}
+
+    def _emit_density(self, row: wf.Row) -> None:
+        self._emit("density", self._density_payload(row))
 
     def _cmd_density_get(self) -> dict:
         """いまの密度（途中から繋いだ画面・密度に切り替えた画面が描くため）。まだ無ければ image は None。"""
         rows = list(self._density_src)
         if self._view_opts["layout"] != "density" or not rows or self._density.key is None:
             return {"image": None, **self._density_info()}
-        row = rows[-1]
-        d = self._density
-        stop = row.start_hz + row.step_hz * max(0, row.columns - 1)
-        return {"image": d.image(), "bins": d.bins, "cols": d.n_cols, "start_hz": int(row.start_hz),
-                "stop_hz": int(stop), "level_lo": d.level_lo, "level_hi": d.level_hi, "bin_db": wf.DENSITY_BIN_DB,
-                "zero_span": row.zero_span, "sweeps": d.added, **self._density_info()}
+        return self._density_payload(rows[-1])
 
     # ------------------------------------------------------------------ 行を取り直す（P §9.2）
 
@@ -289,7 +376,7 @@ class WaterfallMixin:
         latest = self._wf_history.latest()
         return {"rows": [self._wf_row_out(r) for r in rows], "range": self._wf_range(), "epoch": self._wf_epoch,
                 "seq": self._wf_seq, "source": source,
-                "unit": self._wf_shift(rows[-1])[1] if rows else (self._wf_shift(latest)[1] if latest else None),
+                "unit": self._wf_shown(rows[-1])[1] if rows else self._wf_unit_now(),
                 "t_first": self._wf_t_first(), "t_last": latest.t_end if latest else None}
 
     def _wf_t_first(self) -> Optional[float]:
@@ -358,7 +445,9 @@ class WaterfallMixin:
         td = TraceData(number=1, values=values, quantity=q, value_kind=ValueKind.REAL,
                        axis=FreqAxis(int(row.start_hz), int(row.step_hz), int(row.columns)),
                        info={"action": "update", "visible": True, "count": None, "current_count": row.sweeps,
-                             "unit": row.unit},
+                             "unit": row.unit,
+                             # 行と同じ表示の形式で出す（|Γ|・SWR: 設計R §3。参照トレースは保存したときの形式で出る）
+                             "format": self._wf_shown(row)[2], "measurement": (row.cond or {}).get("mode")},
                        flags={}, profile=dict((row.extra or {}).get("profile") or {}),
                        origin={"file": "", "created_at": when.isoformat(timespec="seconds")})
         self._files[PAST_FILE_ID] = {

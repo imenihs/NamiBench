@@ -17,7 +17,7 @@ from .texts_ui import *  # noqa: F401,F403 — 画面の部品の語の表（メ
 from .texts_ui import DISPLAY_MARKS, TEMPLATES
 from .texts_labels import *  # noqa: F401,F403 — 部品の名前・ボタンの語（LABELS）。Web へも同じ表で配る
 from .texts_labels import LABELS
-from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「直結を 0dB にする」の語（J §4.7・§4.2）
+from .texts_devices import *  # noqa: F401,F403 — 機器の一覧と「基準を取る」の語（J §4.7・§4.2）
 from .texts_devices import device_name, port_shown
 from .texts_web import *  # noqa: F401,F403 — ブラウザから使うときの語（A §4.3.2）
 from .texts_web import WEB_ERRORS
@@ -25,6 +25,14 @@ from .texts_screens import *  # noqa: F401,F403 — 右のタブ・マーカー�
 from .texts_settings import *  # noqa: F401,F403 — 設定の画面・配色・キー・プリセット・表示の単位（設計O・J §4.4・§4.6）
 from .texts_settings import SETTINGS_ERRORS, VIEW_TEXTS
 from .texts_web_settings import *  # noqa: F401,F403 — ブラウザだけの設定の画面・キーの割り当ての語
+from .texts_cal import *  # noqa: F401,F403 — 校正の画面の語（設計K）
+from .texts_cal import CAL_ERRORS, CAL_TASK_CANCELLED, CAL_TASK_DONE, CAL_TASK_FAILED, CAL_TASK_NAMES
+from .texts_zerospan import *  # noqa: F401,F403 — ゼロスパンの時間軸と流す表示の語（設計N §1）
+from .texts_zerospan import ZERO_SPAN_ERRORS
+from .texts_s11 import *  # noqa: F401,F403 — 反射（S11）と表示の形式（|Γ|・SWR）の語（設計E §6.5・設計R §3）
+from .texts_s11 import S11_ERRORS, S11_NOTICES, S11_OPEN_DISCARD_REASONS, S11_TASK_NAMES, SWR_LIMIT_NOTE
+from .texts_step import *  # noqa: F401,F403 — SG のステップ掃引・内部の漏れの印の語（設計L §1.3・§1.4）
+from .texts_step import STEP_ERRORS, step_end_text, step_legend, step_task_label
 from .texts_display import *  # noqa: F401,F403 — ウォーターフォール・密度・再生・バンドプラン（設計P）
 from .texts_display import (DISPLAY_ERRORS, DISPLAY_NORM_REASONS, DISPLAY_NOTICES, DISPLAY_RESET_CAUSES,
                             DISPLAY_TASKS, DISPLAY_TEXTS, clock_text, display_notice_text)
@@ -57,6 +65,7 @@ FIELD_NAMES = {
     "step_hz": "Step",
     "mode": "モード",
     "image_reject": "イメージ除去",
+    "span_lock": "Span 固定",
 }
 
 FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz", "span_hz", "sg_hz", "step_hz", "rbw_hz"}
@@ -67,7 +76,12 @@ OFFSET_FREQ_FIELDS = {"start_hz", "stop_hz", "center_hz"}
 
 
 def adjustment_text(adj: dict, freq_offset_hz: int = 0) -> str:
-    """調整1件を「◯◯ に合わせました（理由）」にする。周波数は欄と同じく換算後の周波数で出す。"""
+    """調整1件を「◯◯ に合わせました（理由）」にする。周波数は欄と同じく換算後の周波数で出す。
+
+    値ではなく状態が変わった調整（Span 固定を外した: 設計C §5.13）は、その文だけを出す（SENTENCE_REASONS）。
+    """
+    if adj.get("reason") in SENTENCE_REASONS:
+        return SENTENCE_REASONS[adj["reason"]]
     field = adj.get("field", "")
     v = adj.get("adopted")
     if field in FREQ_FIELDS and isinstance(v, int):
@@ -109,6 +123,9 @@ REASONS = {
     "device_changed": "機器が変わったため既定",
 }
 
+# 値ではなく状態が変わった調整の文（「◯◯ に合わせました」の形にしない）。欄は調整の field で決まる
+SENTENCE_REASONS = {"span_lock_released": LABELS["span_lock_released"]}
+
 # 範囲の規則で値を動かした理由（設計C §5.11・§5.12）。この知らせには反対の規則のボタンを添える
 RULE_REASONS = {"keep_center", "keep_span"}
 
@@ -133,6 +150,8 @@ WARNINGS = {
     "rbw180k_narrow_span": "RBW 180kHz で Span 0.3MHz 未満: 平らな上面しか見えません（レベルは正しい）",
     "rbw30k_fine_step": "RBW 30kHz で Step 2kHz 未満: 形が狭く出ます（レベルは正しい）",
     "rbw15k_unstable": "RBW 15kHz は1回の掃引ではレベルと形が揺れます。平均を使ってください",
+    # ゼロスパンで RBW 15kHz（設計N §1・C §5.3。D4: 15〜30dB の落ち込みが散発する）
+    "rbw15k_zero_span": "RBW 15kHz のゼロスパンは 15〜30dB の落ち込みが散発します（RBW 180kHz なら安定）",
 }
 
 
@@ -206,6 +225,7 @@ NOTICES = {
     "rtltcp_stopped": "rtl_tcp の送出を止めました",
     "listen_stopped": "聞くのをやめました",
     "auto_connected": "前回の機器に繋ぎました",
+    **S11_NOTICES,
 }
 
 DISCARD_REASONS = {
@@ -254,6 +274,8 @@ RUN_STATES = {
     "single": "単発",
     "stopping": "停止中（掃引の終わりを待っています）",
     "reference": "基準を取っています",
+    "calibration": "校正で測っています",
+    "step_sweep": "ステップ掃引",
 }
 
 
@@ -301,6 +323,10 @@ def notice_text(n: dict) -> str:
         text = tpl("auto_connected", name=d["name"])
     elif code == "listen_stopped":
         r = LISTEN_STOP_REASONS.get(d.get("reason"), d.get("reason") or "")
+        if r:
+            text += tpl("paren", text=r)
+    elif code == "s11_open_discarded":
+        r = S11_OPEN_DISCARD_REASONS.get(d.get("reason"), d.get("reason") or "")
         if r:
             text += tpl("paren", text=r)
     return text
@@ -427,8 +453,11 @@ def legend_parts(t: dict) -> dict:
         out["count_target"] = t.get("count_target")
     else:
         out["count"] = None
-    if t.get("axis_differs"):
-        out["label"] = TEMPLATES["axis_differs"]
+    # SG のステップ掃引の結果（設計L §1.3）・いまの軸と違う（固定のトレース: F §5.3）
+    label = " ".join(s for s in (step_legend(t.get("step_sweep")),
+                                 TEMPLATES["axis_differs"] if t.get("axis_differs") else "") if s)
+    if label:
+        out["label"] = label
     return out
 
 
@@ -476,11 +505,14 @@ MARKER_NOTES = {
     "reference_coarse": "基準が粗い（±0.5dB 程度）",
     "reference_power_cycled": "電源の入れ直し前の基準",
     "rbw15k_unstable": "RBW 15kHz の1回の掃引",
+    "rbw15k_zero_span": "RBW 15kHz のゼロスパン（落ち込みが散発）",
     "rbw180k_narrow_span": "RBW 180kHz で狭い Span",
     "rbw30k_fine_step": "RBW 30kHz で細かい Step",
     "no_value": "値なし",
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
     "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
+    # SWR の上限に当てた点（設計R §3。値は上限の SWR）
+    "swr_limit": SWR_LIMIT_NOTE,
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
     **DISPLAY_MARKS,
 }
@@ -574,6 +606,7 @@ TASK_NAMES = {
     "finish_unfinished": "記録をまとめています",
     "rtlsdr_fit_gain": "利得を合わせています",
     "reference_take": "基準を取っています",
+    "step_sweep": "ステップ掃引",
 }
 
 TASK_DONE = {
@@ -605,6 +638,8 @@ TASK_CANCELLED = {
     "finish_unfinished": "まとめるのをやめました。作業ファイルは残っています",
     "rtlsdr_fit_gain": "利得を合わせるのをやめました（利得は押す前の段に戻しました）",
     "reference_take": "基準を取るのをやめました（基準は変わりません）",
+    # 閉じる確認に出す（やめたときの知らせは texts_step.step_end_text: 済んだ段の数と残したトレース）
+    "step_sweep": "重ねた結果は保存していなければ残りません",
 }
 
 STORAGE_ERRORS = {
@@ -629,10 +664,22 @@ def storage_error_text(err: dict) -> str:
     return STORAGE_ERRORS.get(code) or ERRORS.get(code) or code
 
 
+# 校正の測定（設計K）の語は texts_cal.py に置き、ここで同じ表へ足す（Web へも同じ表で配る）
+TASK_NAMES.update(CAL_TASK_NAMES)
+TASK_DONE.update(CAL_TASK_DONE)
+TASK_FAILED.update(CAL_TASK_FAILED)
+TASK_CANCELLED.update(CAL_TASK_CANCELLED)
+
+
 def task_label(t: dict) -> str:
     """進み具合の1行（何件目/全体・経過時間。時間は約束しない: U-20）。"""
     kind = t.get("task") or t.get("kind") or ""
+    if kind == "step_sweep":
+        return step_task_label(t)  # いまの段/全体の段（設計L §1.3）
     text = TASK_NAMES.get(kind, kind)
+    std = (t.get("detail") or {}).get("standard") if kind == "reference_take" else None
+    if std in S11_TASK_NAMES:
+        text = S11_TASK_NAMES[std]  # S11 のオープン・ショート（設計E §6.5）
     if t.get("total"):
         text += tpl("task_progress", done=t.get("done", 0), total=t["total"])
     text += tpl("task_elapsed", s=int(t.get("elapsed_s") or 0))
@@ -641,6 +688,7 @@ def task_label(t: dict) -> str:
     return text
 
 
+ERRORS.update(ZERO_SPAN_ERRORS)
 ERRORS.update({
     "no_trace_data": "そのトレースにまだ値がありません",
     "table_full": "マーカーはそれぞれ 8 本までです",
@@ -673,6 +721,7 @@ ERRORS.update({
     "rtlsdr_fit_running": "いま利得を合わせています",
     **WEB_ERRORS,
     **SETTINGS_ERRORS,
+    **S11_ERRORS,
     "unknown_file": "そのファイルはもう外しています",
     **DISPLAY_ERRORS,
 })
@@ -681,6 +730,9 @@ TASK_NAMES.update(DISPLAY_TASKS["names"])
 TASK_DONE.update(DISPLAY_TASKS["done"])
 TASK_FAILED.update(DISPLAY_TASKS["failed"])
 TASK_CANCELLED.update(DISPLAY_TASKS["cancelled"])
+# 校正の画面（設計K）・SG のステップ掃引（設計L §1.3）が断った理由。すでにある語は変えない
+ERRORS.update({k: v for k, v in CAL_ERRORS.items() if k not in ERRORS})
+ERRORS.update({k: v for k, v in STEP_ERRORS.items() if k not in ERRORS})
 
 
 # ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語
@@ -740,7 +792,13 @@ def source_text(st: dict) -> str:
     """信号源が出ていることの表示（U-05: 状態は画面が示す）。掃引している間だけ出す。"""
     if not st or not st.get("run") or not st.get("sweep"):
         return ""
-    running = st["run"]["state"] in ("continuous", "single", "stopping", "reference")
+    running = st["run"]["state"] in ("continuous", "single", "stopping", "reference", "step_sweep")
+    if st["run"]["state"] == "calibration" and (st.get("connection") or {}).get("state") == "connected":
+        # 校正の掃引は、いまの条件とは別の条件（RBW の校正は SG で 500MHz: 設計K §4.3）。機器へ渡した方を出す
+        src = st.get("source") or {}
+        if src.get("output") == "sg" and src.get("freq_hz") is not None:
+            return tpl("source_sg", freq=format_freq(src["freq_hz"]))
+        return TEMPLATES["source_tg"] if src.get("output") == "tg" else ""
     if (st.get("connection") or {}).get("state") != "connected" or not running:
         return ""
     sw = st["sweep"]
@@ -839,6 +897,9 @@ def status_items(st: dict) -> list[dict]:
 def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
     """長い処理の終わりの知らせ（H §4.1）。(文, 保存したファイルのパス or None)。"""
     kind = d.get("task", "")
+    if kind == "step_sweep":
+        # 終わり方・済んだ段の数・残した結果のトレース（設計L §1.3・U-19）
+        return step_end_text(code, d, storage_error_text(d.get("error") or {})), None
     if code == "task_done":
         res = d.get("result") or {}
         text = TASK_DONE.get(kind, kind)
@@ -871,7 +932,7 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
             text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
                                                                                          name=res.get("name", ""))
             if res.get("ref_level") is not None:
-                # 0dB が見えるよう REF レベルを動かした（「直結を 0dB にする」: 黙って変えない J §4）
+                # 0dB が見えるよう REF レベルを動かした（上段の「基準を取る」: 黙って変えない J §4）
                 text += tpl("ref_zero_shown", ref=f"{res['ref_level']:+g}".replace("-", "−"))
         return text, path
     if code == "task_cancelled":

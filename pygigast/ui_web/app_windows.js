@@ -11,7 +11,8 @@
 
   // ---- 設定の画面。ページは SETTINGS_PAGES の順（接続・配色・通知・キー操作・保存・ブラウザから使う・rtl_tcp・RTL-SDR）。
   // ブラウザから変えられない項目は Qt と同じ欄を出して無効にし、理由をツールチップに出す（U-08）。
-  // - 配色: 行ごとに 変えた印・名前・色・#rrggbb・この色だけ初期値に戻す・読みやすさの知らせ（変えた色の行に出す: U-25）
+  // - 配色: 上に保存した配色の一覧（プリセットの窓と同じ形: J §4.4.1。読みやすさの知らせはその行）。下に行ごとに
+  //   変えた印・名前・色・#rrggbb・この色だけ初期値に戻す・読みやすさの知らせ（変えた色の行に出す: U-25）
   // - 保存: 保存・開くの最初のフォルダと PNG の保存先は PC の画面の項目（ブラウザはブラウザの保存先へダウンロードする）
   // - ブラウザから使う: 変えるのは pyGigaSt の PC の画面。ここはいまの様子を映し、接続のしかたの窓だけ開ける。
   //   暗号化していないことは、スマートフォンや PC からも使う間だけそのチェックの下に出す（A §4.3.2 の 7・U-14）
@@ -50,21 +51,45 @@
     </template>
 
     <template v-else-if="page === 'display'">
-      <div class="row">
-        <button @click="a.resetPalette('light')">{{ a.S('palette_reset_light') }}</button>
-        <button @click="a.resetPalette('dark')">{{ a.S('palette_reset_dark') }}</button>
+      <fieldset class="group pal-saved">
+        <legend>{{ a.S('palettes_group') }}</legend>
+        <div class="pal-list-scroll" v-if="ps.rows.length"><table class="mtable" data-repeat><tbody>
+          <tr v-for="r in ps.rows" :key="r.id" :class="{sel: r.id === ps.sel}" @click="ps.sel = r.id" @dblclick="ps.sel = r.id; a.palLoad()">
+            <td>{{ r.name }}</td><td class="pal-warn fill" :title="r.warn_tip || undefined">{{ r.warn }}</td>
+          </tr>
+        </tbody></table></div>
+        <div class="dim" v-if="ps.ready && !ps.rows.length">{{ a.S('palettes_none') }}</div>
+        <div class="warn" v-if="ps.broken">{{ a.S('palettes_broken', {n: ps.broken}) }}</div>
+        <div class="row">
+          <button :disabled="!psel" :title="a.S('palette_load_tip')" @click="a.palLoad()">{{ a.S('palette_load') }}</button>
+          <button :disabled="!psel" @click="a.palRename()">{{ a.S('palette_rename') }}</button>
+          <button :disabled="!psel" @click="a.palDelete()">{{ a.S('palette_delete') }}</button>
+          <button :disabled="!psel" @click="a.palOverwrite()">{{ a.S('palette_overwrite') }}</button>
+          <button :disabled="!psel" @click="a.palExport()">{{ a.S('palette_export') }}</button>
+        </div>
+        <div class="row">
+          <button @click="a.palSaveNew()">{{ a.S('palette_save_new') }}</button>
+          <button @click="a.palImport()">{{ a.S('palette_import') }}</button>
+        </div>
+        <div class="fnote" v-if="a.notes.palettes">{{ a.notes.palettes.text }}</div>
+      </fieldset>
+      <div class="pal-edit">
+        <div class="row">
+          <button @click="a.resetPalette('light')">{{ a.S('palette_reset_light') }}</button>
+          <button @click="a.resetPalette('dark')">{{ a.S('palette_reset_dark') }}</button>
+        </div>
+        <div class="pal-scroll"><table class="mtable pal" data-repeat><tbody>
+          <tr v-for="r in pv.rows" :key="r.name" :class="{changed: r.changed}">
+            <td class="mark" :title="r.tip">{{ r.changed ? a.S('palette_changed_mark') : '' }}</td>
+            <td>{{ r.label }}</td>
+            <td><input type="color" :value="r.color" :title="a.S('palette_pick_title', {name: r.label})" @change="a.setColor(r.name, $event.target.value)"></td>
+            <td><input class="w-color" v-steady="r.color" :placeholder="a.S('palette_hex')" :title="a.S('palette_hex')" @change="a.typedColor(r, $event)"></td>
+            <td><button :disabled="!r.changed" :title="a.S('palette_row_reset_tip')" @click="a.setColor(r.name, r.default)">{{ a.S('reset') }}</button></td>
+            <td class="pal-warn" :title="r.warn_tip || undefined">{{ r.warn }}</td>
+          </tr>
+        </tbody></table></div>
+        <div class="fnote" v-if="a.notes.settings_palette">{{ a.notes.settings_palette.text }}</div>
       </div>
-      <div class="pal-scroll"><table class="mtable pal" data-repeat><tbody>
-        <tr v-for="r in pv.rows" :key="r.name" :class="{changed: r.changed}">
-          <td class="mark" :title="r.tip">{{ r.changed ? a.S('palette_changed_mark') : '' }}</td>
-          <td>{{ r.label }}</td>
-          <td><input type="color" :value="r.color" :title="a.S('palette_pick_title', {name: r.label})" @change="a.setColor(r.name, $event.target.value)"></td>
-          <td><input class="w-color" v-steady="r.color" :placeholder="a.S('palette_hex')" :title="a.S('palette_hex')" @change="a.typedColor(r, $event)"></td>
-          <td><button :disabled="!r.changed" :title="a.S('palette_row_reset_tip')" @click="a.setColor(r.name, r.default)">{{ a.S('reset') }}</button></td>
-          <td class="pal-warn" :title="r.warn_tip || undefined">{{ r.warn }}</td>
-        </tr>
-      </tbody></table></div>
-      <div class="fnote" v-if="a.notes.settings_palette">{{ a.notes.settings_palette.text }}</div>
     </template>
 
     <template v-else-if="page === 'notify'">
@@ -200,7 +225,8 @@
     <button class="primary" @click="a.answerConfirm(false)">{{ a.T('SETTINGS_LABELS', 'close') }}</button>
   </div>
   <div class="modal-btns" v-else>
-    <button class="primary" @click="a.answerConfirm(true)">{{ b.ok || a.W('confirm_ok') }}</button>
+    <button class="primary" :disabled="!!b.okDisabled" @click="a.answerConfirm(true)">{{ b.ok || a.W('confirm_ok') }}</button>
+    <button v-if="b.alt" @click="a.answerConfirm('alt')">{{ b.alt }}</button>
     <button @click="a.answerConfirm(false)">{{ a.W('cancel') }}</button>
   </div>
 </div>
@@ -227,6 +253,8 @@
         ...parent.computed,
         page() { return (this.a.settingsWin || {}).page || "connection"; },
         pv() { return this.a.paletteView; },
+        ps() { return this.a.palStore; },
+        psel() { return this.a.palSel(); },
       },
     },
     "gs-presets": {

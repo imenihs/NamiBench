@@ -491,15 +491,34 @@
     yLabel() { return root.GSTexts.w("axis_level", { unit: this.unit }); }
     yRange() { return [this.ref - DIVISIONS * this.div, this.ref]; }
     ySplits() { const out = []; for (let i = DIVISIONS; i >= 0; i--) out.push(this.ref - i * this.div); return out; }
-    yValues(splits) { return splits.map((v) => root.GSUnits.levelText(v)); }
+    // 目盛の数字はグラフと同じ桁（|Γ|・SWR は1目盛を書き分けられる桁: 設計R §3。graph.js の fmtTick と同じ）
+    yValues(splits) {
+      const d = this.decimals || 1;
+      return splits.map((v) => {
+        if (d <= 1) return root.GSUnits.levelText(v);
+        const s = Number(v).toFixed(d);
+        return root.GSUnits.minusSign(Number(s) === 0 ? Number(0).toFixed(d) : s);
+      });
+    }
 
-    setY(ref, div, unit) {
-      if (ref === this.ref && div === this.div && (unit || this.unit) === this.unit) return;
+    // ref は一番上（|Γ|・SWR は下端 + 10 目盛）。グラフの縦軸と同じ範囲（設計P §4）
+    setY(ref, div, unit, decimals) {
+      if (ref === this.ref && div === this.div && (unit || this.unit) === this.unit
+          && (decimals || 1) === (this.decimals || 1)) return;
       this.ref = ref;
       this.div = div;
       this.unit = unit || this.unit;
+      this.decimals = decimals || 1;
       this._labels();
       this.u.setScale("y", { min: ref - DIVISIONS * div, max: ref });
+    }
+
+    // 描かない理由（行にするトレースの単位が縦軸と違う: Qt の DensityView.set_reason と同じ）。理由がある間は絵を出さない
+    setReason(why) {
+      const r = why || null;
+      if (r === (this.reason || null)) return;
+      this.reason = r;
+      this.u.redraw(false);
     }
 
     // 届いた密度を描く。画面に出ていない間は塗らずに持つだけ（出したときに塗る）
@@ -511,7 +530,7 @@
 
     _draw(u) {
       const d = this.d;
-      if (!d || !d.values || !d.bins || !d.cols || !this.lut) return;
+      if (this.reason || !d || !d.values || !d.bins || !d.cols || !this.lut) return;
       const off = this.off;
       if (this.dirty) {
         this.dirty = false;

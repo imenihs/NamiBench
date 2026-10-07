@@ -68,6 +68,6 @@ class TopBar(QWidget):
         super().resizeEvent(e)
 
     def relayout(self) -> None:
-        """中身の幅が変わったとき（TG で「直結を 0dB にする」が出た・消えた）に段を決め直す。"""
+        """中身の幅が変わったとき（TG で「基準を取る」が出た・消えた）に段を決め直す。"""
         if self.width() > 0:
             self._place(self.width() < self.needed_one_row())

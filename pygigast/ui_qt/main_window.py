@@ -32,11 +32,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from ..api.local import LocalApi
 from ..core.units import drag_ref_level, format_freq, level_text
-from . import (device_menu, display_view, look, marker_rows, menu_table, menus, png_data, screen_model, sizes, texts,
-               theme, widget_sync)
+from . import (device_menu, display_view, look, marker_rows, menu_table, menus, png_data, screen_model, screen_s11, sizes,
+               texts, theme, widget_sync)
 from .display_control import DisplayControl
 from .waterfall_view import LEFT_AXIS_W
 from .docks import Parts
@@ -59,6 +60,7 @@ from .tab_source import SourceTab
 from .tab_traces import TraceTab, disable_item
 from .tasks import TaskPanel
 from .theme import DARK, stylesheet
+from .time_axis import apply_x_axis
 from .presets_dialog import PresetsDialog, save_new
 from .ref_quick import RefQuick
 from .topbar import TopBar
@@ -98,6 +100,7 @@ class MainWindow(QMainWindow):
         self.state: dict = {}
         self._ref_dbm = DEFAULT_REF
         self._db_div = DEFAULT_DIV
+        self._axis_shown: Optional[tuple] = None  # 描いている縦軸（単位・一番上・1目盛）
         self._amp_pending = 0
         self._drag_ref0 = 0.0
         self.selected_marker: Optional[str] = None
@@ -106,10 +109,13 @@ class MainWindow(QMainWindow):
         self._requested: set = set()
         self._had_trace = False
         self._bridge = _Bridge()
-        self._bridge.event.connect(self._on_event, Qt.ConnectionType.QueuedConnection)
-        self._bridge.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
+        # 窓を壊した後に届いた知らせ・命令の応答は捨てる（部品はもう無い。窓を閉じる間際に返ってきた応答で起きる）
+        self._bridge.event.connect(lambda kind, payload: isValid(self) and self._on_event(kind, payload),
+                                   Qt.ConnectionType.QueuedConnection)
+        self._bridge.call.connect(lambda fn: isValid(self) and fn(), Qt.ConnectionType.QueuedConnection)
         self.files = FileActions(self)
         self.device_window = None  # 機器の一覧の窓（J §4.7。device_menu.open_list が作る）
+        self.cal_window = None  # 校正の画面（設計K。cal_dialog.open_calibration が作る）
         self._presets: Optional[PresetsDialog] = None
 
         # 描き方・色・大きさの決まり（設計J §4.11）は部品を作る前に入れる（部品が出るときに当たる）
@@ -299,9 +305,11 @@ class MainWindow(QMainWindow):
         self.f_ref.add_header_widget(self.btn_ref_auto)
         top.addWidget(self.f_ref)
         div_box = ValueField("dB/div", big=True)
+        self.div_field = div_box
         self.div_combo = QComboBox()
         for v in DB_PER_DIV_CHOICES:
             self.div_combo.addItem(f"{v:g} dB", v)
+        self._div_key: tuple = ()
         self.div_combo.setCurrentIndex(DB_PER_DIV_CHOICES.index(DEFAULT_DIV))
         self.div_combo.activated.connect(lambda i: self._set_div(self.div_combo.itemData(i)))
         div_box.layout().replaceWidget(div_box.edit, self.div_combo)
@@ -323,7 +331,7 @@ class MainWindow(QMainWindow):
         self.btn_cont.clicked.connect(lambda: self.actions["run_cont"].trigger())
         self.btn_single.clicked.connect(lambda: self.actions["run_single"].trigger())
         self.btn_stop.clicked.connect(lambda: self.actions["stop"].trigger())
-        # TG・S11 のときだけ「直結を 0dB にする」といまの基準（J §4.2: 基準を取るは1クリックで届く所）
+        # TG・S11 のときだけ「基準を取る」といまの基準（J §4.2: 基準を取るは1クリックで届く所）
         self.ref_quick = RefQuick(self)
         top.addWidget(self.ref_quick)
         self.topbar.align_bottom()
@@ -482,24 +490,22 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 縦軸（J §4.1。正本はコアの amplitude）
 
     def ref_level(self) -> float:
-        return self._ref_dbm
+        """縦軸の一番上の値（dB 系は REF レベル、|Γ|・SWR は下端 + 10 目盛: 設計R §3）。"""
+        a = self.axis()
+        return a["top"] if a["linear"] else self._ref_dbm
 
     def db_div(self) -> float:
-        return self._db_div
+        """縦軸の1目盛（dB 系は dB/div、|Γ|・SWR はその単位の /div）。"""
+        a = self.axis()
+        return a["div"] if a["linear"] else self._db_div
 
     def display_unit(self) -> str:
-        """縦軸の単位。コアの amplitude.unit が決まっていればそれ、無ければ見えているトレースの単位。"""
-        amp = self.state.get("amplitude") or {}
-        if amp.get("unit") == "dB" or (amp.get("unit") and amp.get("unit") == (self.state.get("view") or {}).get(
-                "level_unit_label")):
-            return amp["unit"]
-        p = self.traces.any_live()
-        if p is not None and p.get("unit"):
-            return p["unit"]
-        for s in self.state.get("traces") or []:
-            if s.get("visible") and s.get("unit"):
-                return s["unit"]
-        return "dBm"
+        """縦軸の単位 = 表示している測定中のトレースの最初の単位（Web と同じ screen_s11.axis_unit）。"""
+        return screen_s11.axis_unit(self.state)
+
+    def axis(self) -> dict:
+        """縦軸の決め方（dB 系か、下端の決まった |Γ|・SWR か: screen_s11.axis_view）。"""
+        return screen_s11.axis_view(self.state, self.display_unit())
 
     def _send_amplitude(self, **kw) -> None:
         self._amp_pending += 1
@@ -521,15 +527,32 @@ class MainWindow(QMainWindow):
         if (ref, div) != (self._ref_dbm, self._db_div):
             self._ref_dbm, self._db_div = ref, div
             self._update_y_axis()
+        elif self._axis_shown != self._axis_key():
+            self._update_y_axis()  # |Γ|・SWR の1目盛・縦軸の単位が変わった（設計R §3）
+
+    def _axis_key(self) -> tuple:
+        a = self.axis()
+        return (a["linear"], a["unit"], a["top"], a["div"])
 
     def _set_ref(self, v: float) -> None:
         # 表示だけの値。測定値は変わらない（J §4.1）。画面はすぐ動かし、コアへ送る
+        why = self.axis()["ref_reason"]
+        if why:
+            self.f_ref.flash_note(why)  # |Γ|・SWR の縦軸は下端が決まっていて REF を持たない（設計R §3）
+            return
         self._ref_dbm = round(v, 2)
         self._update_y_axis()
         self._send_amplitude(ref_level=self._ref_dbm)
 
     def _set_div(self, v: float) -> None:
-        # dB/div を変えても REF レベルは動かない（J §4.1）
+        # dB/div を変えても REF レベルは動かない（J §4.1）。|Γ|・SWR は1目盛だけを選ぶ（下端は決まった値: 設計R §3）
+        a = self.axis()
+        if a["linear"]:
+            amp = self.state.setdefault("amplitude", {})
+            amp[a["div_key"]] = float(v)  # すぐ描き直し、コアからの戻りで確かめる
+            self._update_y_axis()
+            self._send_amplitude(**{a["div_key"]: float(v)})
+            return
         self._db_div = float(v)
         self._update_y_axis()
         self._send_amplitude(db_per_div=int(v))
@@ -544,6 +567,9 @@ class MainWindow(QMainWindow):
 
     def _ref_auto_view(self) -> dict:
         """表示中のトレース（測定中の 1〜4・重ねた参照トレース）から screen_model.ref_auto_view（Web と同じ規則）。"""
+        why = self.axis()["ref_reason"]
+        if why:
+            return {"level": None, "reason": why}
         shown = [str(n) for n in (1, 2, 3, 4) if self.traces.live_payload(n) is not None]
         shown += [tid for tid in self.traces.files if self.traces.file_drawn(tid)]
         return screen_model.ref_auto_view(self.state, shown, self.display_unit(), self._db_div,
@@ -556,16 +582,22 @@ class MainWindow(QMainWindow):
         self.btn_ref_auto.setToolTip(texts.LABELS["ref_auto_tip"] + (f" — {why}" if why else ""))
 
     def _on_level_wheel(self, steps: int, ctrl: bool) -> None:
-        if ctrl:
-            # Ctrl+ホイール: dB/div を1段（奥へ回すと大きく）
-            i = DB_PER_DIV_CHOICES.index(self._db_div) if self._db_div in DB_PER_DIV_CHOICES else 3
-            i = min(max(i + (1 if steps > 0 else -1), 0), len(DB_PER_DIV_CHOICES) - 1)
-            self._set_div(DB_PER_DIV_CHOICES[i])
+        a = self.axis()
+        if ctrl or a["linear"]:
+            # Ctrl+ホイール: 1目盛を1段（奥へ回すと大きく）。|Γ|・SWR の縦軸は REF を持たないので、ホイールは
+            # いつも1目盛を変える（下端は決まった値: 設計R §3）
+            values = [c["value"] for c in a["div_choices"]]
+            cur = self.db_div()
+            i = values.index(cur) if cur in values else len(values) - 1
+            i = min(max(i + (1 if steps > 0 else -1), 0), len(values) - 1)
+            self._set_div(values[i])
         else:
             # ホイール1段で REF レベルを1目盛（奥へ回すと REF が上がる。数値の欄のホイールと同じ向き）
             self._set_ref(self._ref_dbm + steps * self._db_div)
 
     def _on_level_drag(self, start: bool, frac: float) -> None:
+        if self.axis()["linear"]:
+            return  # |Γ|・SWR の縦軸は下端が決まっていて動かさない（設計R §3）
         # つかんだ目盛がマウスに付いてくる: 下へ引くと、より上の値が見える（REF が上がる）
         if start:
             self._drag_ref0 = self._ref_dbm
@@ -573,14 +605,20 @@ class MainWindow(QMainWindow):
         self._set_ref(drag_ref_level(self._drag_ref0, frac, self._db_div, DIVISIONS))
 
     def _update_y_axis(self) -> None:
-        top = self._ref_dbm
-        bottom = top - DIVISIONS * self._db_div
+        a = self.axis()
+        self._axis_shown = self._axis_key()
+        top, div = (a["top"], a["div"]) if a["linear"] else (self._ref_dbm, self._db_div)
+        bottom = top - DIVISIONS * div
         pi = self.plot.getPlotItem()
         # 端ちょうどの目盛は範囲の外と見なされて数字が消えるので、わずかに広げる
-        eps = self._db_div * 1e-3
+        eps = div * 1e-3
         pi.setYRange(bottom - eps, top + eps, padding=0)
-        # 目盛の数字は REF の欄と同じ形（0.1 dB まで・負号「−」）。単位を換えた REF の端数を出さない
-        ticks = [(top - i * self._db_div, level_text(top - i * self._db_div)) for i in range(DIVISIONS + 1)]
+        # 目盛の数字は REF の欄と同じ形（0.1 dB まで・負号「−」）。単位を換えた REF の端数を出さない。
+        # |Γ|・SWR は1目盛を書き分けられる桁（設計R §3）
+        def tick(v: float) -> str:
+            return screen_s11.tick_text(v, a["decimals"]) if a["linear"] else level_text(v)
+
+        ticks = [(top - i * div, tick(top - i * div)) for i in range(DIVISIONS + 1)]
         pi.getAxis("left").setTicks([ticks, []])
         for line in self._hgrid:
             pi.removeItem(line)
@@ -589,14 +627,28 @@ class MainWindow(QMainWindow):
         for line in self._hgrid:
             line.setZValue(-10)
             pi.addItem(line, ignoreBounds=True)
-        self.f_ref.set_value(self._ref_dbm)
-        i = self.div_combo.findData(self._db_div)
+        self.f_ref.set_value(top)
+        self._apply_div_choices(a)
+        i = self.div_combo.findData(div)
         if i >= 0:
             widget_sync.set_index(self.div_combo, i)
         fill = (self.state.get("view") or {}).get("draw_style") == "fill"
         self.traces.set_fill(fill, bottom)
         if hasattr(self, "display"):
-            self.display.apply_y(self._ref_dbm, self._db_div, self.display_unit())
+            # 密度表示の縦はグラフと同じ範囲・同じ目盛の数字（|Γ|・SWR は下端 + 10 目盛: 設計R §3）
+            self.display.apply_y(top, div, self.display_unit(), a["decimals"] if a["linear"] else 1)
+
+    def _apply_div_choices(self, a: dict) -> None:
+        """1目盛の欄の名前と選択肢（dB/div か、|Γ|・SWR の /div: 設計R §3）と、REF の欄の使えない理由。"""
+        key = tuple((c["value"], c["text"]) for c in a["div_choices"])
+        if key != self._div_key:
+            self._div_key = key
+            widget_sync.set_items(self.div_combo, [(c["text"], c["value"]) for c in a["div_choices"]])
+            self.div_field.name_label.setText(a["div_label"])
+            self.topbar.relayout()  # 選択肢の幅が変わると上段の幅が変わる（J §4.3.3）
+        why = a["ref_reason"]
+        self.f_ref.setEnabled(why is None)
+        self.f_ref.setToolTip(why or "")
 
     def _update_unit(self) -> None:
         unit = self.display_unit()
@@ -607,9 +659,14 @@ class MainWindow(QMainWindow):
         label = texts.LABELS["level"]
         if n.get("used") and not n.get("applied"):
             label = texts.LABELS["level_no_ref"]
-        self.plot.getPlotItem().setLabel("left", label, units=unit)
+        if screen_s11.formats.is_linear_unit(unit):
+            self.plot.getPlotItem().setLabel("left", unit, units="")  # |Γ|・SWR はレベルではないので名前だけ（設計R §3）
+        else:
+            self.plot.getPlotItem().setLabel("left", label, units=unit)
         # 比（dB）のときは 0dB の線を目盛線と別の色で描く（E §6.6）
         self.traces.set_zero_line(unit == "dB")
+        if self._axis_shown != self._axis_key():
+            self._update_y_axis()  # 縦軸の単位が dB 系と |Γ|・SWR の間で変わった（設計R §3）
 
     def redraw_style(self) -> None:
         self._update_y_axis()
@@ -660,31 +717,41 @@ class MainWindow(QMainWindow):
         m.setToolTipsVisible(True)
         why = self._freq_ops_reason()
         hz = int(round(x))
-        shown = format_freq(hz + texts.freq_offset_of(self.state))  # 換算後の周波数（設計O）
-        act = m.addAction(texts.LABELS["ctx_center"] + ("" if why else texts.tpl("paren", text=shown)))
+        # 換算後の周波数（設計O）。ゼロスパンは時間（設計N §1）
+        shown = texts.tpl("paren", text=screen_model.x_text(self.state, x)) if self.state.get("sweep") else ""
+        act = m.addAction(texts.LABELS["ctx_center"] + ("" if why else shown))
         act.setObjectName("ctx_center")
         act.triggered.connect(lambda: self._set_sweep(center_hz=hz, field=self.f_center))
-        act2 = m.addAction(texts.LABELS["ctx_marker"] + ("" if why else texts.tpl("paren", text=shown)))
+        act2 = m.addAction(texts.LABELS["ctx_marker"] + shown)
         act2.setObjectName("ctx_marker")
         act2.triggered.connect(lambda: self._marker_add_at(x, y))
         act3 = m.addAction(texts.DISPLAY_TEXTS["ctx_bookmark"])
         act3.setObjectName("ctx_bookmark")
         act3.triggered.connect(lambda: self.display.add_bookmark(hz))
-        for a in (act, act2, act3):
-            if why:
+        for a, reason in ((act, why), (act2, self._marker_reason()), (act3, why)):
+            if reason:
                 a.setEnabled(False)
-                a.setToolTip(why)
+                a.setToolTip(reason)
         level = round(y, 1)
         act = m.addAction(texts.LABELS["ctx_ref"].replace("{level}", f"{level:.1f}").replace("{unit}", self.display_unit()))
         act.setObjectName("ctx_ref")
         act.triggered.connect(lambda: self._set_ref(level))
+        ref_why = self.axis()["ref_reason"]
+        if ref_why:
+            # |Γ|・SWR の縦軸は REF を持たない（設計R §3）。消さずに無効にして理由（U-08）
+            act.setEnabled(False)
+            act.setToolTip(ref_why)
         sel = self.selected_marker
         if sel:
             m.addSeparator()
+            freq_only = screen_model.zero_span_view(self.state)["freq_only"]
             for target, name in (("center", "ctx_m_center"), ("ref", "ctx_m_ref"), ("span", "ctx_m_span")):
                 a = m.addAction(texts.LABELS[name].replace("{m}", sel))
                 a.setObjectName(name)
                 a.triggered.connect(lambda _=False, t=target: self.marker_to(sel, t))
+                if freq_only and target != "ref":
+                    a.setEnabled(False)  # 時間の位置は周波数の条件にできない（設計N §1）
+                    a.setToolTip(freq_only)
             # マーカーの位置を聞く（設計Q §6.8）。使えないときは理由を出す（U-08）
             a = m.addAction(texts.LABELS["ctx_m_listen"].replace("{m}", sel).replace("{start}", texts.LISTEN_LABELS["start"]))
             a.setObjectName("ctx_m_listen")
@@ -727,10 +794,14 @@ class MainWindow(QMainWindow):
         shift = bool(QGuiApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
         self.call("marker_set", id=self.selected_marker, step=sign * (10 if shift else 1))
 
+    def _marker_reason(self) -> Optional[str]:
+        """マーカーを置けない理由。ゼロスパンでも時間の位置に置ける（設計N §1）。"""
+        return None if self.state.get("sweep") else texts.REASON_TEXTS["no_sweep"]
+
     def _marker_add_at(self, x: float, y: float) -> None:
         """その位置に M を置く。見えているトレースのうち縦に最も近いものに載せる（G §3.2）。
-        向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き）。"""
-        if self._freq_ops_reason():
+        向きは置いたときの山／谷の選択（G §3.8: N dB 帯域幅・追従の向き）。ゼロスパンの x は時間（μs）。"""
+        if self._marker_reason():
             return
         trace = self.traces.nearest_trace(x, y) or self._first_visible_trace()
         self.call("marker_add", on_ok=self._select_result, kind="M", trace=trace, freq_hz=int(round(x)),
@@ -747,7 +818,7 @@ class MainWindow(QMainWindow):
     def _marker_at_mouse(self) -> None:
         vb = self.plot.getPlotItem().getViewBox()
         scene = self.plot.mapToScene(self.plot.mapFromGlobal(QCursor.pos()))
-        if not vb.sceneBoundingRect().contains(scene) or self._freq_ops_reason():
+        if not vb.sceneBoundingRect().contains(scene) or self._marker_reason():
             return
         p = vb.mapSceneToView(scene)
         self._marker_add_at(p.x(), p.y())
@@ -789,7 +860,9 @@ class MainWindow(QMainWindow):
         self.call("set_xy", **{key: int(round(value)) if key.endswith("_hz") else round(float(value), 2)})
 
     def _apply_markers(self, snap: dict) -> None:
-        self.marker_snap = {"markers": snap.get("markers", []), "xy": snap.get("xy") or {}}
+        # 横軸の種類と、ゼロスパンの区間の最大・最小・平均も持つ（マーカー表の列と行: 設計N §1）
+        self.marker_snap = {"markers": snap.get("markers", []), "xy": snap.get("xy") or {},
+                            "x_kind": snap.get("x_kind") or "freq", "interval": snap.get("interval")}
         ids = {m["id"] for m in self.marker_snap["markers"]}
         if self.selected_marker not in ids:
             self.selected_marker = None
@@ -799,14 +872,18 @@ class MainWindow(QMainWindow):
         self.marker_row_list = marker_rows.rows_from_snapshot(self.marker_snap)
         self.marker_panel.set_rows(self.marker_row_list, self.selected_marker)
         self.marker_tab.apply(self._selected_row(), self.marker_snap)
-        self.marker_layer.enabled = self._freq_ops_reason() is None
+        self.marker_layer.enabled = self._marker_reason() is None
+        self.marker_layer.unit = self.display_unit()  # 縦軸と単位の違うトレースのマーカーは描かない（設計R §3）
         self.marker_layer.update(self.marker_row_list, self.selected_marker, self.marker_snap["xy"])
         why = None if self.selected_marker else texts.REASON_TEXTS["select_marker"]
-        for code in ("marker_left", "marker_right", "marker_center", "marker_ref", "marker_remove"):
+        for code in ("marker_left", "marker_right", "marker_ref", "marker_remove"):
             menus.set_reason(self.actions[code], why)
+        # ゼロスパンの位置は時間なので、周波数の条件（Center・Start/Stop）にはできない（設計N §1）
+        freq_only = screen_model.zero_span_view(self.state)["freq_only"]
+        menus.set_reason(self.actions["marker_center"], why or freq_only)
         sel = self._selected_row()
         menus.set_reason(self.actions["marker_span"],
-                         why or (None if sel and sel.get("ref") else texts.REASON_TEXTS["delta_ref"]))
+                         why or freq_only or (None if sel and sel.get("ref") else texts.REASON_TEXTS["delta_ref"]))
         if hasattr(self, "listen"):
             self.listen.refresh()
             self.rtl_panel.refresh_markers()
@@ -859,8 +936,11 @@ class MainWindow(QMainWindow):
     def apply_keymap(self) -> None:
         look.apply_keymap(self)
 
-    def _import_legacy(self) -> None:
-        device_menu.import_legacy(self)
+    def open_calibration(self, kind: str) -> None:
+        """メニュー「校正」の項目（設計K §4.1。旧校正ファイルの取り込みも同じ画面: K §4.5）。"""
+        from .cal_dialog import open_calibration
+
+        open_calibration(self, kind)
 
     # ------------------------------------------------------------------ イベント
 
@@ -876,6 +956,8 @@ class MainWindow(QMainWindow):
         elif kind == "progress":
             if payload.get("kind") == "task":
                 self.task_panel.on_progress(payload)
+                if self.cal_window is not None:
+                    self.cal_window.on_progress(payload)
             elif payload.get("kind") == "waiting_sweep_end":
                 self.status_note(texts.waiting_text(payload["remaining_s"]))
         elif kind == "audio":
@@ -918,8 +1000,10 @@ class MainWindow(QMainWindow):
         self.status_note(texts.tpl("trace_note", n=number, text=text) if number else text)
 
     def _show_adjustments(self, adjustments: list[dict], alternative: Optional[dict] = None) -> None:
+        # Span 固定を外した知らせは Span の欄に出す（固定の切り替えは Span の欄にある: 設計C §5.13）
         fields = {"start_hz": self.f_start, "stop_hz": self.f_stop, "center_hz": self.f_center,
-                  "span_hz": self.f_span, "rbw_hz": self.rbw_field, "sg_hz": self.source_tab.f_sg}
+                  "span_hz": self.f_span, "span_lock": self.f_span, "rbw_hz": self.rbw_field,
+                  "sg_hz": self.source_tab.f_sg}
         for adj in adjustments:
             w = fields.get(adj.get("field"))
             text = texts.adjustment_text(adj, texts.freq_offset_of(self.state))
@@ -969,7 +1053,6 @@ class MainWindow(QMainWindow):
                          + (f" — {why}" if why else ""))
             menus.set_reason(self.actions[f"mode_{code}"], why)
         self.span_lock.show_lock(sw.get("span_lock_hz"), sw["span_hz"], format_freq)
-        self.plot.getPlotItem().getViewBox().freq_ops_enabled = self._freq_ops_reason() is None
         if self._amp_pending == 0:
             self._take_amplitude(st.get("amplitude") or {})
         self._update_x_axis()
@@ -979,6 +1062,8 @@ class MainWindow(QMainWindow):
         self.listen.apply(st)
         if self._settings is not None:
             self._settings.apply(st)
+        if self.cal_window is not None:
+            self.cal_window.apply_state(st)
         self.source_tab.apply_state(st)
         self.ref_quick.apply(st)
         for n in self.traces.apply_trace_states(st.get("traces") or []):
@@ -1036,17 +1121,8 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(running or run["state"] == "stopping")
 
     def _update_x_axis(self) -> None:
-        sw = display_view.freq_view(self.state)  # 再生中は再生の表示の範囲（設計P §5・§2 の連動）
-        if not sw:
-            return
-        if sw["step_hz"] == 0:
-            # ゼロスパンの時間軸は設計N（⑥）。いまは点の番号で出す
-            self.plot.getPlotItem().setLabel("bottom", texts.LABELS["axis_zero_span"], units="")
-            self.plot.setXRange(0, max(1, sw["points"] - 1), padding=0)
-        else:
-            # 周波数オフセットで換算中なら、軸の名前で示す（設計O）
-            self.plot.getPlotItem().setLabel("bottom", look.freq_axis_label(self.state), units="Hz")
-            self.plot.setXRange(sw["start_hz"], sw["stop_hz"], padding=0)
+        # 横軸は x_axis_view（周波数・ゼロスパンの時間。再生中は再生の表示の範囲: 設計N §1・設計P §5）
+        apply_x_axis(self)
 
     # ------------------------------------------------------------------ 知らせ・ドラッグ＆ドロップ・閉じる
 
@@ -1084,6 +1160,11 @@ class MainWindow(QMainWindow):
         rec = self.state.get("recording") or {}
         if rec.get("active") or rec.get("stopped"):
             lost.append(texts.LABELS["close_lost_record"])
+        from .cal_view import main_close_line
+
+        cal_line = main_close_line(self.state)  # 校正の画面の保存していない作業（設計K §4.1・U-18）
+        if cal_line:
+            lost.append(cal_line)
         if lost and not self.confirm(texts.LABELS["close_title"], texts.LABELS["close_confirm"] + "\n" + "\n".join(lost),
                                     texts.LABELS["do_close"]):
             e.ignore()

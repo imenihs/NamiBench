@@ -190,6 +190,32 @@ class MarkerCommandsTest(InstrumentCase):
             self.call("marker_to", id="M1", target="span")
         self.assertEqual(cm.exception.code, "no_ref")
 
+    def test_marker_span_releases_span_lock(self):
+        """デルタの2点を Start・Stop に（設計C §5.13）: 固定 ON なら固定を外し、2点をそのまま Start・Stop にして知らせる。"""
+        self.call("set_sweep", start_hz=100_000_000, stop_hz=1_100_000_000)
+        self.single()
+        self.call("marker_add", kind="M", trace=1, freq_hz=300_000_000)
+        self.call("marker_add", kind="M", trace=1, freq_hz=700_000_000)
+        self.call("marker_set", id="M2", ref="M1")
+        marks = {m["id"]: m["freq_hz"] for m in self.call("get_state")["markers"]["markers"]}
+        lo, hi = sorted((marks["M1"], marks["M2"]))
+        self.call("set_sweep", span_lock=True)
+        self.assertEqual(self.call("get_state")["sweep"]["span_lock_hz"], 1_000_000_000)
+        r = self.call("marker_to", id="M2", target="span")
+        self.assertEqual((r["adopted"]["start_hz"], r["adopted"]["stop_hz"]), (lo, hi))
+        self.assertIsNone(r["adopted"]["span_lock_hz"])
+        released = [a for a in r["adjustments"] if a["field"] == "span_lock"]
+        self.assertEqual([a["reason"] for a in released], ["span_lock_released"])
+        # 元に戻すで固定も戻る
+        self.call("undo")
+        sw = self.call("get_state")["sweep"]
+        self.assertEqual((sw["start_hz"], sw["stop_hz"], sw["span_lock_hz"]), (100_000_000, 1_100_000_000, 1_000_000_000))
+        # 固定 OFF なら知らせない
+        self.call("set_sweep", span_lock=False)
+        r = self.call("marker_to", id="M2", target="span")
+        self.assertEqual((r["adopted"]["start_hz"], r["adopted"]["stop_hz"]), (lo, hi))
+        self.assertFalse([a for a in r["adjustments"] if a["field"] == "span_lock"])
+
 
 class TraceLineTest(InstrumentCase):
     """トレースの線（設計F §9）: 5つから選ぶ・既定は実線・変えても蓄積を捨てない・トレースの設定と一緒に覚える。"""

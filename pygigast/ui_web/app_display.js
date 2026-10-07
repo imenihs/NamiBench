@@ -23,6 +23,9 @@
     computed: {
       dv() { return this.ui.display || {}; },
       layoutCode() { return (this.st && this.st.view && this.st.view.layout) || "spectrum"; },
+      // いま出す組み合わせ（ゼロスパンの間はスペクトルのみ。設定の layout は変えない: display_view.shown_layout）
+      shownLayout() { return this.dv.shown_layout || this.layoutCode; },
+      layoutReasons() { return this.dtab.layout_reasons || {}; },
       // 横軸・上段の欄の範囲（ライブは掃引の範囲・再生は再生の表示の範囲: display_view.freq_view。P §2・§5）
       fv() {
         const f = this.dv.freq_view;
@@ -38,7 +41,7 @@
       bpView() { return this.dv.bandplan || { bands: [], bookmarks: [], list: [], count: "", file: "" }; },
       bpCount() { return [this.bpView.count, this.bpView.file].filter((t) => t).join("・"); },
       // グラフの下に出す部分（表示の組み合わせ: P §2）
-      lowerKey() { return LOWER.includes(this.layoutCode) ? this.layoutCode : null; },
+      lowerKey() { return LOWER.includes(this.shownLayout) ? this.shownLayout : null; },
       lowerShown() { return !!this.lowerKey && this.show(this.lowerKey); },
       followLabel() { return this.pbActive ? D("whole") : D("latest"); },
       followReason() {
@@ -46,13 +49,15 @@
         return this.wfFollow ? X.get("REASON_TEXTS", "wf_following") : null;
       },
       densitySeconds() { return this.dv.density_seconds || ""; },
+      // 密度を描かない理由（行にするトレースの単位が縦軸と違う: display_view.density_reason）。題の行の秒の場所に出す
+      densityReason() { return this.dv.density_reason || null; },
       runReason() { return this.ui.run_reason || null; },
     },
     methods: {
       D,
       lowerVisible(key) {
         if (this.part) return this.part === key;
-        return this.layoutCode === key && !this.detached[key];
+        return this.shownLayout === key && !this.detached[key];
       },
       // ---------------------------------------------------------- 部品を作る（グラフを作った後に app.js が呼ぶ）
       makeLower() {
@@ -103,20 +108,23 @@
             else g.setX(f.start_hz, f.stop_hz, false, this.freqOff, this.ui.freq_offset_text || "");
           }
         }
-        if (this.$dens) this.$dens.setY(this.amp.ref, this.amp.div, this.axisUnit);
+        if (this.$dens) {
+          this.$dens.setY(this.amp.ref, this.amp.div, this.axisUnit, this.amp.decimals);
+          this.$dens.setReason(this.densityReason);
+        }
         this.applyLowerAxes();
         const wf = st.waterfall || {};
         if (this.$wf && wf.range && wf.range.lo != null) this.$wf.setRange(wf.range.lo, wf.range.hi);
         const pb = st.playback || {};
         const active = !!pb.active;
-        const layoutChanged = this.layoutCode !== this.wfShownLayout;
-        this.wfShownLayout = this.layoutCode;
+        const layoutChanged = this.shownLayout !== this.wfShownLayout;
+        this.wfShownLayout = this.shownLayout;
         if (active !== this.pbActive) {
           this.pbActive = active;
           this.wfFollow = !active;
           this.wfWindow = null;
           this.fetchRows();
-        } else if (wf.epoch !== this.wfEpoch || (layoutChanged && this.layoutCode === "waterfall")) {
+        } else if (wf.epoch !== this.wfEpoch || (layoutChanged && this.shownLayout === "waterfall")) {
           this.fetchRows();
         }
         if (this.$wf) this.$wf.setCursor(active ? pb.t : this.pastTime());
@@ -161,7 +169,7 @@
       onDensity(p) { if (this.$dens) this.$dens.setDensity(p); },
       // ---------------------------------------------------------- 行を取り直す（P §9.2）
       async fetchRows() {
-        if (!this.$wf || (this.layoutCode !== "waterfall" && !this.pbActive && this.part !== "waterfall")) { this.wfEpoch = null; return; }
+        if (!this.$wf || (this.shownLayout !== "waterfall" && !this.pbActive && this.part !== "waterfall")) { this.wfEpoch = null; return; }
         if (this.wfBusy) { this.wfAgain = true; return; }
         this.wfBusy = true;
         this.wfAgain = false;

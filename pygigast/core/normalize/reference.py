@@ -170,7 +170,7 @@ def segment_from_frames(
     kind: str = KIND_FINE,
     expected_mode: Mode = Mode.TG,
 ) -> ReferenceSegment:
-    """TG を直結して測ったフレーム（1回以上）から基準の区間を作る（設計E §6.2）。
+    """被測定物を外して TG の経路を測ったフレーム（1回以上）から基準の区間を作る（設計E §6.2）。
 
     複数のフレームは W のまま平均する。軸は機器が測った点をそのまま使う
     （Stop を超える最後の点も実際に測った点なので基準に入れる）。

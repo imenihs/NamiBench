@@ -223,7 +223,7 @@ def translate(files: WebFiles, command: str, args: dict) -> Translated:
         args["paths"] = [str(files.upload_path(u)) for u in ids]
         return Translated(args, ident)
 
-    if command in ("import_legacy_calibration", "bandplan_load"):
+    if command in ("import_legacy_calibration", "cal_legacy_load", "bandplan_load"):
         args["path"] = str(files.upload_path(args.pop("upload_id", None)))
         return Translated(args, ident)
 

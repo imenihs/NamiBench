@@ -1,4 +1,5 @@
 """Qt の設定の画面・配色・キーの割り当て・プリセット・表示の単位と周波数オフセット・切り離し（設計O・J §4.3.2・§4.4・§4.6）。"""
+import json
 import unittest
 
 from PySide6.QtWidgets import QApplication, QPushButton
@@ -124,6 +125,80 @@ class SettingsDialogTest(UiBase):
         self.win.reset_palette("light")
         self.wait(lambda: self.state()["palette"]["base"] == "light", what="すぐ切り替える")
         self.assertEqual(len(self.confirm_asked), n)
+
+    def test_saved_palettes(self):
+        """独自の配色の保存と読み込み（J §4.4.1）: 名前を付けて保存・読み込み（保存していない変更があるときだけ聞く・
+        元に戻す）・名前・上書き・消す・ファイルへの書き出しと取り込み（読みにくい組はその行と知らせに出す）。"""
+        dlg = self.open_settings("display")
+        sp = dlg.palette_page.saved
+        self.wait(lambda: sp.empty.isVisible(), what="空の一覧")
+        self.assertEqual(sp.title(), "保存した配色")
+        self.assertFalse(sp.btn_load.isEnabled())
+        self.assertTrue(sp.btn_new.isEnabled() and sp.btn_import.isEnabled())
+        # いまの配色に名前を付けて保存
+        self.cmd("palette_set", colors={"trace1": "#123456"})
+        self.text_answer = "夜の観測"
+        sp.btn_new.click()
+        self.wait(lambda: [r["name"] for r in sp.rows] == ["夜の観測"], what="保存した配色の行")
+        self.assertIn("配色「夜の観測」を保存しました", self.win.st_note.text())
+        self.assertIs(sp.current()["id"], sp.rows[0]["id"])
+        self.assertTrue(sp.btn_load.isEnabled())
+        # 変えてから読み込む: 保存していない変更の数を言ってから聞く。断れば変えない
+        self.cmd("palette_set", colors={"trace2": "#654321"})
+        self.confirm_answer = False
+        n = len(self.confirm_asked)
+        sp.btn_load.click()
+        self.pump(0.2)
+        self.assertEqual(self.confirm_asked[n:], ["保存していない変更 1 個が消えます。「夜の観測」を読み込みますか？"])
+        self.assertEqual(self.state()["palette"]["colors"]["trace2"], "#654321")
+        self.confirm_answer = True
+        sp.btn_load.click()
+        self.wait(lambda: self.win.pal["trace2"] == BASES["dark"]["trace2"], what="読み込み")
+        self.assertEqual(self.win.pal["trace1"], "#123456")
+        self.wait(lambda: "読み込みました" in self.win.st_note.text(), what="読み込みの知らせ")
+        # 保存していない変更が無ければ聞かずに読み込む
+        n = len(self.confirm_asked)
+        sp.btn_load.click()
+        self.pump(0.3)
+        self.assertEqual(len(self.confirm_asked), n)
+        # 元に戻す（Ctrl+Z）で戻せる（1回目の読み込みの前の色）
+        self.win.actions["undo"].trigger()
+        self.wait(lambda: self.win.pal["trace2"] == "#654321", what="元に戻す")
+        # 書き出し: 保存・開くの最初のフォルダに、配色の名前のファイル
+        self.save_path = str(self.root / "out.json")
+        sp.btn_export.click()
+        self.wait(lambda: (self.root / "out.json").exists(), what="書き出し")
+        d = json.loads((self.root / "out.json").read_text(encoding="utf-8"))
+        self.assertEqual((d["name"], d["content"]["colors"]["trace1"]), ("夜の観測", "#123456"))
+        # 取り込み（読みにくい組は、その行と知らせにその場で出す）。同じ名前は「(2)」
+        d["content"]["colors"]["text"] = d["content"]["colors"]["graph_bg"]
+        (self.root / "in.json").write_text(json.dumps(d), encoding="utf-8")
+        self.open_paths = [str(self.root / "in.json")]
+        sp.btn_import.click()
+        self.wait(lambda: len(sp.rows) == 2, what="取り込み")
+        self.assertIn("配色「夜の観測 (2)」を取り込みました（⚠ 読みにくい組", self.win.st_note.text())
+        row = {r["name"]: r for r in sp.rows}["夜の観測 (2)"]
+        self.assertTrue(row["warn"].startswith("⚠ 読みにくい組"))
+        self.assertEqual(sp.current()["name"], "夜の観測 (2)")
+        i = [r["name"] for r in sp.rows].index("夜の観測 (2)")
+        self.assertEqual(sp.table.item(i, 1).text(), row["warn"])
+        self.assertIn("コントラスト比", sp.table.item(i, 1).toolTip())
+        # 配色のファイルでないものは取り込まない
+        (self.root / "bad.json").write_text("{", encoding="utf-8")
+        self.open_paths = [str(self.root / "bad.json")]
+        sp.btn_import.click()
+        self.wait(lambda: "配色のファイルを読めません" in self.win.st_note.text(), what="読めないファイル")
+        # 名前・上書き・消す
+        self.text_answer = "取り込んだ配色"
+        sp.btn_rename.click()
+        self.wait(lambda: "取り込んだ配色" in [r["name"] for r in sp.rows], what="名前")
+        self.assertEqual(sp.current()["name"], "取り込んだ配色")
+        sp.btn_overwrite.click()
+        self.wait(lambda: not {r["name"]: r for r in sp.rows}["取り込んだ配色"]["warn"], what="上書き")
+        self.assertIn("「取り込んだ配色」の色を、いまの配色で置き換えます。", self.confirm_asked[-1])
+        sp.btn_delete.click()
+        self.wait(lambda: [r["name"] for r in sp.rows] == ["夜の観測"], what="消す")
+        self.assertIn("取り込んだ配色", self.confirm_asked[-1])
 
     def test_key_rebinding_updates_menu_and_tooltips(self):
         dlg = self.open_settings("keys")

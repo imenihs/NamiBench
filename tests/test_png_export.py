@@ -327,3 +327,81 @@ class TraceLineRuleTest(unittest.TestCase):
         self.assertEqual(rl.stroke("solid", 1.25), {"width": 1.25, "dash": None})
         self.assertEqual(rl.stroke("dash", 1.0)["dash"], [8.0, 4.0])
         self.assertEqual(rl.stroke("nonsense", 1.0), rl.stroke("solid", 1.0))
+
+
+class AxesRuleTest(unittest.TestCase):
+    """PNG の目盛と単位の置き場所は1か所（core/report_layout.graph_axes）。Qt の png_export はその値で描く（Web の png.js
+    も同じ値で描く: tests/test_web_png.py）。目盛は縦も横も 10 区画の線の上、縦軸の単位は縦軸の数字の上（凡例の段の左端）、
+    横軸の単位は数字の下の見出し。"""
+
+    def test_layout_axes(self):
+        from pygigast.core import report_layout as rl
+
+        lay = rl.layout(sample_data(), (1600, 1000))
+        ax = lay["axes"]
+        self.assertEqual(ax["unit_left"], lay["margin_px"])
+        self.assertEqual(ax["legend_left"], ax["plot_left"])
+        self.assertLess(ax["y_label_right"], ax["plot_left"])
+        # 縦軸の数字と単位が枠の左に入る（見積もりは広め: 一番広い書体の Meiryo UI の幅でも入る）
+        widest = max(len(s) for s in lay["y_labels"] + [lay["unit"]])
+        self.assertGreaterEqual(ax["y_label_right"] - ax["unit_left"], widest * lay["font_px"] * 0.62 - 1)
+        self.assertEqual(ax["x_every"], 1)
+        self.assertEqual(len(lay["x_labels"]), rl.DIVISIONS + 1)
+        # 狭い画像では間引く（重ならない最小の間隔）
+        small = rl.layout(sample_data(), (320, 240))["axes"]
+        self.assertIn(small["x_every"], (2, 5, 10))
+        # 同じ大きさでも、1Hz 単位の長い数字は間引く（短い数字は間引かない）
+        self.assertEqual(rl.layout(sample_data(), (640, 400))["axes"]["x_every"], 1)
+        d = sample_data()
+        d["conditions"].update(start_hz=1_420_405_751, stop_hz=1_420_405_761)
+        long_lay = rl.layout(d, (640, 400))
+        self.assertGreater(long_lay["axes"]["x_every"], 1, long_lay["x_labels"])
+
+    def test_zero_span_axis_is_time(self):
+        from pygigast.core import report_layout as rl
+
+        d = sample_data()
+        d["conditions"].update(step_hz=0, stop_hz=d["conditions"]["start_hz"], points=501,
+                               x_axis={"kind": "time", "x0": -10_000_000, "x1": 0, "factor": 1_000_000, "unit": "s",
+                                       "length_s": 10.0, "point_time_s": 0.00014})
+        lay = rl.layout(d, (1600, 1000))
+        self.assertEqual(lay["x_labels"][0], "-10")
+        self.assertEqual(lay["x_labels"][-1], "0")
+        self.assertEqual(lay["x_title"], rl.X_AXIS_TITLE_TIME.replace("{unit}", "s"))
+        png = pe.render_png(d, size=(800, 500))
+        self.assertFalse(QImage.fromData(png, "PNG").isNull())
+
+    def test_qt_draws_from_layout(self):
+        from unittest import mock
+
+        from PySide6.QtGui import QPainter
+
+        from pygigast.core import report_layout as rl
+
+        for size in ((1600, 1000), (640, 400), (320, 240)):
+            with self.subTest(size=size):
+                rec = []
+                orig = QPainter.drawText
+
+                def spy(painter, *a):
+                    if len(a) == 2 and hasattr(a[0], "x"):
+                        rec.append((a[0].x(), a[0].y(), a[1]))
+                    return orig(painter, *a)
+
+                with mock.patch.object(QPainter, "drawText", spy):
+                    pe.render_png(sample_data(), size=size)
+                lay = rl.layout(sample_data(), size)
+                ax = lay["axes"]
+                # 横軸の数字: x_every 目盛ごと・同じ段（グラフの下の1段目）。見出しはその1行下。マーカー表の見出しにも
+                # 同じ「周波数 (MHz)」があるので、1行上に横軸の最初の数字がある方を軸の見出しとする
+                gap = ax["x_title_top"] - ax["x_label_top"]
+                title = [r for r in rec if r[2] == lay["x_title"]
+                         and any(abs(q[1] - (r[1] - gap)) < 0.01 and q[2] == lay["x_labels"][0] for q in rec)]
+                self.assertEqual(len(title), 1)
+                row_y = title[0][1] - gap
+                drawn = [r[2] for r in rec if abs(r[1] - row_y) < 0.01]
+                self.assertEqual(drawn, lay["x_labels"][::ax["x_every"]])
+                # 縦軸の単位は凡例の段の左端
+                unit = [r for r in rec if r[2] == lay["unit"]]
+                self.assertEqual([r[0] for r in unit], [ax["unit_left"]])
+                self.assertLess(unit[0][1], ax["plot_top"])

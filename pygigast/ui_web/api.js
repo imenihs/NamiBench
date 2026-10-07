@@ -56,6 +56,14 @@
       let k = 0;
       for (const r of header.rows || []) { r.values = values.subarray(k, k + r.n); k += r.n; }
     }
+    // ステップ掃引の段ごとの線（設計L §1.3）: 値の後に [段, 点] の float32 が続く。1段ずつの並びにする
+    const st = header.steps;
+    if (st && st.count && st.points) {
+      const off = 4 + hlen + 4 * header.value_count;
+      const rows = [];
+      for (let i = 0; i < st.count; i++) rows.push(new Float32Array(buf, off + 4 * i * st.points, st.points));
+      header.steps = { x0: st.x0, dx: st.dx, rows };
+    }
     return header;
   }
 

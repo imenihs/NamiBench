@@ -6,8 +6,9 @@
 ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
 ウォーターフォールと密度表示は instrument_waterfall.py、記録の再生は instrument_playback.py、バンドプランと
-ブックマークは instrument_bandplan.py（設計P）。rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
-機能は instrument_listen.py。
+ブックマークは instrument_bandplan.py（設計P）。校正作業（設計K）は instrument_cal.py。
+rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
+機能は instrument_listen.py、SG のステップ掃引（設計L §1.3）は instrument_step.py。
 機種のプロファイルと掃引条件モデルは、つないだ機器に合わせて切り替える（設計Q §2.1・§6.4: GigaSt と
 シミュレータは GigaSt のプロファイル、RTL-SDR は sweep_kind "fft" のプロファイル）。
 """
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .devices.base import Device, load_profile
+from .instrument_cal import CalMixin
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
 from .instrument_devices import DevicesMixin
 from .instrument_diff import DiffMixin
@@ -38,7 +40,9 @@ from .instrument_playback import PlaybackMixin
 from .instrument_waterfall import WaterfallMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
+from .instrument_step import RUN_STATE as STEP_RUN_STATE, StepSweepMixin
 from .instrument_view import ViewMixin
+from .instrument_zerospan import ZeroSpanMixin, zero_span_request
 from .level.calibration import Calibration, CalibrationStore, default_root
 from .level.convert import LevelConverter
 from .settings import Settings
@@ -169,8 +173,8 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMixin, BandplanMixin, RtlTcpMixin,
-                 RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin):
+class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
+                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -228,10 +232,12 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         self._last_stop_reason: Optional[str] = None
 
         # トレース・マーカー・振幅（前回の設定を戻す）と、書き込みスレッド・長い処理
+        self._init_zero_span()  # ゼロスパンの流す表示（設計N §1）
         self._init_display(saved if isinstance(saved, dict) else None)
         # 表示の設定・配色・プリセット（設計O・J §4.4）。トレースの値を出す前に要る
         self._init_view(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
+        self._init_cal()
         self._init_diff(saved if isinstance(saved, dict) else None)  # トレースと参照トレースの後（2本を探すため）
         self._init_waterfall()  # 表示の設定の後（行数の上限・密度の N を使う: 設計P）
         self._init_playback()
@@ -240,6 +246,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         self._init_rtlsdr()
         self._init_listen()
         self._init_devices()
+        self._init_step(saved if isinstance(saved, dict) else None)  # SG のステップ掃引（設計L §1.3）
 
         self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
         self._running = True
@@ -265,6 +272,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
                 # 前回の値。前の版の覚え書きの image_cancel は読み替え、どちらも無ければ機種の初期値（設計F §7.3）
                 image_reject=ir.read_choice(st),
             )
+            req = zero_span_request(req)
             try:
                 restored = self._model.apply(req, base)
             except ValueError:
@@ -290,6 +298,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
             **self._files_state_to_save(),
             **self._diff_state_to_save(),
             **self._view_state_to_save(),
+            **self._step_state_to_save(),
         }
 
     def _error(self, code: str, field: Optional[str] = None, detail: Optional[dict] = None) -> CommandError:
@@ -381,8 +390,12 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
             self._on_disconnected(item[1])
         elif kind == "invalid":
             self._notice("invalid_sweep", {"message": item[2]})
+            if self._cal_job is not None:
+                self._cal_abort(CommandError("invalid_sweep", None, {"message": item[2]}))
             if self._ref_job is not None:
                 self._abort_ref_job(CommandError("invalid_sweep", None, {"message": item[2]}))
+            if self._step_job is not None:
+                self._step_stop(CommandError("invalid_sweep", None, {"message": item[2]}))
             self._set_run("stopped", reason="invalid_sweep")
         elif kind == "worker_error":
             self._notice("device_error", {"message": item[1], "trace": item[2]})
@@ -442,6 +455,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
                 "last_stop_reason": self._last_stop_reason,
             },
             "calibration": cal,
+            # 校正の画面の作業（設計K §4.1。開いていなければ None）
+            "calibration_work": self._cal_state(),
             "source": self._source_state(),
             **self._display_snapshot(),
             "files": self._files_state(),
@@ -451,6 +466,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
             "rtltcp": self._rtltcp_state(),
             "rtlsdr": self._rtlsdr_state(),
             "listen": self._listen_state(),
+            "step_sweep": self._step_state(),  # SG のステップ掃引の設定と動き（設計L §1.3）
             "waterfall": self._waterfall_state(),
             "playback": self._playback_state(),
             "bandplan": self._bandplan_state(),
@@ -465,10 +481,13 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         出しているとみなすのは、つないでいて掃引を機器へ渡している間（連続・単発・止まる途中・基準を取る間）だけ。
         掃引を止めた後も機器が出し続けるかは設計に書かれていないので、止めたら出していないとして出す。"""
         job = self._ref_job
-        if job is not None:
+        cal = self._cal_source()
+        if cal is not None:
+            adopted, sweeping = cal, True  # 校正の掃引（RBW の校正は SG で 500MHz を出す: 設計K §4.3）
+        elif job is not None:
             adopted, sweeping = job.adopted, True
         else:
-            adopted, sweeping = self._adopted, self._run in ("continuous", "single", "stopping")
+            adopted, sweeping = self._adopted, self._run in ("continuous", "single", "stopping", STEP_RUN_STATE)
         output = self._SOURCE_OF_MODE.get(adopted.mode, "none")
         src = self._profile.get("source") or {}
         if self._conn != "connected" or not sweeping or not src.get(output):
@@ -496,6 +515,10 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         if self._worker is None:
             return
         busy = self._worker.busy_since
+        if self._cal_push_job():
+            return  # 校正の間は、いまの条件とは別の条件で決めた回数だけ測る（設計K §4.1）
+        if self._step_push_job():
+            return  # ステップ掃引の間は、いまの段の条件で残りの回数だけ測る（設計L §1.3）
         job = self._ref_job
         if job is not None:
             # 基準を取っている間は、いまの条件とは別の条件で決めた回数だけ測る（設計E §6.2）
@@ -525,10 +548,16 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         if gen != self._gen or self._playback is not None:
             return  # 条件が変わる前の掃引（設計B §7.2.1: 結果は捨てる）・再生中に届いた掃引
         self._last_sweep_s = raw.duration_s
+        if self._cal_job is not None:
+            # 校正のための掃引。トレース・記録には入れない（設計K §4.1）
+            self._cal_on_sweep(raw)
+            return
         if self._ref_job is not None:
             # 基準を取るための掃引。トレース・記録には入れない（設計E §6.2）
             self._on_ref_sweep(raw)
             return
+        if self._step_on_sweep(raw):
+            return  # ステップ掃引の掃引（結果のトレースへ重ね、いまのトレースにも入れる: 設計L §1.3）
         self._sweep_count += 1
         frame = self._build_frame(raw)
         self._rtltcp_on_sweep(raw, frame)  # 相手がいなければ何もしない（設計Q §4.3）
@@ -569,7 +598,9 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         self._worker.start()
         self._load_calibration(ident.serial)
         self._load_saved_reference()
+        self._s11_open_follow(self._adopted)  # 電源を入れ直す前に測ったオープンはショートと組まない（設計E §6.5）
         self._conn = "connected"
+        self._cal_refresh()  # 校正の画面が開いていれば、つないだ機器の校正を「前の値」にする（つないだ後に見る）
         self._rtltcp_update_header()
         self._rtlsdr_on_clients()  # rtl_tcp の相手が先につながっていれば、中心を動かさない動きにする
         self._push_job()
@@ -654,6 +685,10 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         return new, adj
 
     def _drop_device(self) -> None:
+        if self._cal_job is not None:
+            self._cal_abort(CommandError("disconnected"))
+        if self._step_job is not None:
+            self._step_stop(CommandError("disconnected"))  # そこまでの結果は残る（設計L §1.3）
         self._listen_end("device_lost")
         self._rtlsdr_on_drop()
         if self._worker is not None:
@@ -711,6 +746,11 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
     # ------------------------------------------------------------------ 命令
 
     def _cmd__shutdown(self) -> None:
+        if self._step_job is not None:
+            # SG の周波数を始める前に戻してから状態を残す（次の起動でステップ掃引の段の周波数にならない）
+            from .storage import Cancelled
+
+            self._step_stop(Cancelled())
         self._shutdown_rtltcp()
         self._drop_device()
         self._shutdown_playback()
@@ -740,9 +780,14 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
         self._last_estimate = new.estimated_sweep_s
         if changed:
             self._on_sweep_condition(old, new, step_sweep=step_sweep)
+            self._s11_open_follow(new)  # 測ってあるオープンとショートが組めなくなったら捨てて知らせる（設計E §6.5）
             if self._run == "single":
                 self._single_done = 0
             self._push_job()
+        if (old.axis.step_hz == 0) != (new.axis.step_hz == 0):
+            # 横軸が周波数 ⇔ 時間（ゼロスパン）に変わった: マーカー表を切り替えて出し直す（設計N §1）
+            self._rebuild_views()
+            self._refresh_markers()
         self._changed()
 
     def _apply(self, request: SweepRequest) -> dict:
@@ -876,5 +921,6 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMi
             self._converter = LevelConverter(self._profile, cal)
             self._on_condition(ConditionChange.CALIBRATION)  # 校正が変わると値の意味が変わる（設計F §5.3）
             self._push_job()
+        self._cal_refresh()
         self._changed()
         return {"summary": cal.to_dict()}

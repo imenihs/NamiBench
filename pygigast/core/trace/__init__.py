@@ -1,4 +1,5 @@
 """トレース（設計F）。"""
+from . import formats
 from .average import NOTICE_LOG_AVERAGE_READS_LOW, AverageType, allowed_average_types, default_average_type
 from .ops import (
     DIFF_NO_OVERLAP,

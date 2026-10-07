@@ -15,8 +15,9 @@ from typing import Optional
 
 import numpy as np
 
-from ..core.units import format_freq
-from . import display_view, marker_rows, texts
+from ..core import zero_span as zs
+from ..core.units import format_freq, format_time_us, time_axis_unit
+from . import display_view, marker_rows, screen_s11, source_view, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
 
@@ -105,7 +106,9 @@ def sweep_reasons(st: dict) -> dict:
                 "image_reject": RTL_LABELS["image_reject_fft"]}
     sw = st.get("sweep") or {}
     reject = None
-    if sw.get("mode") == "nf":
+    if (st.get("step_sweep") or {}).get("running"):
+        reject = texts.REASON_TEXTS["image_reject_step"]  # ステップ掃引の間は使わない（設計L §1.3）
+    elif sw.get("mode") == "nf":
         reject = texts.REASON_TEXTS["image_reject_nf"]
     elif sw.get("step_hz") == 0:
         reject = texts.REASON_TEXTS["image_reject_zero_span"]
@@ -276,10 +279,11 @@ def rtltcp_view(st: dict) -> dict:
             "bind": r.get("bind"), "text": text, "error_text": err_text, "dropped_text": dropped}
 
 
-# ---------------------------------------------------------------- 上段の「直結を 0dB にする」（設計J §4.2・E §6.2）
+# ---------------------------------------------------------------- 上段の「基準を取る」（設計J §4.2・E §6.2）
 
 def ref_quick_view(st: dict) -> dict:
-    """TG・S11 のときだけ上段に出す。ボタンの使えない理由・取っている間の進み具合・いまの基準の状態。"""
+    """TG・S11 のときだけ上段に出す。ボタンの名前・使えない理由・押したときに送る中身・取っている間の進み具合・
+    いまの基準の状態。TG は「基準を取る」、S11 は次の1段（オープンを測る → ショートを測る: 設計E §6.5）。"""
     from .texts_devices import REF_QUICK_LABELS, hhmm
 
     sw = st.get("sweep") or {}
@@ -287,18 +291,23 @@ def ref_quick_view(st: dict) -> dict:
     task = next((t for t in st.get("tasks") or [] if t.get("kind") == "reference_take"), None)
     if (st.get("connection") or {}).get("state") != "connected":
         reason = texts.ERRORS["not_connected"]
-    elif sw.get("mode") == "s11":
-        reason = REF_QUICK_LABELS["s11_reason"]
     elif task is not None:
         reason = REF_QUICK_LABELS["taking_reason"]
     else:
         reason = None
+    if sw.get("mode") == "s11":
+        q = screen_s11.s11_quick(st)
+        label, button_tip, take = q["label"], q["tip"], q["take"]
+    else:
+        label, button_tip, take = REF_QUICK_LABELS["button"], REF_QUICK_LABELS["tip"], \
+            {"standard": None, "kind": "wide", "show_zero": True}
+        q = {"open_text": ""}
     n = st.get("normalization") or {}
     sel = n.get("selected")
     tip = ""
     if sel and (n.get("applied") or not n.get("used")):
         name, when = sel.get("name", ""), hhmm(sel.get("taken_at"))
-        # 既定の名前（「直結 12:24」）は時刻を含むので、同じ時刻を重ねて出さない
+        # 既定の名前（「TG 12:24」）は時刻を含むので、同じ時刻を重ねて出さない
         text = tpl("ref_quick_name", name=name) if when and when in name else             tpl("ref_quick_now", name=name, time=when)
         if n.get("power_cycled"):
             text += "・" + TEMPLATES["ref_quick_power_cycled"]
@@ -307,7 +316,11 @@ def ref_quick_view(st: dict) -> dict:
         text = TEMPLATES["ref_quick_none"]
         if sel and n.get("reason"):
             tip = texts.NORM_REASONS.get(n["reason"], n["reason"])
+    if q["open_text"]:
+        # S11 でオープンを測ってある間は、次はショートであることを状態の文でも示す（1段ずつ: 設計E §6.5）
+        text, tip = q["open_text"], ""
     return {"visible": visible, "reason": reason, "text": text, "tip": tip,
+            "label": label, "button_tip": button_tip + (f" — {reason}" if reason else ""), "take": take,
             "taking": task is not None, "task_id": task.get("task_id") if task else None,
             "cancelling": bool(task and task.get("cancelling")),
             "progress_text": texts.task_label({**task, "task": task.get("kind")}) if task else ""}
@@ -403,7 +416,9 @@ def palette_view(st: dict) -> dict:
                      "default": defaults[k], "changed": k in changed,
                      "tip": S["palette_changed_tip"].replace("{default}", defaults[k]) if k in changed else "",
                      "warn": "  ".join(parts), "warn_tip": "\n".join(h["tips"])})
-    return {"rows": rows, "base": base, "changed_n": len(changed)}
+    # unsaved_n: 保存していない変更の数（保存した配色を読み込む前の確認: J §4.4.1）。origin_id: いまの配色を始めた配色
+    return {"rows": rows, "base": base, "changed_n": len(changed), "unsaved_n": len(p.get("unsaved") or []),
+            "origin_id": (p.get("origin") or {}).get("id")}
 
 
 def palette_reset_question(st: dict, base: str) -> Optional[str]:
@@ -413,6 +428,50 @@ def palette_reset_question(st: dict, base: str) -> Optional[str]:
         return None
     return texts.SETTINGS_TEXTS["palette_reset_confirm"].replace("{n}", str(n)).replace(
         "{base}", texts.PALETTE_BASES.get(base, base))
+
+
+def palette_warn_texts(warnings: list[dict]) -> tuple[str, str]:
+    """保存した配色の読みやすさの知らせ（一覧の行の短い文と、組ごとの文を並べたツールチップ）。無ければ ("", "")。"""
+    S = texts.SETTINGS_TEXTS
+    name = texts.PALETTE_NAMES.get
+    tips = []
+    for w in warnings or []:
+        if w.get("code") == "low_contrast":
+            tips.append(S["palette_contrast_tip"].replace("{fg}", name(w["fg"], w["fg"])).replace(
+                "{bg}", name(w["bg"], w["bg"])).replace("{ratio}", f"{w['ratio']:.1f}"))
+        elif w.get("code") == "similar_traces":
+            tips.append(S["palette_similar_tip"].replace("{a}", name(w["a"], w["a"])).replace(
+                "{b}", name(w["b"], w["b"])).replace("{d}", f"{w['delta_e']:.0f}"))
+    if not tips:
+        return "", ""
+    return S["palette_list_warn"].replace("{n}", str(len(tips))), "\n".join(tips)
+
+
+def palette_rows(result: dict) -> list[dict]:
+    """保存した配色の一覧の行（名前・読みやすさの知らせ・いまの配色を始めた配色か）。命令 palette_list の戻り値から。"""
+    out = []
+    for p in result.get("palettes") or []:
+        warn, tip = palette_warn_texts(p.get("warnings") or [])
+        out.append({"id": p["id"], "name": p["name"], "warn": warn, "warn_tip": tip,
+                    "origin": p["id"] == result.get("origin_id")})
+    return out
+
+
+def palette_load_question(st: dict, name: str) -> Optional[str]:
+    """保存した配色を読み込む前の確認の文。保存していない変更が無ければ None（聞かずに読み込む: J §4.4.1・U-18）。"""
+    n = len((st.get("palette") or {}).get("unsaved") or [])
+    if n == 0:
+        return None
+    return texts.SETTINGS_TEXTS["palette_load_confirm"].replace("{n}", str(n)).replace("{name}", name)
+
+
+def palette_import_text(result: dict) -> str:
+    """取り込んだあとの知らせ。読みにくい組があればその場で言う（J §4.4.1）。"""
+    S = texts.SETTINGS_TEXTS
+    warn, _tip = palette_warn_texts(result.get("warnings") or [])
+    if warn:
+        return S["palette_imported_warn"].replace("{name}", result.get("name", "")).replace("{warn}", warn)
+    return S["palette_imported"].replace("{name}", result.get("name", ""))
 
 
 def preset_rows(presets: list[dict]) -> list[dict]:
@@ -458,9 +517,81 @@ def trace_status(s: dict) -> dict:
     return {"text": text, "tip": tip}
 
 
+# ---------------------------------------------------------------- 横軸（周波数・ゼロスパンの時間: 設計N §1）
+
+def is_zero_span(st: dict) -> bool:
+    return ((st or {}).get("sweep") or {}).get("step_hz") == 0
+
+
+def x_axis_view(st: dict) -> dict:
+    """横軸の範囲と名前。周波数は Hz、ゼロスパンは時間（位置はマイクロ秒）。
+
+    形: {"kind": "freq" | "time", "x0", "x1"} に、時間なら目盛の単位 {"factor": 1単位の μs, "unit", "label"}・
+    表示する長さ length_s（0 は1回の掃引）。1回の掃引は 0〜最後の点、流す表示は −長さ〜0（core/zero_span.py）。
+    """
+    sw = (st or {}).get("sweep") or {}
+    fv = display_view.freq_view(st or {})
+    if fv.get("playback"):
+        # 再生中は再生の表示の範囲（設計P §5。ゼロスパンの間は再生しない: instrument_playback.py）
+        return {"kind": "freq", "x0": fv["start_hz"], "x1": fv["stop_hz"]}
+    if sw.get("step_hz") != 0:
+        return {"kind": "freq", "x0": sw.get("start_hz", 0), "x1": sw.get("stop_hz", 1)}
+    length = zero_span_length(st)
+    x0, x1 = zs.x_range_us(length, int(sw.get("points") or 1), float(sw.get("point_time_s") or 0.0))
+    if x1 <= x0:
+        x1 = x0 + 1
+    factor, unit = time_axis_unit(x1 - x0)
+    return {"kind": "time", "x0": x0, "x1": x1, "factor": factor, "unit": unit,
+            "label": texts.ZERO_SPAN_TEXTS["axis_time"].replace("{unit}", unit), "length_s": length}
+
+
+def zero_span_length(st: dict) -> float:
+    return float(((st or {}).get("view") or {}).get("zero_span_s", 10) or 0)
+
+
+def zero_span_view(st: dict) -> dict:
+    """ゼロスパンの欄（右のタブ「表示」の表示する長さ）と、時間軸で使わない欄の理由（U-08）。
+
+    形: {"time": ゼロスパンか, "items": [{"value": 秒, "text"}], "value": 選んでいる秒, "reason": 長さを選べない理由,
+         "freq_only": 周波数を前提にする欄（Center へ・N dB 帯域幅・しきい値・周波数のオフセット）の理由}
+    """
+    zero = is_zero_span(st)
+    items = [{"value": int(k), "text": v} for k, v in texts.ZERO_SPAN_LENGTHS.items()]
+    return {"time": zero, "items": items, "value": int(zero_span_length(st)),
+            "reason": None if zero else texts.ZERO_SPAN_TEXTS["not_zero_span"],
+            "freq_only": texts.ZERO_SPAN_TEXTS["freq_only"] if zero else None}
+
+
+def x_text(st: dict, x: float) -> str:
+    """横軸の位置の文字（周波数は換算後の周波数: 設計O、時間は ms）。"""
+    if is_zero_span(st):
+        return format_time_us(x)
+    return format_freq(int(round(x)) + texts.freq_offset_of(st))
+
+
+def s11_ui(st: dict) -> dict:
+    """反射（S11）の手順・トレースの表示の形式・縦軸（Qt と Web が同じものを使う: screen_s11.py）。
+
+    axis: 縦軸の単位と決め方、trace_format: トレースごとの表示の形式の欄、trace_drawn: 縦軸と単位が違って描かない
+    トレースの理由、s11: 信号源のタブの手順、tg_take_reason: TG の基準のボタンの使えない理由。
+    """
+    unit = screen_s11.axis_unit(st)
+    traces = st.get("traces") or []
+    return {
+        "axis": screen_s11.axis_view(st, unit),
+        "trace_format": {str(t.get("number")): screen_s11.trace_format_view(t, st) for t in traces},
+        "trace_drawn": {str(t.get("number")): screen_s11.trace_drawn_reason(t, unit) for t in traces},
+        "s11": screen_s11.s11_view(st),
+        "tg_take_reason": screen_s11.tg_take_reason(st),
+        "ref_state": screen_s11.ref_state_text(st),
+    }
+
+
 def ui_view(st: dict) -> dict:
     """Web の画面へ state と一緒に送るもの。Qt も同じ関数の部分を使う。"""
     return {
+        "x_axis": x_axis_view(st),  # 横軸の範囲と名前（ゼロスパンは時間: 設計N §1）
+        "zero_span": zero_span_view(st),
         "status": texts.status_items(st),
         "cond": texts.condition_lines(st),
         "rbw": rbw_groups(st),
@@ -479,8 +610,13 @@ def ui_view(st: dict) -> dict:
         "sg_state": texts.sg_state_text(st),  # SG 周波数の欄のそば（J §4.12）
         "trace_status": {str(t.get("number")): trace_status(t) for t in st.get("traces") or []},
         "level": unit_view(st),  # 単位の欄（J §4.10）
+        # 反射（S11）の手順・表示の形式・縦軸（設計E §6.5・設計R §3。screen_s11.py）
+        **s11_ui(st),
         # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う
         "freq_offset_text": texts.offset_text(texts.freq_offset_of(st)) if texts.freq_offset_of(st) else "",
+        # SG のステップ掃引の欄と、内部の漏れの印（設計L §1.3・§1.4）
+        "step": source_view.step_view(st),
+        "leaks": source_view.leak_marks_view(st),
         "run_reason": run_reason(st),
         "display": display_view.ui(st),  # ウォーターフォール・密度・再生・バンドプラン（設計P）
     }
@@ -489,8 +625,11 @@ def ui_view(st: dict) -> dict:
 # ---------------------------------------------------------------- マウスの位置の読み値（設計G §2・§3.3）
 
 def trace_x(payload: dict) -> np.ndarray:
-    """トレースの横軸（float）。ゼロスパンは点の番号。周波数の正本は Hz の整数のまま（描くときと読むときの共通）。"""
+    """トレースの横軸（float）。ゼロスパンの時間軸（axis.kind = "time"）はマイクロ秒（設計N §1）。周波数の正本は
+    Hz の整数のまま（描くときと読むときの共通）。"""
     ax = payload["axis"]
+    if ax.get("kind") == "time":
+        return float(ax["start_us"]) + float(ax["step_us"]) * np.arange(int(ax["points"]), dtype=np.float64)
     if "freqs_hz" in ax:
         return np.asarray(ax["freqs_hz"], dtype=np.float64)
     n = int(ax["points"])
@@ -544,7 +683,7 @@ def point_note_codes(payload: dict, i: int) -> list[str]:
 
 
 def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = False,
-                  freq_offset_hz: int = 0) -> dict:
+                  freq_offset_hz: int = 0, leaks: Optional[list[dict]] = None, px_hz: float = 0.0) -> dict:
     """グラフの上のマウスの位置の読み値（設計G §2: マウスの縦の位置ではなく波形の値を出す）。
 
     payloads は画面が表示している測定中のトレース（イベント trace の形）、x・y はマウスの位置の軸の値。
@@ -554,23 +693,30 @@ def mouse_reading(payloads: list[dict], x: float, y: float, zero_span: bool = Fa
     周波数の文字は表示の周波数オフセット（設計O）を足した値。freq_hz は測った周波数のまま。
     """
     off = int(freq_offset_hz or 0)
+    # 内部の漏れの印の近く（設計L §1.4）なら、その説明を添える（leaks は source_view.leak_marks_view。px_hz は
+    # グラフの1画素の周波数の幅で、狭い印もマウスで拾えるようにする）
+    leak = None if zero_span else source_view.leak_near(leaks or [], x, px_hz)
     hit = nearest_point(payloads, x, y)
     if hit is None:
         pos = int(round(x))
-        lines = [tpl("mouse_point", n=pos) if zero_span else format_freq(pos + off)]
-        return {"trace": None, "freq_hz": None if zero_span else pos, "point": pos if zero_span else None,
+        lines = [format_time_us(pos) if zero_span else format_freq(pos + off)]
+        if leak:
+            lines.append(leak["tip"])
+        return {"trace": None, "freq_hz": None if zero_span else pos, "time_us": pos if zero_span else None,
                 "level": None, "unit": None, "notes": [], "lines": lines, "text": "\n".join(lines)}
     k, i = hit
     p = payloads[k]
     v = float(np.asarray(p["values"])[i])
     level = v if np.isfinite(v) else None
     unit = p.get("unit") or "dBm"
-    ax = p["axis"]
-    zero = zero_span or ("freqs_hz" not in ax and ax.get("step_hz", 0) == 0)
-    freq = None if zero else int(round(float(trace_x(p)[i])))
+    # ゼロスパンの横軸は時間（推定。設計N §1）: 位置はその点の時間
+    zero = zero_span or p["axis"].get("kind") == "time"
+    pos = int(round(float(trace_x(p)[i])))
     codes = point_note_codes(p, i)
-    value_text = f"{level:.2f} {unit}" if level is not None else texts.MARKER_STATUS["no_value"]
-    lines = [tpl("mouse_point", n=i) if zero else format_freq(freq + off),
+    value_text = screen_s11.value_text(level, unit) if level is not None else texts.MARKER_STATUS["no_value"]
+    lines = [format_time_us(pos) if zero else format_freq(pos + off),
              tpl("trace_note", n=p.get("trace"), text=value_text), *marker_rows.note_texts(codes)]
-    return {"trace": p.get("trace"), "freq_hz": freq, "point": i if zero else None, "level": level, "unit": unit,
-            "notes": codes, "lines": lines, "text": "\n".join(lines)}
+    if leak and not zero:
+        lines.append(leak["tip"])
+    return {"trace": p.get("trace"), "freq_hz": None if zero else pos, "time_us": pos if zero else None,
+            "level": level, "unit": unit, "notes": codes, "lines": lines, "text": "\n".join(lines)}

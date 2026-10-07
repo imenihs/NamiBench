@@ -34,6 +34,8 @@ from PySide6.QtGui import (
 
 from .. import __version__ as APP_VERSION
 from ..core import report_layout as rl
+from ..core.step_sweep import LINE_ALPHA as _STEP_LINE_ALPHA
+from . import plot_layers as pl
 
 # 規則は report_layout にある。前からこの名前で使っている呼び出し元（画面・試験）のために同じ名前で見せる
 META_KEY = rl.META_KEY
@@ -232,8 +234,10 @@ class _Painter:
         pad = self.fm.horizontalAdvance("あ")
         col_gap = pad * 2
         block_w = (rect.width() - col_gap * (cols - 1)) / cols
+        # 列の名前は配置のもの（ゼロスパンは位置の列が時間: 設計N §1。Web の PNG と同じ report_layout の見出し）
+        header = list(self.lay["table"].get("header") or MARKER_COLUMNS)
         # 列の幅は中身の最大幅（全ブロックで共通にして縦に揃える）
-        widths = [max(self.fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+        widths = [max(self.fm.horizontalAdvance(r[i]) for r in rows + [header]) for i in range(len(header))]
         need = sum(widths) + pad * (len(widths) - 1)
         scale_font = need > block_w
         if scale_font:
@@ -243,7 +247,7 @@ class _Painter:
             self.p.setFont(f)
             fm = QFontMetricsF(f)
             pad = fm.horizontalAdvance("あ")
-            widths = [max(fm.horizontalAdvance(r[i]) for r in rows + [list(MARKER_COLUMNS)]) for i in range(len(MARKER_COLUMNS))]
+            widths = [max(fm.horizontalAdvance(r[i]) for r in rows + [header]) for i in range(len(header))]
         else:
             fm = self.fm
         for b in range(cols):
@@ -251,7 +255,7 @@ class _Painter:
             if not chunk:
                 continue
             x0 = rect.left() + b * (block_w + col_gap)
-            self._draw_table_block([list(MARKER_COLUMNS)] + chunk, widths, pad, x0, rect.top(), fm)
+            self._draw_table_block([header] + chunk, widths, pad, x0, rect.top(), fm)
 
     def _draw_table_block(self, rows, widths, pad, x0, y0, fm: QFontMetricsF) -> None:
         y = y0
@@ -273,25 +277,25 @@ class _Painter:
     # ---- グラフ
     def _draw_graph(self, rect: QRectF) -> None:
         c = self.data.get("conditions") or {}
-        unit = c.get("unit", "dBm")
+        unit = self.lay["unit"]
         ref = float(c.get("ref_level", 0.0))
         div = float(c.get("db_per_div", 10.0))
         bottom = ref - DIVISIONS * div
         start = float(c.get("start_hz", 0.0))
         stop = float(c.get("stop_hz", start + 1.0))
+        xa = c.get("x_axis") or {}
+        if xa.get("kind") == "time":
+            # ゼロスパン: 横軸は時間（μs。設計N §1）。トレース・マーカーの位置も μs
+            start, stop = float(xa["x0"]), float(xa["x1"])
         if stop <= start:
             stop = start + 1.0
 
-        y_labels = self.lay["y_labels"]
-        axis_w = max(self.fm.horizontalAdvance(s) for s in y_labels + [unit]) + self.fm.horizontalAdvance("あ") * 0.6
-        legend_h = self.lh
-        # 一番上の目盛（REF）の数字が切れないよう、上に文字の半分の高さを空ける（J §4.3）
-        plot = QRectF(rect.left() + axis_w, rect.top() + legend_h + self.lh * 0.6,
-                      rect.width() - axis_w - self.fm.horizontalAdvance("0") * 3,
-                      0.0)
-        plot.setBottom(rect.bottom() - self.lh * 2.3)  # 横軸の数字と「周波数 (MHz)」
-        if plot.height() < self.lh * 3:
-            plot.setBottom(plot.top() + self.lh * 3)
+        # 枠と軸の文字の置き場所・横軸の数字の間引きは Web と同じ決まり（report_layout.graph_axes）
+        ax = self.lay["axes"]
+        plot = QRectF(ax["plot_left"], ax["plot_top"], ax["plot_right"] - ax["plot_left"], 0.0)
+        plot.setBottom(rect.bottom() - ax["bottom_room"])
+        if plot.height() < ax["min_plot_h"]:
+            plot.setBottom(plot.top() + ax["min_plot_h"])
 
         def fx(f: float) -> float:
             return plot.left() + (f - start) / (stop - start) * plot.width()
@@ -300,7 +304,7 @@ class _Painter:
             return plot.top() + (ref - v) / (ref - bottom) * plot.height()
 
         self.p.fillRect(plot, self.c("graph_bg"))
-        # 目盛線
+        # 目盛線（縦も横も 10 区画。目盛の数字はこの線の上: AXES）
         self.p.setPen(QPen(self.c("grid"), 1))
         for i in range(DIVISIONS + 1):
             y = plot.top() + plot.height() * i / DIVISIONS
@@ -314,20 +318,19 @@ class _Painter:
         self.p.setPen(QPen(self.c("axis"), 1))
         self.p.drawRect(plot)
 
-        # 縦軸の数字（絶対値: M-06）
+        # 縦軸の数字（絶対値: M-06）。右端をそろえ、目盛線の高さの真ん中に置く
         self.p.setFont(self.font)
         self.p.setPen(self.c("text"))
-        for i, s in enumerate(y_labels):
+        mid = (self.fm.ascent() - self.fm.descent()) / 2
+        for i, s in enumerate(self.lay["y_labels"]):
             y = plot.top() + plot.height() * i / DIVISIONS
-            tw = self.fm.horizontalAdvance(s)
-            self.p.drawText(QPointF(plot.left() - tw - self.fm.horizontalAdvance("0") * 0.5,
-                                    y + (self.fm.ascent() - self.fm.descent()) / 2), s)
-        # 単位は縦軸の上（凡例と同じ段）
+            self.p.drawText(QPointF(ax["y_label_right"] - self.fm.horizontalAdvance(s), y + mid), s)
+        # 単位は縦軸の数字の上（凡例と同じ段の左端）
         self.p.setPen(self.c("text_dim"))
-        self.p.drawText(QPointF(rect.left(), rect.top() + self.fm.ascent()), unit)
+        self.p.drawText(QPointF(ax["unit_left"], rect.top() + self.base), unit)
 
-        self._draw_x_axis(plot, start, stop)
-        self._draw_legend(QRectF(plot.left(), rect.top(), plot.width(), legend_h))
+        self._draw_x_axis(plot)
+        self._draw_legend(QRectF(ax["legend_left"], rect.top(), plot.right() - ax["legend_left"], self.lh))
 
         # トレースと印は枠の中だけに描く（横軸は表示の Start–Stop で切る）。重ねる順は画面と同じ（参照トレースが下、
         # 太い線が上、同じ段は番号順: 設計F §9）
@@ -339,25 +342,24 @@ class _Painter:
         self.p.restore()
         self._draw_markers(plot, fx, fy, start, stop, ref, bottom)
 
-    def _draw_x_axis(self, plot: QRectF, start: float, stop: float) -> None:
+    def _draw_x_axis(self, plot: QRectF) -> None:
+        """横軸の数字（10 区画の線の上を x_every ごと）と、その下の見出し（単位）。置き場所は report_layout.graph_axes。"""
+        ax = self.lay["axes"]
         labels = self.lay["x_labels"]
         step_px = plot.width() / DIVISIONS
-        widest = max(self.fm.horizontalAdvance(s) for s in labels) + self.fm.horizontalAdvance("0") * 1.5
-        every = rl.x_label_every(step_px, widest)
         self.p.setFont(self.font)
         self.p.setPen(self.c("text"))
-        y = plot.bottom() + self.fm.ascent() + self.lh * 0.15
-        for i in range(0, DIVISIONS + 1, every):
+        y = plot.bottom() + ax["x_label_top"] + self.base
+        for i in range(0, DIVISIONS + 1, ax["x_every"]):
             s = labels[i]
             tw = self.fm.horizontalAdvance(s)
-            x = plot.left() + step_px * i - tw / 2
             # 両端の数字は画像の外に出さない
-            x = min(max(x, 0.0), self.w - self.margin * 0.3 - tw)
+            x = min(max(plot.left() + step_px * i - tw / 2, 0.0), ax["x_label_max_right"] - tw)
             self.p.drawText(QPointF(x, y), s)
         title = self.lay["x_title"]
         tw = self.fm.horizontalAdvance(title)
         self.p.setPen(self.c("text_dim"))
-        self.p.drawText(QPointF(plot.center().x() - tw / 2, y + self.lh), title)
+        self.p.drawText(QPointF(plot.center().x() - tw / 2, plot.bottom() + ax["x_title_top"] + self.base), title)
 
     def _draw_legend(self, rect: QRectF) -> None:
         self.p.setFont(self.font)
@@ -373,7 +375,7 @@ class _Painter:
             self.p.setPen(_stroke_pen(col, item["stroke"]))
             self.p.drawLine(QPointF(x, yc), QPointF(x + sw * 0.8, yc))
             self.p.setPen(self.c("text"))
-            self.p.drawText(QPointF(x + sw, rect.top() + self.fm.ascent()), s)
+            self.p.drawText(QPointF(x + sw, rect.top() + self.base), s)
             x += sw + self.fm.horizontalAdvance(s) + self.fm.horizontalAdvance("あ") * 2
 
     def _draw_trace(self, tr: dict, fx, fy, start: float, stop: float) -> None:
@@ -388,6 +390,9 @@ class _Painter:
         flags = tr.get("flags")
         flags = list(flags.tolist() if hasattr(flags, "tolist") else flags) if flags is not None else None
         col = _color(self.pal, tr.get("color") or f"trace{tr.get('number', 1)}")
+        if tr.get("steps"):
+            # ステップ掃引を全部重ねた段ごとの線（周波数軸のときだけ届く: 設計L §1.3）
+            self._draw_step_lines(tr["steps"], col, fx, fy)
         # そのトレースの線（設計F §9）。基準の幅は Web の PNG と同じ（report_layout.png_line_base）
         line = rl.stroke(tr.get("line"), self.lay["line_base_px"])
         # 範囲の1点外側までは描いて、枠の端まで線をつなぐ
@@ -415,6 +420,31 @@ class _Painter:
             self.p.setBrush(Qt.BrushStyle.NoBrush)
             self.p.drawPath(path)
 
+    def _draw_step_lines(self, steps: dict, col: QColor, fx, fy) -> None:
+        """ステップ掃引を全部重ねた段ごとの線（設計L §1.3）: トレースの色の不透明度 約 35% の細い線（画面と同じ）。"""
+        c = QColor(col)
+        c.setAlphaF(_STEP_LINE_ALPHA)
+        pen = QPen(c, max(1.0, self.lay["line_base_px"] * 0.5))
+        self.p.setPen(pen)
+        self.p.setBrush(Qt.BrushStyle.NoBrush)
+        x0, dx = float(steps["x0"]), float(steps["dx"])
+        for row in steps["values"]:
+            paths: list[QPainterPath] = []
+            path: Optional[QPainterPath] = None
+            for i, v in enumerate(row):
+                v = float(v)
+                if math.isnan(v):
+                    path = None  # 値の無い点で線を切る
+                    continue
+                pt = QPointF(fx(x0 + i * dx), fy(v))
+                if path is None:
+                    path = QPainterPath(pt)
+                    paths.append(path)
+                else:
+                    path.lineTo(pt)
+            for p in paths:
+                self.p.drawPath(p)
+
     def _draw_markers(self, plot: QRectF, fx, fy, start, stop, top, bottom) -> None:
         self.p.setFont(self.small)
         mcol = self.c("marker")
@@ -423,7 +453,8 @@ class _Painter:
         line_col = QColor(mcol)
         line_col.setAlpha(89)
         self.p.setPen(QPen(line_col, 1, Qt.PenStyle.DotLine))
-        for m in self.data.get("markers") or []:
+        shown = [m for m in self.data.get("markers") or [] if not m.get("hidden")]  # 描いていないトレースのものは除く
+        for m in shown:
             ln = m.get("line") if m.get("kind") == "function" else None
             if not ln or ln.get("level") is None:
                 continue
@@ -435,24 +466,43 @@ class _Painter:
                 if start <= f <= stop:
                     x = fx(f)
                     self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
-        for m in self.data.get("markers") or []:
+        # カーソルは画面（plot_layers.MarkerLayer）と同じ: オフセットのカーソルはマーカーの色の破線、XY カーソルは強調の
+        # 色の実線。名前の位置も画面と同じ割合と側（_line_label）
+        names = []
+        n_vline = 0
+        for m in shown:
             kind = m.get("kind", "marker")
-            f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
+            f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", "")).strip()
+            xy = m.get("id") in pl.XY_IDS
+            col = self.c("accent") if xy else mcol
+            pen = QPen(col, 1, Qt.PenStyle.SolidLine if xy else Qt.PenStyle.DashLine)
+            fill = pl.XY_LABEL_FILL if xy else pl.CURSOR_LABEL_FILL
             if kind == "freq_cursor":
                 if f is None or not (start <= f <= stop):
                     continue
                 x = fx(f)
-                self.p.setPen(QPen(mcol, 1, Qt.PenStyle.DashLine))
+                self.p.setPen(pen)
                 self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
-                self._label(name.strip(), QPointF(x + 3, plot.top() + self.fms.ascent() + 2), plot)
+                if xy:
+                    pos = pl.XY_LABEL_V
+                else:
+                    pos = pl.CURSOR_LABEL_V - pl.CURSOR_LABEL_STAGGER * (n_vline % 3)
+                    n_vline += 1
+                names.append(("v", x, pos, name, col, fill))
             elif kind == "level_cursor":
                 if v is None or not (bottom <= v <= top):
                     continue
                 y = fy(v)
-                self.p.setPen(QPen(mcol, 1, Qt.PenStyle.DashLine))
+                self.p.setPen(pen)
                 self.p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
-                tw = self.fms.horizontalAdvance(name.strip())
-                self._label(name.strip(), QPointF(plot.right() - tw - 3, y - 3), plot)
+                names.append(("h", y, pl.XY_LABEL_H if xy else pl.CURSOR_LABEL_H, name, col, fill))
+        for n in names:
+            self._line_label(plot, *n)
+        for m in shown:
+            kind = m.get("kind", "marker")
+            f, v, name = m.get("freq_hz"), m.get("value"), str(m.get("name", ""))
+            if kind in ("freq_cursor", "level_cursor", "interval"):
+                continue  # カーソルは上で描いた。区間の最大・最小・平均は表の行だけ（画面のグラフにも描かない: 設計N §1）
             else:
                 if f is None or v is None or not (start <= f <= stop):
                     continue
@@ -468,6 +518,27 @@ class _Painter:
                 if ly - self.fms.ascent() < plot.top():
                     ly = y + self.fms.ascent() + 3  # 上に余地が無ければ点の下へ
                 self._label(name, QPointF(x - tw / 2, ly), plot)
+
+    def _line_label(self, plot: QRectF, direction: str, at: float, pos: float, text: str, col: QColor, fill: int) -> None:
+        """線の脇の名前（背景を敷く）。縦線は高さが下からの割合 pos、横線は横が左からの割合 pos。名前は線から見てグラフの
+        真ん中の側に置く（画面のグラフの部品 pyqtgraph と同じ: 端の近くの線でも名前が枠の外へ出ない）。縦線は真ん中より左の線なら
+        右、そうでなければ左。横線は真ん中より上の線なら下、そうでなければ上。"""
+        if not text:
+            return
+        pad = 2.0
+        w = self.fms.horizontalAdvance(text) + 2 * pad
+        h = self.fms.height() + 2.0
+        if direction == "v":
+            x = at + pad if at < plot.center().x() else at - pad - w
+            y = plot.top() + plot.height() * (1 - pos) - h / 2
+        else:
+            x = max(plot.left(), plot.left() + plot.width() * pos - w / 2)
+            y = at + pad if at < plot.center().y() else at - pad - h
+        bg = self.c("graph_bg")
+        bg.setAlpha(fill)
+        self.p.fillRect(QRectF(x, y, w, h), bg)
+        self.p.setPen(col)
+        self.p.drawText(QPointF(x + pad, y + 1 + self.fms.ascent()), text)
 
     def _label(self, text: str, at: QPointF, plot: QRectF) -> None:
         """グラフの上の文字。背景を敷いてトレースと重なっても読めるようにし、枠からはみ出させない。"""

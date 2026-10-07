@@ -1,7 +1,9 @@
 """密度（パーシステンス）表示（設計P §4・§8・§9.3）。Qt の画面の部品（描くのは pyqtgraph の画像）。
 
-- 升目ごとに来た割合の色（0 は描かない）。横軸（周波数）はスペクトルと同じ範囲・縦軸はいまの縦軸（REF・dB/div）
-- 何秒分の密度か（N × 掃引の間隔: P §4）を右上に出す
+- 升目ごとに来た割合の色（0 は描かない）。横軸（周波数）はスペクトルと同じ範囲・縦軸はいまの縦軸（REF・dB/div、
+  |Γ|・SWR は下端 + 10 目盛: 設計R §3）
+- 何秒分の密度か（N × 掃引の間隔: P §4）を右上に出す。行にするトレースの単位が縦軸と違う間は描かず、そこに理由を出す
+  （display_view.density_reason）
 - 周波数軸・レベル軸の上の操作はスペクトルと同じ（シグナルを main_window が同じ命令にする）
 中身（升目の数）はコアが作る（instrument_waterfall.py。Qt と Web で同じ絵: P §8）。
 """
@@ -15,7 +17,7 @@ from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from ..core import colormaps
 from ..core.units import level_text
-from . import sizes, texts
+from . import screen_s11, sizes, texts
 from .graph import GraphSignals, _FreqAxis, _GraphViewBox, _LevelAxis
 from .waterfall_view import LEFT_AXIS_W
 
@@ -67,6 +69,7 @@ class DensityView(QWidget):
         self.colormap = colormaps.DEFAULT
         self._lut = colormaps.lut(self.colormap)
         self._last: Optional[dict] = None
+        self._reason: Optional[str] = None
         self.style_axes()
 
     def style_axes(self) -> None:
@@ -86,13 +89,16 @@ class DensityView(QWidget):
         self.freq_axis.set_offset(0 if zero_span else offset_hz)
         self.plot.setXRange(x0, max(x1, x0 + 1), padding=0)
 
-    def set_y(self, ref: float, div: float, unit: str) -> None:
-        """縦軸はスペクトルと同じ REF・dB/div（J §4.1）。"""
+    def set_y(self, ref: float, div: float, unit: str, decimals: int = 1) -> None:
+        """縦軸はスペクトルと同じ範囲（REF・dB/div: J §4.1、|Γ|・SWR は一番上 = 下端 + 10 目盛と /div: 設計R §3）。"""
         top = ref
         bottom = top - DIVISIONS * div
         eps = div * 1e-3
         self.plot.setYRange(bottom - eps, top + eps, padding=0)
-        ticks = [(top - i * div, level_text(top - i * div)) for i in range(DIVISIONS + 1)]
+        def tick(v: float) -> str:
+            return level_text(v) if decimals <= 1 else screen_s11.tick_text(v, decimals)
+
+        ticks = [(top - i * div, tick(top - i * div)) for i in range(DIVISIONS + 1)]
         self.level_axis.setTicks([ticks, []])
         for line in self._hgrid:
             self.box.removeItem(line)
@@ -103,10 +109,27 @@ class DensityView(QWidget):
             self.box.addItem(line, ignoreBounds=True)
         self.plot.getPlotItem().setLabel("left", texts.LABELS["level"], units=unit)
 
+    def set_reason(self, why: Optional[str]) -> None:
+        """描かない理由（行にするトレースの単位が縦軸と違う）。理由がある間は絵を消し、右上に理由を出す。"""
+        if why == self._reason:
+            return
+        self._reason = why
+        self.seconds.setObjectName("warn" if why else "dim")
+        self.seconds.style().unpolish(self.seconds)
+        self.seconds.style().polish(self.seconds)
+        if self._last is not None:
+            self.set_density(self._last)
+        elif why:
+            self.seconds.setText(why)
+
     def set_density(self, d: dict) -> None:
         """コアの密度（イベント density の中身）を描く。image が無ければ消す。"""
         self._last = d
         img = d.get("image")
+        if self._reason:
+            self.image.clear()
+            self.seconds.setText(self._reason)
+            return
         if img is None or not getattr(img, "size", 0):
             self.image.clear()
             self.seconds.setText("")

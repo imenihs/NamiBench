@@ -116,6 +116,25 @@ class WebFunctionLinesServerTest(unittest.TestCase):
         self.post("set_view", {"function_lines": False})
         self.assertIs(self.get_state()["view"]["function_lines"], False)
 
+    def test_cursor_rows_carry_position_and_name(self):
+        # グラフはカーソルの線と名前を表の行から描く（Qt の plot_layers と同じ）。行に位置と表と同じ名前が要る
+        self.post("connect", {"backend": "simulator", "serial": "SIM00001"})
+        self.post("set_sweep", {"start_hz": 1400 * MHZ, "stop_hz": 1600 * MHZ})
+        self.sweep_once()
+        self.post("marker_add", {"kind": "M", "trace": 1, "freq_hz": 1500 * MHZ})
+        self.post("marker_offset_add", {"id": "M1", "type": "freq", "sign": "+", "delta": MHZ})
+        self.post("marker_offset_add", {"id": "M1", "type": "level", "sign": "-", "delta": 3.0})
+        self.post("set_xy", {"x1_hz": 1450 * MHZ, "y1": -50.0})
+        st = self.sweep_once()
+        rows = [r for r in st["markers"]["rows"] if r["kind"] in ("freq_cursor", "level_cursor")]
+        by_name = {r["name"].strip(): r for r in rows}
+        self.assertEqual(set(by_name), {"M1 +1 MHz", "M1 −3 dB", "X1", "Y1"})
+        self.assertIsNotNone(by_name["M1 +1 MHz"]["freq_hz"])
+        self.assertEqual(by_name["M1 +1 MHz"]["parent"], "M1")
+        self.assertIsNotNone(by_name["M1 −3 dB"]["value"])
+        self.assertEqual(by_name["X1"]["freq_hz"], 1450 * MHZ)
+        self.assertEqual(by_name["Y1"]["value"], -50.0)
+
 
 class WebMarkupTest(unittest.TestCase):
     def test_db_fields_and_toggle_in_markup(self):
@@ -124,7 +143,9 @@ class WebMarkupTest(unittest.TestCase):
         sec = html[start:html.index("W('xy_cursor')")]
         self.assertEqual(sec.count("<db-field"), 3)
         self.assertIn(":choices=\"dbLists.bw\"", sec)
-        self.assertIn(":unit=\"axisUnit\" signed :choices=\"dbLists.ref\"", sec)
+        # しきい値の欄は、選んでいるマーカーのトレースの単位の決まり（dB は REF と同じ一覧・符号付き、|Γ|・SWR はその値:
+        # texts.THRESHOLD_SPECS。設計R §3）
+        self.assertIn(':unit="thSpec.unit" :signed="!!thSpec.signed" :choices="thSpec.choices"', sec)
         self.assertIn("setView({function_lines: $event.target.checked}", sec)
         self.assertIn("viewOpts.function_lines !== false", sec)
         start = html.index("W('peak_list')")
@@ -266,7 +287,7 @@ g.setMarkers([], "M1");
 g.setFunctionLines(JSON.parse(process.argv[2]));
 const out = {};
 g._draw(g.u); out.drawn = strokes.splice(0);
-g.setX(0, 100, true); g._draw(g.u); out.zeroSpan = strokes.splice(0);
+g.setX(0, 100, { kind: "time", factor: 1, unit: "us", label: "t" }); g._draw(g.u); out.zeroSpan = strokes.splice(0);
 g.setX(1400e6, 1600e6, false); g.setFunctionLines([]); g._draw(g.u); out.hidden = strokes.splice(0);
 console.log(JSON.stringify(out));
 """
@@ -292,7 +313,7 @@ console.log(JSON.stringify(out));
             ("#m", a, dash, [[0, 200], [1000, 200]]),
             ("#m", a, dash, [[500, 0], [500, 400]]),
         ])
-        self.assertEqual(got["zeroSpan"], [])  # ゼロスパン（横軸が点の番号）では描かない
+        self.assertEqual(got["zeroSpan"], [])  # ゼロスパン（横軸が時間: 設計N §1）では描かない
         self.assertEqual(got["hidden"], [])    # 切り替えで出さないとき（空を渡す）
 
 

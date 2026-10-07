@@ -62,6 +62,7 @@ class WaterfallGroup(QGroupBox):
         v = display_view.display_tab_view(st)
         widget_sync.set_data(self.trace, v["trace"])
         widget_sync.set_checked(self.auto, v["auto"])
+        set_enabled(self.auto, v["auto_reason"])  # |Γ|・SWR は縦軸と同じ範囲（設計R §3）
         for f, val in ((self.lo, v["lo"]), (self.hi, v["hi"])):
             f.set_unit(v["unit"])
             f.set_value(val)

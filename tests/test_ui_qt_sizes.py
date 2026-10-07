@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -99,10 +100,18 @@ class LayoutTest(UiBase):
         self.win.show_part("tab-marker")
         found += self.check(self.win, "主画面 tab-marker（谷）")
         self.win.marker_panel.set_polarity("peak")
+        # 保存した配色（J §4.4.1）: いまの配色と、読みにくい組のある取り込んだ配色（一覧の行の知らせも数える）
+        pal = self.api.call("palette_save", name="夜の観測").result(5)
+        d = json.loads(self.api.call("palette_export", id=pal["id"]).result(5)["text"])
+        d["content"]["colors"]["text_dim"] = d["content"]["colors"]["panel_bg"]
+        d["name"] = "読みにくい配色"
+        self.api.call("palette_import", text=json.dumps(d)).result(5)
         self.win._settings_dialog()
         dlg = self.win._settings
         for key in list(dlg._page_index):
             dlg.open_page(key)
+            if key == "display":
+                self.wait(lambda: len(dlg.palette_page.saved.rows) == 2, what="保存した配色の一覧")
             found += self.check(dlg, f"設定 {key}")
         dlg.close()
         self.win.open_presets()
@@ -120,6 +129,50 @@ class LayoutTest(UiBase):
         self.win.parts.graph.attach()
         self.win.parts.peaks.attach()
         found += self.dialogs()
+        found += self.cal_pages()
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_zero_span_tabs(self):
+        """ゼロスパン（設計N §1）: 時間の欄（マーカー・X1・X2）・区間の行・表示する長さの欄も同じ決まりで数える。"""
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_view", zero_span_s=10).result(5)
+        self.api.call("set_sweep", center_hz=100_000_000, span_hz=0).result(5)
+        self.api.call("run", mode="single").result(5)
+        self.wait(lambda: (self.win.state.get("run") or {}).get("state") == "stopped"
+                  and (self.win.traces.live_payload(1) or {}).get("x_kind") == "time", what="ゼロスパンの1回の掃引")
+        r = self.api.call("marker_add", kind="M", trace=1).result(5)
+        self.pump(0.2)
+        self.win.select_marker(r["id"])
+        self.api.call("set_xy", x1_hz=-8_000_000, x2_hz=-1_000_000).result(5)
+        found = []
+        for key in ("tab-trace", "tab-marker", "tab-view"):
+            self.win.show_part(key)
+            found += self.check(self.win, f"ゼロスパン {key}")
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_s11_screens(self):
+        """S11（設計E §6.5・設計R §3）: オープンを測った後の信号源のタブと上段（次はショート）、基準を取って SWR にした
+        トレースの表（表示の形式・縦軸と単位が違うトレースの理由）・マーカーのタブ（SWR のしきい値）・|Γ|・SWR の縦軸の上段。"""
+        found = []
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000).result(5)
+        self.api.call("set_mode", mode="s11").result(5)
+        self.api.call("reference_take", kind="fine", standard="open").result(5)
+        self.wait(lambda: self.win.source_tab.s11_state.isVisible(), timeout=20, what="オープンを測った")
+        self.win.show_part("tab-source")
+        found += self.check(self.win, "主画面 S11 オープンの後 tab-source")
+        self.api.call("reference_take", standard="short").result(5)
+        self.wait(lambda: (self.win.state.get("display_quantity") == "ratio"), timeout=20, what="基準との比")
+        self.api.call("set_trace", number=1, format="swr").result(5)
+        self.api.call("set_trace", number=2, visible=True).result(5)
+        r = self.api.call("marker_peak", polarity="dip", trace=1).result(5)
+        self.api.call("marker_function", id=r["id"], threshold={"level": 2.0, "side": "below"}).result(5)
+        self.wait(lambda: self.win.display_unit() == "SWR", what="縦軸が SWR")
+        self.win.select_marker(r["id"])
+        self.wait(lambda: self.win.trace_tab.rows[2].unit_note.isVisible(), what="描かない理由")
+        for key in ("tab-trace", "tab-marker", "tab-source"):
+            self.win.show_part(key)
+            found += self.check(self.win, f"主画面 S11（SWR） {key}")
         self.assertEqual(sorted(set(found)), [])
 
     def _single(self):
@@ -180,6 +233,51 @@ class LayoutTest(UiBase):
         self.assertTrue(any("並びの 2 列目" in p for p in found), found)
         self.assertTrue(any("クリア" in p and "伸びている" in p for p in found), found)
         self.assertTrue(any("100px が値の種類の幅" in p for p in found), found)
+
+    def cal_pages(self) -> list[str]:
+        """校正の画面（設計K）の手順: 準備・測る（周波数特性・RBW・NF の増幅度）・確かめる（周波数特性・旧校正ファイル）。
+        測った点と結果がある形で数える（Web の test_web_layout.cal_views と同じ手順）。"""
+        from pygigast.ui_qt.cal_dialog import CHECK, MEASURE
+        from tests.test_level import build_legacy_bytes
+
+        found = []
+        dev = self.api._inst._device
+        self.win.open_calibration("freq")
+        d = self.win.cal_window
+        self.wait(lambda: d.v is not None, what="校正の画面")
+        self.assertEqual(d.windowTitle(), texts.MENU_ITEMS["cal_freq"].rstrip("…"))
+        found += self.check(d, "校正 準備")
+
+        def measure(**kw):
+            self.api.call("cal_measure", **kw).result(10)
+            self.wait(lambda: not self.api.get_state().result(5)["tasks"], timeout=30, what="校正の測定")
+            self.pump(0.3)
+
+        dev.config.signals = [(10_000_000, -10.0)]
+        measure()
+        d.show_page(MEASURE)
+        found += self.check(d, "校正 測る（周波数特性）")
+        d.show_page(CHECK)
+        found += self.check(d, "校正 確かめる（周波数特性）")
+        self.api.call("cal_set_kind", kind="rbw", discard=True).result(5)
+        measure()
+        d.show_page(MEASURE)
+        found += self.check(d, "校正 測る（RBW）")
+        self.api.call("cal_set_kind", kind="nf", discard=True).result(5)
+        self.pump(0.3)
+        d.show_page(MEASURE)
+        found += self.check(d, "校正 測る（NF の増幅度）")
+        self.api.call("cal_set_kind", kind="legacy", discard=True).result(5)
+        p = self.root / "gigast.txt"
+        p.write_bytes(build_legacy_bytes())
+        self.api.call("cal_legacy_load", path=str(p)).result(10)
+        self.pump(0.3)
+        d.show_page(CHECK)
+        found += self.check(d, "校正 確かめる（旧校正ファイル）")
+        d.ask_close = lambda: "discard"
+        d.close()
+        dev.config.signals = []
+        return found
 
     def dialogs(self) -> list[str]:
         found = []
@@ -255,7 +353,7 @@ if __name__ == "__main__":
 
 
 class TopBarOneRowTest(UiBase):
-    """上段は SA の 1600 幅・TG（直結を 0dB にするとその基準の文が出る）の 1920 幅で1段に収まる（RBW 以降を2行目へ
+    """上段は SA の 1600 幅・TG（基準を取るとその基準の文が出る）の 1920 幅で1段に収まる（RBW 以降を2行目へ
     追い出さない: 2026-10-03 ユーザー指摘・設計の PDCA 2巡目）。上段の周波数の欄は一番長い値でも切れない。"""
 
     def one_row(self) -> bool:
@@ -273,7 +371,7 @@ class TopBarOneRowTest(UiBase):
         self.win.resize(1920, 1080)
         self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
         self.api.call("set_mode", mode="tg").result(5)
-        self.wait(lambda: self.win.ref_quick.isVisible(), what="直結を 0dB にする")
+        self.wait(lambda: self.win.ref_quick.isVisible(), what="基準を取る")
         self.assertTrue(self.one_row(), self.win.topbar.needed_one_row())
 
     def test_widest_top_frequency_fits(self):

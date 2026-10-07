@@ -497,6 +497,8 @@ class CommandTest(unittest.TestCase):
         self.t.set_ref("P1", "M1")
         c = self.t.span_from_delta_command("P1", self.views)
         self.assertEqual((c.request.start_hz, c.request.stop_hz, c.request.edited), (f(1), f(3), ("start_hz", "stop_hz")))
+        # Span 固定を外す命令（設計C §5.13: 固定 ON のドラッグの規則を当てない）
+        self.assertIs(c.request.span_lock, False)
         self.t.set_frequency("M1", f(3), self.v)
         self.assertEqual(self.t.span_from_delta_command("P1", self.views).code, "same_frequency")
 

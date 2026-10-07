@@ -7,6 +7,8 @@
 
   // 全角1字の幅を測る字（Qt の png_export と同じく「あ」）
   const WIDE = String.fromCharCode(0x3042);
+  // 目盛の区画の数（core/report_layout.DIVISIONS と同じ）
+  const DIVISIONS = 10;
 
   // ---- PNG の塊（tEXt は Latin-1 なので、JSON は ASCII にしてから入れる）
   const CRC_TABLE = (() => {
@@ -165,13 +167,24 @@
       g2.font = font;
     }
 
-    // 凡例（グラフの上の1段: U-14）
-    let lx = margin;
+    // グラフの枠と軸の文字の置き場所・横軸の数字の間引き（Qt の png_export と同じ決まり: report_layout.graph_axes）。
+    // 目盛は縦も横も 10 区画の線の上。縦軸の単位は縦軸の数字の上（凡例と同じ段の左端）、横軸の単位は数字の下の見出し
+    const ax = lay.axes;
+    const plotL = ax.plot_left;
+    const plotR = ax.plot_right;
+    const plotT = ax.plot_top;
+    let plotB = graphBottom - ax.bottom_room;
+    if (plotB - plotT < ax.min_plot_h) plotB = plotT + ax.min_plot_h;
+    const pw = plotR - plotL;
+    const ph = plotB - plotT;
+
+    // 凡例（グラフの上の1段: U-14）。左端はグラフの枠の左
+    let lx = ax.legend_left;
     const sw = g2.measureText(WIDE).width * lay.legend_sample;
     for (const it of lay.legend) {
       const col = String(it.color || "").startsWith("#") ? it.color : (c[it.color] || c.trace1);
       const tw = g2.measureText(it.text).width;
-      if (lx + sw + tw > W - margin) break;
+      if (lx + sw + tw > plotR + 1) break;
       // 線の見本はそのトレースの線（設計F §9。太さと切れ目はサーバーの report_layout.legend_stroke: Qt と同じ）
       g2.strokeStyle = col;
       g2.lineWidth = it.stroke.width;
@@ -184,31 +197,67 @@
       lx += sw + tw + g2.measureText(WIDE).width * 2;
     }
 
-    // グラフ: 画面と同じ描画の部品（GSGraph）を、画面の外の要素に決めた大きさで描く
-    const gTop = margin + lh;
-    const graphW = innerW;
-    const graphH = Math.max(lh * 3, graphBottom - gTop);
+    // 目盛線と枠（Qt と同じ順: 目盛線 → 枠 → トレース）
+    g2.lineWidth = 1;
+    g2.strokeStyle = c.grid;
+    g2.beginPath();
+    for (let i = 0; i <= DIVISIONS; i++) {
+      const y = plotT + ph * i / DIVISIONS;
+      const x = plotL + pw * i / DIVISIONS;
+      g2.moveTo(plotL, y); g2.lineTo(plotR, y);
+      g2.moveTo(x, plotT); g2.lineTo(x, plotB);
+    }
+    g2.stroke();
+    g2.strokeStyle = c.axis;
+    g2.strokeRect(plotL, plotT, pw, ph);
+
+    // 縦軸の数字（右端をそろえ、目盛線の高さの真ん中）と単位
+    g2.fillStyle = c.text;
+    g2.textAlign = "right";
+    lay.y_labels.forEach((s, i) => g2.fillText(s, ax.y_label_right, plotT + ph * i / DIVISIONS));
+    g2.textAlign = "left";
+    g2.fillStyle = c.text_dim;
+    g2.fillText(lay.unit, ax.unit_left, margin + lh / 2);
+    // 横軸の数字（x_every 目盛ごと。両端の数字は画像の外に出さない）と見出し
+    g2.fillStyle = c.text;
+    const step = pw / DIVISIONS;
+    for (let i = 0; i <= DIVISIONS; i += ax.x_every) {
+      const s = lay.x_labels[i];
+      const tw = g2.measureText(s).width;
+      const x = Math.min(Math.max(plotL + step * i - tw / 2, 0), ax.x_label_max_right - tw);
+      g2.fillText(s, x, plotB + ax.x_label_top + lh / 2);
+    }
+    g2.fillStyle = c.text_dim;
+    g2.fillText(lay.x_title, (plotL + plotR) / 2 - g2.measureText(lay.x_title).width / 2, plotB + ax.x_title_top + lh / 2);
+
+    // グラフの中身: 画面と同じ描画の部品（GSGraph）を軸なし（bare）で枠の大きさに描き、枠の中へ写す
+    const graphW = Math.max(1, Math.round(pw));
+    const graphH = Math.max(1, Math.round(ph));
     const host = document.createElement("div");
     host.style.cssText = `position:fixed;left:-20000px;top:0;width:${graphW}px;height:${graphH}px;background:${c.graph_bg}`;
     document.body.appendChild(host);
     try {
       // トレースの線の基準の幅は Qt の PNG と同じ（report_layout.png_line_base: 文字の大きさから）
-      const g = new GSGraph(host, { colors: c, static: true, width: graphW, height: graphH, lineBase: lay.line_base_px });
+      const g = new GSGraph(host, { colors: c, static: true, bare: true, width: graphW, height: graphH, lineBase: lay.line_base_px });
       const s = (ctx.st || {}).sweep || {};
-      if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true); else g.setX(s.start_hz, s.stop_hz, false);
+      // 横軸は画面と同じ（ゼロスパンは時間: サーバーの ui.x_axis。設計N §1）
+      const xa = ((ctx.st || {}).ui || {}).x_axis;
+      if (xa && xa.kind === "time") g.setX(xa.x0, xa.x1, xa); else g.setX(s.start_hz, s.stop_hz, null);
       // 周波数オフセット（設計O）: 目盛の数字と軸の名前は画面と同じく換算後
       if (s.step_hz !== 0 && ctx.offset && ctx.offset.hz) g.setXOffset(ctx.offset.hz, ctx.offset.text);
-      g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit);
+      // |Γ|・SWR の縦軸は下端が決まっていて、目盛の数字は1目盛を書き分けられる桁（設計R §3。画面と同じ）
+      g.setY(ctx.amp.ref, ctx.amp.div, ctx.amp.unit, ctx.amp.linear, ctx.amp.decimals);
       g.setTraces(ctx.traces(c));
       g.setMarkers((ctx.markers || {}).markers || [], null);
       // マーカーの機能の線（G §3.6）: 画面で出しているときだけ PNG にも描く
       if ((((ctx.st || {}).view) || {}).function_lines !== false) g.setFunctionLines((ctx.markers || {}).rows || []);
       g.setXY((ctx.markers || {}).xy);
+      g.setCursorRows((ctx.markers || {}).rows || []);
       g.u.redraw(false, false);
       // uPlot は描き直しをまとめて microtask で行うので、描き終わるのを待ってから写す
       // （requestAnimationFrame は裏のタブで止まるので使わない）
       await new Promise((r) => setTimeout(r, 0));
-      g2.drawImage(g.u.ctx.canvas, margin, gTop, graphW, graphH);
+      g2.drawImage(g.u.ctx.canvas, plotL, plotT, pw, ph);
       g.destroy();
     } finally {
       host.remove();

@@ -31,6 +31,8 @@ AUTO_MIN_SPAN_DB = 10.0
 AUTO_STEP_DB = 0.5
 # 密度: 縦の刻み（dB）・横の列の上限・見せる下限（1 回の掃引の 1% に満たない重みは出さない）
 DENSITY_BIN_DB = 0.5
+# |Γ|・SWR（縦軸が dB でない: 設計R §3）の密度の升目の高さは、縦軸の1目盛のこの数分の1（10 目盛で 200 升）
+DENSITY_LINEAR_BINS_PER_DIV = 20
 DENSITY_MAX_COLUMNS = 1024
 DENSITY_MIN_HITS = 0.01
 # 密度を作り直すときに読み直す行（重みが 1/256 になるまで = 半分になる回数の 8 倍）
@@ -243,10 +245,13 @@ class Density:
         self.bins = 0
         self.level_lo = 0.0
         self.level_hi = 0.0
+        self.bin = DENSITY_BIN_DB
         self.added = 0
 
-    def setup(self, key: tuple, points: int, level_lo: float, level_hi: float, half: int) -> bool:
-        """条件（列の数を決める点の数・縦の範囲・半分になる回数）を決める。変わって作り直したら True。"""
+    def setup(self, key: tuple, points: int, level_lo: float, level_hi: float, half: int,
+              bin_size: float = DENSITY_BIN_DB) -> bool:
+        """条件（列の数を決める点の数・縦の範囲・半分になる回数・升目の高さ）を決める。変わって作り直したら True。
+        升目の高さは表示の値の単位（dB 系は DENSITY_BIN_DB、|Γ|・SWR は1目盛 / DENSITY_LINEAR_BINS_PER_DIV）。"""
         if key == self.key and self._acc is not None:
             return False
         self.key = key
@@ -255,7 +260,8 @@ class Density:
         self._cols_of = (np.arange(n, dtype=np.int64) * self.n_cols) // n
         self._per_col = np.bincount(self._cols_of, minlength=self.n_cols).astype(np.float64)
         self.level_lo, self.level_hi = float(level_lo), float(level_hi)
-        self.bins = max(1, int(round((self.level_hi - self.level_lo) / DENSITY_BIN_DB)))
+        self.bin = float(bin_size) if bin_size and bin_size > 0 else DENSITY_BIN_DB
+        self.bins = max(1, int(round((self.level_hi - self.level_lo) / self.bin)))
         self._acc = np.zeros((self.bins, self.n_cols), dtype=np.float64)
         self._wsum = 0.0
         self._decay = 0.5 ** (1.0 / max(1, int(half)))
@@ -270,7 +276,7 @@ class Density:
         if v.shape[0] != self._cols_of.shape[0]:
             return
         with np.errstate(invalid="ignore"):
-            b = np.floor((v - self.level_lo) / DENSITY_BIN_DB)
+            b = np.floor((v - self.level_lo) / self.bin)
         ok = np.isfinite(b) & (b >= 0) & (b < self.bins)
         idx = b[ok].astype(np.int64) * self.n_cols + self._cols_of[ok]
         hits = np.bincount(idx, minlength=self.bins * self.n_cols).reshape(self.bins, self.n_cols)

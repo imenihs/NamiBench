@@ -4,6 +4,10 @@
   上段の欄・横軸・グラフの上の操作が同じ範囲を使う（スペクトルとウォーターフォールの横軸の連動: P §2）
 - 表示のタブの欄（display_tab_view）・再生の帯（playback_view）・バンドプランとブックマーク（bandplan_view）・
   別ウィンドウにできるか（part_reasons）・ウォーターフォールの読み値（waterfall_reading）・条件の境目（boundary_label）
+- ゼロスパン（横軸が時間: 設計N §1）の間は、グラフの下にウォーターフォール・密度を出さない（shown_layout）。表示の
+  組み合わせの設定は変えず、＋ウォーターフォール・＋密度を理由付きで選べなくする（U-08。抜けたら元の組み合わせに戻る）
+- 密度の縦はグラフの縦軸と同じ範囲なので、行にするトレースの単位が縦軸の単位と違う（|Γ|・SWR と dB など）間は描かず、
+  理由を出す（density_reason。グラフが縦軸と単位の違うトレースを描かないのと同じ: 設計R §3）
 Qt を import しない。
 """
 from __future__ import annotations
@@ -11,9 +15,10 @@ from __future__ import annotations
 from typing import Optional
 
 from ..core import colormaps
+from ..core.trace import formats
 from ..core.units import format_freq, level_text
 from ..core.view_units import DENSITY_HALF_CHOICES, WF_ROWS_CHOICES
-from . import texts
+from . import screen_s11, texts
 
 D = texts.DISPLAY_TEXTS
 
@@ -46,11 +51,45 @@ def layout_of(st: dict) -> str:
     return (st.get("view") or {}).get("layout") or "spectrum"
 
 
+def time_axis(st: dict) -> bool:
+    """横軸が時間（ライブのゼロスパン）か。再生中は記録の周波数の範囲（ゼロスパンの間は再生しない）。"""
+    if (st.get("playback") or {}).get("active"):
+        return False
+    return (st.get("sweep") or {}).get("step_hz") == 0
+
+
+def shown_layout(st: dict) -> str:
+    """いま画面に出す組み合わせ。ゼロスパンの間はスペクトルのみ（設定の layout はそのまま）。"""
+    return "spectrum" if time_axis(st) else layout_of(st)
+
+
+def layout_reasons(st: dict) -> dict:
+    """表示の組み合わせの選択肢ごとの選べない理由（ゼロスパンの間の＋ウォーターフォール・＋密度: U-08）。"""
+    why = texts.REASON_TEXTS["layout_zero_span"] if time_axis(st) else None
+    return {"spectrum": None, "waterfall": why, "density": why}
+
+
 def part_reasons(st: dict) -> dict:
-    """ウォーターフォール・密度表示の部分が使えない理由（表示の組み合わせで選んでいないとき: U-08）。"""
+    """ウォーターフォール・密度表示の部分が使えない理由（ゼロスパンの間・表示の組み合わせで選んでいないとき: U-08）。"""
+    if time_axis(st):
+        why = texts.REASON_TEXTS["layout_zero_span"]
+        return {"waterfall": why, "density": why}
     lay = layout_of(st)
     return {"waterfall": None if lay == "waterfall" else texts.REASON_TEXTS["layout_waterfall"],
             "density": None if lay == "density" else texts.REASON_TEXTS["layout_density"]}
+
+
+def wf_unit(st: dict) -> Optional[str]:
+    return (st.get("waterfall") or {}).get("unit")
+
+
+def density_reason(st: dict) -> Optional[str]:
+    """密度を描かない理由: 行にするトレースの単位が縦軸の単位と違う（縦軸は screen_s11.axis_unit: 設計R §3）。"""
+    unit = wf_unit(st)
+    axis = screen_s11.axis_unit(st)
+    if not unit or unit == axis:
+        return None
+    return texts.REASON_TEXTS["trace_unit_differs"].replace("{axis}", axis).replace("{unit}", unit)
 
 
 def display_tab_view(st: dict) -> dict:
@@ -61,14 +100,21 @@ def display_tab_view(st: dict) -> dict:
     wf = st.get("waterfall") or {}
     rng = wf.get("range") or {}
     unit = wf.get("unit") or texts.level_unit_label(v.get("level_unit"))
+    # |Γ|・SWR の行は縦軸と同じ範囲で色を付ける（自動・下限・上限は dB の行のもの: instrument_waterfall）
+    linear = bool(rng.get("axis")) or formats.is_linear_unit(unit)
+    range_reason = texts.REASON_TEXTS["wf_linear_axis"] if linear else (
+        texts.REASON_TEXTS["wf_auto_on"] if auto else None)
+    shown_auto = auto and not linear
     return {
         "layout": layout_of(st),
+        "layout_reasons": layout_reasons(st),
         "trace": int(v.get("wf_trace") or 1),
         "traces": [{"code": n, "text": texts.w("trace_n", n=n)} for n in (1, 2, 3, 4)],
-        "auto": auto,
-        "lo": float(rng.get("lo") if auto and rng.get("lo") is not None else v.get("wf_color_lo", -110.0)),
-        "hi": float(rng.get("hi") if auto and rng.get("hi") is not None else v.get("wf_color_hi", -20.0)),
-        "range_reason": texts.REASON_TEXTS["wf_auto_on"] if auto else None,
+        "auto": shown_auto,
+        "auto_reason": texts.REASON_TEXTS["wf_linear_axis"] if linear else None,
+        "lo": float(rng["lo"] if (shown_auto or linear) and rng.get("lo") is not None else v.get("wf_color_lo", -110.0)),
+        "hi": float(rng["hi"] if (shown_auto or linear) and rng.get("hi") is not None else v.get("wf_color_hi", -20.0)),
+        "range_reason": range_reason,
         "unit": unit,
         "colormap": pal.get("colormap") or colormaps.DEFAULT,
         "colormaps": [{"code": c, "text": texts.COLORMAP_NAMES.get(c, c)} for c in colormaps.CHOICES],
@@ -147,7 +193,12 @@ def waterfall_reading(t: float, sweeps: int, freq_hz: Optional[int], level: Opti
         lines.append(format_freq(int(freq_hz) + int(freq_offset_hz or 0)))
     elif point is not None:
         lines.append(texts.tpl("mouse_point", n=int(point)))
-    lines.append(f"{level_text(level)} {unit}".strip() if level is not None else texts.MARKER_STATUS["no_value"])
+    if level is None:
+        lines.append(texts.MARKER_STATUS["no_value"])
+    elif formats.is_linear_unit(unit):
+        lines.append(formats.value_cell(level, unit))  # |Γ|・SWR はその値の桁（設計R §3: マーカー表と同じ）
+    else:
+        lines.append(f"{level_text(level)} {unit}".strip())
     return lines
 
 
@@ -155,7 +206,9 @@ def ui(st: dict) -> dict:
     """Web へ状態と一緒に送るもの（Qt も同じ関数を使う）。"""
     return {
         "freq_view": freq_view(st),
+        "shown_layout": shown_layout(st),
         "parts": part_reasons(st),
+        "density_reason": density_reason(st),
         "tab": display_tab_view(st),
         "playback": playback_view(st),
         "bandplan": bandplan_view(st),

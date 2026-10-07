@@ -152,7 +152,7 @@ class BandplanUiTest(UiBase):
         tab = self.win.marker_tab
         tab.pk_find.click()
         self.wait(lambda: tab.pk_table.rowCount() > 0, what="ピークの一覧")
-        cell = tab.pk_table.cellWidget(0, tab.pk_table.columnCount() - 1)
+        cell = tab.pk_table.cellWidget(0, 3)  # 操作の列（その後ろは内部の漏れの印の列: 設計L §1.4）
         bs = cell.findChildren(QPushButton)
         self.assertEqual([b.text() for b in bs], [texts.LABELS["register_p"], D["to_center"]])
         freq = float(tab.pk_table.item(0, 0).text()) * 1e6

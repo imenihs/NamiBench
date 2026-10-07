@@ -1,8 +1,12 @@
 """右のタブ「表示」（設計J §4.5・P §2・O・I §3）。
 
-- 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（設計P §2: 1操作で切り替える。コアの表示の設定）
+- 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（設計P §2: 1操作で切り替える。コアの表示の設定）。
+  ゼロスパン（横軸が時間）の間は＋ウォーターフォール・＋密度を理由付きで選べない（display_view.display_tab_view）
 - ウォーターフォール・密度とバンドプラン・ブックマークの欄は display_groups.py（設計P §9.2・§9.3・§9.5）
-- 描き方: 線／塗りつぶし（旧 Line/Dot。測定値は変わらない）。コアの表示の設定（Qt と Web で同じ・プリセットに入る）
+- 描き方: 線／塗りつぶし（旧 Line/Dot。測定値は変わらない）。コアの表示の設定（Qt と Web で同じ・プリセットに入る）。
+  内部の漏れの印を出すか（設計L §1.4。同じくコアの表示の設定）
+- ゼロスパン（設計N §1）: 表示する長さ（掃引1回・1/10/60 秒）。コアの表示の設定 view.zero_span_s。ゼロスパンでない
+  間は理由付きで選べない（U-08）
 - 振幅の詳細（設計O）: 単位 dBm／dBμV／dBmV と外部補正 dB。換算はコア（グラフ・マーカー・CSV・PNG・REF が
   同じ単位になる）。「初期値に戻す」
   - 単位の欄は実際に使っている単位を出す（J §4.10 の 2）。基準との比を出している間は「dB（基準との比）」で、
@@ -34,10 +38,10 @@ from PySide6.QtWidgets import (
 
 from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from ..core.view_units import LEVEL_UNITS
-from . import screen_model, sizes, texts, widget_sync
+from . import display_view, screen_model, sizes, texts, widget_sync
 from .display_groups import BandplanGroup, WaterfallGroup
 from .fields import DbField
-from .tab_traces import body, outer
+from .tab_traces import body, outer, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -87,6 +91,23 @@ class DisplayTab(QWidget):
             self.style_group.addButton(b)
             v.addWidget(b)
         self.style_fill.toggled.connect(self._style_changed)
+        # 内部の漏れの印（設計L §1.4。コアの表示の設定 view.leak_marks で Qt と Web が共有）
+        self.leak_marks = QCheckBox(L["leak_marks"])
+        self.leak_marks.setToolTip(L["leak_marks_tip"])
+        self.leak_marks.setChecked(True)
+        self.leak_marks.toggled.connect(lambda on: win.call("set_view", leak_marks=bool(on)))
+        v.addWidget(self.leak_marks)
+        lay.addWidget(g)
+
+        Z = texts.ZERO_SPAN_TEXTS
+        g = QGroupBox(Z["group"])
+        form = sizes.form(g)
+        self.zs_length = QComboBox()
+        for it in screen_model.zero_span_view({})["items"]:
+            self.zs_length.addItem(it["text"], it["value"])
+        self.zs_length.activated.connect(
+            lambda i: win.call("set_view", field=None, zero_span_s=int(self.zs_length.itemData(i))))
+        form.addRow(Z["length"], self.zs_length)
         lay.addWidget(g)
 
         g = QGroupBox(L["amplitude_detail"])
@@ -208,13 +229,19 @@ class DisplayTab(QWidget):
         v = st.get("view") or {}
         self._apply_unit(st)
         lay = v.get("layout") or "spectrum"
+        reasons = display_view.display_tab_view(st)["layout_reasons"]
         for code, b in (("spectrum", self.view_spectrum), ("waterfall", self.view_waterfall),
                         ("density", self.view_density)):
             widget_sync.set_checked(b, lay == code)
+            set_enabled(b, reasons.get(code))  # ゼロスパンの間は＋ウォーターフォール・＋密度を選べない（理由付き）
         self.wf_group.apply_state(st)
         self.bandplan_group.apply_state(st)
+        zv = screen_model.zero_span_view(st)
+        widget_sync.set_data(self.zs_length, zv["value"])
+        set_enabled(self.zs_length, zv["reason"], texts.ZERO_SPAN_TEXTS["length_tip"])
         widget_sync.set_checked(self.style_fill, v.get("draw_style") == "fill")
         widget_sync.set_checked(self.style_line, v.get("draw_style") != "fill")
+        widget_sync.set_checked(self.leak_marks, v.get("leak_marks", True) is not False)
         self.ext.set_value(float(v.get("ext_db") or 0.0))  # 打っている間は欄が書き直さない（fields._Edit）
 
     def fill_on(self) -> bool:

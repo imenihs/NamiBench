@@ -51,7 +51,8 @@
           marker_remove: () => { if (!this.removeSelectedRow()) this.cmd("marker_remove", { id: this.selectedMarker }); },
           marker_clear: () => this.markerClear(),
           marker_copy: () => this.copyMarkerTable(),
-          cal_legacy: () => this.legacyDialog(),
+          cal_freq: () => this.openCal("freq"), cal_rbw: () => this.openCal("rbw"), cal_nf: () => this.openCal("nf"),
+          cal_legacy: () => this.openCal("legacy"),
           settings: () => this.openSettings("connection"),
           web_connect: () => this.showConnect(),
           presets: () => this.openPresets(), preset_save: () => this.presetSaveNew(),
@@ -102,7 +103,9 @@
         const items = (codes) => codes.filter((c) => !WEB_SKIP.has(c)).map((code) => {
           if (code === null) return null;
           const notYet = X.get("MENU_NOT_YET", code, null);
-          const why = notYet ? X.get("NOT_YET", notYet) : this.itemReason(code);
+          // 表示の組み合わせの項目はゼロスパンの間は選べない（理由: display_view.layout_reasons）
+          const layoutWhy = code === "view_waterfall" ? this.layoutReasons.waterfall : (code === "view_density" ? this.layoutReasons.density : null);
+          const why = notYet ? X.get("NOT_YET", notYet) : (layoutWhy || this.itemReason(code));
           // 名前は山／谷の選択で変わる項目がある（app_markers.js の menuLabel: G §3.8）
           // 表示の組み合わせの項目は、選んでいるものに印（Qt の選べる項目と同じ: 設計P §2）
           const on = (code === "view_waterfall" && this.layoutCode === "waterfall") || (code === "view_density" && this.layoutCode === "density");
@@ -205,12 +208,13 @@
           // 上に重なっている窓から1つ閉じる
           if (this.confirmBox) this.answerConfirm(false);
           else if (this.modal) { if (!inField) this.modal = null; }
+          else if (this.calWin) { if (!inField) this.calClose(); }  // 校正の画面: 測った値があれば聞いてから閉じる（U-18）
           else if (this.settingsWin) this.closeSettings();
           else if (this.presetsWin) this.closePresets();
           return;
         }
         // 窓（入力・確かめる・設定・プリセット）を開いている間は、メイン画面の操作のキーを動かさない
-        if (this.modal || this.confirmBox || this.settingsWin || this.presetsWin) return;
+        if (this.modal || this.confirmBox || this.settingsWin || this.presetsWin || this.calWin) return;
         for (const [code, keys] of Object.entries(this.keySeqs)) {
           if (!keys.includes(k)) continue;
           // 入力の欄にいる間は、Ctrl・Alt の付かないキーと Ctrl+Z/Y は欄に渡す（J §4.6）

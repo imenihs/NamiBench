@@ -4,7 +4,8 @@
 // - 周波数軸（グラフの中）でホイール → カーソルの位置を中心に拡大・縮小
 // - レベル軸の上でホイール → REF を1目盛（Ctrl で dB/div を1段）、ドラッグ → REF を連続で
 // - クリック → マーカーを置く、右クリック → 名前の付いた操作のメニュー
-// 横軸の位置は機器の周波数のまま。周波数オフセット（設計O）は目盛の数字と軸の名前だけに足す
+// 横軸の位置は機器の周波数のまま。周波数オフセット（設計O）は目盛の数字と軸の名前だけに足す。
+// ゼロスパン（設計N §1）の横軸は時間（推定）で、位置はマイクロ秒。目盛の数字は軸の単位（ms・s）で出す
 (function (root) {
   "use strict";
 
@@ -14,6 +15,23 @@
   // マーカーの機能の線の濃さ（G §3.6: マーカーの色の不透明度 約 35%。Qt の plot_layers.FUNCTION_LINE_ALPHA と同じ）
   const FUNCTION_LINE_ALPHA = 89 / 255;
   const FUNCTION_LINE_DASH = [2, 3];
+  // ステップ掃引を全部重ねたときの段ごとの線の濃さ（設計L §1.3。core/step_sweep.LINE_ALPHA と同じ: Qt の画面・PNG も同じ）
+  const STEP_LINE_ALPHA = 0.35;
+  // 内部の漏れの印の三角の大きさ（px。Qt の mark_bands の ▼ と同じくらい: 設計L §1.4）
+  const LEAK_MARK_PX = 9;
+  // カーソルの線と名前（Qt の plot_layers.MarkerLayer と同じ）: オフセットのカーソルはマーカーの色の破線、XY カーソルは
+  // 強調の色の実線。名前の位置はグラフの高さ・幅に対する割合（縦線は下から、横線は左から）。近い縦線の名前が重ならないよう、
+  // オフセットのカーソルの縦線は1本ごとに高さをずらす。名前の背景の濃さも Qt と同じ
+  const CURSOR_DASH = [4, 2];
+  const CURSOR_LABEL_V = 0.92;
+  const CURSOR_LABEL_STAGGER = 0.06;
+  const CURSOR_LABEL_H = 0.08;
+  const XY_LABEL_V = 0.95;
+  const XY_LABEL_H = 0.05;
+  const CURSOR_LABEL_FILL = 180 / 255;
+  const XY_LABEL_FILL = 200 / 255;
+  const MARKER_LABEL_FILL = 180 / 255;
+  const XY_NAMES = { X1: 1, X2: 1, Y1: 1, Y2: 1 };
   // 画面の線の基準の幅（px。設計F §9 の実線 = 今までの線）。PNG は opts.lineBase で渡す
   const SCREEN_LINE_BASE = 1.25;
   // 凡例の線の見本の長さと行の高さ（px。Qt の pyqtgraph の凡例の見本と同じ 20px）
@@ -36,8 +54,13 @@
     return a >= 1e9 ? [1e9, "GHz"] : a >= 1e6 ? [1e6, "MHz"] : a >= 1e3 ? [1e3, "kHz"] : [1, "Hz"];
   }
 
-  // 目盛の数字は REF の欄と同じ形（units.js の levelText）
-  function fmtLevel(v) { return root.GSUnits.levelText(v); }
+  // 目盛の数字は REF の欄と同じ形（units.js の levelText）。|Γ|・SWR は1目盛を書き分けられる桁（設計R §3。Qt と同じ
+  // screen_s11.tick_text）
+  function fmtTick(v, decimals) {
+    if (!decimals || decimals <= 1) return root.GSUnits.levelText(v);
+    const s = Number(v).toFixed(decimals);
+    return root.GSUnits.minusSign(Number(s) === 0 ? Number(0).toFixed(decimals) : s);
+  }
 
   class Graph {
     constructor(el, opts) {
@@ -47,16 +70,21 @@
       this.x0 = 0;
       this.x1 = 1;
       this.zeroSpan = false;
+      this.timeAxis = null; // ゼロスパンの時間軸 {factor（1単位の μs）, unit, label}（サーバーの ui.x_axis）
       this.xOffset = 0; // 周波数オフセット（Hz）と、その文字（+10 GHz）。目盛と軸の名前に使う
       this.xOffsetText = "";
       this.ref = 0;
       this.div = 10;
       this.unit = "dBm";
+      this.linear = false; // |Γ|・SWR の縦軸（下端が決まっている: 設計R §3）
+      this.decimals = 1; // 目盛の数字の小数の桁
       this.traces = [];
       this.bands = [];
+      this.leaks = []; // 内部の漏れの印（設計L §1.4）: [{freq_hz, fill}]
       this.markers = [];
       this.selectedMarker = null;
       this.functionRows = []; // マーカーの機能の線（マーカー表の機能の行の line: G §3.6）
+      this.cursorRows = []; // オフセットのカーソル（マーカー表の freq_cursor・level_cursor の行。XY は this.xy）
       this.planBands = []; // バンドプランの帯 [{name, start_hz, stop_hz, color}]（設計P §6）
       this.planMarks = []; // ブックマーク [{name, hz}]
       this._markHits = []; // クリックで Center にする印の当たり（CSS px）
@@ -73,11 +101,13 @@
     _build(w, h) {
       const c = this.colors;
       const self = this;
+      // bare: 軸・目盛・余白なしで中身だけを描く（PNG。軸は png.js が report_layout.graph_axes の決まりで描く: Qt と同じ）
+      const bare = !!this.o.bare;
       const opts = {
         width: w,
         height: h,
         // 上に余白を取り、一番上の目盛（REF レベル）の数字を切らない（J §4.3）
-        padding: [14, 18, 0, 0],
+        padding: bare ? [0, 0, 0, 0] : [14, 18, 0, 0],
         legend: { show: false },
         pxAlign: 0,
         scales: {
@@ -86,6 +116,7 @@
         },
         axes: [
           {
+            show: !bare,
             stroke: c.text,
             grid: { stroke: c.grid, width: 1 },
             ticks: { stroke: c.axis, width: 1 },
@@ -94,12 +125,13 @@
             font: "12px sans-serif",
             labelFont: "12px sans-serif",
             values: (u, splits) => {
-              if (self.zeroSpan) return splits.map((v) => String(Math.round(v)));
+              if (self.timeAxis) return splits.map((v) => String(+(v / self.timeAxis.factor).toPrecision(10)));
               const [k] = xUnit(self.x1 - self.x0);
               return splits.map((v) => String(+((v + self.xOffset) / k).toPrecision(10)));
             },
           },
           {
+            show: !bare,
             stroke: c.text,
             grid: { stroke: c.grid, width: 1 },
             ticks: { stroke: c.axis, width: 1 },
@@ -114,7 +146,7 @@
               for (let i = DIVISIONS; i >= 0; i--) out.push(self.ref - i * self.div);
               return out;
             },
-            values: (u, splits) => splits.map(fmtLevel),
+            values: (u, splits) => splits.map((v) => fmtTick(v, self.decimals)),
           },
         ],
         series: [{}, { stroke: "transparent", points: { show: false } }],
@@ -139,20 +171,23 @@
       // 軸の名前は texts の表（Qt と同じ語）
       const X = root.GSTexts;
       // 換算中は軸の名前で示す（設計O）。単位の付け方は換算しない軸の名前（axis_freq）と同じ形
-      if (this.zeroSpan) this.u.axes[0].label = X.w("axis_zero_span");
+      if (this.timeAxis) this.u.axes[0].label = this.timeAxis.label;
       else if (this.xOffset) this.u.axes[0].label = X.fmtText(X.get("VIEW_TEXTS", "axis_freq_offset"), { off: this.xOffsetText }) + ` (${unit})`;
       else this.u.axes[0].label = X.w("axis_freq", { unit });
-      this.u.axes[1].label = X.w("axis_level", { unit: this.unit });
+      // |Γ|・SWR はレベルではないので名前だけ（Qt と同じ）
+      this.u.axes[1].label = this.linear ? this.unit : X.w("axis_level", { unit: this.unit });
     }
 
     setSize(w, h) {
       if (w > 0 && h > 0) this.u.setSize({ width: w, height: h });
     }
 
-    setX(start, stop, zeroSpan) {
+    // timeAxis はゼロスパンの時間軸（サーバーの ui.x_axis。周波数軸は null）
+    setX(start, stop, timeAxis) {
       this.x0 = start;
       this.x1 = stop > start ? stop : start + 1;
-      this.zeroSpan = !!zeroSpan;
+      this.timeAxis = timeAxis && timeAxis.kind === "time" ? timeAxis : null;
+      this.zeroSpan = !!this.timeAxis;
       this._applyLabels();
       this.u.setScale("x", { min: this.x0, max: this.x1 });
     }
@@ -177,10 +212,13 @@
       this.u.redraw(false, true);
     }
 
-    setY(ref, div, unit) {
+    // linear・decimals は |Γ|・SWR の縦軸（ref は一番上 = 下端 + 10 目盛）と目盛の数字の桁（設計R §3）
+    setY(ref, div, unit, linear, decimals) {
       this.ref = ref;
       this.div = div;
       this.unit = unit || this.unit;
+      this.linear = !!linear;
+      this.decimals = decimals || 1;
       this.zeroLine = this.unit === "dB";
       this._applyLabels();
       this.u.setScale("y", { min: ref - DIVISIONS * div, max: ref });
@@ -235,10 +273,26 @@
       this.planMarks = marks || [];
       this.u.redraw(false);
     }
+    // 内部の漏れの印（設計L §1.4）: グラフの上端に小さな ▼。説明はマウスの位置の読み値に出る（Qt と同じ）
+    setLeaks(list) {
+      const next = list || [];
+      if (JSON.stringify(next) === JSON.stringify(this.leaks)) return;
+      this.leaks = next;
+      this.u.redraw(false);
+    }
+    // 1画素の周波数の幅（Hz。マウスの位置の読み値で狭い印を拾う幅）
+    pxHz() { return (this.x1 - this.x0) / Math.max(1, (this.u.over && this.u.over.clientWidth) || this.u.bbox.width); }
     setMarkers(rows, selected) { this.markers = rows || []; this.selectedMarker = selected; this.u.redraw(false); }
     setXY(xy) { this.xy = xy; this.u.redraw(false); }
     // マーカーの機能の線（G §3.6）: マーカー表の行のうち line を持つもの。出さないときは空を渡す
     setFunctionLines(rows) { this.functionRows = (rows || []).filter((r) => r.line); this.u.redraw(false); }
+    // オフセットのカーソルの線と名前: マーカー表の行を渡す（名前は表と同じ文字）
+    setCursorRows(rows) {
+      this.cursorRows = (rows || []).filter((r) => (r.kind === "freq_cursor" || r.kind === "level_cursor") && !XY_NAMES[r.id]);
+      this.u.redraw(false);
+    }
+    // 縦軸と単位の違う（描いていない）トレースのマーカー・カーソル・機能の線は描かない（設計R §3。Qt の MarkerLayer と同じ）
+    _onAxis(r) { return !r.unit || r.unit === this.unit; }
 
     // ---- 描く
 
@@ -251,10 +305,11 @@
       ctx.clip();
       const dpr = b.width / Math.max(1, u.over ? u.over.clientWidth || b.width : b.width);
       if (!this.zeroSpan) this._drawBands(u, dpr || 1);
+      if (!this.zeroSpan) this._drawLeaks(u, dpr || 1);
       if (this.zeroLine) this._hline(u, 0, this.colors.zero_db, [], 1.5);
       for (const t of this.traces) this._drawTrace(u, t);
       if (!this.zeroSpan) this._drawFunctionLines(u);
-      this._drawCursors(u);
+      this._drawCursors(u, dpr || 1);
       this._drawMarkers(u, dpr || 1);
       if (!this.zeroSpan) this._drawBandplan(u, dpr || 1);
       ctx.restore();
@@ -359,6 +414,47 @@
       }
     }
 
+    // 内部の漏れの印: 上端から下を指す小さな三角（Qt の ▼ と同じ形・色は配色の「注意」）
+    _drawLeaks(u, dpr) {
+      const ctx = u.ctx;
+      const b = u.bbox;
+      const h = LEAK_MARK_PX * Math.max(1, dpr);
+      for (const m of this.leaks) {
+        const px = u.valToPos(m.freq_hz, "x", true);
+        if (px < b.left || px > b.left + b.width) continue;
+        ctx.fillStyle = m.fill;
+        ctx.beginPath();
+        ctx.moveTo(px - h / 2, b.top);
+        ctx.lineTo(px + h / 2, b.top);
+        ctx.lineTo(px, b.top + h * 0.8);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // ステップ掃引を全部重ねた段ごとの線（設計L §1.3）: トレースの色の細く薄い線で、トレースの線の下に描く
+    _drawStepLines(u, t) {
+      const st = t.steps;
+      const ctx = u.ctx;
+      ctx.globalAlpha = STEP_LINE_ALPHA;
+      ctx.strokeStyle = t.color;
+      ctx.lineWidth = Math.max(1, this.lineBase * 0.5);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      for (const row of st.rows) {
+        let pen = false;
+        for (let i = 0; i < row.length; i++) {
+          const v = row[i];
+          if (!Number.isFinite(v)) { pen = false; continue; }  // 値の無い点で線を切る
+          const px = u.valToPos(st.x0 + st.dx * i, "x", true);
+          const py = u.valToPos(v, "y", true);
+          if (pen) ctx.lineTo(px, py); else { ctx.moveTo(px, py); pen = true; }
+        }
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     _hline(u, level, color, dash, width) {
       const ctx = u.ctx;
       const b = u.bbox;
@@ -396,6 +492,7 @@
       const b = u.bbox;
       const n = t.y.length;
       if (!n) return;
+      if (t.steps) this._drawStepLines(u, t);  // 段ごとの線は周波数軸のときだけ届く（設計L §1.3）
       const useMin = !!t.minHold;
       const segments = [[0, n, t.color]];
       if (t.head > 0 && t.dimColor) segments.splice(0, 1, [0, Math.min(n, t.head + 1), t.dimColor], [t.head, n, t.color]);
@@ -466,6 +563,7 @@
       const ctx = u.ctx;
       ctx.globalAlpha = FUNCTION_LINE_ALPHA;
       for (const r of this.functionRows) {
+        if (!this._onAxis(r)) continue;
         const color = r.parent != null && r.parent === this.selectedMarker ? c.accent : c.marker;
         this._hline(u, r.line.level, color, FUNCTION_LINE_DASH, 1);
         for (const f of r.line.freqs_hz || []) this._vline(u, f, color, FUNCTION_LINE_DASH);
@@ -473,16 +571,75 @@
       ctx.globalAlpha = 1;
     }
 
-    _drawCursors(u) {
+    _drawCursors(u, dpr) {
       const c = this.colors;
-      for (const m of this.markers) {
-        for (const r of m.freq_offsets || []) if (r.freq_hz != null) this._vline(u, r.freq_hz, c.marker, [4, 4]);
-        for (const r of m.level_offsets || []) if (r.level != null) this._hline(u, r.level, c.marker, [4, 4]);
+      const labels = [];
+      let nv = 0;
+      for (const r of this.cursorRows) {
+        if (!this._onAxis(r)) continue;
+        const color = r.parent != null && r.parent === this.selectedMarker ? c.accent : c.marker;
+        const name = String(r.name || "").trim();
+        if (r.kind === "freq_cursor" && r.freq_hz != null) {
+          this._vline(u, r.freq_hz, color, CURSOR_DASH);
+          labels.push(["v", r.freq_hz, CURSOR_LABEL_V - CURSOR_LABEL_STAGGER * (nv++ % 3), name, color, CURSOR_LABEL_FILL]);
+        } else if (r.kind === "level_cursor" && r.value != null) {
+          this._hline(u, r.value, color, CURSOR_DASH);
+          labels.push(["h", r.value, CURSOR_LABEL_H, name, color, CURSOR_LABEL_FILL]);
+        }
       }
-      const xy = this.xy;
-      if (!xy) return;
-      for (const k of ["x1_hz", "x2_hz"]) if (xy[k] != null) this._vline(u, xy[k], c.accent, [2, 3]);
-      for (const k of ["y1", "y2"]) if (xy[k] != null) this._hline(u, xy[k], c.accent, [2, 3]);
+      const xy = this.xy || {};
+      for (const [k, n] of [["x1_hz", "X1"], ["x2_hz", "X2"]]) {
+        if (xy[k] == null) continue;
+        this._vline(u, xy[k], c.accent, []);
+        labels.push(["v", xy[k], XY_LABEL_V, n, c.accent, XY_LABEL_FILL]);
+      }
+      for (const [k, n] of [["y1", "Y1"], ["y2", "Y2"]]) {
+        if (xy[k] == null) continue;
+        this._hline(u, xy[k], c.accent, []);
+        labels.push(["h", xy[k], XY_LABEL_H, n, c.accent, XY_LABEL_FILL]);
+      }
+      // 名前は線を全部描いてから（ほかの線の下に隠れないように）
+      for (const l of labels) this._lineLabel(u, dpr, ...l);
+    }
+
+    // 線の脇の名前（背景を敷く）。名前は線から見てグラフの真ん中の側に置く（Qt の画面のグラフの部品 pyqtgraph と同じ:
+    // 端の近くの線でも名前が枠の外へ出ない）。縦線は真ん中より左の線なら右、そうでなければ左。横線は真ん中より上の線なら下、
+    // そうでなければ上
+    _lineLabel(u, dpr, dir, val, pos, text, color, fill) {
+      if (!text) return;
+      const ctx = u.ctx;
+      const b = u.bbox;
+      const s = Math.max(1, dpr);
+      ctx.font = `${Math.round(12 * s)}px sans-serif`;
+      const pad = 2 * s;
+      const w = ctx.measureText(text).width + 2 * pad;
+      const h = 15 * s;
+      let x;
+      let y;
+      if (dir === "v") {
+        const px = u.valToPos(val, "x", true);
+        if (px < b.left - 1 || px > b.left + b.width + 1) return;
+        x = px < b.left + b.width / 2 ? px + pad : px - pad - w;
+        y = b.top + b.height * (1 - pos) - h / 2;
+      } else {
+        const py = u.valToPos(val, "y", true);
+        if (py < b.top - 1 || py > b.top + b.height + 1) return;
+        x = Math.max(b.left, b.left + b.width * pos - w / 2);
+        y = py < b.top + b.height / 2 ? py + pad : py - pad - h;
+      }
+      this._labelBox(ctx, x, y, w, h, fill);
+      ctx.fillStyle = color;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, x + pad, y + h / 2);
+    }
+
+    // 名前の背景（グラフの背景の色を薄く敷く。Qt の名前の fill と同じ）
+    _labelBox(ctx, x, y, w, h, fill) {
+      ctx.globalAlpha = fill;
+      ctx.fillStyle = this.colors.graph_bg;
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
     }
 
     _drawMarkers(u, dpr) {
@@ -493,7 +650,7 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
       for (const m of this.markers) {
-        if (m.freq_hz == null || m.level == null) continue;
+        if (m.freq_hz == null || m.level == null || !this._onAxis(m)) continue;
         const px = u.valToPos(m.freq_hz, "x", true);
         const py = u.valToPos(m.level, "y", true);
         const sel = m.id === this.selectedMarker;
@@ -504,7 +661,12 @@
         ctx.lineTo(px + 5 * s, py - 11 * s);
         ctx.closePath();
         ctx.fill();
-        ctx.fillText(m.kind + m.number, px, py - 12 * s);
+        // 名前は背景を敷いて、トレースと重なっても読めるようにする（Qt の名前と同じ）
+        const name = m.kind + m.number;
+        const tw = ctx.measureText(name).width + 4 * s;
+        this._labelBox(ctx, px - tw / 2, py - 12 * s - 14 * s, tw, 14 * s, MARKER_LABEL_FILL);
+        ctx.fillStyle = sel ? c.accent : c.marker;
+        ctx.fillText(name, px, py - 12 * s);
       }
     }
 

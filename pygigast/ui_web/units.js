@@ -137,8 +137,32 @@
     return f % 2 === 0 ? f : f + 1;
   }
 
+  // ゼロスパンの時間（設計N §1。core/units.py の parse_time_us・format_time_us・time_axis_unit と同じ）。
+  // 位置はマイクロ秒の整数。打つときの単位は s・ms・μs（省いたら ms）
+  const TIME_EXP = { s: 6, ms: 3, us: 0, "µs": 0, "μs": 0 };
+  const TIME_RE = /^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(s|ms|us|µs|μs)?\s*$/;
+  function parseTimeUs(text, defaultUnit = "ms") {
+    const m = TIME_RE.exec(String(text).replace(/−/g, "-"));
+    if (!m) throw new ParseError(text);
+    const n = Number(scaleRound(m[1], TIME_EXP[m[2] || defaultUnit]));
+    if (!Number.isSafeInteger(n)) throw new ParseError(text);
+    return n;
+  }
+  // マイクロ秒を ms の小数3桁で書く（端数のマイクロ秒は偶数丸め）
+  function formatTimeUs(us) {
+    const v = pyRound(Number(us));
+    const a = Math.abs(v);
+    const s = `${Math.floor(a / 1000)}.${String(a % 1000).padStart(3, "0")}`;
+    return `${v < 0 ? "-" : ""}${s} ms`;
+  }
+  // 時間軸の目盛の単位 [1単位のマイクロ秒, 名前]。2 s 以上は s、2 ms 以上は ms、それより狭いと μs
+  function timeAxisUnit(spanUs) {
+    const a = Math.abs(spanUs);
+    return a >= 2e6 ? [1e6, "s"] : a >= 2e3 ? [1e3, "ms"] : [1, "μs"];
+  }
+
   const api = { ParseError, parseFreqHz, formatFreq, freqFieldText, parseDb, digitExponent, minusSign, levelText,
-                dragRefLevel };
+                dragRefLevel, parseTimeUs, formatTimeUs, timeAxisUnit };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GSUnits = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QApplication
 
-from . import keymap, marker_rows, menus, screen_model, texts, theme
+from . import keymap, marker_rows, menus, screen_model, source_view, texts, theme
 from .theme import stylesheet
 
 if TYPE_CHECKING:
@@ -75,6 +75,10 @@ def apply_view(win: "MainWindow", st: dict) -> None:
         getattr(win, name).set_offset(off)
     win.plot.getPlotItem().getAxis("bottom").set_offset(off)
     win.mouse_reading.offset_fn = lambda: texts.freq_offset_of(win.state)
+    # 内部の漏れの印（設計L §1.4）: グラフの上端の ▼ と、マウスの位置の読み値の説明（Web と同じ source_view）
+    leaks = source_view.leak_marks_view(st)
+    win.mark_bands.set_leaks(leaks)
+    win.mouse_reading.leaks_fn = lambda: source_view.leak_marks_view(win.state)
     win.display_tab.apply_state(st)
     fill = (st.get("view") or {}).get("draw_style") == "fill"
     if fill != win.traces.fill:

@@ -166,6 +166,10 @@ class PlaybackMixin:
             for pos, s in enumerate(src.segments):
                 if not s.n_sweeps:
                     continue
+                if int(s.step_hz) == 0:
+                    # ゼロスパンの区間（横軸が時間: 設計N §1）は周波数の横軸のウォーターフォールとスペクトルに載らない。
+                    # 時間軸の再生は決めていないので、開かずに理由を返す
+                    raise CommandError("playback_zero_span", None, {"file": Path(path).name})
                 levels, offset, ref, meta = self._segment_levels(src, pos)
                 if not levels.can_convert:
                     problems.append({"code": "playback_segment_unreadable", "segment": pos})
@@ -206,9 +210,8 @@ class PlaybackMixin:
         self._density_src.clear()
         self._density.key = None
         self._wf_auto.reset()
-        self._wf_epoch += 1
-        self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "reset": True,
-                                 "range": self._wf_range(), "rows": []})
+        self._wf_last = None  # 行の単位は次に出す掃引で決まる（記録の行・ライブの行）
+        self._wf_reset_rows()
         layout_changed = False
         if self._view_opts.get("layout") != "waterfall":
             # 記録を開くとウォーターフォールに全体が出る（P §5）。表示の組み合わせを変えたことは知らせる（黙って変えない）
@@ -425,9 +428,8 @@ class PlaybackMixin:
         self._density_src.clear()
         self._density.key = None
         self._wf_auto.reset()
-        self._wf_epoch += 1
-        self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "reset": True,
-                                 "range": self._wf_range(), "rows": []})
+        self._wf_last = None  # 行の単位は次に出す掃引で決まる（記録の行・ライブの行）
+        self._wf_reset_rows()
         self._emit_visible_traces()
         self._notice("playback_closed", {"name": s.name})
         self._changed()
@@ -530,8 +532,8 @@ class PlaybackMixin:
         """記録の [t_lo, t_hi] の行（古い順・多くても max_rows 行くらい。書き込みスレッドで呼ぶ）。"""
         rows: list[wf.Row] = []
         for pos, s in enumerate(src.segments):
-            if not s.n_sweeps:
-                continue
+            if not s.n_sweeps or s.step_hz == 0:
+                continue  # ゼロスパンの区間は周波数の横軸に載らないので行にしない（設計N §1）
             ts = src.times(pos)
             s0 = 0 if t_lo is None else int(np.searchsorted(ts, t_lo, side="left"))
             s1 = len(ts) if t_hi is None else int(np.searchsorted(ts, t_hi, side="right"))
@@ -665,4 +667,18 @@ class PlaybackMixin:
     def _check_not_playing(self) -> None:
         if self._playback is not None:
             raise self._error("playback_active")
+
+    def _playback_refusal(self) -> Optional[dict]:
+        """いま再生に入れない理由（開く結果の errors の1行の形）。入れるなら None。
+
+        ゼロスパンの間: マーカー・トレースの横軸がいまの条件の時間軸になる（設計N §1）ので、周波数の記録を載せない。
+        基準・校正の測定とステップ掃引の最中: いまの条件と別の条件で測っている（終わるまで条件と動作を変えない）。
+        """
+        if self._adopted.axis.step_hz == 0:
+            return {"code": "playback_zero_span_live", "detail": {}}
+        try:
+            self._check_not_taking_reference()
+        except CommandError as e:
+            return {"code": e.code, "detail": dict(e.detail or {})}
+        return None
 

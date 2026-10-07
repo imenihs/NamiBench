@@ -12,7 +12,7 @@ from __future__ import annotations
 MODES = (
     ("sa", "SA", "スペクトラムアナライザ", None),
     ("tg", "TG", "伝送特性", None),
-    ("s11", "S11", "反射", "反射（方向性結合器）の測定はまだ使えません"),
+    ("s11", "S11", "反射", None),
     ("sg", "SG", "信号源", None),
     ("nf", "NF", "NF 測定", "NF 測定はまだ使えません"),
 )
@@ -25,7 +25,6 @@ MODE_UNSUPPORTED = "この機器はこのモードで測れません（受信だ
 
 NOT_YET = {
     "file": "保存・読込・書き出しはまだ使えません",
-    "cal": "校正の画面はまだ使えません",
     "view": "表示の切り替えはまだ使えません",
     "settings": "設定の画面はまだ使えません",
     "settings_keys": "キー操作の割り当ての画面はまだ使えません",
@@ -36,8 +35,6 @@ NOT_YET = {
     "unit": "dBμV・dBmV への切り替えはまだ使えません",
     "ext": "外部補正（アッテネータ・アンプ）はまだ使えません",
     "bandplan": "バンドプラン・ブックマークはまだ使えません",
-    "s11": "S11（反射）モードはまだ使えません",
-    "step": "ステップ掃引はまだ使えません",
     "nf": "NF 測定はまだ使えません",
     "freq_offset": "周波数オフセット（変換器の観測用）はまだ使えません",
     "generic": "まだ使えません",
@@ -94,7 +91,7 @@ MENU_ITEMS = {
     "marker_remove": "選んでいるマーカーを消す",
     "marker_clear": "マーカーを全部消す",
     "marker_copy": "マーカー表をコピー（タブ区切り）",
-    "cal_freq": "周波数特性…",
+    "cal_freq": "周波数特性と全体のレベル…",
     "cal_rbw": "RBW…",
     "cal_nf": "NF の増幅度…",
     "cal_legacy": "旧校正ファイルを読み込む…",
@@ -129,7 +126,7 @@ MENU_LAYOUT = (
 
 # まだ作っていない項目と、その理由（NOT_YET のキー）
 MENU_NOT_YET = {
-    "self_test": "diag", "cal_freq": "cal", "cal_rbw": "cal", "cal_nf": "cal",
+    "self_test": "diag",
     "view_waterfall": "waterfall", "view_density": "density",
 }
 
@@ -243,7 +240,6 @@ TEMPLATES = {
     "saved": "保存しました: {name}",
     "trace_note": "トレース {n}: {text}",
     # グラフの上のマウスの位置の読み値（G §2）。ゼロスパンの横軸は点の番号
-    "mouse_point": "点 {n}",
     "task_done_path": "{done}: {name}",
     "open_done": "開きました: {n} ファイル",
     "open_errors": "・開けなかったもの: {list}",

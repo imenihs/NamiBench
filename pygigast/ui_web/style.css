@@ -42,6 +42,8 @@
   --w-value: 169px;
   --w-name: 208px;
   --w-color: 78px;
+  /* 信号源のタブの基準の一覧の高さの下限（数行。Qt の tab_source.REF_LIST_MIN_H と同じ） */
+  --ref-list-min-h: 90px;
   color-scheme: dark;
 }
 [v-cloak] { display: none; }
@@ -62,6 +64,8 @@ select { padding-right: 2px; flex: none; width: auto; max-width: none; }
 button { padding: 0 var(--btn-pad-x); min-width: var(--btn-min-w); white-space: nowrap; cursor: pointer; flex: none; }
 button:disabled { color: var(--axis); cursor: default; }
 button.primary { background: var(--accent); color: var(--graph-bg); border-color: var(--accent); }
+/* 次に押すボタン（S11 のオープン → ショートを1段ずつ: 設計E §6.5。Qt の QPushButton[primary] と同じ見え方） */
+button.next:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 input:disabled, select:disabled, textarea:disabled { color: var(--axis); }
 textarea { padding: 4px 6px; }
 /* 数値の欄に ▲▼ を付けない（S-07） */
@@ -336,6 +340,10 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
 .tavg { grid-column: 3; width: var(--col-a, auto); }
 .taft { grid-column: 4; width: var(--col-b, auto); }
 .tnote { grid-column: 1 / -1; contain: inline-size; justify-self: stretch; color: var(--warn); font-size: var(--font-s); } /* 表の幅で折り返す */
+/* 3行目: 表示の形式（設計R §3）。動作・平均の種類の真下（列 A。幅は列 A に形式の名前も入れて app.js の fitColumns が
+   決める: Qt の tab_traces と同じ）。縦軸と単位が違って描かない理由はその行に出し続ける（U-25） */
+.tfmt { grid-column: 3; width: var(--col-a, auto); }
+.tunit { grid-column: 1 / -1; contain: inline-size; justify-self: stretch; }
 /* 回数の欄: 打てる欄＋一覧の矢印（数値の欄の一覧と同じ形）。トレースの表では列 B の幅いっぱい */
 .count-field { display: inline-flex; align-items: stretch; }
 .count-input { width: var(--w-int); font-variant-numeric: tabular-nums; }
@@ -353,7 +361,7 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
             justify-items: start; }
 .fn-grid label.inline { white-space: nowrap; }
 
-/* ---- 上段の「直結を 0dB にする」（J §4.2）。TG・S11 のときだけ ---- */
+/* ---- 上段の「基準を取る」（J §4.2）。TG・S11 のときだけ ---- */
 .refquick { display: flex; gap: var(--gap); align-items: center; height: var(--h-l); }
 /* いまの基準の文: 小の段の字で2行まで（上段の高さに入る）。それより長い分は … にし、全文はツールチップ */
 .refquick-state { max-width: 150px; font-size: var(--font-s); line-height: 1.3; display: -webkit-box; -webkit-box-orient: vertical;
@@ -408,10 +416,22 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
 .setwin-body[data-page=display], .setwin-body[data-page=keys] { overflow: hidden; }
 .setwin-body[data-page=connection] > fieldset.group:first-child { flex: 1 1 auto; min-height: 0; }
 .pal-scroll, .keys-scroll, .known-scroll { flex: 1 1 auto; min-height: 90px; overflow: auto; align-self: stretch; border: 1px solid var(--grid); }
+/* 保存した配色（J §4.4.1）: 一覧は4行まで見せて中でスクロール（下の色の表に場所を残す。Qt の settings_palettes と同じ）。
+   その下のいまの配色の編集は、ボタンの行と色の表を1つのまとまりにする（まとまりの中は --gap: Qt と同じ） */
+.pal-saved { flex: 0 0 auto; }
+.pal-list-scroll { max-height: calc(4 * var(--row-h) + 2px); overflow: auto; align-self: stretch; border: 1px solid var(--grid); }
+.pal-list-scroll tbody tr { cursor: pointer; }
+.pal-list-scroll td.pal-warn { color: var(--warn); }
+.pal-edit { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); align-self: stretch; align-items: flex-start; }
 .mtable.pal td.mark { width: 1.2em; color: var(--accent); text-align: center; }
 /* 読みやすさの知らせは行の残りの幅で折り返す（横にスクロールさせない） */
 .mtable.pal td.pal-warn { width: 100%; color: var(--warn); white-space: normal; line-height: 1.2; }
 .mtable.keys tbody tr { cursor: pointer; }
+/* 信号源のタブの基準の一覧（Qt の一覧と同じ: 数行が見える高さを下限にし、行を選んで下のボタンで操作する） */
+.mtable.ref-list { min-height: var(--ref-list-min-h); display: block; border: 1px solid var(--axis); background: var(--graph-bg); }
+.mtable.ref-list tbody { display: table; width: 100%; }
+.mtable.ref-list tbody tr { cursor: pointer; }
+.ref-state { white-space: normal; }
 .keymsg { min-height: var(--h-m); display: flex; align-items: center; }
 .modal.presetwin { width: min(680px, 100%); }
 .preset-scroll { max-height: 40vh; overflow: auto; align-self: stretch; border: 1px solid var(--grid); }
@@ -424,6 +444,42 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
 /* ---- ピークの一覧（マーカーのタブの中。別ウィンドウにできる: J §4.3.2） */
 .part-head { display: flex; align-items: center; gap: var(--label-gap); align-self: stretch; }
 .part-head .tab-detach { margin-left: auto; }
+
+/* ---- 校正の画面（設計K。Qt の cal_dialog と同じ並び）: 手順の並び・中身（手順ごと）・戻る・次へ（左）と閉じる（右） ---- */
+.modal.calwin { width: min(1100px, 100%); height: min(820px, 92vh); overflow: hidden; gap: var(--gap); align-items: stretch; }
+.calwin-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--gap); }
+.calwin-body > .form { align-self: flex-start; }
+.cal-steps { gap: var(--gap); }
+.cal-step-on { font-weight: bold; color: var(--text); }
+.form > .cal-top { align-self: start; line-height: var(--h-m); }
+.cal-kinds { gap: 0; }
+.cal-diagram { display: flex; align-items: center; }
+.cal-box { display: inline-flex; align-items: center; height: var(--h-m); padding: 0 var(--btn-pad-x); white-space: nowrap;
+           border: 1px solid var(--accent); border-radius: 3px; background: var(--graph-bg); }
+.cal-arrow { color: var(--text-dim); flex: none; }
+.cal-freq { flex: 1 1 auto; min-height: 0; display: flex; gap: var(--gap); }
+.cal-points { flex: 2 1 0; min-width: 330px; overflow: auto; border: 1px solid var(--axis); }
+.cal-points tbody tr { cursor: pointer; }
+.cal-side { flex: 3 1 0; min-width: 0; }
+.cal-instruction { font-weight: bold; }
+.cal-progress progress { flex: 0 0 180px; }
+.cal-fill { flex: 1 1 auto; min-height: 0; }
+.cal-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; align-self: stretch; border: 1px solid var(--axis); }
+.mtable.cal-rbw { width: auto; }
+.mtable tr.cal-used td { font-weight: bold; }
+.cal-nf { display: grid; grid-template-columns: max-content max-content max-content; gap: var(--gap) var(--label-gap); align-items: center; }
+.mtable.cal-items { align-self: stretch; }
+.cal-graph-wrap { flex: 2 1 0; min-height: 120px; align-self: stretch; position: relative; display: flex; flex-direction: column;
+                  background: var(--graph-bg); border: 1px solid var(--axis); }
+.cal-graph { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.cal-legend { position: absolute; left: 70px; top: 12px; z-index: 2; display: flex; flex-direction: column; gap: 2px;
+              color: var(--text-dim); font-size: var(--font-s); pointer-events: none; }
+.cal-legend > span::before { content: ""; display: inline-block; width: 20px; margin-right: var(--gap); vertical-align: middle; }
+.cal-leg-before::before { border-top: 2px dashed var(--text-dim); }
+.cal-leg-after::before { border-top: 2px solid var(--accent); }
+.cal-check-points { flex: 3 1 0; }
+.modal-btns.cal-btns { justify-content: flex-start; }
+.cal-btns .cal-close { margin-left: auto; }
 
 /* マーカー表のセルを直す欄（G §3.7）: セルの幅に従う（J §4.11） */
 .mtable td.editable { cursor: text; }
@@ -440,7 +496,7 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
   .tab-body > .sec, .tab-body > .tsec { min-width: 0; max-width: 100%; }
   .tgrid { display: flex; flex-direction: column; align-items: flex-start; gap: var(--section-gap); }
   .trow { display: grid; grid-template-columns: var(--col-a, max-content) var(--col-b, max-content) var(--col-line, max-content);
-          grid-template-areas: "head stat stat" "act cnt clr" "avg aft line";
+          grid-template-areas: "head stat stat" "act cnt clr" "avg aft line" "fmt . .";
           justify-items: start; align-items: center; gap: var(--gap); max-width: 100%; }
   .thead { grid-area: head; display: flex; align-items: center; gap: var(--label-gap); }
   .tact { grid-area: act; }
@@ -449,7 +505,8 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
   .tavg { grid-area: avg; }
   .taft { grid-area: aft; }
   .tline { grid-area: line; }
+  .tfmt { grid-area: fmt; }
   .tstat { grid-area: stat; }
-  .tnote { grid-column: 1 / -1; }
+  .tnote, .tunit { grid-column: 1 / -1; }
   .tnum, .tvis { grid-column: auto; }
 }

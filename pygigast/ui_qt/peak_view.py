@@ -12,8 +12,9 @@ from __future__ import annotations
 from typing import Optional
 
 from ..core.marker.analysis import DIP, PEAK, POLARITIES
+from ..core.trace.formats import is_linear_unit, value_decimals
 from ..core.units import level_text
-from . import texts
+from . import source_view, texts
 
 # 名前が選択で変わるボタン・メニューの項目（マーカー表の上の並び。この順で並べる: Qt と Web で同じ）
 SEARCH_CODES = ("marker_peak", "marker_peak_left", "marker_peak_right", "marker_peak_lower", "marker_add")
@@ -49,11 +50,14 @@ def list_view(st: Optional[dict], polarity: str) -> dict:
     形: {"base": "noise_floor" | "max", "label", "tip", "diff_header", "reason": None | 理由}
     """
     L = texts.LABELS
+    # ゼロスパンは横軸が時間なので、周波数のピークの一覧は使わない（設計N §1。理由: U-08）
+    zero = ((st or {}).get("sweep") or {}).get("step_hz") == 0
+    freq_only = texts.ZERO_SPAN_TEXTS["freq_only"] if zero else None
     if ratio_shown(st):
         return {"base": "max", "label": L["from_max"], "tip": L["max_tip_dip" if polarity == DIP else "max_tip_peak"],
-                "diff_header": L["col_below_max_db"], "reason": None}
+                "diff_header": L["col_below_max_db"], "reason": freq_only}
     return {"base": "noise_floor", "label": L["from_floor"], "tip": L["floor_tip"], "diff_header": L["col_height_db"],
-            "reason": texts.REASON_TEXTS["dips_on_power"] if polarity == DIP else None}
+            "reason": freq_only or (texts.REASON_TEXTS["dips_on_power"] if polarity == DIP else None)}
 
 
 def list_views(st: Optional[dict]) -> dict:
@@ -76,31 +80,26 @@ def result_view(r: dict, freq_offset_hz: int = 0) -> dict:
     unit = r.get("unit") or ""
     base_level = r.get("base_level")
     by_max = r.get("base") == "max"
+    # |Γ|・SWR のトレース（設計R §3）は、その値の桁（|Γ| は3桁）。差の列は dB のまま（dB で探すため）
+    digits = value_decimals(unit)
+    linear = is_linear_unit(unit)
     if base_level is None:
         found = texts.w("peaks_found", n=len(peaks))
     else:
         found = texts.w("peaks_found_max" if by_max else "peaks_found_floor", n=len(peaks),
-                        level=level_text(float(base_level)), unit=unit)
+                        level=_num(float(base_level), digits) if linear else level_text(float(base_level)), unit=unit)
     rows = []
     for p in peaks:
         hz = int(p["freq_hz"])
+        # 内部の漏れの可能性の印（設計P §9.6・L §1.4）: 列の文字とツールチップ（漏れでなければ空）
+        leak, leak_tip = source_view.peak_leak(p.get("leak"), freq_offset_hz)
         rows.append({
             "freq_hz": hz,
             "freq": f"{(hz + int(freq_offset_hz or 0)) / 1e6:.6f}".rstrip("0").rstrip("."),
-            "level": f"{_num(float(p['level']), 2)} {unit}".strip(),
+            "level": f"{_num(float(p['level']), digits)} {unit}".strip(),
             "diff": _num(float(p["diff_db"]), 1) if p.get("diff_db") is not None else "",
-            "leak": leak_text(p.get("leak")),
+            "leak": leak,
+            "leak_tip": leak_tip,
         })
     header = texts.LABELS["col_below_max_db" if by_max else "col_height_db"]
-    # 内部の漏れの可能性の印（P §9.6・設計L §1.4）。印のある行が1つも無ければ列を出さない（空の列を出さない: U-15）
-    leak_header = texts.LABELS.get("col_leak", "") if any(r["leak"] for r in rows) else ""
-    return {"found": found, "diff_header": header, "rows": rows, "leak_header": leak_header}
-
-
-def leak_text(mark) -> str:
-    """コアの「内部の漏れの可能性の印」（_peak_leak_mark: 設計L §1.4 で決める）を一覧の文字にする。印が無ければ空。"""
-    if not mark:
-        return ""
-    if isinstance(mark, dict) and mark.get("text"):
-        return str(mark["text"])
-    return texts.LABELS.get("leak_mark", "")
+    return {"found": found, "diff_header": header, "rows": rows}

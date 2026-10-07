@@ -86,6 +86,10 @@ REASON_TEXTS.update({
     "wf_whole": "記録の全体を出しています",
     "wf_auto_on": "色の範囲を自動で追っています",
     "playback_active": "再生中です（ライブに戻ると使えます）",
+    # ゼロスパン（横軸が時間: 設計N §1）の間は、周波数の横軸のウォーターフォール・密度を出さない
+    "layout_zero_span": "ゼロスパン（横軸が時間）では使えません",
+    # |Γ|・SWR の行（設計R §3）は縦軸と同じ範囲で色を付ける（自動・下限・上限は dB の行のもの）
+    "wf_linear_axis": "|Γ|・SWR は縦軸と同じ範囲で色を付けます",
 })
 
 # 失敗の文（texts.ERRORS へ足す）
@@ -107,6 +111,8 @@ DISPLAY_ERRORS = {
     "bandplan_too_many": "帯とブックマークが多すぎます",
     "unknown_bookmark": "そのブックマークはもうありません",
     "playback_not_saved_file": "記録中の作業ファイルからは切り出せません（まとめた保存ファイルを開いてください）",
+    "playback_zero_span": "ゼロスパンの区間がある記録は再生できません",
+    "playback_zero_span_live": "ゼロスパンの間は記録を再生できません（Span を 0 より大きくしてから開いてください）",
 }
 
 # 長い処理（texts の TASK_* へ足す）: 再生している記録の切り出し（H §3.1）・CSV への書き出し（H §5）
@@ -148,9 +154,6 @@ LABELS.update({
     "part_density": "密度表示",
     "axis_time": "時刻",
     "axis_time_tip": "ドラッグ: その時間の範囲を出す\nホイール: 前後へずらす",
-    # ピークの一覧（P §9.6）: 内部の漏れの可能性の印の列（印を付けるのは設計L §1.4）
-    "col_leak": "内部の漏れ",
-    "leak_mark": "可能性あり",
     "waterfall_tip": "クリック: その時刻の掃引をスペクトルに出す\nShift を押しながら横にドラッグ: その範囲を Start/Stop に",
 })
 

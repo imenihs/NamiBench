@@ -18,7 +18,8 @@ from typing import Optional, Union
 
 import numpy as np
 
-from ..types import FreqAxis, Frame, Quantity, ValueKind
+from ..types import FreqAxis, Frame, Mode, Quantity, ValueKind
+from . import formats
 from .average import (
     NOTICE_LOG_AVERAGE_READS_LOW,
     AverageType,
@@ -161,6 +162,7 @@ class Trace:
         average_after: AverageAfterCount = AverageAfterCount.EXPONENTIAL,
         hold_after: HoldAfterCount = HoldAfterCount.CONTINUE,
         line: TraceLine = TraceLine.SOLID,
+        fmt: str = formats.DB,
     ) -> None:
         if not isinstance(number, int) or not 1 <= number <= TRACE_COUNT:
             raise ValueError(f"トレースの番号は 1〜{TRACE_COUNT}")
@@ -173,6 +175,8 @@ class Trace:
         self.average_after = AverageAfterCount(average_after)
         self.hold_after = HoldAfterCount(hold_after)
         self.line = TraceLine(line)
+        # 表示の形式（設計R §3）。選んだ形式を覚えておき、値に当たらないとき（S11 の比でない）は dB で出す
+        self.format = fmt
         self._validate()
 
         # 表示する値と、その値の条件
@@ -182,9 +186,15 @@ class Trace:
         self.value_kind: Optional[ValueKind] = None
         self.flags: dict[str, np.ndarray] = {}
         self.profile: dict = {}
+        # 値を測ったモード（S11 の比かどうかで、表示の形式の |Γ|・SWR が当たるかが決まる: 設計R §3）
+        self.mode: Optional[Mode] = None
         self.display_start_hz: Optional[int] = None
         self.display_stop_hz: Optional[int] = None
         self.last_update_time: Optional[float] = None
+        # SG のステップ掃引の結果（設計L §1.3。固定のトレースにだけ入る）: 全部重ねるときの段ごとの値 [段, 点]（リニア）と、
+        # 掃引の設定と済んだ段の数（凡例・保存に出す）。固定でなくなったら・値を捨てたら消す
+        self.steps: Optional[np.ndarray] = None
+        self.step_info: Optional[dict] = None
 
         # 蓄積（平均は平均の領域の値、最大・最小保持はリニアの値）と回数
         self._acc: Optional[np.ndarray] = None
@@ -201,6 +211,13 @@ class Trace:
             raise ValueError("回数は 1 以上の int か None")
         if self.action == TraceAction.AVERAGE and self.count is None:
             raise ValueError("平均は回数を持つ（設計F §2: 平均（回数指定））")
+        if not formats.is_format(self.format):
+            raise ValueError(f"表示の形式が不明: {self.format}")
+
+    @property
+    def effective_format(self) -> str:
+        """いま使う表示の形式（設計R §3）。選んだ形式が値に当たらなければ dB。"""
+        return formats.effective(self.format, self.mode, self.quantity)
 
     @property
     def effective_count(self) -> Optional[int]:
@@ -216,17 +233,22 @@ class Trace:
         hold_after=_UNSET,
         visible=_UNSET,
         line=_UNSET,
+        fmt=_UNSET,
     ) -> tuple[str, ...]:
         """設定を変える。渡した欄だけ変え、知らせのコードを返す。
 
         動作・回数・平均の種類が変わったら蓄積を捨てる（蓄積の意味が変わるため。設計に無い判断）。
         固定に変えたときは、いまの値を残す（比べるために残す: 設計F §5.2）。
-        表示するか・N 回に達した後の選び方・線（設計F §9）は何も捨てない。
+        表示するか・N 回に達した後の選び方・線（設計F §9）・表示の形式（設計R §3。値は同じで表し方だけ）は何も捨てない。
         """
         old = (self.action, self.count, self.average_type, self.average_after,
-               self.hold_after, self.visible, self.line)
+               self.hold_after, self.visible, self.line, self.format)
+        if fmt is not _UNSET and not formats.is_format(fmt):
+            raise ValueError(f"表示の形式が不明: {fmt}")  # ほかの欄はまだ変えていない
         if line is not _UNSET:
             self.line = TraceLine(line)  # 読めない線は ValueError（ほかの欄はまだ変えていない）
+        if fmt is not _UNSET:
+            self.format = fmt
         if action is not _UNSET:
             self.action = TraceAction(action)
         if count is not _UNSET:
@@ -246,13 +268,14 @@ class Trace:
                     raise ValueError("この値の種類では選べない平均の種類")
         except ValueError:
             (self.action, self.count, self.average_type, self.average_after,
-             self.hold_after, self.visible, self.line) = old
+             self.hold_after, self.visible, self.line, self.format) = old
             raise
 
         notices: list[str] = []
         if (self.action, self.count, self.average_type) != old[:3]:
             if self.action != TraceAction.FIXED:
                 self._discard(clear_values=self.action in ACCUMULATING_ACTIONS)
+                self.steps = self.step_info = None  # ステップ掃引の結果の印は固定の間だけ
         if self.average_after != old[3]:
             self._restart_published = False
         if (self.action == TraceAction.AVERAGE and self.effective_average_type() == AverageType.LOG
@@ -289,6 +312,7 @@ class Trace:
         if clear_values:
             self.values = None
             self.flags = {}
+            self.steps = self.step_info = None
 
     def discard(self) -> None:
         """蓄積を捨てる（単発の前など）。動作はそのまま（設計F §5.2.1）。"""
@@ -339,6 +363,7 @@ class Trace:
             raise ValueError("values の長さが軸の点数と違う")
         if self.action == TraceAction.FIXED:
             return self._result(changed=False)
+        self.steps = self.step_info = None
 
         notices: list[str] = []
         if self.axis is not None and (
@@ -356,6 +381,7 @@ class Trace:
         self.quantity = frame.quantity
         self.value_kind = frame.value_kind
         self.profile = copy.deepcopy(frame.profile)
+        self.mode = frame.adopted.mode if frame.adopted is not None else None
         self.display_start_hz = frame.display_start_hz
         self.display_stop_hz = frame.display_stop_hz
 
@@ -372,6 +398,31 @@ class Trace:
         if changed:
             self.last_update_time = frame.time
         return self._result(changed=changed, notices=tuple(notices))
+
+    def set_result(self, frame: Optional[Frame], steps: Optional[np.ndarray] = None,
+                   step_info: Optional[dict] = None) -> None:
+        """固定のトレースに値を入れる（SG のステップ掃引の結果: 設計L §1.3）。frame が None なら空にする。
+
+        frame の値・軸・量・印・プロファイル・表示の範囲・時刻をそのまま持つ。steps は全部重ねるときの段ごとの値
+        [段, 点]（リニア）。固定でないトレースには入れない（ValueError）。
+        """
+        if self.action != TraceAction.FIXED:
+            raise ValueError("ステップ掃引の結果は固定のトレースに入れる")
+        self._discard(clear_values=True)
+        if frame is None:
+            return
+        self.axis = frame.axis
+        self.quantity = frame.quantity
+        self.value_kind = frame.value_kind
+        self.profile = copy.deepcopy(frame.profile)
+        self.mode = frame.adopted.mode if frame.adopted is not None else None  # 測ったモード（表示の形式: 設計R §3）
+        self.display_start_hz = frame.display_start_hz
+        self.display_stop_hz = frame.display_stop_hz
+        self.values = np.asarray(frame.values, dtype=np.float64).copy()
+        self.flags = _flags_of(frame)
+        self.last_update_time = frame.time
+        self.steps = None if steps is None else np.asarray(steps, dtype=np.float64).copy()
+        self.step_info = None if step_info is None else dict(step_info)
 
     def _result(self, changed: bool, notices: tuple[str, ...] = ()) -> TraceUpdate:
         return TraceUpdate(

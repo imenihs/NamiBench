@@ -1,4 +1,4 @@
-"""画面の部品の語のうち、右のタブ・マーカー表・ファイルの窓・旧校正ファイル・閉じる確認などの語。
+"""画面の部品の語のうち、右のタブ・マーカー表・ファイルの窓・閉じる確認などの語。
 
 もとは Qt の画面のコードに直に書いていた語を、ここの表に移した（J §5: Qt と Web は同じ語の表から作る。
 J §4.9: 画面の語は表だけに置き、使わない語が入っていないことを試験で確かめる）。
@@ -152,7 +152,6 @@ LABELS.update({
     "show_bandplan": "バンドプランを表示",
     # ---- 信号源のタブ
     "sg_group": "SG",
-    "step_sweep": "ステップ掃引…",
     "take_name_placeholder": "空なら「TG 日時」",
     "average": "平均",
     "s11_open": "S11: オープンを測る",
@@ -199,13 +198,6 @@ LABELS.update({
     "unfinished_finish": "まとめる…",
     "unfinished_discard": "捨てる…",
     "unfinished_later": "あとで",
-    # ---- 旧校正ファイル（D §5.6）
-    "legacy_short": "旧校正ファイル",
-    "legacy_confirm": "このファイルを、接続中の機器（{serial}）の校正として取り込みますか？",
-    "legacy_sum_file": "元のファイル: {name}",
-    "legacy_sum_level": "全体のレベル: {db} dB",
-    "legacy_sum_rbw": "RBW ごと: {list}",
-    "legacy_sum_freq": "周波数特性（帯ごとの最小〜最大）:",
     # ---- 閉じる（H §4.1・U-18: 何が失われるかを言って聞く）
     "close_title": "閉じる",
     "close_confirm": "閉じると次のようになります。閉じますか？",
