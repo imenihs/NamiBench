@@ -70,6 +70,21 @@ class MarkerDefsTest(unittest.TestCase):
         u.from_defs({"markers": [], "xy": {"x1_hz": 1.5}})  # int でない X
         self.assertIsNone(u.xy.x1_hz)
 
+    def test_xy_y_kind_round_trip(self):
+        """Y を置いたときの縦軸の単位の種類も戻す。種類の無い前の版・読めない種類は分からない（None）。"""
+        t = MarkerTable()
+        t.set_xy(y1=2.0, y2=-40.0)
+        t.set_y_kind("y1", "swr")
+        t.set_y_kind("y2", "power")
+        u = MarkerTable()
+        u.from_defs(json.loads(json.dumps(t.to_defs())))
+        self.assertEqual((u.xy.y1, u.xy.y1_kind, u.xy.y2, u.xy.y2_kind), (2.0, "swr", -40.0, "power"))
+        u.from_defs({"markers": [], "xy": {"y1": 2.0, "y2": -40.0, "y2_kind": "dBm"}})
+        self.assertEqual((u.xy.y1_kind, u.xy.y2_kind), (None, None))
+        # 置き直した Y の種類は、呼ぶ側が入れ直すまで分からない
+        t.set_xy(y1=1.5)
+        self.assertEqual((t.xy.y1_kind, t.xy.y2_kind), (None, "power"))
+
     def test_set_trace(self):
         t = filled_table()
         t.set_trace("M1", 3)

@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
-from ..types import SweepRequest
+from ..types import Quantity, SweepRequest
 from . import analysis as an
 from .analysis import TraceView
 
@@ -86,8 +86,11 @@ class ThresholdSetting:
     fmt: str = an.formats.DB
     power: bool = False
 
-    def level_in(self, fmt: str) -> float:
-        """fmt の形式で言ったしきい値。"""
+    def level_in(self, fmt: str, ratio_view: bool = True) -> float:
+        """fmt の形式のトレースで使うしきい値。直すのは、比で決めたしきい値を比のトレースで読むときだけ（比の形式の間:
+        設計R §3）。電力で決めたしきい値・電力のトレースでは数字のまま（電力と比の間では直さない）。"""
+        if self.power or not ratio_view:
+            return self.level
         return an.formats.convert_value(self.level, self.fmt, fmt)
 
 
@@ -125,12 +128,23 @@ class XYCursors:
     """自由な XY カーソル（設計G §3.5）。トレースに載らず、値を読まない。
 
     x は周波数（Hz の int）、y はレベル（縦軸の単位の数値）。None は置いていない。
+    y1_kind・y2_kind は y を置いたときの縦軸の単位の種類（Y_KINDS: "power"＝電力の単位・"db"・"gamma"・"swr"＝比の
+    表示の形式。None は分からない前の版）。y は置いたときの単位にだけ従って直す: 電力の値は電力の縦軸のときに電力の
+    単位・外部補正の分だけずらし、比の形式の値は比の縦軸の形式が替わったときに同じ反射の大きさへ直す
+    （設計書 O §1.4・設計R §3）。
     """
 
     x1_hz: Optional[int] = None
     x2_hz: Optional[int] = None
     y1: Optional[float] = None
     y2: Optional[float] = None
+    y1_kind: Optional[str] = None
+    y2_kind: Optional[str] = None
+
+
+# XY カーソルの y を置いたときの縦軸の単位の種類（電力・比の表示の形式）
+Y_KIND_POWER = "power"
+Y_KINDS = (Y_KIND_POWER, an.formats.DB, an.formats.GAMMA, an.formats.SWR)
 
 
 @dataclass(frozen=True)
@@ -290,7 +304,8 @@ class MarkerTable:
         """
         return {
             "markers": [marker_to_def(m) for m in self.markers()],
-            "xy": {"x1_hz": self.xy.x1_hz, "x2_hz": self.xy.x2_hz, "y1": self.xy.y1, "y2": self.xy.y2},
+            "xy": {"x1_hz": self.xy.x1_hz, "x2_hz": self.xy.x2_hz, "y1": self.xy.y1, "y2": self.xy.y2,
+                   "y1_kind": self.xy.y1_kind, "y2_kind": self.xy.y2_kind},
             "excursion_db": float(self.excursion_db),
             "peak_threshold": None if self.peak_threshold is None else float(self.peak_threshold),
         }
@@ -330,6 +345,9 @@ class MarkerTable:
         if isinstance(xy, dict):
             try:
                 self.set_xy(**{k: xy.get(k) for k in ("x1_hz", "x2_hz", "y1", "y2")})
+                for k in ("y1", "y2"):
+                    kind = xy.get(k + "_kind")
+                    self.set_y_kind(k, kind if kind in Y_KINDS else None)
             except (KeyError, TypeError, ValueError):
                 self.xy = XYCursors()
         try:
@@ -643,12 +661,12 @@ class MarkerTable:
         if m.threshold is not None:
             # いまのトレースの表示の形式で言ったしきい値（決めたときの形式と違えば直す: 設計R §3）
             fmt = v.fmt if v is not None else m.threshold.fmt
-            level = m.threshold.level_in(fmt)
+            level = m.threshold.level_in(fmt, v is None or v.quantity == Quantity.RATIO)
             if v is None or r["idx"] is None:
                 b = an.Band(r["status"], an.Edge(r["status"]), an.Edge(r["status"]))
             else:
                 b = an.threshold_band(v, r["idx"], level, m.threshold.side)
-            shown = level if fmt == m.threshold.fmt else round(level, an.formats.threshold_decimals(fmt))
+            shown = level if level == m.threshold.level else round(level, an.formats.threshold_decimals(fmt))
             thr = {"level": shown, "side": m.threshold.side, **self._band_dict(b)}
         return bws, shape, thr
 
@@ -717,6 +735,14 @@ class MarkerTable:
                 if not math.isfinite(val):
                     raise ValueError(f"{k} は有限の値")
             setattr(self.xy, k, val)
+            if k.startswith("y"):
+                setattr(self.xy, k + "_kind", None)  # 置いたときの単位は呼ぶ側が入れる（set_y_kind）
+
+    def set_y_kind(self, k: str, kind: Optional[str]) -> None:
+        """y1・y2 を置いたときの縦軸の単位の種類（Y_KINDS か None）。y が無ければ None。"""
+        if k not in ("y1", "y2") or (kind is not None and kind not in Y_KINDS):
+            raise ValueError(f"{k} の単位の種類が不明: {kind}")
+        setattr(self.xy, k + "_kind", kind if getattr(self.xy, k) is not None else None)
 
     # ---- マーカーから条件を変える（設計G §3.4） ----
 
