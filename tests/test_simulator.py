@@ -71,6 +71,20 @@ class TestSynth(unittest.TestCase):
         self.assertLess(r.raw[(956_000_000 - 900_000_000) // 200_000], 200)
         self.assertLess(r.raw[(946_000_000 - 900_000_000) // 200_000], 200)
 
+    def test_moving_spur_shift_comes_from_profile(self):
+        # b3=1 で動くスプリアスの位置は機種のプロファイルの値（画面の漏れの印と同じ値: 設計L §1.4）
+        from pygigast.core.devices.gigast.protocol import default_profile
+
+        prof = default_profile()
+        self.assertEqual(prof["internal_spurs_hz"]["fixed_b3_shift_hz"], {"956000000": -10000000})
+        prof["internal_spurs_hz"]["fixed_b3_shift_hz"] = {"956000000": -20000000}
+        d = sim(profile=prof)
+        a = adopted(start_hz=900_000_000, step_hz=200_000, points=500, preroll=0, image_reject="off")
+        raw = d.measure(a).raw  # なし は b3=1 だけ
+        self.assertGreater(raw[(936_000_000 - 900_000_000) // 200_000], 1000)
+        self.assertLess(raw[(946_000_000 - 900_000_000) // 200_000], 200)
+        self.assertLess(raw[(956_000_000 - 900_000_000) // 200_000], 200)
+
     def test_accurate_4_removes_bursts(self):
         # 掃引ごとに位置の変わる山（T16）を出しても、帯の中の4回の合わせ方で雑音の床に残らない
         cfg = SynthConfig(bursts_per_sweep=5)

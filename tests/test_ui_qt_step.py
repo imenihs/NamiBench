@@ -106,19 +106,26 @@ class StepUiTest(UiBase):
 
     def test_leak_marks_and_peak_list(self):
         self.cmd("set_mode", mode="sg", sg_hz=500 * MHZ)
-        self.wait(lambda: len(self.win.mark_bands.leaks) == 3, what="漏れの印")
+        # イメージ除去「スピード」（初期値）では b3 で動く 956MHz のスプリアスは消えるので印は2つ
+        self.wait(lambda: len(self.win.mark_bands.leaks) == 2, what="漏れの印")
         items = [it for it, _m in self.win.mark_bands.leaks]
         self.assertEqual({it.textItem.toPlainText() for it in items}, {LEAK_SYMBOL})
-        self.assertEqual([m["freq_hz"] for _it, m in self.win.mark_bands.leaks], [956 * MHZ, 1480 * MHZ, 1980 * MHZ])
+        self.assertEqual([m["freq_hz"] for _it, m in self.win.mark_bands.leaks], [1480 * MHZ, 1980 * MHZ])
+        # なし（b3=1 だけ）では 946MHz にも印
+        self.cmd("set_sweep", image_reject="off")
+        self.wait(lambda: [m["freq_hz"] for _it, m in self.win.mark_bands.leaks] == [946 * MHZ, 1480 * MHZ,
+                                                                                      1980 * MHZ], what="946MHz の印")
+        self.cmd("set_sweep", image_reject="fast")
+        self.wait(lambda: len(self.win.mark_bands.leaks) == 2, what="スピードに戻す")
         # 消す（表示のタブ）→ 印が無くなる
         self.win.display_tab.leak_marks.setChecked(False)
         self.wait(lambda: not self.win.mark_bands.leaks, what="印を消す")
         self.assertIs(self.state()["view"]["leak_marks"], False)
         self.win.display_tab.leak_marks.setChecked(True)
-        self.wait(lambda: len(self.win.mark_bands.leaks) == 3, what="印を戻す")
+        self.wait(lambda: len(self.win.mark_bands.leaks) == 2, what="印を戻す")
         # マウスの位置の読み値（印の近く）
         mr = self.win.mouse_reading
-        self.assertEqual(len(mr.leaks_fn()), 3)
+        self.assertEqual(len(mr.leaks_fn()), 2)
         # ピークの一覧の列
         n0 = self.state()["run"]["sweep_count"]
         self.cmd("run", mode="single")

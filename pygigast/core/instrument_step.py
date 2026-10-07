@@ -25,6 +25,7 @@ from typing import Optional
 
 import numpy as np
 
+from . import display_marks as dm
 from . import step_sweep as ss
 from .instrument_common import sweep_key
 from .instrument_display import apply_trace_settings, display_values, trace_settings
@@ -300,20 +301,22 @@ class StepSweepMixin:
         if job is not None and number == job.trace and set(kw) - {"visible", "line", "fmt"}:
             raise self._error("step_sweep_trace", "number", {"number": number})
 
-    def _step_leaks(self, t) -> list[dict]:
+    def _step_leaks(self, t) -> Optional[list[dict]]:
         """ステップ掃引の結果のトレースが持つ、段ごとの SG からのずれの内部の漏れ（表示範囲の中。設計L §1.4）。
 
         段ごとに SG の周波数が違うので、SG + ずれ の漏れも段の数だけ別の周波数に重なっている。SG で測ったトレースなので
-        固定の周波数の漏れも持つ（いまのモードが SA でも）。ほかのトレースは空。
+        固定の周波数の漏れも持つ（いまのモードが SA でも）。ステップ掃引はいつもイメージ除去なし（b3=1 だけ）で送るので、
+        b3 で動く漏れは b3=1 の位置（956MHz → 946MHz: display_marks.fixed_leaks）。ステップ掃引の結果でなければ None。
         """
         info = getattr(t, "step_info", None)
         a = self._adopted
-        if not info or a.axis.step_hz <= 0:
+        if not info:
+            return None
+        if a.axis.step_hz <= 0:
             return []
         spurs = self._profile.get("internal_spurs_hz") or {}
         offs = spurs.get("sg_offset") or []
-        out = [{"freq_hz": int(f), "kind": "fixed", "offset_hz": None} for f in spurs.get("fixed") or []
-               if a.start_hz <= int(f) <= a.stop_hz]
+        out = [lk for lk in dm.fixed_leaks(self._profile, b3_both=False) if a.start_hz <= lk["freq_hz"] <= a.stop_hz]
         for f in ss.plan(info):
             for off in offs:
                 g = int(f) + int(off)
