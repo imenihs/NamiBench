@@ -110,7 +110,7 @@ def display_tab_view(st: dict) -> dict:
         "layout_reasons": layout_reasons(st),
         "trace": int(v.get("wf_trace") or 1),
         "traces": [{"code": n, "text": texts.w("trace_n", n=n)} for n in (1, 2, 3, 4)],
-        "auto": shown_auto,
+        "auto": auto,  # 設定のまま（|Γ|・SWR の間は理由付きで使えないだけ。黙って変えない）
         "auto_reason": texts.REASON_TEXTS["wf_linear_axis"] if linear else None,
         "lo": float(rng["lo"] if (shown_auto or linear) and rng.get("lo") is not None else v.get("wf_color_lo", -110.0)),
         "hi": float(rng["hi"] if (shown_auto or linear) and rng.get("hi") is not None else v.get("wf_color_hi", -20.0)),

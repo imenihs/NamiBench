@@ -187,7 +187,7 @@ class DisplayViewTest(unittest.TestCase):
         st["waterfall"]["range"] = {"lo": 1.0, "hi": 3.0, "auto": False, "axis": True}
         v = display_view.display_tab_view(st)
         self.assertEqual((v["auto"], v["auto_reason"], v["range_reason"], v["lo"], v["hi"]),
-                         (False, texts.REASON_TEXTS["wf_linear_axis"], texts.REASON_TEXTS["wf_linear_axis"], 1.0, 3.0))
+                         (True, texts.REASON_TEXTS["wf_linear_axis"], texts.REASON_TEXTS["wf_linear_axis"], 1.0, 3.0))
         self.assertEqual(display_view.waterfall_reading(0.0, 1, 100, 1.23456, "SWR")[-1], "1.23 SWR")
         self.assertEqual(display_view.waterfall_reading(0.0, 1, 100, 0.12345, "|Γ|")[-1], "0.123 |Γ|")
 
