@@ -299,6 +299,83 @@ class UnitFollowTest(S11Case):
         self.assertAlmostEqual(after["left_hz"], before["left_hz"], delta=2 * MHZ)
         self.assertAlmostEqual(after["right_hz"], before["right_hz"], delta=2 * MHZ)
 
+    def tg_ratio(self):
+        """TG モードで基準を取り、縦軸を基準との比にする（掃引2回）。"""
+        self.call("set_mode", mode="tg")
+        r = self.call("reference_take", kind="wide")
+        self.assertEqual(self.wait_task(r["task_id"])["code"], "task_done")
+        self.single()
+        self.single()
+        self.assertEqual(self.call("get_state")["display_quantity"], "ratio")
+
+    def test_power_threshold_not_shifted_while_the_axis_is_a_ratio(self):
+        """電力で決めたしきい値でも、縦軸が比の間は外部補正・電力の単位を替えてもずらさない（設計書 O §1.4）。"""
+        self.connect(100 * MHZ, 200 * MHZ)
+        self.single()
+        m = self.call("marker_add", kind="M", trace=1, freq_hz=150 * MHZ)
+        self.call("marker_function", id=m["id"], threshold={"level": -50.0, "side": "above"})
+        self.tg_ratio()
+
+        def threshold():
+            p = next(x for x in self.call("get_state")["markers"]["markers"] if x["id"] == m["id"])
+            return p["unit"], p["threshold"]["level"]
+
+        self.assertEqual(threshold(), ("dB", -50.0))
+        self.call("set_view", ext_db=20.0)
+        self.assertEqual(threshold(), ("dB", -50.0))
+        self.call("set_view", level_unit="dBuV")
+        self.assertEqual(threshold(), ("dB", -50.0))
+
+    def test_power_threshold_not_converted_as_a_ratio_format(self):
+        """電力で決めたしきい値は、SWR のトレースで読んでも比の形式の換算をしない（電力と比の間では直さない）。"""
+        self.connect(100 * MHZ, 200 * MHZ)
+        self.single()
+        m = self.call("marker_add", kind="M", trace=1, freq_hz=150 * MHZ)
+        self.call("marker_function", id=m["id"], threshold={"level": -50.0, "side": "above"})
+        self.call("set_mode", mode="s11")
+        for standard in ("open", "short"):
+            r = self.call("reference_take", kind="fine", standard=standard)
+            self.assertEqual(self.wait_task(r["task_id"])["code"], "task_done")
+        self.call("set_trace", number=1, format="swr")
+        self.single()
+        p = next(x for x in self.call("get_state")["markers"]["markers"] if x["id"] == m["id"])
+        self.assertEqual((p["unit"], p["threshold"]["level"]), ("SWR", -50.0))
+
+    def test_xy_y_set_on_a_power_axis_is_not_converted_as_a_ratio_format(self):
+        """電力の縦軸で置いた Y は、比の縦軸（SWR を覚えていても）に戻っても形式の換算をしない。"""
+        self.s11_reference()
+        self.call("set_trace", number=1, format="swr")
+        self.ratio_trace()
+        self.call("set_xy", y1=2.0)
+        self.call("set_mode", mode="sa")
+        self.single()
+        self.call("set_xy", y1=-40.0, y2=-60.0)
+        self.tg_ratio()
+        xy = self.call("get_state")["markers"]["xy"]
+        self.assertEqual((xy["y1"], xy["y2"]), (-40.0, -60.0))
+
+    def test_xy_y_set_on_a_swr_axis_is_not_shifted_by_power_units(self):
+        """SWR の縦軸で置いた Y は、電力の縦軸で外部補正を替えてもずらさず、SWR の縦軸に戻ればそのまま SWR 2。
+        電力の縦軸で置いた Y は今までどおりずらす。"""
+        self.s11_reference()
+        self.call("set_trace", number=1, format="swr")
+        self.ratio_trace()
+        self.call("set_xy", y1=2.0)
+        self.call("set_mode", mode="sa")
+        self.single()
+        self.call("set_xy", y2=-60.0)
+        self.call("set_view", ext_db=10.0)
+        xy = self.call("get_state")["markers"]["xy"]
+        self.assertEqual((xy["y1"], xy["y2"]), (2.0, -50.0))
+        self.call("set_mode", mode="s11")
+        self.single()
+        self.assertEqual(self.call("get_state")["markers"]["xy"]["y1"], 2.0)
+        # 縦軸の形式を |Γ| に替えると、SWR で置いた Y だけを同じ反射の大きさに直す（電力で置いた Y は直さない）
+        self.call("set_trace", number=1, format="gamma")
+        xy = self.call("get_state")["markers"]["xy"]
+        self.assertAlmostEqual(xy["y1"], 1.0 / 3.0, places=6)
+        self.assertEqual(xy["y2"], -50.0)
+
 
 if __name__ == "__main__":
     unittest.main()

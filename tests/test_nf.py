@@ -301,6 +301,26 @@ class InstrumentNfTest(InstrumentCase):
         self.call("set_mode", mode="nf")
         self.assertEqual(self.call("get_state")["amplitude"]["ref_level"], 12.0)
 
+    def test_xy_y_on_nf_axis_follows_only_nf(self):
+        # NF の縦軸で置いた XY カーソルの Y は、電力の単位でずらさず、比の形式としても直さない（設計M・設計R §3）
+        self.nf_mode()
+        self.call("set_xy", y2=7.0)  # 掃引の前（値のあるトレースが無い）でも NF の縦軸
+        self.assertEqual(self.inst._markers.xy.y2_kind, "nf")
+        self.call("nf_set_enr", enr_db=15.0)
+        self.single()
+        self.call("set_xy", y1=6.0)
+        self.assertEqual(self.inst._markers.xy.y1_kind, "nf")
+        self.call("set_view", level_unit="dBuV")  # NF の間に単位を替えても動かない
+        self.call("set_mode", mode="sa")
+        self.single()
+        self.call("set_view", level_unit="dBm")  # 電力の縦軸で単位を替えても、NF で置いた Y は動かない
+        xy = self.inst._markers.xy
+        self.assertEqual((xy.y1, xy.y2, xy.y1_kind), (6.0, 7.0, "nf"))
+        self.call("set_xy", y1=-40.0)
+        self.call("set_view", level_unit="dBuV")
+        self.assertNotEqual(self.inst._markers.xy.y1, -40.0)  # 電力の縦軸で置いた Y はずれる（比べのため）
+        self.assertEqual(self.inst._markers.xy.y2, 7.0)
+
     def test_unit_view_in_nf(self):
         self.nf_mode()
         self.call("nf_set_enr", enr_db=15.0)

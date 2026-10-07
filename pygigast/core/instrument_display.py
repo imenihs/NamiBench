@@ -18,7 +18,7 @@ from . import display_marks as dm
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
-from .marker.markers import Marker
+from .marker.markers import Y_KIND_NF, Y_KIND_POWER, Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
@@ -54,7 +54,7 @@ AMPLITUDE_DEFAULTS = {AMP_KIND_LEVEL: {"ref_level": None, "unit": None, "db_per_
 def amp_kind_of(mode) -> str:
     return AMP_KIND_NF if mode == Mode.NF else AMP_KIND_LEVEL
 
-# 比の縦軸の単位 → 表示の形式（XY カーソルの Y を直す相手: _follow_axis_format）
+# 比の縦軸の単位 → 表示の形式（測ったトレースが無いときの縦軸の種類: _axis_kind）
 _RATIO_AXIS_FORMATS = {"dB": formats.DB, formats.UNIT_GAMMA: formats.GAMMA, formats.UNIT_SWR: formats.SWR}
 
 # 生の値の形（機種のプロファイルの raw.encoding）が RTL-SDR のもの（instrument_rtlsdr.py で換算する）
@@ -212,9 +212,6 @@ class DisplayMixin:
         # 変わったときだけ知らせる。起動して最初の掃引は「変わった」にしない）
         self._shown_quantity: Optional[Quantity] = None
         self._ref_auto_file_cache: dict = {}  # REF の自動の参照トレースの最大値（_ref_auto_state）
-        # 最後の比の縦軸の単位（dB・|Γ|・SWR。縦軸は表示している一番番号の小さいトレースの単位: 画面の
-        # screen_s11.axis_unit と同じ決まり）。替わったら XY カーソルの Y を同じ反射の大きさの値に直す（_follow_axis_format）
-        self._xy_axis_unit: Optional[str] = None
         st = st or {}
         self._trace_opts = restore_trace_options(st.get("trace_options"))
         # 前回終了時のトレースの設定・マーカーの置き方を戻す（設計O §1.2）。読めないものは既定のまま
@@ -487,30 +484,46 @@ class DisplayMixin:
         self._views = views
         self._follow_axis_format()
 
-    def _follow_axis_format(self) -> None:
-        """縦軸の形式が比の dB・|Γ|・SWR の間で替わったら、XY カーソルの Y（縦軸の単位の値）を同じ反射の大きさの
-        新しい形式の値に直す（設計R §3・設計書 O §1.4: 絵の意味はそのまま、数字の単位だけが替わる）。
+    def _axis_kind(self, without_traces: bool = True) -> Optional[str]:
+        """いまの縦軸の単位の種類（XY カーソルの Y を置いたときに記録する: markers.Y_KINDS）。
 
-        縦軸の単位は、表示していて値のある一番番号の小さいトレースの単位（画面の screen_s11.axis_unit と同じ）。値の
-        あるトレースが無い間は前のままにする（掃引を捨てた直後の間に、単位を行き来させない）。電力の縦軸（dBm など）の
-        間は比の形式を覚えたままにし、比の縦軸に戻ったときに、最後の比の形式から直す（電力の単位の替え方は
-        _set_view_opts）。
+        縦軸は、表示していて値のある一番番号の小さいトレースの単位（画面の screen_s11.axis_unit と同じ決まり）。
+        そのトレースが比なら表示の形式（"db"・"gamma"・"swr"）、NF なら "nf"（設計M）、電力なら "power"。値のある
+        トレースが無ければ、NF モードは "nf"、ほかは縦軸の単位（振幅の単位: 比の dB なら "db"、無い・電力の単位なら
+        "power"）。without_traces が偽なら None。
         """
-        first = next((t for t in self._traces if t.visible and t.values is not None and t.quantity is not None), None)
-        if first is None or first.quantity == Quantity.NF:
-            return  # NF の dB（設計M）は反射の大きさの縦軸ではないので、比の形式を覚えたままにする
-        unit = self._trace_display(first)[1]
-        fn = _RATIO_AXIS_FORMATS.get(unit)
-        if fn is None:
-            return
-        fp, self._xy_axis_unit = _RATIO_AXIS_FORMATS.get(self._xy_axis_unit), unit
-        if fp is None or fp == fn:
+        t = next((t for t in self._traces if t.visible and t.values is not None and t.quantity is not None), None)
+        if t is None:
+            if not without_traces:
+                return None
+            if self._adopted.mode == Mode.NF:
+                return Y_KIND_NF  # NF の縦軸（設計M）。掃引の前でも電力・比の値として扱わない
+            return _RATIO_AXIS_FORMATS.get(self._amplitude.get("unit"), Y_KIND_POWER)
+        if t.quantity == Quantity.NF:
+            return Y_KIND_NF
+        if t.quantity != Quantity.RATIO:
+            return Y_KIND_POWER
+        return self._trace_display(t)[2]
+
+    def _follow_axis_format(self) -> None:
+        """縦軸が比の dB・|Γ|・SWR のどれかのとき、XY カーソルの Y のうち別の比の形式で置いたものを、同じ反射の
+        大きさのいまの形式の値に直す（設計R §3・設計書 O §1.4: 絵の意味はそのまま、数字の単位だけが替わる）。
+
+        直すのは、置いたときの単位が比の形式だった Y だけ（電力の縦軸で置いた Y・NF の縦軸で置いた Y・前の版の分からない
+        Y は比の形式の値ではないので直さない）。縦軸が電力・NF の間は何もしない（比の形式の Y はそのまま持ち、比の
+        縦軸に戻ったときに置いたときの形式から直す）。値のあるトレースが無い間も何もしない（掃引を捨てた直後の間に、
+        残っている振幅の単位で形式を行き来させない）。電力の単位の替え方は _set_view_opts。
+        """
+        fn = self._axis_kind(without_traces=False)
+        if fn in (None, Y_KIND_POWER, Y_KIND_NF):
             return
         xy = self._markers.xy
         for k in ("y1", "y2"):
-            v = getattr(xy, k)
-            if v is not None:
-                setattr(xy, k, formats.convert_value(v, fp, fn))
+            v, fp = getattr(xy, k), getattr(xy, k + "_kind")
+            if v is None or fp in (None, Y_KIND_POWER, Y_KIND_NF) or fp == fn:
+                continue
+            setattr(xy, k, formats.convert_value(v, fp, fn))
+            setattr(xy, k + "_kind", fn)
 
     def _refresh_markers(self, emit: bool = True) -> None:
         self._marker_snap = self._markers.snapshot(self._views)
@@ -1080,6 +1093,12 @@ class DisplayMixin:
             raise self._error("not_integer", None, {"fields": sorted(kw)}) from None
         except ValueError as e:
             raise self._error("bad_value", None, {"message": str(e)}) from e
+        # Y は、置いたときの縦軸の単位の値として持つ（あとで単位・外部補正・形式を替えたときは、その単位に従ってだけ
+        # ずらす・直す: _set_view_opts・_follow_axis_format）
+        kind = self._axis_kind()
+        for k in ("y1", "y2"):
+            if k in kw:
+                self._markers.set_y_kind(k, kind)
         self._markers_changed()
         return {"xy": self._marker_snap["xy"]}
 

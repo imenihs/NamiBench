@@ -24,6 +24,7 @@ from pathlib import PurePath
 from . import view_units
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict
 from .instrument_zerospan import zero_span_request
+from .marker.markers import Y_KIND_POWER
 from .palette import BASES, IMPORT_MAX_CHARS, Palette, PaletteStore, normalize_color
 from .presets import PresetError, PresetStore
 from .sweep import image_reject as ir
@@ -92,7 +93,10 @@ class ViewMixin:
             self._amplitude["unit"] = view_units.level_shift(unit_for(Quantity.POWER, self._profile), new)[1]
         # NF の縦軸は NF の dB（単位・外部補正を当てない: 設計M）。NF に入って最初の掃引の前も動かさない
         if delta and self._last_quantity == Quantity.POWER and self._adopted.mode != Mode.NF:
-            # 縦軸に付いた値（REF・XY カーソルの Y・ピークのしきい値）は、いまの縦軸が電力のときだけずらす
+            # ずらすのは、いまの縦軸が電力のときだけ（比を出している間は単位も外部補正も当てず、何もずらさない:
+            # 設計書 O §1.4）。そのうえで、それぞれの値を決めたときの単位に従う: REF・ピークのしきい値は電力の縦軸の値、
+            # XY カーソルの Y は電力の縦軸で置いたもの（前の版の分からないものを含む）、マーカーのしきい値は電力の
+            # トレースで決めたものだけ。比の dB・|Γ|・SWR と NF の dB で決めた値は電力の単位に関係しない（設計R §3・設計M）
             if shift_levels:
                 ref = self._amplitude.get("ref_level")
                 self._amplitude["ref_level"] = round((0.0 if ref is None else float(ref)) + delta, 2)
@@ -100,14 +104,10 @@ class ViewMixin:
             for table in self._marker_tables.values():
                 xy = table.xy
                 for k in ("y1", "y2"):
-                    if getattr(xy, k) is not None:
+                    if getattr(xy, k) is not None and getattr(xy, k + "_kind") in (Y_KIND_POWER, None):
                         setattr(xy, k, round(getattr(xy, k) + delta, 2))
                 if table.peak_threshold is not None:
                     table.peak_threshold = round(table.peak_threshold + delta, 2)
-        if delta:
-            # マーカーのしきい値は、それぞれの単位に従う: 電力のトレースで決めたものだけを同じだけずらす。比の dB・|Γ|・
-            # SWR で決めたものは電力の単位に関係しない（いまの縦軸が電力でもずらさない: 設計R §3・設計書 O §1.4）
-            for table in self._marker_tables.values():
                 for m in table.markers():
                     if m.threshold is not None and m.threshold.power:
                         m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
