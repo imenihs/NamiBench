@@ -1,0 +1,273 @@
+"""Web の設計P（ウォーターフォール・密度・再生・バンドプラン）: バイナリの形・Web の口・waterfall.js の計算・画面。
+
+- イベント waterfall・density と命令 waterfall_rows はバイナリ（P §8）。Python で読み戻して確かめる
+- 読み値の文は Qt と同じ display_view.waterfall_reading（Web の口 waterfall_reading）
+- バンドプランの読み込みはアップロード、書き出しはダウンロード（Web の口はパスを受け取らない: 設計A §4.3.2 の 3）
+- waterfall.js の行を横の列に移す計算が Qt の waterfall_view.resample と同じ（Node）
+- 画面（ヘッドレスの Edge）: 表示の組み合わせ・ウォーターフォールの行・密度・再生の帯・ブックマーク
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import struct
+import subprocess
+import time
+import unittest
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import numpy as np
+
+from pygigast.api.web import server as web
+from pygigast.ui_qt import display_view, texts
+from tests.test_web_server import UI_WEB, WebServerTest
+
+MHZ = 1_000_000
+
+
+def decode(data: bytes) -> dict:
+    hlen = struct.unpack("<I", data[:4])[0]
+    h = json.loads(data[4:4 + hlen].decode("utf-8"))
+    dt = np.uint8 if h["value_type"] == "uint8" else np.dtype("<f4")
+    h["values"] = np.frombuffer(data[4 + hlen:], dtype=dt)
+    return h
+
+
+class EncodeTest(unittest.TestCase):
+    def test_waterfall_round_trip(self):
+        rows = [{"t": 1.0, "t_end": 1.0, "start_hz": 1, "step_hz": 2, "n": 3, "seg": 1, "sweeps": 1, "pos": None,
+                 "cond": {}, "zero_span": False, "values": np.array([1, 2, 3], dtype=np.float32)},
+                {"t": 2.0, "t_end": 2.0, "start_hz": 1, "step_hz": 2, "n": 2, "seg": 1, "sweeps": 1, "pos": [0, 1],
+                 "cond": {}, "zero_span": False, "values": np.array([np.nan, 5], dtype=np.float32)}]
+        h = decode(web.encode_waterfall({"epoch": 3, "seq": 9, "range": {"lo": -1, "hi": 1}, "rows": rows}))
+        self.assertEqual((h["kind"], h["epoch"], h["seq"], h["value_count"]), ("waterfall", 3, 9, 5))
+        self.assertEqual([r["n"] for r in h["rows"]], [3, 2])
+        self.assertNotIn("values", h["rows"][0])
+        np.testing.assert_array_equal(h["values"][:3], [1, 2, 3])
+        self.assertTrue(np.isnan(h["values"][3]))
+
+    def test_density_round_trip(self):
+        img = (np.arange(12, dtype=np.uint8).reshape(3, 4))
+        h = decode(web.encode_density({"image": img, "bins": 3, "cols": 4, "seconds": None}))
+        self.assertEqual((h["kind"], h["value_type"], h["bins"]), ("density", "uint8", 3))
+        np.testing.assert_array_equal(h["values"].reshape(3, 4), img)
+
+
+class WebDisplayServerTest(unittest.TestCase):
+    # 土台（シミュレータと本物の uvicorn・post・get・ws）は test_web_server と同じものを借りる（試験そのものは借りない）
+    setUp = WebServerTest.setUp
+    tearDown = WebServerTest.tearDown
+    post = WebServerTest.post
+    get = WebServerTest.get
+    ws = WebServerTest.ws
+
+    def post_bin(self, name, body):
+        req = urllib.request.Request(f"{self.srv.base}/api/v1/{name}", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.headers.get("content-type"), r.read()
+
+    def put(self, name, data: bytes):
+        req = urllib.request.Request(f"{self.srv.base}/api/v1/uploads?name={urllib.request.quote(name)}", data=data,
+                                     method="PUT", headers={"Content-Type": "application/octet-stream"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read())
+
+    def single(self):
+        n0 = self.api.get_state().result(5)["run"]["sweep_count"]
+        self.post("run", {"mode": "single"})
+        end = time.monotonic() + 20
+        while True:
+            st = self.api.get_state().result(5)
+            if st["run"]["state"] == "stopped" and st["run"]["sweep_count"] > n0:
+                return st
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.05)
+
+    def test_rows_binary_events_and_reading(self):
+        self.post("connect", {"backend": "simulator", "serial": "SIM00001"})
+        self.post("set_sweep", {"start_hz": 50 * MHZ, "stop_hz": 200 * MHZ})
+        self.post("set_view", {"layout": "density"})
+        with self.ws() as ws:
+            self.single()
+            got = {}
+            end = time.monotonic() + 20
+            while len(got) < 2 and time.monotonic() < end:
+                m = ws.recv(timeout=20)
+                if isinstance(m, bytes):
+                    h = decode(m)
+                    if h["kind"] in ("waterfall", "density"):
+                        got[h["kind"]] = h
+            self.assertEqual(sorted(got), ["density", "waterfall"])
+            self.assertEqual(got["waterfall"]["rows"][0]["start_hz"], 50 * MHZ)
+            self.assertEqual(got["density"]["values"].size, got["density"]["bins"] * got["density"]["cols"])
+        ctype, data = self.post_bin("waterfall_rows", {"max_rows": 10})
+        self.assertEqual(ctype, "application/octet-stream")
+        h = decode(data)
+        self.assertEqual(len(h["rows"]), 1)
+        self.assertEqual(h["value_count"], h["rows"][0]["n"])
+        st, r = self.post("waterfall_reading", {"t": h["rows"][0]["t"], "freq_hz": 60 * MHZ, "level": -50.25,
+                                                "unit": "dBm", "sweeps": 3})
+        self.assertEqual(st, 200)
+        want = display_view.waterfall_reading(h["rows"][0]["t"], 3, 60 * MHZ, -50.25, "dBm", 0)
+        self.assertEqual(r["lines"], want)  # Qt のツールチップと同じ文
+        st, r = self.post("waterfall_rows", {"max_rows": 0})
+        self.assertEqual((st, r["error"]["code"]), (400, "bad_value"))
+        st, info = self.get("/api/v1/info")
+        self.assertEqual(len(json.loads(info)["colormaps"]["viridis"]), 768)
+
+    def test_state_view_has_display_ui(self):
+        st, body = self.get("/api/v1/state")
+        ui = json.loads(body)["ui"]
+        d = ui["display"]
+        self.assertEqual(d["tab"]["layout"], "spectrum")
+        self.assertEqual(d["parts"]["waterfall"], texts.REASON_TEXTS["layout_waterfall"])
+        self.assertFalse(d["playback"]["visible"])
+        self.assertEqual([c["code"] for c in d["tab"]["colormaps"]][0], "viridis")
+        self.assertEqual(ui["run_reason"], texts.ERRORS["not_connected"])
+
+    def test_bandplan_upload_and_download(self):
+        plan = {"format": "pygigast-bandplan", "version": 1,
+                "bands": [{"name": "FM", "start_hz": 76 * MHZ, "stop_hz": 95 * MHZ, "color": "#4fa3ff"}],
+                "bookmarks": [{"name": "A", "hz": 80 * MHZ}]}
+        up = self.put("plan.json", json.dumps(plan).encode("utf-8"))
+        st, r = self.post("bandplan_load", {"upload_id": up["upload_id"]})
+        self.assertEqual(st, 200, r)
+        state = self.api.get_state().result(5)
+        self.assertEqual(state["bandplan"]["bands"][0]["name"], "FM")
+        st, r = self.post("bandplan_load", {"path": "C:/x.json"})
+        self.assertEqual(r["error"]["code"], "path_not_allowed")
+        st, r = self.post("bandplan_save", {"name": "mine"})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["name"], "mine.json")
+        st, data = self.get(f"/api/v1/files/{r['file_id']}")
+        self.assertEqual(json.loads(data.decode("utf-8"))["bookmarks"], [{"name": "A", "hz": 80 * MHZ}])
+
+    def test_playback_outputs_take_a_name(self):
+        # 切り出し・記録の CSV は名前で頼み、サーバーが置き場所を決める（パスは受け取らない）
+        for cmd, ext in (("playback_extract", ".h5"), ("playback_export_csv", ".csv")):
+            st, r = self.post(cmd, {"name": "../cut", "t_lo": 0, "t_hi": 1})
+            self.assertEqual((st, r["error"]["code"]), (400, "not_playing"), cmd)
+            st, r = self.post(cmd, {"path": "C:/x" + ext})
+            self.assertEqual(r["error"]["code"], "path_not_allowed", cmd)
+
+
+@unittest.skipUnless(shutil.which("node"), "Node が無い")
+class WaterfallJsTest(unittest.TestCase):
+    """waterfall.js の resample が Qt の waterfall_view.resample と同じ列を作る（Qt と Web で同じ絵: P §8）。"""
+
+    def test_resample_same_as_python(self):
+        from pygigast.ui_qt.waterfall_view import resample
+
+        rng = np.random.default_rng(1)
+        cases = []
+        for n, w, x0, x1, start, step in ((501, 700, 50e6, 200e6, 50e6, 3e5), (20, 700, 50e6, 200e6, 60e6, 1e6),
+                                          (4096, 300, 0, 1e9, 1e8, 1e5), (11, 50, 0, 10, 0, 1)):
+            v = rng.normal(-80, 5, n).astype(np.float32)
+            v[3] = np.nan
+            cases.append({"row": {"start_hz": start, "step_hz": step, "values": [None if np.isnan(x) else float(x) for x in v]},
+                          "x0": x0, "x1": x1, "w": w})
+        script = ("globalThis.window = globalThis; require(process.argv[1]);"
+                  "const cases = JSON.parse(require('fs').readFileSync(0, 'utf-8'));"
+                  "const out = cases.map((c) => { const r = { ...c.row, values: Float32Array.from(c.row.values.map((x) => x === null ? NaN : x)) };"
+                  " return Array.from(GSWaterfallUtil.resample(r, c.x0, c.x1, c.w)).map((x) => Number.isNaN(x) ? null : x); });"
+                  "console.log(JSON.stringify(out));")
+        out = subprocess.run(["node", "-e", script, str(UI_WEB / "waterfall.js")], input=json.dumps(cases),
+                             capture_output=True, text=True, encoding="utf-8", timeout=30, check=True).stdout
+        got = json.loads(out)
+        for c, g in zip(cases, got):
+            row = {"start_hz": c["row"]["start_hz"], "step_hz": c["row"]["step_hz"],
+                   "values": np.array([np.nan if x is None else x for x in c["row"]["values"]], dtype=np.float32)}
+            want = resample(row, c["x0"], c["x1"], c["w"])
+            g = np.array([np.nan if x is None else x for x in g], dtype=np.float32)
+            np.testing.assert_allclose(g, want, atol=1e-4, equal_nan=True)
+
+
+try:
+    from tests.test_web_layout import App, EdgePage, edge_available, open_app
+except Exception:  # noqa: BLE001
+    edge_available = lambda: False  # noqa: E731
+
+
+@unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
+class WebDisplayUiTest(unittest.TestCase):
+    """Web の画面: 表示の組み合わせ・ウォーターフォールの行・密度の絵・再生の帯・ブックマーク（Qt と同じ動き）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App()
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def sweep(self, n=1):
+        for _ in range(n):
+            n0 = self.app.call("get_state")["run"]["sweep_count"]
+            self.app.call("run", mode="single")
+            end = time.monotonic() + 20
+            while True:
+                st = self.app.call("get_state")
+                if st["run"]["state"] == "stopped" and st["run"]["sweep_count"] > n0:
+                    break
+                self.assertLess(time.monotonic(), end)
+                time.sleep(0.05)
+
+    def test_waterfall_density_bookmark_playback(self):
+        p = self.page
+        open_app(p, self.app, 1280, 720)
+        p.ev("gsApp.tab = 'view'; 1")
+        # 表示の組み合わせ（ラジオ）→ ウォーターフォール
+        p.ev("document.querySelector('input[name=layout][value=waterfall]').click(); 1")
+        p.wait("gsApp.layoutCode === 'waterfall' && !!gsApp.$wf", "＋ウォーターフォール")
+        self.app.call("record_start")
+        self.sweep(3)
+        p.wait("gsApp.$wf.shown.length >= 3", "1掃引＝1行")
+        p.settle()
+        self.assertTrue(p.ev("gsApp.$wf.follow"))
+        self.assertEqual(p.ev("document.querySelector('[data-field=wf_follow]').disabled"), True)
+        # 行のクリック → 過去のトレース
+        p.ev("gsApp.$wf.click(10, 1); 1")
+        p.wait("gsApp.files.some((f) => f.kind === 'past')", "過去のトレース")
+        # 時刻の範囲
+        p.ev("(() => { const s = gsApp.$wf.shown; gsApp.wfTimeRange(s[s.length - 1].t, s[0].t); return 1; })()")
+        p.wait("!gsApp.wfFollow && !document.querySelector('[data-field=wf_follow]').disabled", "時間の範囲")
+        p.ev("document.querySelector('[data-field=wf_follow]').click(); 1")
+        p.wait("gsApp.wfFollow", "最新へ")
+        # 密度
+        p.ev("document.querySelector('input[name=layout][value=density]').click(); 1")
+        p.wait("gsApp.layoutCode === 'density'", "＋密度")
+        self.sweep(1)
+        p.wait("!!(gsApp.$dens.d && gsApp.$dens.d.bins)", "密度の絵")
+        p.wait("gsApp.densitySeconds.startsWith('約')", "何秒分の密度か")
+        # ブックマーク（表示のタブで足す → グラフの下の端の印）
+        p.ev("gsApp.bmName = 'ビーコン'; gsApp.bmFreq = '120 MHz'; gsApp.bookmarkAdd(); 1")
+        p.wait("gsApp.bpView.list.length === 1", "ブックマークを足す")
+        p.settle()
+        self.assertEqual(p.ev("gsApp.$graph.planMarks.length"), 1)
+        # 再生
+        self.app.call("record_stop")
+        h5 = Path(self.app.tmp.name) / "web_rec.h5"
+        r = self.app.call("record_finish", path=str(h5))
+        end = time.monotonic() + 20
+        while not h5.exists():
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.1)
+        self.app.call("open", paths=[str(h5)])
+        p.wait("gsApp.pbView.visible && gsApp.pbActive", "再生の帯")
+        p.wait("!!document.querySelector('.pbbar [data-field=pb_play]')", "再生の帯の部品")
+        self.assertTrue(p.ev("document.querySelector('.run-btn').disabled"))
+        p.wait("gsApp.statusItems.some((s) => s.key === 'view' && s.text.startsWith('再生'))", "状態バーの再生")
+        p.ev("gsApp.pbSlide(2); 1")
+        p.wait("gsApp.pbView.index === 2", "つまみでカーソル")
+        p.ev("document.querySelector('[data-field=pb_live]').click(); 1")
+        p.wait("!gsApp.pbView.visible", "ライブに戻る")
+        self.assertEqual(p.errors, [])

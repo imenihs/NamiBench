@@ -5,7 +5,8 @@
 機器との送受信は機器スレッドが行い、結果を制御スレッドの待ち行列へ戻す。
 ディスクを待つ仕事は書き込みスレッドが行い、終わりを制御スレッドの待ち行列へ戻す（instrument_files.py）。
 トレース・マーカー・ノーマライズ・元に戻すは instrument_display.py（1ファイル 1000 行の決まりで分けた）。
-rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
+ウォーターフォールと密度表示は instrument_waterfall.py、記録の再生は instrument_playback.py、バンドプランと
+ブックマークは instrument_bandplan.py（設計P）。rtl_tcp の出口は instrument_rtltcp.py、RTL-SDR をつなぐ部分は instrument_rtlsdr.py、マーカーの位置を聞く
 機能は instrument_listen.py。
 機種のプロファイルと掃引条件モデルは、つないだ機器に合わせて切り替える（設計Q §2.1・§6.4: GigaSt と
 シミュレータは GigaSt のプロファイル、RTL-SDR は sweep_kind "fft" のプロファイル）。
@@ -32,6 +33,9 @@ from .instrument_diff import DiffMixin
 from .instrument_display import DisplayMixin
 from .instrument_files import DEFERRED, FilesMixin
 from .instrument_listen import ListenMixin
+from .instrument_bandplan import BandplanMixin
+from .instrument_playback import PlaybackMixin
+from .instrument_waterfall import WaterfallMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_view import ViewMixin
@@ -165,7 +169,8 @@ class _DeviceWorker(threading.Thread):
         self._post(("worker_exit",))
 
 
-class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin):
+class Instrument(DisplayMixin, DiffMixin, FilesMixin, WaterfallMixin, PlaybackMixin, BandplanMixin, RtlTcpMixin,
+                 RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -228,6 +233,9 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         self._init_view(saved if isinstance(saved, dict) else None)
         self._init_files(saved if isinstance(saved, dict) else None)
         self._init_diff(saved if isinstance(saved, dict) else None)  # トレースと参照トレースの後（2本を探すため）
+        self._init_waterfall()  # 表示の設定の後（行数の上限・密度の N を使う: 設計P）
+        self._init_playback()
+        self._init_bandplan()
         self._init_rtltcp()
         self._init_rtlsdr()
         self._init_listen()
@@ -400,6 +408,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                 traceback.print_exc()
 
     def _changed(self) -> None:
+        self._waterfall_on_changed()  # 縦軸が変わったら密度を作り直す（設計P §9.3）
         self._version += 1
         self._emit("state", self._snapshot())
 
@@ -442,6 +451,9 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
             "rtltcp": self._rtltcp_state(),
             "rtlsdr": self._rtlsdr_state(),
             "listen": self._listen_state(),
+            "waterfall": self._waterfall_state(),
+            "playback": self._playback_state(),
+            "bandplan": self._bandplan_state(),
             **self._view_snapshot(),
         }
 
@@ -510,8 +522,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
     # ---- 掃引の結果
 
     def _on_sweep(self, gen: int, raw: RawSweep) -> None:
-        if gen != self._gen:
-            return  # 条件が変わる前の掃引（設計B §7.2.1: 結果は捨てる）
+        if gen != self._gen or self._playback is not None:
+            return  # 条件が変わる前の掃引（設計B §7.2.1: 結果は捨てる）・再生中に届いた掃引
         self._last_sweep_s = raw.duration_s
         if self._ref_job is not None:
             # 基準を取るための掃引。トレース・記録には入れない（設計E §6.2）
@@ -701,6 +713,8 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
     def _cmd__shutdown(self) -> None:
         self._shutdown_rtltcp()
         self._drop_device()
+        self._shutdown_playback()
+        self._shutdown_waterfall()
         self._shutdown_files()
         self._settings.set("state", self._state_to_save())
         self._save_palette_setting()
@@ -769,6 +783,12 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
                 raise CommandError("not_integer", name)
         if image_reject is not None and image_reject not in ir.CHOICES:
             raise CommandError("bad_value", "image_reject", {"choices": list(ir.CHOICES)})
+        if self._playback is not None:
+            # 再生中は表示の範囲だけを変える（測り直さない: 設計P §5・H §3.1）。周波数のほかは断る
+            others = (rbw_hz, points, image_reject, span_lock)
+            if any(v is not None for v in others) or points_auto or one_shot:
+                raise CommandError("playback_active")
+            return self._playback_set_view(start_hz=start_hz, stop_hz=stop_hz, center_hz=center_hz, span_hz=span_hz)
         if edited is None:
             edited = [n for n, v in (("start_hz", start_hz), ("stop_hz", stop_hz), ("center_hz", center_hz),
                                      ("span_hz", span_hz)) if v is not None]
@@ -783,6 +803,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         return self._apply(req)
 
     def _cmd_set_mode(self, mode: str, sg_hz: Optional[int] = None) -> dict:
+        self._check_not_playing()
         try:
             m = Mode(mode)
         except ValueError as e:
@@ -795,6 +816,7 @@ class Instrument(DisplayMixin, DiffMixin, FilesMixin, RtlTcpMixin, RtlSdrMixin, 
         if self._conn != "connected":
             raise CommandError("not_connected")
         self._check_not_taking_reference()
+        self._check_not_playing()  # 再生中はライブの掃引をしない（ライブに戻ってから: 設計P §9.4）
         if mode == "continuous":
             self._run = "continuous"
         elif mode == "single":

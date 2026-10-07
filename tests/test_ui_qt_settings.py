@@ -249,10 +249,21 @@ class DockLayoutTest(UiBase):
         self.pump(0.2)
         self.assertTrue(self.win.parts.graph.detached)
         self.win.parts.graph.attach()
-        acts[2].trigger()  # トレース・掃引
+        next(a for a in acts if a.objectName() == "detach_tab-trace").trigger()  # トレース・掃引
         self.pump(0.2)
         self.assertTrue(self.win.parts.docks["tab-trace"].isFloating())
         self.win.parts.reset()
+        # ウォーターフォール・密度表示は表示の組み合わせで選んでいるときだけ（設計P: U-08 の理由付き）
+        wf = next(a for a in acts if a.objectName() == "detach_waterfall")
+        self.assertFalse(wf.isEnabled())
+        self.assertIn(texts.REASON_TEXTS["layout_waterfall"], wf.toolTip())
+        self.cmd("set_view", layout="waterfall")
+        self.wait(lambda: wf.isEnabled(), what="ウォーターフォールの別ウィンドウ")
+        wf.trigger()
+        self.pump(0.2)
+        self.assertTrue(self.win.parts.lower["waterfall"].detached)
+        self.cmd("set_view", layout="spectrum")
+        self.wait(lambda: not self.win.parts.lower["waterfall"].detached, what="組み合わせから外したら元に戻す")
 
     def test_detach_and_reattach_parts(self):
         parts = self.win.parts

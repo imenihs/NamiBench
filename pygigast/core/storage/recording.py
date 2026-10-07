@@ -495,6 +495,25 @@ class RecordingReader:
         raw2 = None if full2 is None else full2[..., i0:i1]
         return RawBlock(s.index, s.raw_layout, s0, i0, t, s.freqs(i0, i1), raw, raw2)
 
+    def times(self, seg: int) -> np.ndarray:
+        """区間（並びの位置）の掃引ごとの開始時刻（区間の中の番号の順）。"""
+        s = self.segments[seg]
+        rows = self._conn.execute("SELECT t_start FROM sweeps WHERE segment = ? ORDER BY idx", (s.index,)).fetchall()
+        return np.array([r[0] for r in rows], dtype=np.float64)
+
+    def overview_range(self, seg: int, k: int, b0: int, b1: int) -> np.ndarray:
+        """概観の段 k の塊 [b0, b1) の値 [塊, 点]（揃った塊だけ。再生のウォーターフォール: 設計P §5）。"""
+        if k not in OVERVIEW_LEVELS:
+            raise ValueError(f"概観の段は {OVERVIEW_LEVELS} のどれか")
+        s = self.segments[seg]
+        rows = self._conn.execute(
+            f"SELECT raw FROM overview_{k} WHERE segment = ? AND block >= ? AND block < ? ORDER BY block",
+            (s.index, int(b0), int(b1))).fetchall()
+        vals = np.empty((len(rows), s.points), dtype=s.dtype)
+        for j, r in enumerate(rows):
+            vals[j] = _from_blob(r[0], (s.points,), s.dtype)
+        return vals
+
     def overview(self, seg: int, k: int, points: Optional[tuple[int, int]] = None) -> OverviewBlock:
         """概観の段 k の、k 掃引が揃った塊だけ（最後の揃っていない塊は含まない。要るなら read で読む）。"""
         if k not in OVERVIEW_LEVELS:

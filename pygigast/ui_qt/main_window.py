@@ -35,7 +35,10 @@ from PySide6.QtWidgets import (
 
 from ..api.local import LocalApi
 from ..core.units import drag_ref_level, format_freq, level_text
-from . import device_menu, look, marker_rows, menu_table, menus, png_data, screen_model, sizes, texts, theme, widget_sync
+from . import (device_menu, display_view, look, marker_rows, menu_table, menus, png_data, screen_model, sizes, texts,
+               theme, widget_sync)
+from .display_control import DisplayControl
+from .waterfall_view import LEFT_AXIS_W
 from .docks import Parts
 from .fields import FreqField, RefLevelField, SpanLockButton, ValueField
 from .files import FileActions
@@ -133,14 +136,17 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 命令を呼ぶ
 
     def call(self, name: str, /, on_ok: Optional[Callable[[dict], None]] = None,
-             field: Optional[ValueField] = None, quiet_codes: tuple[str, ...] = (), **kwargs) -> None:
-        """命令を呼ぶ。quiet_codes の失敗は何も出さない（コアにまだ無い命令など）。"""
+             field: Optional[ValueField] = None, quiet_codes: tuple[str, ...] = (),
+             on_error: Optional[Callable[[BaseException], None]] = None, **kwargs) -> None:
+        """命令を呼ぶ。quiet_codes の失敗は何も出さない（コアにまだ無い命令など）。on_error は失敗したときにも呼ぶ。"""
         fut = self.api.call(name, **kwargs)
 
         def done(f) -> None:
             def in_gui() -> None:
                 exc = f.exception()
                 if exc is not None:
+                    if on_error is not None:
+                        on_error(exc)
                     if getattr(exc, "code", None) in quiet_codes:
                         return
                     msg = texts.error_text(exc)
@@ -226,6 +232,8 @@ class MainWindow(QMainWindow):
         pi.setLabel("left", texts.LABELS["level"], units="dBm")
         left = pi.getAxis("left")
         left.enableAutoSIPrefix(False)
+        # ウォーターフォール・密度表示の縦軸と同じ幅（横軸の画素をそろえる: 設計P §2 の連動）
+        left.setWidth(LEFT_AXIS_W)
         # REF レベルは最も読みたい値なので、軸の端でも数字を隠さない（J §4.3）
         left.setStyle(hideOverlappingLabels=False)
         self.traces = TraceLayer(self.plot, self.pal)
@@ -342,8 +350,12 @@ class MainWindow(QMainWindow):
         self.source_tab = SourceTab(self)
         tabs = {"tab-trace": self.trace_tab, "tab-marker": self.marker_tab, "tab-view": self.display_tab,
                 "tab-source": self.source_tab}
+        # グラフの下のウォーターフォール・密度表示と再生の帯（設計P: display_control.py）
+        self.display = DisplayControl(self)
         self.parts = Parts(self, self.plot, self.marker_panel, tabs, self.marker_tab.peak_group,
-                           self.marker_tab.body)
+                           self.marker_tab.body, lower={"waterfall": self.display.waterfall,
+                                                        "density": self.display.density}, bar=self.display.bar)
+        self.display.wire_parts()
         self.marker_tab.pk_detach.clicked.connect(lambda: self.parts.detach("peaks"))
         outer.addWidget(self.parts.inner, 1)
         self.task_panel = TaskPanel(self)
@@ -583,6 +595,8 @@ class MainWindow(QMainWindow):
             widget_sync.set_index(self.div_combo, i)
         fill = (self.state.get("view") or {}).get("draw_style") == "fill"
         self.traces.set_fill(fill, bottom)
+        if hasattr(self, "display"):
+            self.display.apply_y(self._ref_dbm, self._db_div, self.display_unit())
 
     def _update_unit(self) -> None:
         unit = self.display_unit()
@@ -603,10 +617,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 周波数（J §3。範囲の収め方はコア: 設計C §5.1・§5.11）
 
     def _freq_ops_reason(self) -> Optional[str]:
-        sw = self.state.get("sweep")
-        if not sw:
+        # 横軸は再生中なら再生の表示の範囲（display_view.freq_view: 設計P §5）
+        fv = display_view.freq_view(self.state)
+        if not fv:
             return texts.REASON_TEXTS["no_sweep"]
-        if sw["step_hz"] == 0:
+        if fv["step_hz"] == 0:
             return texts.REASON_TEXTS["zero_span_axis"]
         return None
 
@@ -620,14 +635,15 @@ class MainWindow(QMainWindow):
     def _on_freq_wheel(self, x: float, steps: int) -> None:
         """カーソルの位置の周波数を画面上の同じ位置に保って拡大・縮小する。"""
         sw = self.state.get("sweep")
+        fv = display_view.freq_view(self.state)
         if self._freq_ops_reason() or not sw:
             return
-        if sw.get("span_lock_hz") is not None:
+        if sw.get("span_lock_hz") is not None and not fv.get("playback"):
             # Span 固定中は幅を変えない。命令を送らず、Span の欄で変えることをその場で知らせる（C §5.12）
             self.f_span.flash_note(texts.LABELS["span_lock_wheel"])
             return
         k = ZOOM_STEP ** steps
-        start, stop = sw["start_hz"], sw["stop_hz"]
+        start, stop = fv["start_hz"], fv["stop_hz"]
         new_start = x - (x - start) * k
         new_stop = x + (stop - x) * k
         span = max(int(round(new_stop - new_start)), 1)
@@ -651,7 +667,10 @@ class MainWindow(QMainWindow):
         act2 = m.addAction(texts.LABELS["ctx_marker"] + ("" if why else texts.tpl("paren", text=shown)))
         act2.setObjectName("ctx_marker")
         act2.triggered.connect(lambda: self._marker_add_at(x, y))
-        for a in (act, act2):
+        act3 = m.addAction(texts.DISPLAY_TEXTS["ctx_bookmark"])
+        act3.setObjectName("ctx_bookmark")
+        act3.triggered.connect(lambda: self.display.add_bookmark(hz))
+        for a in (act, act2, act3):
             if why:
                 a.setEnabled(False)
                 a.setToolTip(why)
@@ -863,6 +882,8 @@ class MainWindow(QMainWindow):
             self.listen.on_audio(payload)
         elif kind == "devices":
             device_menu.on_devices(self, payload)
+        elif kind in ("waterfall", "density"):
+            self.display.on_event(kind, payload)
 
     def _on_trace(self, payload: dict) -> None:
         t = {"trace": 1, "source": "live", **payload}
@@ -930,10 +951,11 @@ class MainWindow(QMainWindow):
         device_menu.on_state(self, st, before)
         sw = st["sweep"]
         look.apply_view(self, st)  # 配色・周波数オフセット・描き方（設計J §4.4・O）
-        self.f_center.set_hz(sw["center_hz"])
-        self.f_span.set_hz(sw["span_hz"])
-        self.f_start.set_hz(sw["start_hz"])
-        self.f_stop.set_hz(sw["stop_hz"])
+        fv = display_view.freq_view(st)  # 再生中は再生の表示の範囲（設計P §5）
+        self.f_center.set_hz(fv["center_hz"])
+        self.f_span.set_hz(fv["span_hz"])
+        self.f_start.set_hz(fv["start_hz"])
+        self.f_stop.set_hz(fv["stop_hz"])
         self._apply_rbw(st)
         cond = texts.condition_lines(st)
         self.cond_label.setText("\n".join(cond))
@@ -951,6 +973,7 @@ class MainWindow(QMainWindow):
         if self._amp_pending == 0:
             self._take_amplitude(st.get("amplitude") or {})
         self._update_x_axis()
+        self.display.apply_state(st)
         self.trace_tab.apply_state(st)
         self.rtl_panel.apply(st)
         self.listen.apply(st)
@@ -1003,13 +1026,17 @@ class MainWindow(QMainWindow):
         for b in (self.btn_cont, self.btn_single):
             b.style().unpolish(b)
             b.style().polish(b)
-        connected = conn["state"] == "connected"
-        self.btn_cont.setEnabled(connected)
-        self.btn_single.setEnabled(connected)
+        # 連続・単発は未接続・再生中は使えない（理由をツールチップに: U-08・設計P §9.4）
+        why = screen_model.run_reason(st)
+        for b, tip, code in ((self.btn_cont, "run_cont_tip", "run_cont"), (self.btn_single, "run_single_tip",
+                                                                            "run_single")):
+            b.setEnabled(why is None)
+            b.setToolTip(menus.tooltip_for(self.actions[code], texts.LABELS[tip]) + (f" — {why}" if why else ""))
+            menus.set_reason(self.actions[code], why)
         self.btn_stop.setEnabled(running or run["state"] == "stopping")
 
     def _update_x_axis(self) -> None:
-        sw = self.state.get("sweep")
+        sw = display_view.freq_view(self.state)  # 再生中は再生の表示の範囲（設計P §5・§2 の連動）
         if not sw:
             return
         if sw["step_hz"] == 0:

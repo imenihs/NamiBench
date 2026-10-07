@@ -33,7 +33,7 @@ def apply_palette(win: "MainWindow", colors: dict) -> None:
     theme.install(QApplication.instance(), win.pal)
     sheet = stylesheet(win.pal)
     win.setStyleSheet(sheet)
-    for det in (win.parts.graph, win.parts.peaks):
+    for det in (win.parts.graph, win.parts.peaks, *win.parts.lower.values()):
         if det.window is not None:
             det.window.setStyleSheet(sheet)
     win.plot.setBackground(win.pal["graph_bg"])
@@ -45,6 +45,7 @@ def apply_palette(win: "MainWindow", colors: dict) -> None:
     win._show_markers()
     win.span_lock.set_colors(win.pal["accent"], win.pal["text_dim"])
     win.trace_tab.restyle()
+    win.display.restyle()
 
 
 def reset_palette(win: "MainWindow", base: str) -> None:

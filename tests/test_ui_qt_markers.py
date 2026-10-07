@@ -4,6 +4,7 @@ import unittest
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QPushButton
 
 from tests.test_ui_qt_support import UiBase
 
@@ -251,7 +252,7 @@ class MarkerTabTest(MarkerBase):
     def test_peak_list_register_and_top_n(self):
         self.tab.pk_find.click()
         self.wait(lambda: self.tab.pk_table.rowCount() >= 2, what="ピークの一覧")
-        self.tab.pk_table.cellWidget(0, 3).click()
+        self.tab.pk_table.cellWidget(0, 3).findChildren(QPushButton)[0].click()  # 行の「P に登録」（隣は Center に: P §9.6）
         self.wait(lambda: any(m["id"] == "P1" for m in self.markers()), what="P に登録")
         self.tab.top_n.setValue(2)
         self.tab.top_btn.click()

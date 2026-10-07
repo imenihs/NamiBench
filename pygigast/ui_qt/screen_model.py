@@ -16,7 +16,7 @@ from typing import Optional
 import numpy as np
 
 from ..core.units import format_freq
-from . import marker_rows, texts
+from . import display_view, marker_rows, texts
 from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 
 
@@ -129,10 +129,20 @@ def image_reject_width_samples() -> list[str]:
 def mode_reasons(st: dict) -> dict:
     """モードごとの使えない理由。まだ作っていないもの → 機器が測れないもの（Q §2.1）の順。"""
     meas = profile_of(st).get("measurements") or []
+    playing = texts.REASON_TEXTS["playback_active"] if (st.get("playback") or {}).get("active") else None
     out = {}
     for code, _label, _name, why in texts.MODES:
-        out[code] = why or (None if code in meas else texts.MODE_UNSUPPORTED)
+        out[code] = why or (None if code in meas else texts.MODE_UNSUPPORTED) or playing
     return out
+
+
+def run_reason(st: dict) -> Optional[str]:
+    """連続・単発が使えない理由（未接続・再生中: 設計P §9.4 の「ライブの測定と再生」）。"""
+    if (st.get("playback") or {}).get("active"):
+        return texts.REASON_TEXTS["playback_active"]
+    if (st.get("connection") or {}).get("state") != "connected":
+        return texts.ERRORS["not_connected"]
+    return None
 
 
 # ---------------------------------------------------------------- 単位の欄（J §4.10 の 2。C §5.14 の RBW と同じ決まり）
@@ -471,6 +481,8 @@ def ui_view(st: dict) -> dict:
         "level": unit_view(st),  # 単位の欄（J §4.10）
         # 周波数オフセット（設計O）。横軸の名前と、欄の換算に使う
         "freq_offset_text": texts.offset_text(texts.freq_offset_of(st)) if texts.freq_offset_of(st) else "",
+        "run_reason": run_reason(st),
+        "display": display_view.ui(st),  # ウォーターフォール・密度・再生・バンドプラン（設計P）
     }
 
 

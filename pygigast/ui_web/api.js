@@ -47,9 +47,32 @@
     const dv = new DataView(buf);
     const hlen = dv.getUint32(0, true);
     const header = JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(buf, 4, hlen)));
-    const values = new Float32Array(buf, 4 + hlen, header.value_count);
+    // 密度の升目（設計P §9.3）は uint8、ほかは float32
+    const values = header.value_type === "uint8"
+      ? new Uint8Array(buf, 4 + hlen, header.value_count) : new Float32Array(buf, 4 + hlen, header.value_count);
     header.values = values;
+    if (header.kind === "waterfall") {
+      // ウォーターフォールの行（設計P §8: server.py の encode_waterfall）。値は行を古い順につないだもの
+      let k = 0;
+      for (const r of header.rows || []) { r.values = values.subarray(k, k + r.n); k += r.n; }
+    }
     return header;
+  }
+
+  // ウォーターフォールの行を取り直す（命令 waterfall_rows。戻り値はイベントと同じバイナリ）
+  async function waterfallRows(args) {
+    let res;
+    try {
+      res = await fetch("/api/v1/waterfall_rows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(args) });
+    } catch (e) {
+      throw new CommandError({ error: { code: "server_unreachable", field: null, detail: { message: String(e) } } }, 0);
+    }
+    if (!res.ok) {
+      let body = null;
+      try { body = await res.json(); } catch (e) { body = null; }
+      throw new CommandError(body, res.status);
+    }
+    return decodeTrace(await res.arrayBuffer());
   }
 
   // イベントの購読。切れたら繋ぎ直す（サーバーの再起動・スリープからの復帰）
@@ -71,9 +94,9 @@
           const m = JSON.parse(ev.data);
           this.h.onEvent(m.kind, m.payload);
         } else {
-          // バイナリはトレースと聞く機能の音（見出しの kind で分ける）
+          // バイナリはトレース・聞く機能の音・ウォーターフォールの行・密度（見出しの kind で分ける）
           const m = decodeTrace(ev.data);
-          this.h.onEvent(m.kind === "audio" ? "audio" : "trace", m);
+          this.h.onEvent(["audio", "waterfall", "density"].includes(m.kind) ? m.kind : "trace", m);
         }
       };
       ws.onclose = () => {
@@ -89,5 +112,21 @@
     }
   }
 
-  root.GSApi = { call, getJson, decodeTrace, EventStream, CommandError };
+  // 次の描き直しで1回だけ fn を呼ぶ（同じ key で何度呼んでも1回）。窓が隠れて requestAnimationFrame が止まっていても
+  // FRAME_FALLBACK_MS で呼ぶ（別ウィンドウ・裏のタブでも状態を映す）
+  const FRAME_FALLBACK_MS = 100;
+  function onFrame(owner, key, fn) {
+    if (owner[key]) return;
+    let done = false;
+    const run = () => {
+      if (done) return;
+      done = true;
+      owner[key] = null;
+      fn();
+    };
+    owner[key] = { raf: requestAnimationFrame(run), timer: setTimeout(run, FRAME_FALLBACK_MS) };
+  }
+  root.GSOnFrame = onFrame;
+
+  root.GSApi = { call, getJson, decodeTrace, waterfallRows, EventStream, CommandError };
 })(window);

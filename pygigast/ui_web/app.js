@@ -24,7 +24,7 @@
   const HOVER_MS = 34;
   // 参照トレース（ファイル）の色。J §4.4 に無いので、トレースの色を順に使い点線で描く（設計に無い判断）
   const FILE_COLORS = ["trace2", "trace3", "trace4", "trace1"];
-  const PARTS = ["graph", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"];
+  const PARTS = ["graph", "waterfall", "density", "markers", "tab-trace", "tab-marker", "tab-view", "tab-source", "peaks"];
   // 上段の周波数の欄の幅を決める値の見本（Qt の sizes.TOP_FREQ_SAMPLES と同じ。100Hz 単位の最長の形と、RTL-SDR の
   // 1Hz 単位の形）。一番広い見本で測る
   const TOP_FREQ_SAMPLES = ["-12100.0000 MHz", "0000.000000 MHz"];
@@ -118,14 +118,16 @@
         }
         return this.amp.unit || this.ui.unit || "dBm";
       },
-      // Center・Start・Stop は周波数オフセットを足して出す（設計O。Span は幅、SG は機器が出す周波数なので足さない）
+      // Center・Start・Stop は周波数オフセットを足して出す（設計O。Span は幅、SG は機器が出す周波数なので足さない）。
+      // 再生中は再生の表示の範囲（設計P §5: app_display.js の fv）
       freqText() {
         const s = this.sw;
-        if (!s) return { center: "", span: "", start: "", stop: "", sg: "" };
+        const f = this.fv;
+        if (!s || !f) return { center: "", span: "", start: "", stop: "", sg: "" };
         const o = this.freqOff;
         return {
-          center: U.freqFieldText(s.center_hz + o), span: U.freqFieldText(s.span_hz),
-          start: U.freqFieldText(s.start_hz + o), stop: U.freqFieldText(s.stop_hz + o),
+          center: U.freqFieldText(f.center_hz + o), span: U.freqFieldText(f.span_hz),
+          start: U.freqFieldText(f.start_hz + o), stop: U.freqFieldText(f.stop_hz + o),
           sg: s.sg_hz != null ? U.freqFieldText(s.sg_hz) : "",
         };
       },
@@ -152,7 +154,7 @@
       },
       condLines() { return this.ui.cond || []; },
       freqOpsReason() {
-        const s = this.sw;
+        const s = this.fv;
         if (!s) return X.get("REASON_TEXTS", "no_sweep");
         if (s.step_hz === 0) return X.get("REASON_TEXTS", "zero_span_axis");
         return null;
@@ -185,7 +187,7 @@
       files() { return (this.st && this.st.files) || []; },
       clipboardReason() { return window.isSecureContext && navigator.clipboard && window.ClipboardItem ? null : W("no_clipboard"); },
       partTitle() { return this.part ? W("part_" + this.part) : ""; },
-      layoutStyle() { return { "--split": this.splitPct + "%", "--side": this.sidePx + "px" }; },
+      layoutStyle() { return { "--split": this.splitPct + "%", "--side": this.sidePx + "px", "--lower": this.lowerPct + "%" }; },
       tabList() { return ["trace", "marker", "view", "source"].map((t) => [t, W("tab_" + t)]); },
     },
     created() {
@@ -194,6 +196,7 @@
         const s = JSON.parse(localStorage.getItem("pygigast.layout") || "{}");
         if (s.splitPct) this.splitPct = s.splitPct;
         if (s.sidePx) this.sidePx = s.sidePx;
+        if (s.lowerPct) this.lowerPct = s.lowerPct;
       } catch (e) { /* 読めなければ既定の並び */ }
     },
     async mounted() {
@@ -384,33 +387,57 @@
       // ------------------------------------------------------------ イベント
       onEvent(kind, p) {
         if (kind === "state") {
+          // 状態は画面の描き直し1回に1つだけ映す（掃引の速い機器で状態が描くより速く届いても、描画を止めない: 設計P §8）
           if (this.st && p.version < this.st.version) return;
-          this.st = p;
-          if (p.markers) this.markers = p.markers;
-          if (this.ampLocal) {
-            const a = p.amplitude || {};
-            if (Object.keys(this.ampLocal).every((k) => a[k] === this.ampLocal[k]) && !this.ampBusy) this.ampLocal = null;
-          }
-          const alive = new Set((p.tasks || []).map((t) => t.task_id));
-          for (const id of Object.keys(this.progress)) if (!alive.has(id)) delete this.progress[id];
-          if (!this.running && this.run.state !== "stopping") this.waiting = "";
-          this.onStateRtl(p);
-          this.onStateDevices(p);
-          this.applyLook();
-          this.applyX();
-          this.applyY();
-          this.redraw();
+          if (this.$pendingState && p.version < this.$pendingState.version) return;
+          this.$pendingState = p;
+          this.$pendingMarkersSeq = this.$markersSeq || 0;
+          GSOnFrame(this, "$stateFrame", () => {
+            const s = this.$pendingState;
+            this.$pendingState = null;
+            if (s) this.applyStateEvent(s, (this.$markersSeq || 0) === this.$pendingMarkersSeq);
+          });
         } else if (kind === "markers") {
+          this.$markersSeq = (this.$markersSeq || 0) + 1;
           this.markers = p;
           if (this.selectedMarker && !(p.markers || []).some((m) => m.id === this.selectedMarker)) this.selectedMarker = null;
           this.drawMarkers();
-        } else if (kind === "trace") {
+        } else {
+          this.onOtherEvent(kind, p);
+        }
+      },
+      // 状態を映す。markers が後から届いていれば、状態の中の古いマーカー表で上書きしない
+      applyStateEvent(p, takeMarkers) {
+        if (this.st && p.version < this.st.version) return;
+        this.st = p;
+        if (p.markers && takeMarkers) this.markers = p.markers;
+        if (this.ampLocal) {
+          const a = p.amplitude || {};
+          if (Object.keys(this.ampLocal).every((k) => a[k] === this.ampLocal[k]) && !this.ampBusy) this.ampLocal = null;
+        }
+        const alive = new Set((p.tasks || []).map((t) => t.task_id));
+        for (const id of Object.keys(this.progress)) if (!alive.has(id)) delete this.progress[id];
+        if (!this.running && this.run.state !== "stopping") this.waiting = "";
+        this.onStateRtl(p);
+        this.onStateDevices(p);
+        this.applyLook();
+        this.applyX();
+        this.applyY();
+        this.applyDisplay();  // ウォーターフォール・密度・再生（設計P: app_display.js）
+        this.redraw();
+      },
+      onOtherEvent(kind, p) {
+        if (kind === "trace") {
           this.$traces.set(String(p.trace), markRaw(p));
           this.traceVersion++;
           this.applyY(); // 値の単位（dBm ⇔ dB）は届いたトレースで変わる。縦軸の名前を合わせる
           this.redraw();
         } else if (kind === "audio") {
           this.onAudio(p);
+        } else if (kind === "waterfall") {
+          this.onWaterfall(p);
+        } else if (kind === "density") {
+          this.onDensity(p);
         } else if (kind === "devices") {
           this.onDevices(p);
         } else if (kind === "notice") {
@@ -452,22 +479,27 @@
           onLevelWheel: (steps, ctrl) => this.onLevelWheel(steps, ctrl),
           onLevelDrag: (start, frac) => this.onLevelDrag(start, frac),
           onClick: (x, y) => this.onGraphClick(x, y),
+          onBookmark: (hz) => this.centerOn(hz),
           onContext: (x, y, cx, cy) => this.onGraphContext(x, y, cx, cy),
           onHover: (m) => this.onGraphHover(m),
         }));
         this.applyX();
         this.applyY();
         this.redraw();
+        this.$nextTick(() => this.makeLower());
       },
       applyX() {
         const g = this.$graph;
-        const s = this.sw;
+        const s = this.fv;  // 再生中は再生の表示の範囲（設計P §5）
         if (!g || !s) return;
         if (s.step_hz === 0) g.setX(0, Math.max(1, s.points - 1), true);
         else g.setX(s.start_hz, s.stop_hz, false);
         g.setXOffset(s.step_hz === 0 ? 0 : this.freqOff, this.ui.freq_offset_text || "");
       },
-      applyY() { if (this.$graph) this.$graph.setY(this.amp.ref, this.amp.div, this.axisUnit); },
+      applyY() {
+        if (this.$graph) this.$graph.setY(this.amp.ref, this.amp.div, this.axisUnit);
+        if (this.$dens) this.$dens.setY(this.amp.ref, this.amp.div, this.axisUnit);
+      },
       traceShown(n) {
         const t = ((this.st && this.st.traces) || []).find((x) => x.number === n);
         return !!(t && t.visible && t.has_values);
@@ -541,6 +573,8 @@
           this.rafPending = false;
           if (!this.$graph) return;
           this.$graph.setBands(this.marks());
+          // バンドプランの帯とブックマークの印（設計P §6。中身はサーバーの display_view.bandplan_view）
+          this.$graph.setBandplan(this.bpView.bands, this.bpView.bookmarks);
           this.$graph.setTraces(this.graphTraces(this.palette));
           this.$graph.setLegend(this.legendItems());
           this.drawMarkers();
@@ -560,13 +594,15 @@
       },
       onFreqWheel(x, steps) {
         const s = this.sw;
-        if (this.freqOpsReason || !s) return;
-        // Span 固定中は幅を変えない。命令を送らず、Span の欄で変えることをその場で知らせる（C §5.12。Qt と同じ）
-        if (s.span_lock_hz != null) { this.note("span", W("span_lock_wheel")); return; }
+        const f = this.fv;
+        if (this.freqOpsReason || !s || !f) return;
+        // Span 固定中は幅を変えない。命令を送らず、Span の欄で変えることをその場で知らせる（C §5.12。Qt と同じ）。
+        // 再生中は表示の範囲だけを変えるので固定によらない（設計P §5）
+        if (s.span_lock_hz != null && !f.playback) { this.note("span", W("span_lock_wheel")); return; }
         // カーソルの位置の周波数を画面上の同じ位置に保って拡大・縮小する（Qt と同じ）
         const k = ZOOM_STEP ** steps;
-        const ns = x - (x - s.start_hz) * k;
-        const ne = x + (s.stop_hz - x) * k;
+        const ns = x - (x - f.start_hz) * k;
+        const ne = x + (f.stop_hz - x) * k;
         const span = Math.max(Math.round(ne - ns), 1);
         const center = Math.round(ns) + Math.floor(span / 2);
         this.sweep({ center_hz: center, span_hz: span, edited: ["center_hz", "span_hz"] }, "span");
@@ -616,6 +652,7 @@
         const items = [
           { label: W("ctx_center") + at, why, run: () => this.sweep({ center_hz: hz }, "center") },
           { label: W("ctx_marker") + at, why, run: () => this.markerAdd(x, y) },
+          { label: X.get("DISPLAY_TEXTS", "ctx_bookmark"), why, run: () => this.addBookmarkAt(hz) },
           { label: W("ctx_ref", { level: level.toFixed(1), unit: this.axisUnit }), run: () => this.setAmp({ ref_level: level }) },
           { label: W("ctx_x1"), why, run: () => this.cmd("set_xy", { x1_hz: hz }) },
           { label: W("ctx_x2"), why, run: () => this.cmd("set_xy", { x2_hz: hz }) },
@@ -930,7 +967,10 @@
         for (const p of Object.keys(d)) {
           if (!wins[p] || wins[p].closed) { delete d[p]; delete wins[p]; changed = true; }
         }
-        if (changed) { this.detached = d; this.$nextTick(() => this.$graph && this.$graph.setSize(this.$refs.graph.clientWidth, this.$refs.graph.clientHeight)); }
+        if (changed) {
+          this.detached = d;
+          this.$nextTick(() => { if (this.$graph) this.$graph.setSize(this.$refs.graph.clientWidth, this.$refs.graph.clientHeight); this.resizeLower(); });
+        }
       },
       show(p) { return this.part ? this.part === p : !this.detached[p]; },
       // ピークの一覧だけの別ウィンドウは、マーカーのタブの中のピークの一覧の欄だけを出す（index.html）
@@ -943,14 +983,18 @@
       startSplit(e, which) {
         e.preventDefault();
         const box = this.$refs.main.getBoundingClientRect();
+        // 'g' はスペクトルとウォーターフォール（密度表示）の境目（設計P §2。比はグラフの部分の高さに対する下の割合）
+        const area = which === "g" && this.$refs.garea ? this.$refs.garea.getBoundingClientRect() : null;
         const move = (ev) => {
           if (which === "v") this.splitPct = Math.min(90, Math.max(30, ((ev.clientY - box.top) / box.height) * 100));
+          else if (which === "g" && area) this.lowerPct = Math.min(80, Math.max(20, ((area.bottom - ev.clientY) / area.height) * 100));
           else this.sidePx = Math.min(700, Math.max(240, box.right - ev.clientX));
         };
         const up = () => {
           window.removeEventListener("mousemove", move);
           window.removeEventListener("mouseup", up);
-          try { localStorage.setItem("pygigast.layout", JSON.stringify({ splitPct: this.splitPct, sidePx: this.sidePx })); } catch (err) { /* 残せなくても動く */ }
+          try { localStorage.setItem("pygigast.layout", JSON.stringify({ splitPct: this.splitPct, sidePx: this.sidePx, lowerPct: this.lowerPct })); } catch (err) { /* 残せなくても動く */ }
+          this.$nextTick(() => this.resizeLower());
         };
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
@@ -997,6 +1041,7 @@
   merge(base, GSAppFiles);
   merge(base, GSAppRtl);
   merge(base, GSAppDevices);
+  merge(base, GSAppDisplay);
   // キーの割り当て（app_keys.js）と設定の画面・プリセット・表示の設定（app_settings.js）
   merge(base, window.GSAppKeys || {});
   merge(base, window.GSAppSettings || {});

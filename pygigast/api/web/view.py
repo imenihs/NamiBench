@@ -36,6 +36,8 @@ def state_view(st: dict) -> dict:
     # 参照トレースの凡例の文字（Qt のグラフの凡例・PNG と同じ: 名前・番号・日時・機器）。id は "F1.1" の形
     ui["file_legend"] = {str(tr.get("id")): texts.file_trace_label(f, str(tr.get("id")))
                          for f in st.get("files") or [] for tr in f.get("traces") or []}
+    # 参照トレースの一覧のファイルの名前（過去のトレースは「過去の掃引 時刻」: 設計P §3。Qt の一覧と同じ）
+    ui["file_names"] = {str(f.get("file_id")): texts.file_display_name(f) for f in st.get("files") or []}
     ui["unit"] = default_unit(st)
     # ピークの一覧の欄（P §9.7）。山／谷の選択はブラウザが持つので両方（Qt と同じ peak_view.list_view）
     ui["peaks"] = peak_view.list_views(st)

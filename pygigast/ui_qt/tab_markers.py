@@ -415,18 +415,31 @@ class MarkerTab(QWidget):
         def show(r: dict) -> None:
             view = peak_view.result_view(r, texts.freq_offset_of(self.win.state))
             polarity = r.get("polarity") or peak_view.PEAK  # 「P に登録」は一覧の向き（山・谷）の P にする
-            self.pk_table.setHorizontalHeaderItem(2, QTableWidgetItem(view["diff_header"]))
+            # 内部の漏れの可能性の印（P §9.6・設計L §1.4）は、印のある行があるときだけ列を出す（U-15）
+            leak = bool(view.get("leak_header"))
+            cols = [L["col_freq_mhz"], L["level"], view["diff_header"]] + ([view["leak_header"]] if leak else []) + [""]
+            self.pk_table.setColumnCount(len(cols))
+            self.pk_table.setHorizontalHeaderLabels(cols)
             self.pk_table.setRowCount(len(view["rows"]))
             for i, p in enumerate(view["rows"]):
-                for c, text in enumerate((p["freq"], p["level"], p["diff"])):
+                cells = (p["freq"], p["level"], p["diff"]) + ((p["leak"],) if leak else ())
+                for c, text in enumerate(cells):
                     it = QTableWidgetItem(text)
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     it.setFont(self._num_font)
                     self.pk_table.setItem(i, c, it)
+                # 行から「P に登録」（G §3.5）・Center にする（P §7・§9.6）
                 b = QPushButton(L["register_p"])
                 b.clicked.connect(lambda _=False, f=p["freq_hz"]: self.win.call(
                     "marker_register_peak", trace=trace, freq_hz=int(f), polarity=polarity))
-                self.pk_table.setCellWidget(i, 3, b)
+                c2 = QPushButton(texts.DISPLAY_TEXTS["to_center"])
+                c2.clicked.connect(lambda _=False, f=p["freq_hz"]: self.win.display.center_on(int(f)))
+                cell = QWidget()
+                row = sizes.hbox(cell)
+                row.addWidget(b)
+                row.addWidget(c2)
+                row.addStretch(1)
+                self.pk_table.setCellWidget(i, len(cols) - 1, cell)
             self.pk_note.setText(view["found"])
 
         self.win.call("peak_list", on_ok=show, trace=trace, floor_margin_db=self.pk_margin.value(),

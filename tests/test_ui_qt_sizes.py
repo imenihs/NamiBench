@@ -122,6 +122,49 @@ class LayoutTest(UiBase):
         found += self.dialogs()
         self.assertEqual(sorted(set(found)), [])
 
+    def _single(self):
+        n0 = self.api.call("get_state").result(5)["run"]["sweep_count"]
+        self.api.call("run", mode="single").result(5)
+        self.wait(lambda: (self.win.state.get("run") or {}).get("state") == "stopped"
+                  and self.win.state["run"]["sweep_count"] > n0, what="単発")
+
+    def test_display_parts(self):
+        """設計P の部分（ウォーターフォール・密度表示・再生の帯・表示のタブの欄とブックマークの一覧・別の窓）も数える。"""
+        found = []
+        call = lambda n, **kw: self.api.call(n, **kw).result(10)  # noqa: E731
+        call("connect", backend="simulator", serial="SIM00001")
+        call("set_sweep", start_hz=50_000_000, stop_hz=200_000_000)
+        call("bookmark_add", name="ビーコン", hz=120_000_000)
+        call("bookmark_add", name="FM", hz=80_000_000)
+        call("record_start")
+        call("set_view", layout="waterfall")
+        for _ in range(3):
+            self._single()
+        self.win.show_part("tab-view")
+        self.wait(lambda: len(self.win.display.waterfall.shown_rows) >= 3, what="ウォーターフォールの行")
+        found += self.check(self.win, "主画面 ＋ウォーターフォール")
+        call("set_view", layout="density")
+        self._single()
+        found += self.check(self.win, "主画面 ＋密度")
+        call("record_stop")
+        h5 = self.root / "layout_rec.h5"
+        self.wait_task_done(call("record_finish", path=str(h5)))
+        call("open", paths=[str(h5)])
+        self.wait(lambda: self.win.display.bar.isVisible(), what="再生の帯")
+        found += self.check(self.win, "主画面 再生")
+        self.win.parts.detach("waterfall")
+        self.wait(lambda: self.win.parts.lower["waterfall"].detached, what="ウォーターフォールを別の窓へ")
+        found += self.check(self.win.parts.lower["waterfall"].window, "ウォーターフォールの別の窓")
+        found += self.check(self.win, "主画面（ウォーターフォールを別の窓へ）")
+        self.win.parts.lower["waterfall"].attach()
+        call("playback_close")
+        self.assertEqual(sorted(set(found)), [])
+
+    def wait_task_done(self, r):
+        tid = r["task_id"]
+        self.wait(lambda: not any(t.get("task_id") == tid for t in self.api.call("get_state").result(5)["tasks"]),
+                  what="長い処理の終わり")
+
     def test_checker_finds_broken_layout(self):
         # 検査そのものが働くこと（本物の画面をわざと崩して見つかるか）
         self.win.show_part("tab-trace")

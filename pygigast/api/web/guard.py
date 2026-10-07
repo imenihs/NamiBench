@@ -21,7 +21,8 @@ from typing import Optional
 from .access import KIND_OPERATE, Access, cookie_name, host_allowed, is_loopback, origin_allowed
 
 # 見るだけの接続でも使える命令（状態・トレース・表を読むだけで、何も変えない）
-READ_COMMANDS = {"get_state", "get_trace", "peak_list", "reference_list", "png_layout", "mouse_reading"}
+READ_COMMANDS = {"get_state", "get_trace", "peak_list", "reference_list", "png_layout", "mouse_reading",
+                 "waterfall_rows", "waterfall_reading", "density_get"}
 # 札の無い LAN の接続に出してよいもの（認証の画面だけ）
 _PUBLIC_STATIC = {"/auth.js", "/style.css"}
 _AUTH_PATH = "/api/v1/auth"

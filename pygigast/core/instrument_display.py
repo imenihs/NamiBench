@@ -392,10 +392,14 @@ class DisplayMixin:
         if emit:
             self._emit("markers", {"sweep_no": self._sweep_count, **self._marker_snap})
 
-    def _process_frame(self, frame: Frame) -> None:
-        """基準 → トレース → マーカー → イベント（設計A §4.3.1: トレースは番号ごと、マーカー表は掃引ごと）。"""
+    def _process_frame(self, frame: Frame, normalize=None, live: bool = True) -> None:
+        """基準 → トレース → マーカー → イベント（設計A §4.3.1: トレースは番号ごと、マーカー表は掃引ごと）。
+
+        normalize は基準を当てる関数（省略はいまの基準: _normalize。再生は記録に書いた基準: instrument_playback.py）。
+        live は機器の掃引か（ウォーターフォールの行に足す。再生の掃引は色の範囲と密度だけ: instrument_waterfall.py）。
+        """
         frame = self._mark_frame(frame)
-        frame = self._normalize(frame)
+        frame = (normalize or self._normalize)(frame)
         self._last_quantity = frame.quantity
         shown_before, self._shown_quantity = self._shown_quantity, frame.quantity
         if shown_before == Quantity.POWER and frame.quantity == Quantity.RATIO:
@@ -427,6 +431,7 @@ class DisplayMixin:
         # A か B が生きたトレースなら差も変わる（設計F §5.4）
         self._diff_refresh(swept=frozenset(u.number for u in updates if u.changed))
         self._emit("markers", {"sweep_no": self._sweep_count, "moved": moved, **self._marker_snap})
+        self._waterfall_on_frame(frame, live)  # ウォーターフォールの行・密度（設計P §9.2・§9.3）
 
     @staticmethod
     def _mark_frame(frame: Frame) -> Frame:
@@ -540,7 +545,8 @@ class DisplayMixin:
             if k in s:
                 out.append(tuple(sorted(s[k].items())))
         if "palette" in s:
-            out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items()))))
+            out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items())),
+                        s["palette"].get("colormap")))
         return tuple(out)
 
     def _record_undo(self, before: dict) -> None:
@@ -904,7 +910,16 @@ class DisplayMixin:
         self._no_dips_on_power(v, polarity)
         pl = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db, polarity)
         return {"trace": trace, "unit": v.unit, "base": pl.base, "base_level": pl.base_level, "polarity": pl.polarity,
-                "peaks": [{"freq_hz": r.freq_hz, "level": r.level, "diff_db": r.diff_db} for r in pl.rows]}
+                "peaks": [{"freq_hz": r.freq_hz, "level": r.level, "diff_db": r.diff_db,
+                           "leak": self._peak_leak_mark(r.freq_hz)} for r in pl.rows]}
+
+    def _peak_leak_mark(self, freq_hz: int) -> Optional[dict]:
+        """ピークの一覧の行の「内部の漏れの可能性の印」（設計P §9.6・設計L §1.4）。
+
+        印の決め方（SG・TG を出している間の 1480MHz・SG+1480MHz などの内部の漏れ: L §1.4）は設計L の作業で決める。
+        ここは印を返す口だけで、いまは印を付けない（None）。印を返すと、画面は一覧に印の列を出す（peak_view）。
+        """
+        return None
 
     def _cmd_marker_to(self, id, target: str) -> dict:  # noqa: A002
         """マーカーから条件を変える（設計G §3.4）。Center・Span は設計C §5.11 の規則を通る。"""

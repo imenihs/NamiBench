@@ -34,6 +34,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ... import __version__
 from ..local import CommandError, LocalApi
+from ...core import colormaps
 from ...core import report_layout as rl
 from ...ui_qt import screen_model, texts
 from . import view
@@ -49,6 +50,8 @@ TRACE_RATE_HZ = 30.0
 MAX_PENDING_NOTICES = 500
 # 遅い画面に溜める音の塊の上限（1塊は数 ms〜十数 ms。超えたら古い音から捨てる）
 MAX_PENDING_AUDIO = 64
+# 遅い画面に溜めるウォーターフォールの行の上限（超えたら古い行から捨てる。画面は番号の飛びを見て取り直す）
+MAX_PENDING_WATERFALL = 512
 
 # 失敗のコードと HTTP の状態（設計に無い判断: 命令が無いは 404、それ以外の命令の失敗は 400）
 STATUS_OF = {"unknown_command": 404, "unknown_file": 404, "file_not_ready": 409, "upload_too_large": 413,
@@ -150,6 +153,37 @@ def encode_audio(payload: dict) -> bytes:
     return struct.pack("<I", len(hb)) + hb + values.tobytes()
 
 
+def encode_waterfall(payload: dict) -> bytes:
+    """イベント `waterfall`・命令 `waterfall_rows` の戻り値をバイナリにする（設計P §8: 掃引データはバイナリのまま）。
+
+    形はトレースと同じ: [見出しの長さ uint32 LE][見出し JSON][値 float32 LE]。見出しの rows に行ごとの見出し（n は列の数）、
+    値は行を古い順につないだもの。
+    """
+    rows = payload.get("rows") or []
+    values = (np.concatenate([np.asarray(r["values"], dtype="<f4") for r in rows]) if rows
+              else np.zeros(0, dtype="<f4"))
+    header = {k: v for k, v in payload.items() if k != "rows"}
+    header["rows"] = [{k: v for k, v in r.items() if k != "values"} for r in rows]
+    header["kind"] = "waterfall"
+    header["value_type"] = "float32"
+    header["value_count"] = int(values.size)
+    hb = dumps(header).encode("utf-8")
+    hb += b" " * ((-len(hb)) % 4)
+    return struct.pack("<I", len(hb)) + hb + values.astype("<f4").tobytes()
+
+
+def encode_density(payload: dict) -> bytes:
+    """イベント `density` をバイナリにする。値は [縦, 横] の uint8（0 は来ていない）を行の順につないだもの。"""
+    img = np.asarray(payload.get("image") if payload.get("image") is not None else np.zeros((0, 0)), dtype=np.uint8)
+    header = {k: v for k, v in payload.items() if k != "image"}
+    header["kind"] = "density"
+    header["value_type"] = "uint8"
+    header["value_count"] = int(img.size)
+    hb = dumps(header).encode("utf-8")
+    hb += b" " * ((-len(hb)) % 4)
+    return struct.pack("<I", len(hb)) + hb + np.ascontiguousarray(img).tobytes()
+
+
 def texts_json() -> dict:
     """画面の文言（ui_qt/texts.py の表）。Qt と Web で1つの正本を使う（J §5: 同じ語）。
 
@@ -183,6 +217,8 @@ class _Client:
         self._notices: collections.deque[str] = collections.deque(maxlen=MAX_PENDING_NOTICES)
         self._traces: dict[str, bytes] = {}
         self._audio: collections.deque[bytes] = collections.deque(maxlen=MAX_PENDING_AUDIO)
+        # ウォーターフォールの行は全部を順に送る（間引くと行が欠ける。溢れたら画面が番号の飛びを見て取り直す）
+        self._waterfall: collections.deque[bytes] = collections.deque(maxlen=MAX_PENDING_WATERFALL)
         self._wake = asyncio.Event()
 
     def put_latest(self, kind: str, version: int, text: str) -> None:
@@ -202,6 +238,10 @@ class _Client:
 
     def put_audio(self, data: bytes) -> None:
         self._audio.append(data)
+        self._wake.set()
+
+    def put_waterfall(self, data: bytes) -> None:
+        self._waterfall.append(data)
         self._wake.set()
 
     async def run(self) -> None:
@@ -226,6 +266,8 @@ class _Client:
                 await self.ws.send_text(self._notices.popleft())
             while self._audio:
                 await self.ws.send_bytes(self._audio.popleft())
+            while self._waterfall:
+                await self.ws.send_bytes(self._waterfall.popleft())
             while self._traces:
                 key = next(iter(self._traces))
                 await self.ws.send_bytes(self._traces.pop(key))
@@ -279,6 +321,15 @@ class _Hub:
             data = encode_audio(payload)
             for c in self.clients:
                 c.put_audio(data)
+            return
+        if kind == "waterfall":
+            data = encode_waterfall(payload)
+            for c in self.clients:
+                c.put_waterfall(data)
+            return
+        if kind == "density":
+            # 密度の絵は最新の1枚だけでよい（トレースと同じ間引き）
+            self._trace({**payload, "trace": "density", "source": "density"})
             return
         if kind == "state":
             self.last_state = payload
@@ -362,7 +413,7 @@ class _Hub:
 
     def _send_trace(self, key: str, payload: dict) -> None:
         self._last_sent[key] = self._loop.time()
-        data = encode_trace(payload)
+        data = encode_density(payload) if payload.get("source") == "density" else encode_trace(payload)
         for c in self.clients:
             c.put_trace(key, data)
 
@@ -433,6 +484,8 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
                              "trace_rate_hz": trace_rate_hz,
                              "palettes": {"dark": rl.DARK_DEFAULT, "light": rl.LIGHT_DEFAULT},
                              "line_styles": rl.LINE_STYLES,
+                             # ウォーターフォールと密度表示の色の並び（256 段。Qt と同じ表: 設計P §8）
+                             "colormaps": colormaps.luts_for_web(),
                              "access": {"kind": who["kind"], "local": who["local"]}})
 
     @app.post("/api/v1/png_layout")
@@ -466,6 +519,47 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         zero = ((hub.last_state or {}).get("sweep") or {}).get("step_hz") == 0
         return JSONResponse(to_jsonable(screen_model.mouse_reading(payloads, x, y, zero,
                                                                    texts.freq_offset_of(hub.last_state))))
+
+    @app.post("/api/v1/waterfall_rows")
+    async def waterfall_rows(request: Request):
+        """ウォーターフォールの行（命令 waterfall_rows と同じ引数）。戻り値はイベントと同じバイナリ（設計P §8）。"""
+        from fastapi.responses import Response
+
+        try:
+            args = json.loads(await request.body() or b"{}")
+            if not isinstance(args, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            return fail("bad_json")
+        try:
+            r = await _await(api.call("waterfall_rows", **args))
+        except CommandError as e:
+            return JSONResponse(to_jsonable(view.error_view(e.to_dict())), status_code=STATUS_OF.get(e.code, 400))
+        return Response(content=encode_waterfall(r), media_type="application/octet-stream")
+
+    @app.post("/api/v1/waterfall_reading")
+    async def waterfall_reading(request: Request) -> JSONResponse:
+        """ウォーターフォールの行の上のマウスの読み値の文（Qt のツールチップと同じ display_view.waterfall_reading）。
+
+        受けるのは {"t", "sweeps", "freq_hz" か "point", "level", "unit"}（値は画面が持つ行から）。文を作るだけで、
+        本体の命令の列を通さない。
+        """
+        try:
+            req = json.loads(await request.body() or b"{}")
+            t = float(req["t"])
+            level = req.get("level")
+            level = None if level is None else float(level)
+            freq = req.get("freq_hz")
+            freq = None if freq is None else int(freq)
+            point = req.get("point")
+            point = None if point is None else int(point)
+        except (ValueError, KeyError, TypeError) as e:
+            return fail("bad_value", None, {"message": str(e)})
+        from ...ui_qt import display_view
+
+        lines = display_view.waterfall_reading(t, int(req.get("sweeps") or 1), freq, level, str(req.get("unit") or ""),
+                                               texts.freq_offset_of(hub.last_state), point)
+        return JSONResponse({"lines": lines})
 
     from .routes_access import add_access_routes
 
@@ -536,6 +630,13 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
                 except Exception:  # noqa: BLE001 — 取る間に消えたトレースは飛ばす
                     continue
                 client.put_trace(str(tid), encode_trace(p))
+            # 密度表示のいまの絵（途中から繋いだ画面にも: 設計P §4）
+            try:
+                d = await _await(api.call("density_get"))
+                if d.get("image") is not None:
+                    client.put_trace("density", encode_density(d))
+            except Exception:  # noqa: BLE001
+                pass
             while True:
                 # 受け取るものは無い（命令は POST）。切れたことを知るために待つ
                 msg = await ws.receive()

@@ -254,7 +254,7 @@ let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() 
 globalThis.GSUnits = {}; globalThis.GSTexts = { w: (k) => "W:" + k, get: () => "", dict: () => ({}), fmt: (k) => k };
 const sent = [];
 globalThis.GSApi = { call: async (name, args) => { sent.push([name, args]); return { lines: ["L" + sent.length] }; } };
-for (const n of ["GSAppMenu", "GSAppMarkers", "GSAppFiles", "GSAppRtl", "GSAppDevices"]) globalThis[n] = {};
+for (const n of ["GSAppMenu", "GSAppMarkers", "GSAppFiles", "GSAppRtl", "GSAppDevices", "GSAppDisplay"]) globalThis[n] = {};
 globalThis.GSFields = { NumField: {} };
 require(process.argv[1]);
 const self = { hover: null, hoverLines: null };

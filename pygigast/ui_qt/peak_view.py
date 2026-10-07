@@ -89,6 +89,18 @@ def result_view(r: dict, freq_offset_hz: int = 0) -> dict:
             "freq": f"{(hz + int(freq_offset_hz or 0)) / 1e6:.6f}".rstrip("0").rstrip("."),
             "level": f"{_num(float(p['level']), 2)} {unit}".strip(),
             "diff": _num(float(p["diff_db"]), 1) if p.get("diff_db") is not None else "",
+            "leak": leak_text(p.get("leak")),
         })
     header = texts.LABELS["col_below_max_db" if by_max else "col_height_db"]
-    return {"found": found, "diff_header": header, "rows": rows}
+    # 内部の漏れの可能性の印（P §9.6・設計L §1.4）。印のある行が1つも無ければ列を出さない（空の列を出さない: U-15）
+    leak_header = texts.LABELS.get("col_leak", "") if any(r["leak"] for r in rows) else ""
+    return {"found": found, "diff_header": header, "rows": rows, "leak_header": leak_header}
+
+
+def leak_text(mark) -> str:
+    """コアの「内部の漏れの可能性の印」（_peak_leak_mark: 設計L §1.4 で決める）を一覧の文字にする。印が無ければ空。"""
+    if not mark:
+        return ""
+    if isinstance(mark, dict) and mark.get("text"):
+        return str(mark["text"])
+    return texts.LABELS.get("leak_mark", "")

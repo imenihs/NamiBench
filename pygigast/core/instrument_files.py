@@ -391,6 +391,7 @@ class FilesMixin:
         if self._conn != "connected":
             raise self._error("not_connected")
         self._check_not_taking_reference()
+        self._check_not_playing()
         mode = self._adopted.mode
         if mode not in NORMALIZED_MODES:
             raise self._error("mode_not_normalizable", "mode", {"mode": mode.value})
@@ -558,6 +559,13 @@ class FilesMixin:
             raise self._error("path_required", "path")
         header = self._header(note)
         raw = self._last_raw
+        pb = self._pb_context()
+        if pb is not None:
+            # 再生中: 記録した機器・校正・掃引の生の値で保存する（いまの機器のものを書かない: M-08）
+            h = pb["header"]
+            header = FileHeader(device_model=h.device_model, device_serial=h.device_serial, profile=dict(h.profile),
+                                calibration=pb["calibration"], note=note or "")
+            raw = pb["raw"]
         if raw is not None and not can_store(raw.encoding):
             # 保存ファイルに持つ形を決めていない生の値は入れず、トレース（単位付き）だけを保存する。
             # GigaSt・RTL-SDR はどちらも生の値を持つ（設計Q §6.1: RTL-SDR も GigaSt と同じ保存）
@@ -565,7 +573,7 @@ class FilesMixin:
         traces = self._live_traces_data()
         markers = self._markers.to_defs()["markers"]
         quantity = self._last_quantity
-        norm = self._normalization_record()
+        norm = self._normalization_record() if pb is None else pb["normalization"]
         if raw is None and not traces:
             raise self._error("no_data")
 
@@ -578,7 +586,10 @@ class FilesMixin:
                                 lambda out: {"path": str(out)}, total=1, detail={"path": str(path)})
 
     def _cmd_open(self, paths) -> dict:
-        """保存ファイルを開き、トレースを参照トレースとして重ねる（設計F §5.4・設計H §6）。"""
+        """保存ファイルを開き、トレースを参照トレースとして重ねる（設計F §5.4・設計H §6）。
+
+        記録のファイル（掃引が2つ以上）は再生する（設計H §4・設計P §5: instrument_playback.py）。再生できるのは1つずつで、
+        2つ目からの記録のファイルは開かずに理由を返す。"""
         if isinstance(paths, str):
             paths = [paths]
         if not paths:
@@ -594,17 +605,28 @@ class FilesMixin:
                 progress(i, len(paths), time.monotonic() - t0)
                 try:
                     with H5Record(p) as r:
-                        out.append({"path": p, "header": r.header, "traces": r.traces(), "markers": r.markers()})
-                except (StorageError, OSError, KeyError, ValueError) as e:
+                        is_record = sum(s.n_sweeps for s in r.segments) > 1
+                        if not is_record:
+                            out.append({"path": p, "header": r.header, "traces": r.traces(), "markers": r.markers()})
+                    if is_record:
+                        if any("playback" in o for o in out):
+                            out.append({"path": p, "error": {"code": "playback_one_at_a_time", "detail": {}}})
+                        else:
+                            out.append({"path": p, "playback": self._playback_open_job(p)})
+                except (StorageError, OSError, KeyError, ValueError, CommandError) as e:
                     out.append({"path": p, "error": _storage_error(e)})
             progress(len(paths), len(paths), time.monotonic() - t0)
             return out
 
         def then(results) -> dict:
             files, errors = [], []
+            played = None
             for r in results:
                 if "error" in r:
                     errors.append({"path": r["path"], **r["error"]})
+                    continue
+                if "playback" in r:
+                    played = self._playback_install(r["playback"])
                     continue
                 self._file_seq += 1
                 fid = f"F{self._file_seq}"
@@ -619,12 +641,15 @@ class FilesMixin:
                     self._emit("trace", self._file_trace_payload(tid))
             if files:
                 self._diff_refresh()  # 差で選んでいたファイルを開き直した（設計F §5.4）
-            return {"files": files, "errors": errors}
+            return {"files": files, "errors": errors, "playback": played}
 
         return self._start_task("open", lambda p, c: self._writer.submit(job, p, c), then, total=len(paths))
 
     def _file_summary(self, e: dict) -> dict:
         out = {k: e[k] for k in ("file_id", "path", "name", "created_at", "device_model", "device_serial", "note")}
+        if e.get("kind"):
+            # 過去のトレース（ウォーターフォールの行をクリックした掃引: 設計P §3）。kind と時刻を画面が名前にする
+            out.update({"kind": e["kind"], "t": e.get("t"), "sweeps": e.get("sweeps")})
         rows = []
         for tid, td in e["traces"].items():
             f = td.freqs()
@@ -711,6 +736,12 @@ class FilesMixin:
             "normalization": self._normalization_record(),
             "exported_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
+        pb = self._pb_context()
+        if pb is not None:
+            # 再生中のトレースは記録の掃引から作ったもの。何を測ったかは記録から書く（M-08）
+            meta.update({"device": pb["device"], "conditions": storage_conditions(pb["adopted"]),
+                         "calibration": pb["calibration"], "normalization": pb["normalization"],
+                         "source": pb["source"]})
 
         shifts = [self._level_shift(td.quantity, td.profile) for td in tds]
         offset = int(self._view_opts.get("freq_offset_hz") or 0)

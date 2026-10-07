@@ -15,6 +15,7 @@ import math
 import re
 from typing import Optional
 
+from . import colormaps
 from .report_layout import DARK_DEFAULT, LIGHT_DEFAULT
 
 BASES = {"dark": DARK_DEFAULT, "light": LIGHT_DEFAULT}
@@ -95,28 +96,36 @@ def delta_e(a: str, b: str) -> float:
 class Palette:
     """ユーザー設定の配色（1つ）。"""
 
-    def __init__(self, base: str = DEFAULT_BASE, colors: Optional[dict] = None) -> None:
+    def __init__(self, base: str = DEFAULT_BASE, colors: Optional[dict] = None,
+                 colormap: Optional[str] = None) -> None:
         self.base = base if base in BASES else DEFAULT_BASE
         self.colors = dict(BASES[self.base])
         for k, v in (colors or {}).items():
             c = normalize_color(v)
             if k in self.colors and c:
                 self.colors[k] = c
+        # ウォーターフォールと密度表示の色の並び（J §4.4 の表の最後の行。ライト・ダークとも viridis が初期値: 設計P §9.1）
+        self.colormap = colormap if colormaps.valid(colormap) else colormaps.DEFAULT
 
     @classmethod
     def from_saved(cls, d) -> "Palette":
         """設定に書いた形から作る。読めない色は初期値のまま。"""
         if not isinstance(d, dict):
             return cls()
-        return cls(str(d.get("base") or DEFAULT_BASE), d.get("colors") if isinstance(d.get("colors"), dict) else None)
+        return cls(str(d.get("base") or DEFAULT_BASE), d.get("colors") if isinstance(d.get("colors"), dict) else None,
+                   d.get("colormap"))
 
     def to_saved(self) -> dict:
-        return {"base": self.base, "colors": dict(self.colors)}
+        return {"base": self.base, "colors": dict(self.colors), "colormap": self.colormap}
 
     def changed(self) -> list[str]:
-        """初期値（base）から変えた色の名前（並びは NAMES の順）。"""
+        """初期値（base）から変えた色の名前（並びは NAMES の順）。色の並び（カラーマップ）を変えていれば最後に
+        "colormap"（ライト・ダークの初期値に戻すと失うものとして数える: J §4.4）。"""
         d = BASES[self.base]
-        return [k for k in NAMES if self.colors[k] != d[k]]
+        out = [k for k in NAMES if self.colors[k] != d[k]]
+        if self.colormap != colormaps.DEFAULT:
+            out.append("colormap")
+        return out
 
     def warnings(self) -> list[dict]:
         """読みにくい組（止めはしない）。コントラスト比 7 未満の文字と背景・見分けにくいトレースの組。"""
@@ -133,4 +142,5 @@ class Palette:
 
     def state(self) -> dict:
         return {"base": self.base, "colors": dict(self.colors), "changed": self.changed(),
-                "warnings": self.warnings(), "defaults": {k: dict(v) for k, v in BASES.items()}}
+                "warnings": self.warnings(), "defaults": {k: dict(v) for k, v in BASES.items()},
+                "colormap": self.colormap, "colormaps": list(colormaps.CHOICES)}

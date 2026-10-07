@@ -18,6 +18,9 @@
   const SCREEN_LINE_BASE = 1.25;
   // 凡例の線の見本の長さと行の高さ（px。Qt の pyqtgraph の凡例の見本と同じ 20px）
   const LEGEND_SAMPLE = 20;
+  // バンドプランの帯（上の端）とブックマークの印（下の端）の大きさ（px。Qt の bandplan_layer.py と同じ: 設計P §6）
+  const STRIP_H = 14;
+  const MARK_H = 8;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   // 線の描き方（core/report_layout.TRACE_LINE_STYLES の1つ: width・dash の倍率）から、描く幅と切れ目（px）。
@@ -54,6 +57,9 @@
       this.markers = [];
       this.selectedMarker = null;
       this.functionRows = []; // マーカーの機能の線（マーカー表の機能の行の line: G §3.6）
+      this.planBands = []; // バンドプランの帯 [{name, start_hz, stop_hz, color}]（設計P §6）
+      this.planMarks = []; // ブックマーク [{name, hz}]
+      this._markHits = []; // クリックで Center にする印の当たり（CSS px）
       this.xy = null;
       this.zeroLine = false;
       this.mouse = null; // グラフの上のマウスの位置（M キー用）
@@ -220,6 +226,15 @@
     }
     // 機器の範囲の外・意味の無い区間の帯（J §4.8）: [{start_hz, stop_hz, label, fill}]
     setBands(list) { this.bands = list || []; this.u.redraw(false); }
+    // バンドプランの帯とブックマークの印（設計P §6）
+    setBandplan(bands, marks) {
+      const key = JSON.stringify([bands || [], marks || []]);
+      if (key === this._planKey) return;
+      this._planKey = key;
+      this.planBands = bands || [];
+      this.planMarks = marks || [];
+      this.u.redraw(false);
+    }
     setMarkers(rows, selected) { this.markers = rows || []; this.selectedMarker = selected; this.u.redraw(false); }
     setXY(xy) { this.xy = xy; this.u.redraw(false); }
     // マーカーの機能の線（G §3.6）: マーカー表の行のうち line を持つもの。出さないときは空を渡す
@@ -241,7 +256,68 @@
       if (!this.zeroSpan) this._drawFunctionLines(u);
       this._drawCursors(u);
       this._drawMarkers(u, dpr || 1);
+      if (!this.zeroSpan) this._drawBandplan(u, dpr || 1);
       ctx.restore();
+    }
+
+    // バンドプラン（上の端に帯の色の細い帯と名前）とブックマーク（下の端に印と名前・点線）。Qt の bandplan_layer.py と同じ
+    _drawBandplan(u, dpr) {
+      const ctx = u.ctx;
+      const b = u.bbox;
+      const s = Math.max(1, dpr);
+      this._markHits = [];
+      ctx.font = `${Math.round(11 * s)}px sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      for (const band of this.planBands) {
+        const x0 = Math.max(b.left, u.valToPos(band.start_hz, "x", true));
+        const x1 = Math.min(b.left + b.width, u.valToPos(band.stop_hz, "x", true));
+        if (!(x1 > x0)) continue;
+        ctx.globalAlpha = 110 / 255;
+        ctx.fillStyle = band.color;
+        ctx.fillRect(x0, b.top, x1 - x0, STRIP_H * s);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = band.color;
+        ctx.beginPath();
+        ctx.moveTo(x0 + 0.5, b.top);
+        ctx.lineTo(x0 + 0.5, b.top + STRIP_H * s);
+        ctx.stroke();
+        if (ctx.measureText(band.name).width + 6 * s <= x1 - x0) {
+          ctx.fillStyle = this.colors.text;
+          ctx.fillText(band.name, x0 + 3 * s, b.top + (STRIP_H * s) / 2);
+        }
+      }
+      const mark = this.colors.accent;
+      const bottom = b.top + b.height;
+      for (const m of this.planMarks) {
+        const x = u.valToPos(m.hz, "x", true);
+        if (x < b.left || x > b.left + b.width) continue;
+        ctx.strokeStyle = mark;
+        ctx.setLineDash([1 * s, 2 * s]);
+        ctx.beginPath();
+        ctx.moveTo(x, b.top + STRIP_H * s);
+        ctx.lineTo(x, bottom - MARK_H * s);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = mark;
+        ctx.beginPath();
+        ctx.moveTo(x, bottom - MARK_H * s);
+        ctx.lineTo(x - 5 * s, bottom);
+        ctx.lineTo(x + 5 * s, bottom);
+        ctx.closePath();
+        ctx.fill();
+        const tw = ctx.measureText(m.name).width;
+        ctx.fillText(m.name, x + 6 * s, bottom - MARK_H * s - 7 * s);
+        // 当たりは CSS px（over の中の位置）で持つ
+        this._markHits.push({ x0: (x - 6 * s - b.left) / s, x1: (x + 8 * s + tw - b.left) / s,
+                              y0: (bottom - MARK_H * s - 14 * s - b.top) / s, y1: (bottom - b.top) / s, hz: m.hz });
+      }
+    }
+
+    // クリックした位置のブックマーク（無ければ null）
+    bookmarkAt(px, py) {
+      for (const h of this._markHits) if (px >= h.x0 && px <= h.x1 && py >= h.y0 && py <= h.y1) return h.hz;
+      return null;
     }
 
     // 帯は薄く塗ってトレースの下に敷く（トレースを隠さない）。説明は帯の左上に控えめな字で出し、横書きが
@@ -460,6 +536,9 @@
         down = null;
         if (moved < 4 && this.o.onClick) {
           const r = over.getBoundingClientRect();
+          // ブックマークの印をクリック → その周波数を Center に（設計P §6）
+          const hz = this.bookmarkAt(e.clientX - r.left, e.clientY - r.top);
+          if (hz !== null && this.o.onBookmark) { this.o.onBookmark(hz); return; }
           this.o.onClick(u.posToVal(e.clientX - r.left, "x"), u.posToVal(e.clientY - r.top, "y"));
         }
       });
