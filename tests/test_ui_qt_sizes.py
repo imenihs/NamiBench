@@ -175,6 +175,29 @@ class LayoutTest(UiBase):
             found += self.check(self.win, f"主画面 S11（SWR） {key}")
         self.assertEqual(sorted(set(found)), [])
 
+    def test_reference_value_screens(self):
+        """基準の値（設計E §6.7）: 値を付けて上段で取った基準を一覧で選んだ信号源のタブ（基準の値の欄・行の値・
+        「基準の値…」）と上段の基準の文（値付き）、S11 で欄を使えなくした信号源のタブ。"""
+        found = []
+        src = self.win.source_tab
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000).result(5)
+        self.api.call("set_mode", mode="tg").result(5)
+        self.wait(lambda: self.win.ref_quick.isVisible(), what="基準を取る")
+        src.take_value.set_value(-40.0)
+        self.win.ref_quick.take()
+        self.wait(lambda: ((self.win.state.get("normalization") or {}).get("selected") or {}).get("value_db") == -40.0
+                  and not self.win.state.get("tasks"), timeout=30, what="値を付けた基準")
+        self.wait(lambda: src.ref_list.count() == 1, what="基準の一覧")
+        src.ref_list.setCurrentRow(0)
+        self.win.show_part("tab-source")
+        self.assertTrue(src.btn_value.isEnabled())
+        found += self.check(self.win, "主画面 基準の値 tab-source")
+        self.api.call("set_mode", mode="s11").result(5)
+        self.wait(lambda: not src.take_value.isEnabled(), what="S11 では使えない")
+        found += self.check(self.win, "主画面 基準の値 S11 tab-source")
+        self.assertEqual(sorted(set(found)), [])
+
     def test_checker_finds_broken_layout(self):
         # 検査そのものが働くこと（本物の画面をわざと崩して見つかるか）
         self.win.show_part("tab-trace")

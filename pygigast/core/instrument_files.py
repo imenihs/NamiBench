@@ -30,8 +30,10 @@ from .report_layout import DIVISIONS
 from .normalize import (
     KIND_FINE,
     KIND_WIDE,
+    VALUE_DB_LIMIT,
     ReferenceBuildError,
     ReferenceFileError,
+    check_value_db,
     delete_reference,
     list_references,
     load_reference,
@@ -45,6 +47,7 @@ from .storage import Cancelled, StorageError, WriterThread
 from .storage import adopted_to_dict as storage_conditions
 from .storage.export import export_traces_csv
 from .display_export import export_display_csv
+from .ref_value import shift_ratio_levels
 from .storage.h5file import FileHeader, H5Record, TraceData, can_store, save_snapshot
 from .storage.recording import (
     WORK_PREFIX,
@@ -107,6 +110,8 @@ class _RefJob:
     frames: list = field(default_factory=list)
     # 取ったら 0dB が見える REF レベルにする（上段の「基準を取る」: 設計E §6.2 の「すぐ 0dB を示す」）
     show_zero: bool = False
+    # 基準の値（設計E §6.7）。None は指定なし（新しい基準は 0dB、上書き合成ではその基準の値のまま）
+    value_db: Optional[float] = None
 
 
 def _json_float(x) -> Optional[float]:
@@ -143,6 +148,9 @@ class FilesMixin:
         self._cur_fut = None
         sel = (st or {}).get("reference") or {}
         self._saved_reference = sel if isinstance(sel, dict) and sel.get("id") and sel.get("serial") else None
+        # トレースの値がどの基準の比か（番号 → 基準の id。比でなければ None）。基準の値を直したとき、その基準の比を
+        # 持っているトレースだけを動かすため（設計E §6.7。固定のトレースは固定したときの基準のまま）
+        self._trace_refs: dict[int, Optional[str]] = {}
 
     def _files_state_to_save(self) -> dict:
         ref = self._ref
@@ -286,7 +294,8 @@ class FilesMixin:
 
     def _info_dict(self, i) -> dict:
         return {"id": i.ref_id, "name": i.name, "serial": i.serial, "model": i.model, "mode": i.mode.value,
-                "taken_at": i.taken_at, "selected": self._ref is not None and self._ref.ref_id == i.ref_id}
+                "taken_at": i.taken_at, "selected": self._ref is not None and self._ref.ref_id == i.ref_id,
+                "value_db": i.value_db}
 
     def _cmd_reference_list(self) -> object:
         d = self._references_dir(self._serial_for_files())
@@ -352,6 +361,79 @@ class FilesMixin:
             return {"id": ref.ref_id, "name": ref.name}
 
         return self._io(job, then)
+
+    # ------------------------------------------------------------------ 基準の値（設計E §6.7）
+
+    def _value_arg(self, value_db) -> float:
+        """命令の基準の値（dB）。数でなければ bad_value、範囲（±VALUE_DB_LIMIT）の外は reference_value_range（範囲を detail に）。"""
+        try:
+            return check_value_db(value_db)
+        except ValueError:
+            pass
+        if isinstance(value_db, (int, float)) and not isinstance(value_db, bool) and math.isfinite(value_db):
+            raise self._error("reference_value_range", "value_db",
+                              {"value": value_db, "lo": -VALUE_DB_LIMIT, "hi": VALUE_DB_LIMIT})
+        raise self._error("bad_value", "value_db", {"value": value_db})
+
+    def _cmd_reference_set_value(self, id, value_db) -> object:  # noqa: A002
+        """基準の値を直す（測り直さない: 設計E §6.7）。いま使っている基準なら、その比を持つトレースと、縦軸が
+        その比の間は REF・しきい値・XY カーソルの Y も同じだけずらす（絵は変えない: 設計書 O §1.4 と同じ）。
+        S11 の基準は全反射が 0dB と決まっているので直せない（reference_value_s11）。"""
+        v = self._value_arg(value_db)
+        if self._ref_job is not None:
+            raise self._error("reference_in_progress")  # 取り終えた基準の上書き合成と書き込みが重ならないように
+        serial = self._serial_for_files()
+        p = self._ref_path(serial, id)
+        d = self._references_dir(serial)
+
+        def job():
+            ref = load_reference(p)
+            if ref.mode != Mode.TG:
+                raise CommandError("reference_value_s11", "value_db", {"mode": ref.mode.value})
+            old = ref.value_db
+            if old != v:
+                ref.value_db = v
+                save_reference(d, ref)
+            return ref, old
+
+        def then(res) -> dict:
+            ref, old = res
+            cur = self._ref
+            if cur is not None and cur.ref_id == ref.ref_id and cur.value_db != v:
+                self._ref_value_moved(cur.value_db, v)
+                cur.value_db = v
+                self._changed()
+            return {"id": ref.ref_id, "value_db": v, "previous": old}
+
+        return self._io(job, then)
+
+    def _note_trace_refs(self, ref_id: Optional[str]) -> None:
+        """この掃引を受けるトレース（固定のほか全部）の値が、どの基準の比になるかを覚える（_normalize から）。"""
+        for t in self._traces:
+            if t.action != TraceAction.FIXED:
+                self._trace_refs[t.number] = ref_id
+
+    def _ref_value_moved(self, old: float, new: float) -> None:
+        """いま使っている基準の値が old → new になった（直した・上書き合成で変わった）。
+
+        その基準の比を持っているトレース（流す表示の点も）を同じだけ動かす。いまの縦軸がその基準の比（TG で当てた
+        比を出している）なら、縦軸に結び付いた REF・ピーク探索のしきい値・比の dB で置いた XY カーソルの Y・比の dB で
+        決めたマーカーのしきい値も同じだけずらす（core/ref_value.py）。電力の縦軸の間はずらさない（単位の変更と同じ）。
+        """
+        delta = float(new) - float(old)
+        ref = self._ref
+        if not delta or ref is None:
+            return
+        # どの口から変わっても全部の画面が一度知らせる（黙って数字を変えない: J §4.10 の 4 と同じ）
+        self._notice("reference_value_changed", {"name": ref.name, "value_db": float(new), "previous": float(old)})
+        for t in self._traces:
+            if t.values is not None and t.quantity == Quantity.RATIO and self._trace_refs.get(t.number) == ref.ref_id:
+                t.scale_db(delta)
+                self._zs.shift_db(t.number, delta)
+        if (self._adopted.mode == Mode.TG and self._last_quantity == Quantity.RATIO
+                and self._norm_state.get("applied")):
+            shift_ratio_levels(self._amplitude, self._marker_tables.values(), delta)
+        self._emit_visible_traces()
 
     def _load_saved_reference(self) -> None:
         """接続したとき、前回選んでいた基準（同じ機器のもの）を読む（設計E §4: 次回起動時に最後の基準を読む）。"""
@@ -442,17 +524,22 @@ class FilesMixin:
                 pass
 
     def _cmd_reference_take(self, kind: Optional[str] = None, name: Optional[str] = None, averages: int = 1,
-                            standard: Optional[str] = None, show_zero: bool = False) -> dict:
+                            standard: Optional[str] = None, show_zero: bool = False,
+                            value_db: Optional[float] = None) -> dict:
         """基準を取る（設計E §6.2）。TG・S11 モードで、いまの条件とは別に掃引して区間を作る。
 
         kind: wide（機種の TG の範囲を 1MHz 刻み）/ fine（いまの Start・Stop・Step）。省いたら wide。
         S11 は standard に open → short の順で2回呼ぶ（設計E §6.5）。ショートはオープンと同じ点・同じ条件で測るので、
         kind を省いたらオープンを測ったときの kind（違う kind を渡したら s11_open_missing）。
-        show_zero: 取り終えたとき 0dB が縦軸の外なら、0dB が上から1目盛下に来る REF レベルにする（変えたら
-        終わりの知らせの結果に ref_level を入れて知らせる: J §4 の「黙って変えない」）。
+        show_zero: 取り終えたとき 0dB（基準の値があればその値）が縦軸の外なら、上から1目盛下に来る REF レベルにする
+        （変えたら終わりの知らせの結果に ref_level を入れて知らせる: J §4 の「黙って変えない」）。
+        value_db: 基準の値（設計E §6.7。TG だけ。省いたら新しい基準は 0dB、上書き合成ではその基準の値のまま）。
+        上書き合成で値が違えば基準の値を直したのと同じ（_ref_value_moved）。S11 は 0 以外を受けない（全反射 = 0dB）。
         """
         if not isinstance(show_zero, bool):
             raise self._error("bad_value", "show_zero")
+        if value_db is not None:
+            value_db = self._value_arg(value_db)
         if self._conn != "connected":
             raise self._error("not_connected")
         self._check_not_taking_reference()
@@ -466,6 +553,9 @@ class FilesMixin:
         if isinstance(averages, bool) or not isinstance(averages, int) or averages < 1:
             raise self._error("not_integer", "averages")
         if mode == Mode.S11:
+            if value_db:
+                raise self._error("reference_value_s11", "value_db", {"mode": mode.value})
+            value_db = None
             if standard not in ("open", "short"):
                 raise self._error("s11_standard_required", "standard")
             self._s11_open_follow(self._adopted)
@@ -474,7 +564,8 @@ class FilesMixin:
         adopted = self._ref_adopted(kind, self._adopted)
         task = self._new_task("reference_take", total=averages,
                               detail={"kind": kind, "mode": mode.value, "standard": standard})
-        self._ref_job = _RefJob(task, adopted, averages, kind, name, standard, self._run, show_zero=show_zero)
+        self._ref_job = _RefJob(task, adopted, averages, kind, name, standard, self._run, show_zero=show_zero,
+                                value_db=value_db)
         self._device_standard(standard if mode == Mode.S11 else None)
         self._run = "reference"
         self._push_job()
@@ -494,17 +585,17 @@ class FilesMixin:
             return formats.effective(t.format, mode, Quantity.RATIO) == formats.DB
         return True
 
-    def _show_zero_level(self) -> dict:
-        """0dB が縦軸の中（一番上の線より下・一番下の線より上）に無ければ、上から1目盛下に置く REF レベルにする。
-        dB の縦軸のときだけ呼ぶ（_ref_axis_is_db）。"""
+    def _show_zero_level(self, level: float = 0.0) -> dict:
+        """基準と同じ通過の高さ（0dB。基準の値があればその値: 設計E §6.7）が縦軸の中（一番上の線より下・一番下の線
+        より上）に無ければ、上から1目盛下に置く REF レベルにする。dB の縦軸のときだけ呼ぶ（_ref_axis_is_db）。"""
         amp = self._amplitude
         ref = 0.0 if amp.get("ref_level") is None else float(amp["ref_level"])
         div = float(amp.get("db_per_div") or DEFAULT_DB_PER_DIV)
-        if ref - DIVISIONS * div < 0.0 < ref:
+        if ref - DIVISIONS * div < level < ref:
             return {}
-        amp["ref_level"] = div
+        amp["ref_level"] = round(level + div, 2)
         self._changed()
-        return {"ref_level": div, "previous_ref_level": ref}
+        return {"ref_level": amp["ref_level"], "previous_ref_level": ref}
 
     def _on_ref_sweep(self, raw) -> None:
         job = self._ref_job
@@ -555,13 +646,17 @@ class FilesMixin:
             self._end_task(job.task, CommandError("reference_build_failed", None, {"message": str(e)}))
             return
         cur = self._ref
-        if (cur is not None and cur.mode == mode and cur.serial == serial
-                and (job.name is None or job.name == cur.name)):
-            # いま選んでいる基準へ上書き合成する（範囲の外は残る: 設計E §6.2）。保存が済むまで元の基準は変えない
+        merge = (cur is not None and cur.mode == mode and cur.serial == serial
+                 and (job.name is None or job.name == cur.name))
+        if merge:
+            # いま選んでいる基準へ上書き合成する（範囲の外は残る: 設計E §6.2）。保存が済むまで元の基準は変えない。
+            # 基準の値を渡していれば、その値にする（同じ基準の経路の値: 設計E §6.7）
             target = copy.deepcopy(cur)
+            if job.value_db is not None:
+                target.value_db = job.value_db
         else:
             default_name = f"{mode.value.upper()} {datetime.datetime.now():%Y-%m-%d %H:%M}"
-            target = new_reference(job.name or default_name, self._profile, serial, mode)
+            target = new_reference(job.name or default_name, self._profile, serial, mode, value_db=job.value_db or 0.0)
         target.merge(seg)
         d = self._references_dir(serial)
         wf = self._writer.submit(save_reference, d, target)
@@ -573,9 +668,13 @@ class FilesMixin:
                 if exc is not None:
                     self._end_task(job.task, exc)
                     return
+                if merge and self._ref is cur and cur.value_db != target.value_db:
+                    # 上書き合成で基準の値が変わった: 直したのと同じく、持っている比と縦軸の数字を同じだけずらす
+                    self._ref_value_moved(cur.value_db, target.value_db)
                 self._set_reference(target)
                 # 0dB が見える REF にするのは dB の縦軸だけ（|Γ|・SWR の縦軸は REF を持たず、黙って REF の数字を変えない）
-                extra = self._show_zero_level() if job.show_zero and self._ref_axis_is_db(mode) else {}
+                extra = (self._show_zero_level(target.applied_value_db)
+                         if job.show_zero and self._ref_axis_is_db(mode) else {})
                 self._end_task(job.task, None, {"reference_id": target.ref_id, "name": target.name, **extra})
                 if prev_run not in ("continuous", "single") and self._conn == "connected":
                     # 取った基準ですぐ測って 0dB 付近になることを示す（設計E §6.2）

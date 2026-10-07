@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from ... import __version__
 from ...core import report_layout as rl
-from ...ui_qt import cal_view, marker_rows, peak_view, screen_model, source_view, texts
+from ...ui_qt import cal_view, marker_rows, peak_view, screen_model, screen_s11, source_view, texts
 
 
 def default_unit(st: Optional[dict]) -> str:
@@ -114,6 +114,9 @@ def result_view(command: str, args: dict, result: Any, freq_offset_hz: int = 0) 
         return result
     if command == "preset_list" and "presets" in result:
         return {**result, "rows": screen_model.preset_rows(result.get("presets") or [])}
+    if command == "reference_list" and "references" in result:
+        # 基準の一覧の行の文と「基準の値…」の使えない理由（Qt の一覧と同じ screen_s11.ref_row: 設計E §6.7）
+        return {**result, "references": [{**r, **screen_s11.ref_row(r)} for r in result.get("references") or []]}
     if command == "palette_list" and "palettes" in result:
         # 保存した配色の一覧の行（名前・読みやすさの知らせ。Qt の設定の画面と同じ screen_model.palette_rows: J §4.4.1）
         return {**result, "rows": screen_model.palette_rows(result)}

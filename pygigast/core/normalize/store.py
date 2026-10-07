@@ -23,13 +23,15 @@ import numpy as np
 
 from ..sweep import image_reject as ir
 from ..types import FreqAxis, Mode
-from .reference import Reference, ReferenceSegment
+from .reference import Reference, ReferenceSegment, check_value_db
 
 FORMAT = "pygigast-reference"
 # 2 でイメージキャンセル（区間の image_cancel 真偽）をイメージ除去（image_reject）に置き換えた（設計F §7.3）。
-# 1 は読むときに true → "fast"、false → "off" に読み替える
-VERSION = 2
-READABLE_VERSIONS = (1, 2)
+# 1 は読むときに true → "fast"、false → "off" に読み替える。
+# 3 で基準の値（value_db: 設計E §6.7）を足した。2 以前は 0dB として読む。値を知らない前の版のアプリが 3 を読むと
+# 基準の値の分だけ違う数を出すので、版を上げて読ませない
+VERSION = 3
+READABLE_VERSIONS = (1, 2, 3)
 SUFFIX = ".h5"
 # id はファイル名に使うので、フォルダの外を指す文字を許さない
 _ID_RE = re.compile(r"^[0-9A-Za-z_-]{1,64}$")
@@ -50,6 +52,7 @@ class ReferenceInfo:
     mode: Mode
     taken_at: Optional[float]
     path: Path
+    value_db: float = 0.0  # 基準の値（設計E §6.7）
 
 
 def _int(v: object, what: str) -> int:
@@ -68,6 +71,7 @@ def to_dict(ref: Reference) -> dict:
         "serial": ref.serial,
         "mode": ref.mode.value,
         "band_edges_hz": [int(e) for e in ref.band_edges_hz],
+        "value_db": float(ref.value_db),
         "segments": [
             {
                 "start_hz": int(s.axis.start_hz),
@@ -117,11 +121,20 @@ def from_dict(d: dict) -> Reference:
             band_edges_hz=tuple(_int(e, "band_edges_hz") for e in d.get("band_edges_hz", [])),
             segments=segs,
             ref_id=str(d["id"]),
+            value_db=_value_of(d),
         )
     except (KeyError, TypeError, ValueError) as e:
         if isinstance(e, ReferenceFileError):
             raise
         raise ReferenceFileError(f"中身が壊れている: {e}") from e
+
+
+def _value_of(d: dict) -> float:
+    """基準の値（設計E §6.7）。2 以前の版には無いので 0dB。数でない・範囲の外は壊れている（ValueError）。"""
+    v = d.get("value_db", 0.0)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        v = float(v)
+    return check_value_db(v)
 
 
 def _reject_of(s: dict) -> str:
@@ -166,6 +179,7 @@ def _write_h5(path: str, ref: Reference) -> None:
     with h5py.File(path, "w") as f:
         for k in ("format", "version", "id", "name", "model", "serial", "mode"):
             f.attrs[k] = d[k]
+        f.attrs["value_db"] = float(d["value_db"])
         f.attrs["band_edges_hz"] = np.asarray(d["band_edges_hz"], dtype=np.int64)
         g = f.create_group("segments")
         for i, seg in enumerate(ref.segments):
@@ -235,7 +249,7 @@ def list_references(directory: Path | str) -> list[ReferenceInfo]:
             ref = load_reference(p)
         except (OSError, ReferenceFileError):
             continue
-        out.append(ReferenceInfo(ref.ref_id, ref.name, ref.serial, ref.model, ref.mode, ref.taken_at, p))
+        out.append(ReferenceInfo(ref.ref_id, ref.name, ref.serial, ref.model, ref.mode, ref.taken_at, p, ref.value_db))
     out.sort(key=lambda i: (i.taken_at is None, -(i.taken_at or 0.0)))
     return out
 

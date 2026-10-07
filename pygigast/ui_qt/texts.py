@@ -35,6 +35,8 @@ from .texts_step import *  # noqa: F401,F403 — SG のステップ掃引・内�
 from .texts_step import STEP_ERRORS, step_end_text, step_legend, step_task_label
 from .texts_nf import *  # noqa: F401,F403 — NF 測定の語（設計M）
 from .texts_nf import ENR_TABLE_REASONS, NF_ERRORS, NF_MARKER_NOTES, NF_TEXTS
+from .texts_refvalue import *  # noqa: F401,F403 — 基準の値の語（設計E §6.7）
+from .texts_refvalue import REF_VALUE_ERRORS, REF_VALUE_NOTICES, ref_value_text, value_range_text
 
 
 def tpl(key: str, **kw) -> str:
@@ -225,6 +227,7 @@ NOTICES = {
     "listen_stopped": "聞くのをやめました",
     "auto_connected": "前回の機器に繋ぎました",
     **S11_NOTICES,
+    **REF_VALUE_NOTICES,
 }
 
 DISCARD_REASONS = {
@@ -317,6 +320,9 @@ def notice_text(n: dict) -> str:
         text += tpl("paren", text=f"{d['ratio'] * 100:.2f} %")
     elif code == "auto_connected" and d.get("name"):
         text = tpl("auto_connected", name=d["name"])
+    elif code == "reference_value_changed" and d.get("name") is not None:
+        # 基準の値を直した（設計E §6.7）。0 dB に戻したときも値を言う
+        text = tpl("ref_value_changed", name=d["name"], value=ref_value_text(d.get("value_db")) or "0.0 dB")
     elif code == "listen_stopped":
         r = LISTEN_STOP_REASONS.get(d.get("reason"), d.get("reason") or "")
         if r:
@@ -343,6 +349,8 @@ def error_text(e) -> str:
     elif code == "internal_error" and detail.get("message"):
         # どこで何が起きたかを出す（「値が正しくない」と取り違えさせない）
         text += tpl("paren", text=str(detail["message"]))
+    elif code == "reference_value_range" and "lo" in detail and "hi" in detail:
+        text = value_range_text(float(detail["lo"]), float(detail["hi"]))
     elif code == "bad_value" and "min" in detail and "max" in detail:
         text += tpl("paren", text=tpl("range_min_max", min=detail["min"], max=detail["max"]))
     elif code == "enr_table_unreadable" and detail.get("reason"):
@@ -576,7 +584,9 @@ def normalization_text(n: dict) -> str:
     if not n.get("applied"):
         reason = NORM_REASONS.get(n.get("reason") or "", n.get("reason") or "")
         return tpl("norm_none_reason", reason=reason) if reason else TEMPLATES["norm_none"]
-    parts = [tpl("norm_ref", name=sel["name"]) if sel else TEMPLATES["norm_ref_noname"]]
+    value = ref_value_text((sel or {}).get("value_db"))  # 基準の値（設計E §6.7。0 dB なら出さない）
+    parts = [(tpl("norm_ref_value", name=sel["name"], value=value) if value else tpl("norm_ref", name=sel["name"]))
+             if sel else TEMPLATES["norm_ref_noname"]]
     acc = ACCURACY.get(n.get("accuracy") or "", "")
     if acc:
         parts.append(acc)
@@ -722,6 +732,7 @@ ERRORS.update({
 ERRORS.update({k: v for k, v in CAL_ERRORS.items() if k not in ERRORS})
 ERRORS.update({k: v for k, v in STEP_ERRORS.items() if k not in ERRORS})
 ERRORS.update({k: v for k, v in NF_ERRORS.items() if k not in ERRORS})  # NF の ENR（設計M）
+ERRORS.update({k: v for k, v in REF_VALUE_ERRORS.items() if k not in ERRORS})  # 基準の値（設計E §6.7）
 
 
 # ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語

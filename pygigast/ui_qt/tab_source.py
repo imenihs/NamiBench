@@ -2,8 +2,9 @@
 
 - SG: 周波数・周波数を変えたら最大・最小保持を消すか（設計F §8）・出力中の表示
 - ステップ掃引（設計L §1.3）: SG の欄のすぐ下（step_panel.py）
-- ノーマライズの基準（TG・S11）: いまの基準の状態（名前・精度・経過時間・電源の入れ直し前）・一覧と選択・名前・消す・
-  TG の「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 の範囲とオープン → ショート
+- ノーマライズの基準（TG・S11）: いまの基準の状態（名前・基準の値・精度・経過時間・電源の入れ直し前）・一覧と選択・
+  名前・基準の値（測り直さずに直す: 設計E §6.7）・消す・TG の「基準の値」の欄（取るときに送る。上段の「基準を取る」も
+  この値を使う）と「広く取る」「いまの条件で細かく取る」（進み具合とやめるは処理の帯: H §4.1）・S11 の範囲とオープン → ショート
   （1段ずつ。次に押すボタンを強調し、測ったオープンの時刻と範囲を出す: 設計E §6.5。中身は screen_s11.s11_view）
 - NF（設計M）: ENR（dB の小数）・ENR の表（CSV を読み込む・外す）・NF の増幅度（校正データの倍率）・つなぎ方の窓を開く。
   中身は nf_view.nf_view（Web と同じ）。ENR が無いときの知らせは ENR の欄に、表の範囲の知らせは表の行に付ける（U-25）
@@ -11,7 +12,6 @@
 """
 from __future__ import annotations
 
-import datetime
 from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import Qt, QTimer
@@ -28,8 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.units import ParseError, level_text, parse_db
 from . import nf_view, screen_s11, sizes, texts, widget_sync
-from .fields import DbField, FreqField
+from .fields import DbField, FreqField, LocalDbChoiceField
 from .step_panel import StepPanel
 from .texts_nf import NF_TEXTS as N
 from .tab_traces import body, outer, set_enabled
@@ -69,12 +70,6 @@ class _EnrField(DbField):
     def clear_value(self) -> None:
         self._value = 0.0
         self.edit.show_value("")
-
-
-def _when(ts) -> str:
-    if not ts:
-        return ""
-    return datetime.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
 
 
 class SourceTab(QWidget):
@@ -118,6 +113,13 @@ class SourceTab(QWidget):
         self.take_avg.setSuffix(L["times_suffix"])
         sizes.set_width(self.take_avg, "int")
         form.addRow(L["average"], self.take_avg)
+        # 基準の値（設計E §6.7: 表示 = 基準との比 + この値）。取るときに送る値で、画面ごとに持つ（名前・平均と同じ）
+        spec = texts.REF_VALUE_SPEC
+        self.take_value = LocalDbChoiceField(L["ref_value"], "dB", lambda _v: None, tuple(spec["choices"]),
+                                             signed=spec["signed"], lo=spec["lo"], hi=spec["hi"],
+                                             decimals=spec["decimals"], big=False)
+        self.take_value.set_value(0.0)
+        form.addRow(self.take_value.name, self.take_value)
         v.addLayout(form)
         self.take_wide = QPushButton(L["take_wide"])
         self.take_fine = QPushButton(L["take_fine"])
@@ -152,12 +154,15 @@ class SourceTab(QWidget):
         self.btn_select = QPushButton(L["use"])
         self.btn_unselect = QPushButton(L["not_use"])
         self.btn_rename = QPushButton(L["rename_dots"])
+        self.btn_value = QPushButton(L["ref_value_dots"])
         self.btn_delete = QPushButton(L["erase_dots"])
         self.btn_select.clicked.connect(self._select)
         self.btn_unselect.clicked.connect(lambda: win.call("reference_select", id=None, on_ok=lambda r: self.refresh()))
         self.btn_rename.clicked.connect(self._rename)
+        self.btn_value.clicked.connect(self._edit_value)
         self.btn_delete.clicked.connect(self._delete)
-        v.addLayout(sizes.buttons_row(self.btn_select, self.btn_unselect, self.btn_rename, self.btn_delete))
+        v.addLayout(sizes.buttons_row(self.btn_select, self.btn_unselect, self.btn_rename, self.btn_value,
+                                      self.btn_delete))
         lay.addWidget(g)
 
         lay.addWidget(self._build_nf())
@@ -292,6 +297,8 @@ class SourceTab(QWidget):
         reason = screen_s11.tg_take_reason(st)
         set_enabled(self.take_wide, reason, L["take_wide_tip"])
         set_enabled(self.take_fine, reason, L["take_fine_tip"])
+        rv = screen_s11.ref_value_view(st)  # S11 の基準には使わない（Web と同じ）
+        set_enabled(self.take_value, rv["reason"], rv["tip"])
         v = screen_s11.s11_view(st)
         set_enabled(self.s11_range, v["range_reason"], L["s11_range_tip"])
         set_enabled(self.s11_open, v["open_reason"], L["s11_open_tip"])
@@ -320,8 +327,7 @@ class SourceTab(QWidget):
             cur = self.ref_list.currentItem().data(ID_ROLE) if self.ref_list.currentItem() else None
             self.ref_list.clear()
             for ref in self._refs:
-                mark = "● " if ref.get("selected") else "   "
-                it = QListWidgetItem(f"{mark}{ref['name']}  {ref['mode'].upper()}  {_when(ref.get('taken_at'))}")
+                it = QListWidgetItem(screen_s11.ref_row(ref)["text"])  # Web の表と同じ行の文（基準の値も）
                 it.setData(ID_ROLE, ref["id"])
                 self.ref_list.addItem(it)
                 if ref["id"] == cur:
@@ -339,10 +345,16 @@ class SourceTab(QWidget):
         it = self.ref_list.currentItem()
         return it.data(ID_ROLE) if it else None
 
+    def _current_ref(self) -> Optional[dict]:
+        rid = self._current_id()
+        return next((r for r in self._refs if r["id"] == rid), None)
+
     def _update_buttons(self) -> None:
         has = self._current_id() is not None
         for b in (self.btn_select, self.btn_rename, self.btn_delete):
             set_enabled(b, None if has else REASON_NO_SELECTION)
+        ref = self._current_ref()
+        set_enabled(self.btn_value, screen_s11.ref_row(ref)["value_reason"] if ref else REASON_NO_SELECTION)
         selected = any(r.get("selected") for r in self._refs)
         set_enabled(self.btn_unselect, None if selected else texts.REASON_TEXTS["no_reference_selected"])
 
@@ -350,7 +362,8 @@ class SourceTab(QWidget):
 
     def _take(self, kind: str) -> None:
         name = self.take_name.text().strip() or None
-        self.win.call("reference_take", kind=kind, name=name, averages=self.take_avg.value())
+        self.win.call("reference_take", kind=kind, name=name, averages=self.take_avg.value(),
+                      value_db=self.take_value.value())
 
     def _take_s11(self, standard: str) -> None:
         """S11 のオープン・ショート（設計E §6.5）。オープンは選んだ範囲、ショートはオープンと同じ範囲（コアが合わせる）。"""
@@ -371,6 +384,22 @@ class SourceTab(QWidget):
         name = self.win.ask_text(L["rename_ref_title"], L["new_name"], ref["name"])
         if name and name.strip() and name != ref["name"]:
             self.win.call("reference_rename", id=rid, name=name.strip(), on_ok=lambda r: self.refresh())
+
+    def _edit_value(self) -> None:
+        """一覧で選んだ基準の値を直す（測り直さない: 設計E §6.7）。範囲の外はコアが断り、理由を出す。"""
+        ref = self._current_ref()
+        if ref is None or screen_s11.ref_row(ref)["value_reason"]:
+            return
+        text = self.win.ask_text(L["ref_value_title"], L["ref_value_new"], level_text(ref.get("value_db") or 0.0))
+        if text is None or not text.strip():
+            return
+        try:
+            v = parse_db(text)
+        except ParseError:
+            self.win.status_note(L["bad_value"])
+            return
+        if v != (ref.get("value_db") or 0.0):
+            self.win.call("reference_set_value", id=ref["id"], value_db=v, on_ok=lambda r: self.refresh())
 
     def _delete(self) -> None:
         rid = self._current_id()

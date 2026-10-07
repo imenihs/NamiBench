@@ -362,7 +362,7 @@ class DisplayMixin:
         sel = None
         if ref is not None:
             sel = {"id": ref.ref_id, "name": ref.name, "mode": ref.mode.value, "serial": ref.serial,
-                   "taken_at": ref.taken_at}
+                   "taken_at": ref.taken_at, "value_db": ref.applied_value_db}  # 基準の値（設計E §6.7）
         # s11_open: 測ってあるオープン（S11 の基準の1段目。次はショート: 設計E §6.5）
         return {"selected": sel, **self._norm_state, "s11_open": self._s11_open_state()}
 
@@ -406,9 +406,11 @@ class DisplayMixin:
         if a is None or a.mode not in NORMALIZED_MODES:
             self._norm_state = {"used": False}
             self._norm_key = None
+            self._note_trace_refs(None)
             return frame
         serial = (self._identity or {}).get("serial") or ""
         res = apply_reference(frame, self._ref, serial=serial, connected_at=self._connected_at or 0.0, now=time.time())
+        self._note_trace_refs(res.reference_id if res.applied else None)  # 基準の値を直したときに動かす相手（設計E §6.7）
         self._norm_state = {
             "used": True,
             "applied": res.applied,
@@ -434,7 +436,9 @@ class DisplayMixin:
             return None
         return {"id": self._ref.ref_id, "name": self._ref.name, "taken_at": self._ref.taken_at,
                 "connected_at": self._connected_at, "accuracy": self._norm_state.get("accuracy"),
-                "power_cycled": self._norm_state.get("power_cycled")}
+                "power_cycled": self._norm_state.get("power_cycled"),
+                # 基準の値（設計E §6.7）。比の値はこの値を足したもの
+                "value_db": self._ref.applied_value_db}
 
     def _trace_notes(self) -> tuple[str, ...]:
         """読み値に添える注意（設計G §3.3）。掃引条件の信用できない条件と、基準の精度・電源の入れ直し前。"""
