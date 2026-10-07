@@ -209,6 +209,14 @@ class InstrumentStepSweepTest(InstrumentCase):
         self.assertTrue(resets)
         self.assertFalse([d for d in resets if d["cause"] == "sg_freq" and 3 in d["traces"]])
         self.assertTrue([d for d in resets if d["cause"] == "sg_freq" and 4 in d["traces"]])
+        # 始めと終わりのイメージ除去の切り替えでも最大保持は残る（積み上げた分が終わった瞬間に消えない）
+        self.assertFalse([d for d in resets if 3 in d["traces"]])
+        self.assertTrue([d for d in resets if d["cause"] == "image_reject" and 4 in d["traces"]])
+        self.assertTrue(st["traces"][2]["has_values"])
+        t3 = self.call("get_trace", id=3)
+        f3 = t3["axis"]["start_hz"] + t3["axis"]["step_hz"] * np.arange(t3["axis"]["points"])
+        for sg in (400, 600):
+            self.assertGreater(np.nanmax(t3["values"][np.abs(f3 - sg * MHZ) <= 2 * MHZ]), -40.0, sg)
 
     def test_image_reject_not_used_and_reason(self):
         sent = []

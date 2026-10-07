@@ -7,7 +7,8 @@
   - SG の周波数は `_set_adopted(new, step_sweep=True)` で動かす（設計F §8 の 2: 最大・最小保持を残し、平均は捨てる）。
     SG 周波数の欄・状態バーの「SG 出力中」もいまの段の周波数になる。終わったら始める前の周波数に戻す
   - イメージ除去は使わない（旧アプリも SG-SWEEP 中は使わない）。利用者の選択は変えず、機器へ渡す条件だけを「なし」に
-    する。選択の欄は間だけ理由付きで選べない（画面: screen_model.sweep_reasons）
+    する。選択の欄は間だけ理由付きで選べない（画面: screen_model.sweep_reasons）。始めと終わりのイメージ除去の切り替えで
+    平均は捨て、最大・最小保持は残す（SG の周波数を動かすときと同じ扱い）
   - 掃引はいまのトレースにもふつうに入る（トレース1 などで、いまの段の掃引が見える）
   - 結果は選んだトレースを固定にして入れる（掃引ごとに入れ直す: 設計F の固定のトレース。保存・PNG はふつうどおり）。
     止めた・失敗したときもそこまでの結果を残す。1回も重ねないうちに終わったら、トレースの設定を始める前に戻す
@@ -28,7 +29,7 @@ from . import step_sweep as ss
 from .instrument_common import sweep_key
 from .instrument_display import apply_trace_settings, display_values, trace_settings
 from .storage import Cancelled
-from .trace import ConditionChange, TraceAction, formats
+from .trace import ConditionChange, HoldKeep, TraceAction, formats
 from .types import AdoptedSweep, Mode, RawSweep, SweepRequest
 
 TASK = "step_sweep"
@@ -165,8 +166,10 @@ class StepSweepMixin:
         self._run = RUN_STATE
         self._last_stop_reason = None
         if job.ic_used:
-            # 機器へ渡す条件のイメージ除去が「なし」になる（値の意味が変わる: 設計F §5.3）
-            self._on_condition(ConditionChange.IMAGE_REJECT)
+            # 機器へ渡す条件のイメージ除去が「なし」になる（値の意味が変わる: 設計F §5.3）。平均は捨てるが、最大・最小
+            # 保持は残す（ステップ掃引が条件を動かすときは特性を積み上げて描く: 設計F §8 の 2 と同じ扱い。捨てると、
+            # 段ごとに積み上げた保持が終わった瞬間に消えた: 2026-10-03 反証）
+            self._on_condition(ConditionChange.IMAGE_REJECT, holds=HoldKeep.ALL)
         self._rebuild_views()
         self._refresh_markers()
         self._step_goto(0)
@@ -269,7 +272,8 @@ class StepSweepMixin:
             back = self._model.apply(SweepRequest(sg_hz=job.orig_sg_hz, one_shot=True), self._adopted)
             self._set_adopted(dataclasses.replace(back, adjustments=(), alternative=None), step_sweep=True)
         if job.ic_used:
-            self._on_condition(ConditionChange.IMAGE_REJECT)  # 機器へ渡す条件のイメージ除去が選択に戻る
+            # 機器へ渡す条件のイメージ除去が選択に戻る。始めたときと同じく最大・最小保持は残す（設計F §8 の 2）
+            self._on_condition(ConditionChange.IMAGE_REJECT, holds=HoldKeep.ALL)
         self._push_job()
         self._rebuild_views()
         self._refresh_markers()
