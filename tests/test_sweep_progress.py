@@ -259,6 +259,65 @@ class ControlThrottleTest(unittest.TestCase):
         self.c._sweep_progress_screen_done(0)  # 前の世代の結果では何もしない
         self.assertEqual(len(self.c.sent), 2)
 
+    def sends(self):
+        """(送った時刻, 済んだ量か "hide") の並び。"""
+        return [(t, p["done"] if p["show"] else "hide") for t, _k, p in self.c.sent]
+
+    def check_100_kept(self, after):
+        """画面の更新の 100% はすぐ送り、次の値（after）はその 0.1 秒後より前に送らない。"""
+        s = self.sends()
+        i = [d for _t, d in s].index(1000)
+        self.assertEqual([d for _t, d in s[i:]], [1000, after])
+        self.assertGreaterEqual(s[i + 1][0] - s[i][0], MIN_INTERVAL_S - 1e-9)
+
+    def test_screen_done_soon_after_a_send_is_100_and_next_sweep_waits(self):
+        # 連続: 直前の知らせから 0.1 秒以内に画面が更新され、すぐ次の掃引の 0% が来る（2026-10-07 反証で見つかった形:
+        # 100% が後回しになり、0% に置き換わって 100% が出なかった）
+        self.put(930)
+        self.clock.t += 0.05
+        self.c._sweep_progress_screen_done(1)
+        self.assertEqual(self.payloads()[-1]["done"], 1000)  # 間隔の内でもすぐ送る
+        for _ in range(9):
+            self.clock.t += 0.01
+            self.put(0 if self.clock.t < 100.1 else 5)
+        self.clock.t += self.c._sweep_progress_wait()
+        self.c._sweep_progress_poll()
+        self.check_100_kept(5)
+
+    def test_screen_done_then_hide_waits(self):
+        # 単発の終わり・機器が仕事を持たない・ステップ掃引の段の変わり目: 100% の直後に隠す
+        self.put(930)
+        self.clock.t += 0.05
+        self.c._sweep_progress_screen_done(1)
+        self.clock.t += 0.001
+        self.c._sweep_progress_hide()
+        self.clock.t += 0.05
+        self.c._sweep_progress_poll()
+        self.assertEqual(self.payloads()[-1]["done"], 1000)
+        self.clock.t += self.c._sweep_progress_wait()
+        self.c._sweep_progress_poll()
+        self.check_100_kept("hide")
+
+    def test_next_sweep_read_before_the_screen_result_waits_for_it(self):
+        # 機器スレッドが次の掃引を始めて 0 を置いたのを、画面の更新（掃引の結果）を受ける前に読んだ: 0 は出さず、
+        # 結果を受けてから 100% → 0
+        self.put(930)
+        self.clock.t += 0.2
+        self.put(0)
+        self.assertEqual(self.payloads()[-1]["done"], 930)
+        self.c._sweep_progress_screen_done(1)
+        self.clock.t += self.c._sweep_progress_wait()
+        self.c._sweep_progress_poll()
+        self.assertEqual([d for _t, d in self.sends()], [930, 1000, 0])
+
+    def test_discarded_screen_starts_again_from_zero(self):
+        # 上限時間で画面ごと捨てた: 100% にせず、次の掃引の 0 から出す
+        self.put(400)
+        self.clock.t += 0.2
+        self.c._sweep_progress_screen_dropped()
+        self.put(0)
+        self.assertEqual([d for _t, d in self.sends()], [400, 0])
+
     def test_hide_replaces_pending_and_is_sent_once(self):
         self.put(10, 100)
         self.clock.t += 0.01
@@ -317,10 +376,68 @@ class SweepProgressEventsTest(InstrumentCase):
         dones = [p["done"] for p in shown]
         self.assertEqual(dones, sorted(dones))
         self.assertLessEqual(max(dones), total)
-        times = [t for _p, t in ev]
-        self.assertTrue(all(b - a >= MIN_INTERVAL_S - 0.005 for a, b in zip(times, times[1:])), times)
+        # 0.1 秒おき。画面の更新の 100% だけは間隔によらずすぐ送る（その次は 0.1 秒待つ）
+        self.assertEqual(dones[-1], total)
+        gaps = [(tb - ta, b) for (_a, ta), (b, tb) in zip(ev, ev[1:])]
+        self.assertTrue(all(g >= MIN_INTERVAL_S - 0.005 for g, b in gaps if not (b["show"] and b["done"] == b["total"])),
+                        gaps)
         self.assertFalse(ev[-1][0]["show"])
         self.assertNotIn("sweep_progress", st)  # 状態（PNG の元）には入れない
+
+    def check_every_screen_ends_at_100(self, ev, screens, stopped_mid_screen=False):
+        """画面ごとに 100% を出し、次の掃引の値・隠すはその 0.1 秒後より前に来ない（設計J §4.13「画面更新までを 100%」）。
+
+        stopped_mid_screen: 最後の隠すは止める操作（途中の画面を捨てた）なので、その前は 100% でなくてよい。
+        """
+        seq = [p["done"] if p["show"] else "hide" for p, _t in ev]
+        full = [p for p, _t in ev if p["show"] and p["done"] == p["total"]]
+        self.assertEqual(len(full), screens, seq)
+        for i, ((a, ta), (b, tb)) in enumerate(zip(ev, ev[1:])):
+            if not a["show"]:
+                continue
+            last_hide = i + 1 == len(ev) - 1 and not b["show"]
+            if (b["show"] and b["done"] < a["done"]) or (not b["show"] and not (last_hide and stopped_mid_screen)):
+                self.assertEqual(a["done"], a["total"], seq)  # 画面の区切り（次の掃引が 0 から・隠す）の前は 100%
+            if a["done"] == a["total"]:
+                self.assertGreaterEqual(tb - ta, MIN_INTERVAL_S - 0.005, seq)
+
+    def long_screens(self):
+        # 50MHz〜2GHz・正確（見積もり 5.7 秒）。シミュレータは見積もりの 1/10 の時間（1画面 約 0.57 秒）
+        self.inst._backends["simulator"].speed = 0.1
+        self.connect(50_000_000, 2_000_000_000)
+        self.call("set_sweep", image_reject="accurate")
+        self.assertGreater(self.call("get_state")["sweep"]["estimated_sweep_s"], SHOW_ABOVE_S)
+
+    def test_single_every_screen_reaches_100(self):
+        self.long_screens()
+        with self.cv:
+            self.sp.clear()
+        self.clear_events()
+        self.call("run", mode="single", count=3)
+        self.wait_for(lambda k, p: k == "state" and p["run"]["state"] == "stopped"
+                      and p["run"]["last_stop_reason"] == "single_done")
+        self.wait_for(lambda k, p: k == "sweep_progress" and not p["show"])
+        ev = self.progress_events()
+        self.assertFalse(ev[-1][0]["show"])
+        self.check_every_screen_ends_at_100(ev, 3)
+
+    def test_continuous_every_screen_reaches_100(self):
+        self.long_screens()
+        n0 = self.call("get_state")["run"]["sweep_count"]
+        with self.cv:
+            self.sp.clear()
+        self.call("run", mode="continuous")
+        end = time.monotonic() + 20
+        while self.call("get_state")["run"]["sweep_count"] < n0 + 4:
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.02)
+        self.call("stop")
+        self.wait_for(lambda k, p: k == "state" and p["run"]["state"] == "stopped")
+        time.sleep(0.3)
+        screens = self.call("get_state")["run"]["sweep_count"] - n0
+        ev = self.progress_events()
+        self.assertFalse(ev[-1][0]["show"])
+        self.check_every_screen_ends_at_100(ev, screens, stopped_mid_screen=True)
 
     def test_short_screen_not_shown(self):
         self.connect(100_000_000, 200_000_000)
@@ -351,6 +468,8 @@ class SweepProgressEventsTest(InstrumentCase):
         self.call("set_step_sweep", start_hz=400_000_000, stop_hz=450_000_000, step_hz=50_000_000, per_step=1,
                   combine="max", trace=2)
         self.clear_events()
+        with self.cv:
+            self.sp.clear()
         r = self.call("step_sweep_start")
         self.wait_task(r["task_id"])
         self.wait_for(lambda k, p: k == "sweep_progress" and not p["show"])
@@ -363,6 +482,8 @@ class SweepProgressEventsTest(InstrumentCase):
         self.assertEqual({p["total"] for p in shown}, totals)
         self.assertNotIn(accurate_total, totals)
         self.assertTrue(all(p["done"] <= p["total"] for p in shown))
+        # 2つの段の掃引が、どちらも 100% で終わる（段の変わり目・終わりの隠すに置き換わらない）
+        self.check_every_screen_ends_at_100(self.progress_events(), 2)
 
 
 class StallPort:

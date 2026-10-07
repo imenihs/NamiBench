@@ -4,8 +4,12 @@
 - 割合は機器が実際に済ませた量から出す（GigaSt・シミュレータは届いた点の数、RTL-SDR は周波数を動かした段の数:
   Device.progress_sink）。時間からは出さない（機器が止まったら棒も止まり、止まったことが見える）
 - 出すのは1画面の見積もりが SHOW_ABOVE_S を超えるときだけ
-- 画面へはイベント sweep_progress {"show", "done", "total"} で送る（状態を全部送り直さない）。1秒に
-  1 / MIN_INTERVAL_S 回まで。間に来た値は最後の1つだけを残し、間隔が明けたら送る
+- 画面へはイベント sweep_progress {"show", "done", "total"} で送る（状態を全部送り直さない）。前の知らせから
+  MIN_INTERVAL_S は空ける（1秒に10回まで）。間に来た値は最後の1つだけを残し、間隔が明けたら送る
+- ただし画面が更新されたときの 100% は間隔によらずすぐ送り、ほかの値で置き換えない。次の値（次の掃引の 0%・隠す）
+  はその MIN_INTERVAL_S 後まで待たせる（100% が少なくとも1間隔は見える）。間引きに入れると、100% は次の掃引の 0%
+  か隠すにすぐ置き換わって出なかった（2026-10-07 反証: 連続で 17 画面のうち 6 画面しか 100% にならなかった）。
+  このため画面の更新の前後だけは、間隔が MIN_INTERVAL_S より短い知らせが1つ増える
 
 機器スレッドの側（ProgressReporter）は最新の量を置くだけで、制御スレッドの側（SweepProgressMixin）が
 MIN_INTERVAL_S ごとに読みに行く。機器スレッドから量ごとに送ると、点が1つずつ届く掃引では待ち行列が溢れ、
@@ -73,6 +77,9 @@ class SweepProgressMixin:
         self._sp_pending: Optional[dict] = None  # 間隔が明けたら送る知らせ
         self._sp_last_t = -math.inf
         self._sp_seen: Optional[tuple[int, int, int]] = None  # 最後に読んだ機器スレッドの量
+        # いまの画面で出した量。これより小さい量は次の掃引のもの（機器スレッドは結果を送るとすぐ次の掃引を始めるので、
+        # 制御スレッドが結果を受ける前に次の掃引の 0 を読むことがある）。画面の区切り（更新・捨てた・隠す）で 0 に戻す
+        self._sp_floor = 0
 
     def _sweep_progress_reporter(self) -> Optional[ProgressReporter]:
         return getattr(getattr(self, "_worker", None), "progress", None)
@@ -82,9 +89,13 @@ class SweepProgressMixin:
         rep = self._sweep_progress_reporter()
         v = rep.latest if rep is not None else None
         if v is not None and v != self._sp_seen:
-            self._sp_seen = v
-            if v[0] == self._gen:  # 条件が変わる前の掃引は出さない（結果は捨てる。設計B §7.2.1）
+            if v[0] != self._gen:  # 条件が変わる前の掃引は出さない（結果は捨てる。設計B §7.2.1）
+                self._sp_seen = v
+            elif v[1] >= self._sp_floor:
+                self._sp_seen = v
+                self._sp_floor = v[1]
                 self._sweep_progress_set({"show": True, "done": v[1], "total": v[2]})
+            # 小さい量は次の掃引のもの: いまの画面の結果を受けて区切ってから出す（読んだことにしない）
         if self._sp_pending is not None and self._sp_clock() + _EPS_S >= self._sp_last_t + MIN_INTERVAL_S:
             self._sweep_progress_send(self._sp_pending)
 
@@ -100,12 +111,24 @@ class SweepProgressMixin:
         return max(0.0, min(waits)) if waits else None
 
     def _sweep_progress_screen_done(self, gen: int) -> None:
-        """画面が1回更新された（いまの世代の掃引の結果を受けた）: 出していれば 100%。"""
+        """画面が1回更新された（いまの世代の掃引の結果を受けた）: 出していれば 100% をすぐ送る（間隔によらない）。
+        次の値は _sp_last_t から MIN_INTERVAL_S 待つので、100% は次の掃引の 0%・隠すに置き換わらない。"""
+        if gen != self._gen:
+            return
         cur = self._sp_pending or self._sp_sent
-        if gen == self._gen and cur.get("show"):
-            self._sweep_progress_set({"show": True, "done": cur["total"], "total": cur["total"]})
+        if cur.get("show"):
+            full = {"show": True, "done": cur["total"], "total": cur["total"]}
+            if full != self._sp_sent:
+                self._sweep_progress_send(full)
+            self._sp_pending = None
+        self._sp_floor = 0
+
+    def _sweep_progress_screen_dropped(self) -> None:
+        """いまの画面を捨てた（上限時間など。画面は更新されない）: 次の掃引の 0 から出す。"""
+        self._sp_floor = 0
 
     def _sweep_progress_hide(self) -> None:
+        self._sp_floor = 0
         self._sweep_progress_set(dict(HIDDEN))
 
     def _sweep_progress_set(self, payload: dict) -> None:

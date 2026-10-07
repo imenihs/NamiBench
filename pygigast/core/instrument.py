@@ -586,6 +586,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, R
     def _on_discarded(self, gen: int, reason: str, detail: dict) -> None:
         if reason == "cancelled":
             return  # 利用者の操作で捨てた掃引。数えない
+        if gen == self._gen:
+            self._sweep_progress_screen_dropped()  # 画面は更新されない: 次の掃引の進み具合を 0 から出す（設計J §4.13）
         self._discard_count += 1
         self._notice("sweep_discarded", {"reason": reason, **(detail or {})})
         self._changed()
