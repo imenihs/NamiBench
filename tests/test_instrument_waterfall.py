@@ -555,7 +555,7 @@ class ZeroSpanAndFormatTest(S11Case):
 
         self.s11_reference()
         self.call("set_view", layout="density")
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         self.call("set_amplitude", swr_per_div=0.5)
         self.clear_events()
         sweep_once(self)
@@ -588,7 +588,7 @@ class ZeroSpanAndFormatTest(S11Case):
         self.assertEqual(d["level_hi"], 11.0)
         # 形式を dB に戻すと行を取り直す（持っている行も新しい形式で出す）
         ep = st["waterfall"]["epoch"]
-        self.call("set_trace", number=1, format="db")
+        self.call("set_view", s11_format="db")
         st = self.call("get_state")
         self.assertGreater(st["waterfall"]["epoch"], ep)
         r = self.call("waterfall_rows", max_rows=5)

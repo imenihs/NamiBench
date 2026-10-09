@@ -445,7 +445,7 @@ class MainWindow(QMainWindow):
     def _toggle_run(self) -> None:
         """Pause キー: 連続 ⇔ 停止（J §4.6）。"""
         state = self.state.get("run", {}).get("state")
-        if state in ("continuous", "single"):
+        if state in ("continuous", "single", "step_sweep"):
             self.actions["stop"].trigger()
         elif state == "stopped":
             self.actions["run_cont"].trigger()
@@ -1128,7 +1128,6 @@ class MainWindow(QMainWindow):
         self.status.apply(st)
         run = st["run"]
         conn = st["connection"]
-        running = run["state"] in ("continuous", "single")
         self.btn_cont.setProperty("running", run["state"] == "continuous")
         self.btn_single.setProperty("running", run["state"] == "single")
         for b in (self.btn_cont, self.btn_single):
@@ -1141,7 +1140,7 @@ class MainWindow(QMainWindow):
             b.setEnabled(why is None)
             b.setToolTip(menus.tooltip_for(self.actions[code], texts.LABELS[tip]) + (f" — {why}" if why else ""))
             menus.set_reason(self.actions[code], why)
-        self.btn_stop.setEnabled(running or run["state"] == "stopping")
+        self.btn_stop.setEnabled(screen_model.can_stop(st))  # ステップ掃引の間も「停止」でやめる（Web と同じ）
 
     def _update_x_axis(self) -> None:
         # 横軸は x_axis_view（周波数・ゼロスパンの時間。再生中は再生の表示の範囲: 設計N §1・設計P §5）

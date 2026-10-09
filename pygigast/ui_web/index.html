@@ -144,7 +144,7 @@
                   :title="W('run_cont_tip') + keyHint('run_cont') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_cont')">{{ T('MENU_ITEMS', 'run_cont') }}</button>
           <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!!runReason"
                   :title="W('run_single_tip') + keyHint('run_single') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_single')">{{ T('MENU_ITEMS', 'run_single') }}</button>
-          <button class="run-btn" :disabled="!(running || run.state === 'stopping')"
+          <button class="run-btn" :disabled="!ui.can_stop"
                   :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
         </div>
       </div>
@@ -329,7 +329,7 @@
           <div class="tgrid" data-repeat>
             <div class="trow" v-for="t in traceRows" :key="t.number">
               <span class="thead"><span class="tnum"><span class="swatch" :style="{background: t.color}"></span>{{ t.number }}</span>
-                <label class="inline tvis"><input type="checkbox" :checked="t.visible" @change="setTrace(t.number, 'visible', $event.target.checked)">{{ W('visible') }}</label></span>
+                <label class="inline tvis" :title="traceDrawnReason(t) || ''"><input type="checkbox" :checked="t.visible" :disabled="!!traceDrawnReason(t)" @change="setTrace(t.number, 'visible', $event.target.checked)">{{ W('visible') }}</label></span>
               <select class="tact" :value="t.action" @change="setTraceAction(t, $event.target.value)">
                 <option v-for="(l, c) in Td('TRACE_ACTIONS')" :key="c" :value="c">{{ l }}</option></select>
               <!-- 回数: 打てるドロップダウン（一覧から選ぶ・数を打つ。平均は回数が要るので「回数なし」を出さない: 設計F §2） -->
@@ -354,11 +354,6 @@
               <!-- 線（設計F §9）。描き方だけなので、変えても蓄積は捨てない -->
               <select class="tline" :value="t.line || 'solid'" :title="W('line')" @change="setTrace(t.number, 'line', $event.target.value)">
                 <option v-for="(l, c) in Td('TRACE_LINES')" :key="c" :value="c">{{ l }}</option></select>
-              <!-- 3行目: 表示の形式（設計R §3。使えない形式は残して無効にし理由: R §5.1）。縦軸と単位が違って描かない理由 -->
-              <select class="tfmt" :value="traceFormat(t).value" :disabled="!!traceFormat(t).reason" :title="traceFormat(t).tip"
-                      @change="setTraceFormat(t, $event.target.value)">
-                <option v-for="it in traceFormat(t).items" :key="it.code" :value="it.code" :disabled="!it.enabled" :title="it.tip">{{ it.text }}</option></select>
-              <div class="tunit warn" v-if="traceDrawnReason(t)">{{ traceDrawnReason(t) }}</div>
               <div class="tnote" v-if="traceNotes[t.number] || notes['trace' + t.number]">{{ traceNotes[t.number] || notes['trace' + t.number].text }}</div>
             </div>
           </div>
@@ -603,9 +598,15 @@
           <h3>{{ W('amplitude_detail') }}</h3>
           <div class="form">
             <label>{{ V('level_unit') }}</label>
-            <select data-field="level_unit" :value="unitView.current" :title="unitView.tip" @change="setUnit($event.target.value)">
+            <select class="w-unit-col" data-field="level_unit" :value="unitView.current" :title="unitView.tip" @change="setUnit($event.target.value)">
               <option v-for="o in unitView.choices" :key="o.code" :value="o.code" :disabled="!o.enabled" :title="o.tip">{{ o.text }}</option></select>
             <template v-if="notes.unit"><label></label><div class="fnote">{{ notes.unit.text }}</div></template>
+            <!-- S11 の表示（縦軸の表示の形式: リターンロス（dB）・|Γ|・SWR。設計R §3）。単位と同じく縦軸に1つ（Qt の
+                 tab_display と同じ。中身は ui.axis_format: 使えない形式は残して無効にし理由） -->
+            <label>{{ W('axis_format') }}</label>
+            <select class="w-unit-col" data-field="s11_format" :value="axisFormat.value" :disabled="!!axisFormat.reason" :title="axisFormat.tip"
+                    @change="setAxisFormat($event.target.value)">
+              <option v-for="it in axisFormat.items" :key="it.code" :value="it.code" :disabled="!it.enabled" :title="it.tip">{{ it.text }}</option></select>
             <label>{{ V('ext_db') }}</label>
             <div class="row"><input class="w-value" data-field="ext_db" v-steady="extText" :placeholder="V('ext_db_placeholder')" :title="V('ext_db_tip')" @change="commitExt($event.target.value)"><span>dB</span></div>
           </div>

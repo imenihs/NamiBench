@@ -278,6 +278,31 @@ class InstrumentStepSweepTest(InstrumentCase):
         self.assertEqual(st["run"]["state"], "stopped")
         self.assertIn("そこまでの結果はトレース 2", texts.task_end_text("task_cancelled", d)[0])
 
+    def test_top_stop_ends_like_cancel_and_stops_sweeping(self):
+        """上段の「停止」（命令 stop）でもステップ掃引をやめる（2026-10-09 ユーザー決定）。終わり方は「やめる」と同じ
+        （そこまでの結果を残し task_cancelled で知らせる）。始める前が連続でも、その後の掃引は止まったまま。"""
+        self.call("run", mode="continuous")
+        self.call("set_step_sweep", start_hz=400 * MHZ, stop_hz=700 * MHZ, step_hz=10 * MHZ, per_step=1, combine="max",
+                  trace=2)
+        self.clear_events()
+        r = self.call("step_sweep_start")
+        self.wait_for(lambda k, p: k == "trace" and p["trace"] == 2)
+        res = self.call("stop")
+        self.assertEqual(res["run"], "stopped")
+        end = self.wait_task(r["task_id"])
+        self.assertEqual(end["code"], "task_cancelled")
+        d = end["detail"]
+        self.assertTrue(d["kept"])
+        self.assertLess(d["steps_done"], 31)
+        st = self.call("get_state")
+        self.assertEqual((st["traces"][1]["action"], st["traces"][1]["has_values"]), ("fixed", True))
+        self.assertEqual(st["sweep"]["sg_hz"], self.SG0)
+        self.assertEqual((st["run"]["state"], st["run"]["last_stop_reason"]), ("stopped", "user"))
+        self.assertEqual(st["tasks"], [])
+        self.assertIn("そこまでの結果はトレース 2", texts.task_end_text("task_cancelled", d)[0])
+        # 連続に戻らない（機器スレッドへ次の掃引を渡していない）
+        self.assertIsNone(self.on_control(lambda: self.inst._worker._job))
+
     def test_cancel_before_any_sweep_restores_trace(self):
         self.call("set_trace", number=2, action="average", count=8, visible=False)
         self.call("set_step_sweep", start_hz=400 * MHZ, stop_hz=500 * MHZ, step_hz=50 * MHZ, combine="max", trace=2)

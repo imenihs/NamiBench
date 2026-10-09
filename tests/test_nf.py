@@ -262,29 +262,60 @@ class InstrumentNfTest(InstrumentCase):
         self.call("nf_set_enr", enr_db=13.5)
         self.assertEqual(self.call("get_state")["nf"]["enr"], {"kind": "value", "db": 13.5})
 
-    def test_nf_vertical_axis_is_separate(self):
+    def test_nf_vertical_axis_is_shared(self):
+        """縦軸は全部のモードで1つ（2026-10-09 ユーザー決定）: NF に入っても REF・dB/div を変えず、NF で変えた縦軸は
+        ほかのモードでもそのまま。次の起動も同じ1つの縦軸。前の版の NF の縦軸（amplitude_nf）は読まない。"""
         self.connect()
         self.call("set_amplitude", ref_level=-30.0, db_per_div=10)
         self.call("set_mode", mode="nf")
         amp = self.call("get_state")["amplitude"]
-        self.assertEqual((amp["ref_level"], amp["db_per_div"]), (20.0, 2))  # NF の既定（設計M §1: 2dB/div）
+        self.assertEqual((amp["ref_level"], amp["db_per_div"]), (-30.0, 10))
         self.call("set_amplitude", ref_level=16.0, db_per_div=1)
         self.call("set_mode", mode="sa")
         amp = self.call("get_state")["amplitude"]
-        self.assertEqual((amp["ref_level"], amp["db_per_div"]), (-30.0, 10))
-        self.call("set_mode", mode="nf")
-        amp = self.call("get_state")["amplitude"]
         self.assertEqual((amp["ref_level"], amp["db_per_div"]), (16.0, 1))
-        # 次の起動でも両方を戻す
         self.inst.shutdown()
         self.inst = self.make_instrument()
         amp = self.call("get_state")["amplitude"]
         self.assertEqual((amp["ref_level"], amp["db_per_div"]), (16.0, 1))
-        self.call("set_mode", mode="sa")
-        amp = self.call("get_state")["amplitude"]
-        self.assertEqual((amp["ref_level"], amp["db_per_div"]), (-30.0, 10))
+        self.assertNotIn("amplitude_nf", self.inst._settings.get("state") or {})
 
-    def test_preset_amplitude_goes_to_its_mode_and_undo(self):
+    def test_old_state_nf_axis_is_not_used(self):
+        """前の版の状態に NF の縦軸（amplitude_nf）があっても、NF に入ったとき縦軸を変えない。"""
+        self.inst.shutdown()
+        from pygigast.core.settings import Settings
+
+        st = Settings(self.root / "data" / "settings.json")
+        state = dict(st.get("state") or {})
+        state.update({"amplitude": {"ref_level": -40.0, "db_per_div": 10},
+                      "amplitude_nf": {"ref_level": 20.0, "db_per_div": 2}})
+        st.set("state", state)
+        st.save()
+        self.inst = self.make_instrument()
+        self.connect()
+        self.call("set_mode", mode="nf")
+        amp = self.call("get_state")["amplitude"]
+        self.assertEqual((amp["ref_level"], amp["db_per_div"]), (-40.0, 10))
+
+    def test_ref_auto_works_on_nf(self):
+        """NF の値（0〜20 dB 付近）が電力の縦軸の REF では見えなくても、REF の自動に使う最大が NF の dB で出る。"""
+        self.nf_mode()
+        self.call("set_amplitude", ref_level=-30.0, db_per_div=10)
+        self.call("nf_set_enr", enr_db=15.0)
+        self.single()
+        self.single()
+        st = self.call("get_state")
+        self.assertEqual((st["amplitude"]["ref_level"], st["amplitude"]["db_per_div"]), (-30.0, 10))
+        peak = st["ref_auto"]["peaks"]["1"]
+        self.assertEqual(peak["unit"], "dB")
+        self.assertIsNotNone(peak["max"])
+        from pygigast.ui_qt import screen_model
+
+        v = screen_model.ref_auto_view(st, ["1"], "dB", 10.0, True)
+        self.assertIsNone(v["reason"])
+        self.assertGreater(v["level"], peak["max"])
+
+    def test_preset_amplitude_is_the_common_axis_and_undo(self):
         self.connect()
         self.call("set_amplitude", ref_level=-30.0, db_per_div=10)
         self.call("set_mode", mode="nf")
@@ -298,9 +329,8 @@ class InstrumentNfTest(InstrumentCase):
                          ("nf", 18.0, 5))
         self.call("undo")
         st = self.call("get_state")
-        self.assertEqual((st["sweep"]["mode"], st["amplitude"]["ref_level"]), ("sa", -30.0))
-        self.call("set_mode", mode="nf")
-        self.assertEqual(self.call("get_state")["amplitude"]["ref_level"], 12.0)
+        self.assertEqual((st["sweep"]["mode"], st["amplitude"]["ref_level"], st["amplitude"]["db_per_div"]),
+                         ("sa", 12.0, 1))
 
     def test_xy_y_on_nf_axis_follows_only_nf(self):
         # NF の縦軸で置いた XY カーソルの Y は、電力の単位でずらさず、比の形式としても直さない（設計M・設計R §3）

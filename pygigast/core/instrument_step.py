@@ -3,7 +3,7 @@
 - 設定（開始・終了・刻み・1段の回数・重ね方・結果を入れるトレース）はコアに1つ（Qt と Web が同じものを見る）。前回
   終了時の状態に入る。命令 set_step_sweep は渡した欄だけ変え、直した値は adjusted で返す（M-02: 黙って直さない）
 - 命令 step_sweep_start: SG モードで、いまの SP の掃引条件のまま、段ごとに SG の周波数を動かして回数分掃引し、重ね方に
-  従って重ねる。長い処理（task "step_sweep"）として段の進み具合を出し、cancel_task でやめられる（U-19）
+  従って重ねる。長い処理（task "step_sweep"）として段の進み具合を出し、cancel_task か上段の「停止」（命令 stop）でやめられる（U-19）
   - SG の周波数は `_set_adopted(new, step_sweep=True)` で動かす（設計F §8 の 2: 最大・最小保持を残し、平均は捨てる）。
     SG 周波数の欄・状態バーの「SG 出力中」もいまの段の周波数になる。終わったら始める前の周波数に戻す
   - イメージ除去は使わない（旧アプリも SG-SWEEP 中は使わない）。利用者の選択は変えず、機器へ渡す条件だけを「なし」に
@@ -254,10 +254,12 @@ class StepSweepMixin:
 
     # ------------------------------------------------------------------ 終わり
 
-    def _step_end(self, exc: Optional[BaseException]) -> None:
+    def _step_end(self, exc: Optional[BaseException], stop: bool = False) -> None:
         """終わる（exc が None なら全部の段が済んだ。Cancelled はやめた、それ以外は失敗）。
 
-        そこまでの結果は残す。SG の周波数と動作を始める前に戻し、終わり方を知らせる（U-19）。
+        そこまでの結果は残す。SG の周波数と動作を始める前に戻し、終わり方を知らせる（U-19）。stop は上段の「停止」で
+        止めたとき（2026-10-09 ユーザー決定）: 終わり方は「やめる」と同じで、その後の掃引も止める（始める前が連続でも
+        連続に戻さない。「停止」を押した人は掃引が止まることを期待する）。
         """
         job = self._step_job
         if job is None:
@@ -270,7 +272,9 @@ class StepSweepMixin:
             apply_trace_settings(t, job.before_trace)
             if job.undo_entry is not None and self._undo and self._undo[-1] is job.undo_entry:
                 self._undo.pop()
-        self._run = "continuous" if job.prev_run == "continuous" else "stopped"
+        self._run = "continuous" if job.prev_run == "continuous" and not stop else "stopped"
+        if stop:
+            self._last_stop_reason = "user"
         if job.orig_sg_hz is not None and self._adopted.sg_hz != job.orig_sg_hz:
             back = self._model.apply(SweepRequest(sg_hz=job.orig_sg_hz, one_shot=True), self._adopted)
             self._set_adopted(dataclasses.replace(back, adjustments=(), alternative=None), step_sweep=True)
@@ -289,6 +293,13 @@ class StepSweepMixin:
         """外から止める（やめる・切断・送れない条件・終了）。"""
         self._step_end(exc)
 
+    def _step_stop_by_user(self) -> bool:
+        """上段の「停止」（命令 stop）から: ステップ掃引をしていれば「やめる」と同じ終わり方でやめて True。"""
+        if self._step_job is None:
+            return False
+        self._step_end(Cancelled(), stop=True)
+        return True
+
     def _step_cancel(self, task) -> bool:
         """cancel_task から: このステップ掃引の処理ならやめて True。"""
         job = self._step_job
@@ -298,9 +309,9 @@ class StepSweepMixin:
         return True
 
     def _step_check_trace(self, number: int, kw: dict) -> None:
-        """ステップ掃引が結果を入れているトレースの動作は変えない（表示するか・線・表示の形式は変えてよい）。"""
+        """ステップ掃引が結果を入れているトレースの動作は変えない（表示するか・線は変えてよい）。"""
         job = self._step_job
-        if job is not None and number == job.trace and set(kw) - {"visible", "line", "fmt"}:
+        if job is not None and number == job.trace and set(kw) - {"visible", "line"}:
             raise self._error("step_sweep_trace", "number", {"number": number})
 
     def _step_leaks(self, t) -> Optional[list[dict]]:

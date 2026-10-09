@@ -268,14 +268,14 @@ class InstrumentViewTest(InstrumentCase):
         self.call("set_view", level_unit="dBmV", ext_db=-3.5, freq_offset_hz=123_000_000, draw_style="fill",
                   function_lines=False, zero_span_s=60, leak_marks=False, layout="density", wf_trace=3,
                   wf_color_auto=False, wf_color_lo=-90.0, wf_color_hi=-30.0, wf_rows=1000, density_half=50,
-                  bandplan_shown=False, bookmarks_shown=False)
+                  bandplan_shown=False, bookmarks_shown=False, s11_format="swr")
         self.call("palette_set", colors={"accent": "#0055aa"})
         self.inst.shutdown()
         self.inst = self.make_instrument()
         st = self.call("get_state")
         # 表示の組み合わせとウォーターフォール・密度・バンドプランの設定も戻す（設計O §1.1: 表示の設定はコアの状態）
         self.assertEqual({k: st["view"][k] for k in view_units.DEFAULTS},
-                         {"level_unit": "dBmV", "ext_db": -3.5, "freq_offset_hz": 123_000_000, "draw_style": "fill",
+                         {"level_unit": "dBmV", "s11_format": "swr", "ext_db": -3.5, "freq_offset_hz": 123_000_000, "draw_style": "fill",
                           "layout": "density", "function_lines": False, "zero_span_s": 60, "leak_marks": False,
                           "wf_trace": 3, "wf_color_auto": False, "wf_color_lo": -90.0, "wf_color_hi": -30.0,
                           "wf_rows": 1000, "density_half": 50, "bandplan_shown": False, "bookmarks_shown": False})

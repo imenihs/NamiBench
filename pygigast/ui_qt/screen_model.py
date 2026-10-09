@@ -179,6 +179,12 @@ def run_reason(st: dict) -> Optional[str]:
     return None
 
 
+def can_stop(st: dict) -> bool:
+    """上段の「停止」が使えるか: 連続・単発で掃引している・止まる途中・SG のステップ掃引をしている（ステップ掃引も
+    「停止」でやめる: 2026-10-09 ユーザー決定。処理の帯の「やめる」と同じ終わり方）。"""
+    return ((st.get("run") or {}).get("state") or "") in ("continuous", "single", "stopping", "step_sweep")
+
+
 # ---------------------------------------------------------------- 単位の欄（J §4.10 の 2。C §5.14 の RBW と同じ決まり）
 
 # 単位の欄で「基準との比」を表す値（単位の設定のコードではない。選んで送るものではない）
@@ -643,16 +649,17 @@ def x_text(st: dict, x: float) -> str:
 
 
 def s11_ui(st: dict) -> dict:
-    """反射（S11）の手順・トレースの表示の形式・縦軸（Qt と Web が同じものを使う: screen_s11.py）。
+    """反射（S11）の手順・縦軸の表示の形式・縦軸（Qt と Web が同じものを使う: screen_s11.py）。
 
-    axis: 縦軸の単位と決め方、trace_format: トレースごとの表示の形式の欄、trace_drawn: 縦軸と単位が違って描かない
-    トレースの理由、s11: 信号源のタブの手順、tg_take_reason: TG の基準のボタンの使えない理由。
+    axis: 縦軸の単位と決め方、axis_format: 縦軸の表示の形式の欄（「振幅の詳細」の「S11 の表示」）、trace_drawn: 縦軸と
+    単位が違って描かないトレースの理由（「表示」のチェックのツールチップ）、s11: 信号源のタブの手順、tg_take_reason:
+    TG の基準のボタンの使えない理由。
     """
     unit = screen_s11.axis_unit(st)
     traces = st.get("traces") or []
     return {
         "axis": screen_s11.axis_view(st, unit),
-        "trace_format": {str(t.get("number")): screen_s11.trace_format_view(t, st) for t in traces},
+        "axis_format": screen_s11.axis_format_view(st),
         "trace_drawn": {str(t.get("number")): screen_s11.trace_drawn_reason(t, unit) for t in traces},
         "s11": screen_s11.s11_view(st),
         "tg_take_reason": screen_s11.tg_take_reason(st),
@@ -695,6 +702,7 @@ def ui_view(st: dict) -> dict:
         "step": source_view.step_view(st),
         "leaks": source_view.leak_marks_view(st),
         "run_reason": run_reason(st),
+        "can_stop": can_stop(st),  # 上段の「停止」（ステップ掃引の間も使える）
         "sg_reason": sg_reason(st),  # SG の周波数の欄（ステップ掃引の間・再生中）
         "display": display_view.ui(st),  # ウォーターフォール・密度・再生・バンドプラン（設計P）
     }

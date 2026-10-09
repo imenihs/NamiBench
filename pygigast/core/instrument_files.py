@@ -607,16 +607,13 @@ class FilesMixin:
         return {"task_id": task.task_id}
 
     def _ref_axis_is_db(self, mode: Mode) -> bool:
-        """基準を当てた後の縦軸が dB か（REF と 0dB を持つ縦軸か）。縦軸は表示している一番番号の小さいトレースで決まり、
-        その表示の形式が |Γ|・SWR なら下端の決まった縦軸で、REF も 0dB の線も無い（設計R §3・設計J §4.7 の末尾）。
-        値を固定したトレースは、いま持っている値の形式のまま。"""
-        for t in self._traces:
-            if not t.visible:
-                continue
-            if t.action == TraceAction.FIXED and t.values is not None:
-                return t.effective_format == formats.DB
-            return formats.effective(t.format, mode, Quantity.RATIO) == formats.DB
-        return True
+        """基準を当てた後の縦軸が dB か（REF と 0dB を持つ縦軸か）。縦軸は測定中のトレースで決まり（_axis_trace）、
+        縦軸の形式（view.s11_format）が |Γ|・SWR なら下端の決まった縦軸で、REF も 0dB の線も無い（設計R §3・設計J §4.7 の
+        末尾）。測定中のトレースが表示していないときは、表示している固定のトレースがいま持っている値の形式のまま。"""
+        if any(t.visible and t.action != TraceAction.FIXED for t in self._traces):
+            return formats.effective(self._axis_format(), mode, Quantity.RATIO) == formats.DB
+        t = self._axis_trace()
+        return t is None or self._fmt_of(t) == formats.DB
 
     def _show_zero_level(self, level: float = 0.0) -> dict:
         """基準と同じ通過の高さ（0dB。基準の値があればその値: 設計E §6.7）が縦軸の中（一番上の線より下・一番下の線
@@ -756,8 +753,8 @@ class FilesMixin:
                   "current_count": t.current_count, "average_type": None if eff is None else eff.value,
                   "average_after": t.average_after.value, "hold_after": t.hold_after.value,
                   "last_update_time": t.last_update_time, "unit": unit_for(t.quantity, t.profile),
-                  # 表示の形式と測ったモード（設計R §3。開いたとき同じ形式で重ねる・書き出す）
-                  "format": t.effective_format, "measurement": None if t.mode is None else t.mode.value,
+                  # 保存したときの縦軸の形式（記録。開いたときはいまの縦軸の形式で重ねる: 設計R §3）と測ったモード
+                  "format": self._fmt_of(t), "measurement": None if t.mode is None else t.mode.value,
                   # SG のステップ掃引の結果なら、その設定と済んだ段の数（何の測定か分かる形で残す: M-08）
                   **({"step_sweep": dict(t.step_info)} if t.step_info else {})},
             flags={k: np.array(v, dtype=bool) for k, v in t.flags.items()},
@@ -886,7 +883,7 @@ class FilesMixin:
         for tid, td in e["traces"].items():
             f = td.freqs()
             rows.append({"id": tid, "number": td.number, "quantity": td.quantity.value,
-                         "unit": self._shown(td.quantity, td.profile, file_trace_format(td))[1], "points": int(f.size),
+                         "unit": self._shown(td.quantity, td.profile, file_trace_format(td, self._axis_format()))[1], "points": int(f.size),
                          "start_hz": int(f[0]) if f.size else None, "stop_hz": int(f[-1]) if f.size else None,
                          "info": td.info})
         out["traces"] = rows
@@ -912,8 +909,8 @@ class FilesMixin:
         else:
             axis = {"freqs_hz": f.astype(np.int64), "points": int(f.size)}
         pts = {k: np.asarray(v, dtype=bool) for k, v in td.flags.items()}
-        # 表示の単位・外部補正の分だけずらす（測定中のトレースと同じ: core/view_units.py）。表示の形式は保存したときのもの
-        shift, unit, fmt = self._shown(td.quantity, td.profile, file_trace_format(td))
+        # 表示の単位・外部補正の分だけずらす（測定中のトレースと同じ: core/view_units.py）。表示の形式はいまの縦軸の形式
+        shift, unit, fmt = self._shown(td.quantity, td.profile, file_trace_format(td, self._axis_format()))
         lim = swr_limit_points(td.values, td.quantity, fmt)
         if lim is not None and lim.any():
             pts["swr_limit"] = lim
@@ -962,13 +959,13 @@ class FilesMixin:
                 if t.values is None:
                     raise self._error("no_trace_data", "traces", {"trace": tid})
                 tds.append(self._live_trace_data(t))
-                fmts.append(t.effective_format)
+                fmts.append(self._fmt_of(t))
             elif tid == DIFF_TRACE_ID:
                 tds.append(self._diff_trace_data())  # トレース間の差（設計F §5.4。dB の比）
                 fmts.append(formats.DB)
             else:
                 tds.append(self._find_file_trace(str(tid)))
-                fmts.append(file_trace_format(tds[-1]))
+                fmts.append(file_trace_format(tds[-1], self._axis_format()))
         if not tds:
             raise self._error("no_data", "traces")
         ident = self._identity or {}

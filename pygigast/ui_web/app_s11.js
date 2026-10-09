@@ -1,10 +1,11 @@
 // 信号源のタブの基準（TG の「広く取る」「いまの条件で細かく取る」・基準の値（設計E §6.7）・S11 のオープン → ショート・
 // 基準の一覧: 設計E §6・§6.5）と、
-// トレースの表示の形式（設計R §3: リターンロス（dB）・|Γ|・SWR。位相系は位相を測れない機器では無効にして理由: R §5.1）、
-// |Γ|・SWR の縦軸（下端が決まっていて 1目盛だけを選ぶ）。Qt の ui_qt/tab_source.py・tab_traces.py・main_window.py と
-// 同じ並び・同じ語・同じ動き（J §5）。app.js が読み込んで合わせる。
+// 縦軸の表示の形式（設計R §3: 表示のタブの「振幅の詳細」の「S11 の表示」。リターンロス（dB）・|Γ|・SWR。縦軸に1つ。位相系は
+// 位相を測れない機器では無効にして理由: R §5.1）、|Γ|・SWR の縦軸（下端が決まっていて 1目盛だけを選ぶ）、縦軸と単位が
+// 違って描かない固定のトレースの「表示」のチェック（無効にして理由はツールチップ）。Qt の ui_qt/tab_source.py・
+// tab_display.py・tab_traces.py・main_window.py と同じ並び・同じ語・同じ動き（J §5）。app.js が読み込んで合わせる。
 // - 使えない理由・次に押すボタン・状態の文・形式の選択肢・縦軸の決め方はサーバーが Qt と同じ関数で作る
-//   （screen_s11.s11_view・trace_format_view・axis_view・ref_quick_view）。ここは映して命令を送るだけ
+//   （screen_s11.s11_view・axis_format_view・trace_drawn_reason・axis_view・ref_quick_view）。ここは映して命令を送るだけ
 (function (root) {
   "use strict";
 
@@ -38,6 +39,8 @@
       // 縦軸の決め方（サーバーの screen_s11.axis_view: dB 系か、下端の決まった |Γ|・SWR か）
       axis() { return this.ui.axis || DB_AXIS; },
       s11() { return this.ui.s11 || {}; },
+      // 「S11 の表示」の欄（サーバーの screen_s11.axis_format_view。Qt の tab_display._apply_axis_format と同じ）
+      axisFormat() { return this.ui.axis_format || { value: "db", items: [], reason: null, tip: "" }; },
       refSelected() { return this.refs.find((r) => r.id === this.refSel) || null; },
       // 基準の値の欄の決まり（一覧・範囲・桁: texts.REF_VALUE_SPEC）と使えない理由（S11: サーバーの screen_s11.ref_value_view）
       refValueSpec() { return X.dict("REF_VALUE_SPEC") || {}; },
@@ -85,14 +88,12 @@
         this.setDiv(values[i]);
       },
 
-      // ---- トレースの表示の形式（Qt の tab_traces._TraceRow.apply_format と同じ）
-      traceFormat(t) {
-        return ((this.ui && this.ui.trace_format) || {})[String(t.number)] || { value: "db", items: [], reason: null, tip: "" };
+      // ---- 縦軸の表示の形式（Qt の tab_display._axis_format_chosen と同じ）と、描かないトレースの「表示」のチェックの理由
+      //      （Qt の tab_traces._TraceRow.apply_drawn と同じ）
+      setAxisFormat(code) {
+        if (code !== ((this.st || {}).view || {}).s11_format) this.setView({ s11_format: code });
       },
       traceDrawnReason(t) { return ((this.ui && this.ui.trace_drawn) || {})[String(t.number)] || null; },
-      setTraceFormat(t, code) {
-        if (code !== t.format) this.setTrace(t.number, "format", code);
-      },
 
       // ---- 基準の一覧（Qt の tab_source と同じ: 一覧で選び、下の［使う］［使わない］［名前…］［消す…］）
       async loadRefs() {

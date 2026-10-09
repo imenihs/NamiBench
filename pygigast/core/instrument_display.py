@@ -40,19 +40,10 @@ DB_PER_DIV_CHOICES = (1, 2, 5, 10)
 
 UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB", Quantity.NF: "dB"}
 
-# 縦軸（REF レベル・dB/div: 設計J §4.1）はモードの量ごとに持つ。NF は NF の dB の縦軸で、既定は REF 20dB・2dB/div
-# （設計M §1: 旧アプリの NF モードと同じ見やすさ。0〜20dB が見える）。ほかのモードは今までどおり1つ
-AMP_KIND_LEVEL = "level"
-AMP_KIND_NF = "nf"
-# |Γ|・SWR の1目盛（swr_per_div・gamma_per_div: 設計R §3）は S11 の縦軸。NF の縦軸にも同じ欄を持つ（使わない）
-AMPLITUDE_DEFAULTS = {AMP_KIND_LEVEL: {"ref_level": None, "unit": None, "db_per_div": None,
-                                       "swr_per_div": None, "gamma_per_div": None},
-                      AMP_KIND_NF: {"ref_level": 20.0, "unit": None, "db_per_div": 2,
-                                    "swr_per_div": None, "gamma_per_div": None}}
-
-
-def amp_kind_of(mode) -> str:
-    return AMP_KIND_NF if mode == Mode.NF else AMP_KIND_LEVEL
+# 縦軸（REF レベル・dB/div: 設計J §4.1）は全部のモードで1つ。NF に入っても REF・dB/div を変えない（モードで表示の方法を
+# 変えない: 2026-10-09 ユーザー決定。NF の値が見えないときは REF の自動で合わせる）。|Γ|・SWR の1目盛（swr_per_div・
+# gamma_per_div: 設計R §3）も同じ縦軸の欄。None は画面が決める既定
+AMPLITUDE_DEFAULTS = {"ref_level": None, "unit": None, "db_per_div": None, "swr_per_div": None, "gamma_per_div": None}
 
 # 比の縦軸の単位 → 表示の形式（測ったトレースが無いときの縦軸の種類: _axis_kind）
 _RATIO_AXIS_FORMATS = {"dB": formats.DB, formats.UNIT_GAMMA: formats.GAMMA, formats.UNIT_SWR: formats.SWR}
@@ -124,22 +115,35 @@ def trace_settings(t) -> dict:
         "average_after": t.average_after.value,
         "hold_after": t.hold_after.value,
         "line": t.line.value,
-        "format": t.format,  # 表示の形式（設計R §3）
     }
 
 
 def apply_trace_settings(t, d: dict) -> tuple[str, ...]:
-    # 線（設計F §9）・表示の形式（設計R §3）は前の版の設定・プリセットに無い。無い・読めないときは既定（実線・dB）にし、
-    # ほかの欄は戻す（読めない欄が1つあるだけでトレースの設定を全部捨てない）
+    # 線（設計F §9）は前の版の設定・プリセットに無い。無い・読めないときは既定（実線）にし、ほかの欄は戻す（読めない欄が
+    # 1つあるだけでトレースの設定を全部捨てない）。前の版のトレースごとの表示の形式（"format"）はここでは読まない
+    # （縦軸の形式へ読み替える: legacy_axis_format）
     line = d.get("line")
-    fmt = d.get("format")
     return t.configure(
         action=d["action"], count=d.get("count"), average_type=d.get("average_type"),
         average_after=d.get("average_after", "exponential"), hold_after=d.get("hold_after", "continue"),
         visible=bool(d.get("visible", True)),
         line=line if line in {x.value for x in TraceLine} else TraceLine.SOLID,
-        fmt=fmt if formats.is_format(fmt) and fmt not in formats.VECTOR_FORMATS else formats.DB,
     )
+
+
+def legacy_axis_format(view, traces) -> Optional[str]:
+    """前の版の状態・プリセット（表示の形式をトレースごとに持っていた）から、縦軸の形式（view.s11_format）を決める。
+
+    新しい版の view に s11_format があれば None（読み替えない）。無ければ、前の版の縦軸を決めていたトレース（表示して
+    いる一番番号の小さいトレース。表示しているものが無ければ一番番号の小さいトレース）の形式。読めなければ dB。
+    """
+    if isinstance(view, dict) and "s11_format" in view:
+        return None
+    rows = sorted((d for d in traces or [] if isinstance(d, dict) and isinstance(d.get("number"), int)),
+                  key=lambda d: d["number"])
+    pick = next((d for d in rows if d.get("visible", True)), rows[0] if rows else None)
+    fmt = (pick or {}).get("format")
+    return fmt if fmt in formats.AXIS_FORMATS else formats.DB
 
 
 def _finite_or_none(x) -> Optional[float]:
@@ -168,10 +172,11 @@ def display_values(values: np.ndarray, quantity: Quantity, shift: float, fmt: st
     return shift_values(v, shift)
 
 
-def file_trace_format(td) -> str:
-    """参照トレース（開いたファイル）の表示の形式: 保存したときの形式（info.format）。S11 の比でなければ dB（設計R §3）。"""
+def file_trace_format(td, setting: str) -> str:
+    """参照トレース（開いたファイル）の表示の形式: いまの縦軸の形式（setting）。S11 で測った比でなければ dB（設計R §3）。
+    保存したときの形式（info.format）は読まない（形式は縦軸に1つ。前の版のファイルも、いまの形式で重ねる）。"""
     info = td.info if isinstance(getattr(td, "info", None), dict) else {}
-    return formats.effective(info.get("format"), info.get("measurement"), td.quantity)
+    return formats.effective(setting, info.get("measurement"), td.quantity)
 
 
 def swr_limit_points(values: np.ndarray, quantity: Quantity, fmt: str) -> Optional[np.ndarray]:
@@ -200,8 +205,8 @@ class DisplayMixin:
         self._undo: list[dict] = []
         self._redo: list[dict] = []
         # 縦軸（設計J §4.1）。None は画面が決める既定。|Γ|・SWR の縦軸の1目盛（設計R §3: 下端は決まった値）。
-        # モードの量ごとに持つ（NF は NF の dB の縦軸: AMPLITUDE_DEFAULTS）。いまのモードの縦軸が _amplitude
-        self._amp_store = {k: dict(v) for k, v in AMPLITUDE_DEFAULTS.items()}
+        # 全部のモードで1つ（AMPLITUDE_DEFAULTS）
+        self._amp = dict(AMPLITUDE_DEFAULTS)
         self._ref = None  # 選んでいるノーマライズの基準（normalize.Reference）
         self._norm_state: dict = {"used": False}
         self._norm_key: Optional[tuple] = None
@@ -223,11 +228,11 @@ class DisplayMixin:
         # 読めない行・読めない XY は飛ばす（MarkerTable.from_defs）。時間軸の表は time_markers・time_xy
         self._marker_tables["freq"].from_defs({"markers": st.get("markers") or [], "xy": st.get("xy") or {}})
         self._marker_tables["time"].from_defs({"markers": st.get("time_markers") or [], "xy": st.get("time_xy") or {}})
-        for kind, key in ((AMP_KIND_LEVEL, "amplitude"), (AMP_KIND_NF, "amplitude_nf")):
-            amp = st.get(key) or {}
-            for k in self._amp_store[kind]:
-                if k in amp:
-                    self._amp_store[kind][k] = amp[k]
+        # 前の版の NF の縦軸（amplitude_nf）は読まない（縦軸は1つ）
+        amp = st.get("amplitude") or {}
+        for k in self._amp:
+            if k in amp:
+                self._amp[k] = amp[k]
         self._marker_snap = self._markers.snapshot({})
         # 起動したときの横軸（前回がゼロスパンなら時間: 設計N §1）。画面はマーカー表の列の名前に使う
         self._marker_snap["x_kind"] = self._x_kind()
@@ -237,15 +242,23 @@ class DisplayMixin:
             "traces": [trace_settings(t) for t in self._traces],
             **{k: v for k, v in self._marker_tables["freq"].to_defs().items() if k in ("markers", "xy")},
             **{"time_" + k: v for k, v in self._marker_tables["time"].to_defs().items() if k in ("markers", "xy")},
-            "amplitude": dict(self._amp_store[AMP_KIND_LEVEL]),
-            "amplitude_nf": dict(self._amp_store[AMP_KIND_NF]),
+            "amplitude": dict(self._amp),
             "trace_options": dict(self._trace_opts),
         }
 
     @property
     def _amplitude(self) -> dict:
-        """いまのモードの縦軸（NF は NF の縦軸: AMPLITUDE_DEFAULTS）。書き換えるとそのモードの縦軸が変わる。"""
-        return self._amp_store[amp_kind_of(self._adopted.mode)]
+        """縦軸（全部のモードで1つ）。"""
+        return self._amp
+
+    def _axis_format(self) -> str:
+        """縦軸の表示の形式（表示の設定 view.s11_format: S11 の比のトレースに当てる。設計R §3）。"""
+        fmt = (getattr(self, "_view_opts", None) or {}).get("s11_format")
+        return fmt if fmt in formats.AXIS_FORMATS else formats.DB
+
+    def _fmt_of(self, t) -> str:
+        """トレースをいま出す形式: S11 で測った比なら縦軸の形式、ほかは dB（設計R §3）。"""
+        return formats.effective(self._axis_format(), t.mode, t.quantity)
 
     # ------------------------------------------------------------------ 状態
 
@@ -263,8 +276,8 @@ class DisplayMixin:
             "value_kind": (t.value_kind.value if t.value_kind is not None
                            else self._profile.get("value_kind", "real")),
             "unit": self._trace_display(t)[1],
-            # 表示の形式（設計R §3）: いま使う形式と、値を測ったモード（画面が選べる形式と名前を決める）
-            "format_effective": t.effective_format,
+            # いま出している形式（縦軸の形式が当たるのは S11 の比だけ: 設計R §3）と、値を測ったモード
+            "format_effective": self._fmt_of(t),
             "measurement": None if t.mode is None else t.mode.value,
             "has_values": t.values is not None,
             "axis_differs": t.action == TraceAction.FIXED and t.axis_differs(self._adopted.axis),
@@ -304,7 +317,7 @@ class DisplayMixin:
 
     def _trace_display(self, t) -> tuple[float, Optional[str], str]:
         """測っているトレースの (足す dB, 出す単位, 表示の形式)。|Γ|・SWR の形式では単位はその名前で、ずらさない。"""
-        return self._shown(t.quantity, t.profile, t.effective_format)
+        return self._shown(t.quantity, t.profile, self._fmt_of(t))
 
     def _shown(self, quantity, profile, fmt: str) -> tuple[float, Optional[str], str]:
         shift, unit = self._level_shift(quantity, profile)
@@ -342,12 +355,12 @@ class DisplayMixin:
             for t in self._traces:
                 if t.visible and t.values is not None and t.axis is not None and t.quantity is not None:
                     put_shifted(str(t.number), t.values, t.quantity, t.axis.freqs(), t.flags, t.profile,
-                                t.effective_format)
+                                self._fmt_of(t))
         cache = self._ref_auto_file_cache
         new_cache = {}
         for e in self._files.values():
             for tid, td in e["traces"].items():
-                fmt = file_trace_format(td)
+                fmt = file_trace_format(td, self._axis_format())
                 key = (tid, id(td), lo, hi, self._shown(td.quantity, td.profile, fmt))
                 if key not in cache:
                     put_shifted(tid, td.values, td.quantity, td.freqs(), td.flags, td.profile, fmt)
@@ -526,8 +539,11 @@ class DisplayMixin:
         return Y_KIND_TG if t.mode == Mode.TG else self._trace_display(t)[2]
 
     def _axis_trace(self):
-        """縦軸を決めるトレース（表示していて値のある一番番号の小さいもの）。無ければ None。"""
-        return next((t for t in self._traces if t.visible and t.values is not None and t.quantity is not None), None)
+        """縦軸を決めるトレース: 表示していて値のある測定中（固定でない）のトレースの一番番号の小さいもの。無ければ表示して
+        いて値のある固定のトレースの一番番号の小さいもの。どれも無ければ None。測定中のトレースはどれも同じ掃引の値で単位が
+        そろうので、単位の違う固定・参照トレースのほうを描かない（2026-10-09 ユーザー決定。screen_s11.axis_unit と同じ）。"""
+        shown = [t for t in self._traces if t.visible and t.values is not None and t.quantity is not None]
+        return next((t for t in shown if t.action != TraceAction.FIXED), shown[0] if shown else None)
 
     def _follow_axis_format(self) -> None:
         """縦軸が比の dB・|Γ|・SWR のどれかのとき、XY カーソルの Y のうち別の比の形式で置いたものを、同じ反射の
@@ -712,8 +728,6 @@ class DisplayMixin:
             s["view"] = dict(self._view_opts)
         if "amplitude" in keys:
             s["amplitude"] = dict(self._amplitude)
-            # モードの量ごとの縦軸を全部（プリセットは別のモードの縦軸を書き換えうる: AMPLITUDE_DEFAULTS）
-            s["amplitude_store"] = {k: dict(v) for k, v in self._amp_store.items()}
         if "palette" in keys:
             s["palette"] = self._palette.to_saved()
         return s
@@ -728,8 +742,6 @@ class DisplayMixin:
         for k in ("view", "amplitude"):
             if k in s:
                 out.append(tuple(sorted(s[k].items())))
-        if "amplitude_store" in s:
-            out.append(tuple(sorted((k, tuple(sorted(v.items()))) for k, v in s["amplitude_store"].items())))
         if "palette" in s:
             out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items())),
                         s["palette"].get("colormap")))
@@ -747,10 +759,7 @@ class DisplayMixin:
         if "view" in s:
             # 縦軸も一緒に戻すときは、縦軸は持っている値にする（ずらさない）
             self._set_view_opts(s["view"], shift_levels="amplitude" not in s)
-        if "amplitude_store" in s:
-            for k, v in s["amplitude_store"].items():
-                self._amp_store[k].update(v)
-        elif "amplitude" in s:
+        if "amplitude" in s:
             self._amplitude.update(s["amplitude"])
         if "palette" in s:
             from .palette import Palette
@@ -829,34 +838,25 @@ class DisplayMixin:
                 self._emit("trace", self._trace_payload(t))
         self._diff_refresh()
 
-    def _check_format(self, t, fmt) -> None:
-        """表示の形式を選べるか（設計R §2・§3・§5.1）。位相系は位相を測れる機器（複素数の値）だけ、|Γ|・SWR は反射（S11）
-        だけ（S11 で測った値のトレースか、いまのモードが S11）。"""
-        if not formats.is_format(fmt):
-            raise self._error("bad_trace_setting", "format", {"format": fmt})
+    def _check_axis_format(self, fmt) -> None:
+        """縦軸の表示の形式（view.s11_format）に選べるか（設計R §2・§3・§5.1）。位相系は位相を測れる機器（複素数の値）
+        だけで、まだ作っていない（SDR の VNA と一緒に作る: R §5.1）。リターンロス（dB）・|Γ|・SWR はいつでも選べる
+        （S11 の比のトレースにだけ当たる。S11 を測る前に選んでおける）。"""
         if fmt in formats.VECTOR_FORMATS:
-            kind = t.value_kind.value if t.value_kind is not None else self._profile.get("value_kind", "real")
-            if kind != "complex":
-                raise self._error("format_needs_phase", "format", {"format": fmt})
-            raise self._error("format_not_yet", "format", {"format": fmt})  # 位相系は SDR の VNA と一緒に作る（R §5.1）
-        if fmt in formats.S11_FORMATS:
-            # 比の値を持つトレースはその値を測ったモードで決まる（固定した S21 の値に |Γ|・SWR は当たらない）。比の値を
-            # 持たない（まだ値が無い・基準を取る前の電力）ときは、いまのモードが S11 なら選んでおける
-            has_ratio = t.values is not None and t.quantity == Quantity.RATIO
-            if (t.mode != Mode.S11) if has_ratio else (self._adopted.mode != Mode.S11):
-                raise self._error("format_s11_only", "format", {"format": fmt})
+            if self._profile.get("value_kind", "real") != "complex":
+                raise self._error("format_needs_phase", "s11_format", {"format": fmt})
+            raise self._error("format_not_yet", "s11_format", {"format": fmt})
+        if fmt is not None and fmt not in formats.AXIS_FORMATS:
+            raise self._error("bad_value", "s11_format", {"value": fmt, "choices": list(formats.AXIS_FORMATS)})
 
     def _cmd_set_trace(self, number, action=_UNSET, count=_UNSET, visible=_UNSET, average_type=_UNSET,
-                       average_after=_UNSET, hold_after=_UNSET, line=_UNSET, format=_UNSET) -> dict:  # noqa: A002
-        """トレースの設定（設計F §5）。line は描く線（設計F §9: thin・solid・thick・dash・dot）、format は表示の形式
-        （設計R §3: db・gamma・swr）。どちらも描き方・表し方だけなので、変えても蓄積を捨てない。"""
+                       average_after=_UNSET, hold_after=_UNSET, line=_UNSET) -> dict:
+        """トレースの設定（設計F §5）。line は描く線（設計F §9: thin・solid・thick・dash・dot）。描き方だけなので、
+        変えても蓄積を捨てない。表示の形式はトレースごとでなく縦軸に1つ（set_view の s11_format: 設計R §3）。"""
         t = self._trace_of(number)
         kw = {k: v for k, v in (("action", action), ("count", count), ("visible", visible),
                                 ("average_type", average_type), ("average_after", average_after),
                                 ("hold_after", hold_after), ("line", line)) if v is not _UNSET}
-        if format is not _UNSET:
-            self._check_format(t, format)
-            kw["fmt"] = format
         self._step_check_trace(number, kw)  # ステップ掃引が結果を入れている間は動作を変えない（設計L §1.3）
         if "count" in kw and kw["count"] is not None and (isinstance(kw["count"], bool) or not isinstance(kw["count"], int)):
             raise self._error("not_integer", "count")

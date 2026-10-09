@@ -919,7 +919,10 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         return {"run": self._run}
 
     def _cmd_stop(self) -> dict:
-        """いまの掃引の終わりを待ってから止まる（設計B §3）。"""
+        """いまの掃引の終わりを待ってから止まる（設計B §3）。ステップ掃引の間は、処理の帯の「やめる」と同じ終わり方で
+        やめ（そこまでの結果を残し、終わり方を知らせる: 設計L §1.3）、掃引も止める（2026-10-09 ユーザー決定）。"""
+        if self._step_stop_by_user():
+            return {"run": self._run}
         if self._run in ("continuous", "single"):
             self._run = "stopping" if (self._worker and self._worker.busy_since) else "stopped"
             self._last_stop_reason = "user"

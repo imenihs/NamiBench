@@ -78,6 +78,8 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 input[type=checkbox], input[type=radio] { width: var(--indicator); height: var(--indicator); margin: 0; accent-color: var(--accent);
                                           vertical-align: middle; flex: none; cursor: pointer; }
 input[type=checkbox]:disabled, input[type=radio]:disabled { cursor: default; }
+/* 使えないチェック・選択の名前も薄くする（Qt の無効の部品と同じ見え方） */
+label:has(> input:disabled) { color: var(--axis); }
 /* 色の見本（Qt の色のボタンと同じ大きさ） */
 input[type=color] { width: var(--btn-min-w); padding: 2px; cursor: pointer; }
 
@@ -89,6 +91,9 @@ input[type=color] { width: var(--btn-min-w); padding: 2px; cursor: pointer; }
 .w-grow { flex: 1 1 auto; min-width: 0; width: auto; }
 /* イメージ除去の選択: 出しうる一番長い選択肢の幅（秒の桁が変わっても動かさない。app.js の fitColumns が --col-reject に置く） */
 .w-reject { width: var(--col-reject, auto); }
+/* 「振幅の詳細」の単位と S11 の表示（同じ列の欄は同じ幅: S-02。app.js の fitColumns が --col-unitcol に置く。Qt と同じ見本:
+   texts.UNIT_COLUMN_SAMPLES） */
+.w-unit-col { width: var(--col-unitcol, auto); }
 
 h3 { margin: 0; font-size: var(--font-m); color: var(--text-dim); font-weight: 600; }
 .dim { color: var(--text-dim); }
@@ -362,10 +367,6 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
 .tavg { grid-column: 3; width: var(--col-a, auto); }
 .taft { grid-column: 4; width: var(--col-b, auto); }
 .tnote { grid-column: 1 / -1; contain: inline-size; justify-self: stretch; color: var(--warn); font-size: var(--font-s); } /* 表の幅で折り返す */
-/* 3行目: 表示の形式（設計R §3）。動作・平均の種類の真下（列 A。幅は列 A に形式の名前も入れて app.js の fitColumns が
-   決める: Qt の tab_traces と同じ）。縦軸と単位が違って描かない理由はその行に出し続ける（U-25） */
-.tfmt { grid-column: 3; width: var(--col-a, auto); }
-.tunit { grid-column: 1 / -1; contain: inline-size; justify-self: stretch; }
 /* 回数の欄: 打てる欄＋一覧の矢印（数値の欄の一覧と同じ形）。トレースの表では列 B の幅いっぱい */
 .count-field { display: inline-flex; align-items: stretch; }
 .count-input { width: var(--w-int); font-variant-numeric: tabular-nums; }
@@ -518,7 +519,7 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
   .tab-body > .sec, .tab-body > .tsec { min-width: 0; max-width: 100%; }
   .tgrid { display: flex; flex-direction: column; align-items: flex-start; gap: var(--section-gap); }
   .trow { display: grid; grid-template-columns: var(--col-a, max-content) var(--col-b, max-content) var(--col-line, max-content);
-          grid-template-areas: "head stat stat" "act cnt clr" "avg aft line" "fmt . .";
+          grid-template-areas: "head stat stat" "act cnt clr" "avg aft line";
           justify-items: start; align-items: center; gap: var(--gap); max-width: 100%; }
   .thead { grid-area: head; display: flex; align-items: center; gap: var(--label-gap); }
   .tact { grid-area: act; }
@@ -527,8 +528,7 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
   .tavg { grid-area: avg; }
   .taft { grid-area: aft; }
   .tline { grid-area: line; }
-  .tfmt { grid-area: fmt; }
   .tstat { grid-area: stat; }
-  .tnote, .tunit { grid-column: 1 / -1; }
+  .tnote { grid-column: 1 / -1; }
   .tnum, .tvis { grid-column: auto; }
 }

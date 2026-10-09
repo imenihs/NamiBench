@@ -40,6 +40,14 @@ class NfServerTest(_Base):
         st, r = self.post("nf_set_enr", {"enr_db": 14.5})
         self.assertEqual(r["error"]["code"], "enr_table_in_use")
 
+    def test_vertical_axis_is_shared(self):
+        """縦軸は全部のモードで1つ（2026-10-09 ユーザー決定）: NF に入っても状態の REF・dB/div は変わらない。"""
+        self.connect_and_sweep(400 * MHZ, 600 * MHZ)
+        self.assertEqual(self.post("set_amplitude", {"ref_level": -30.0, "db_per_div": 10})[0], 200)
+        self.assertEqual(self.post("set_mode", {"mode": "nf"})[0], 200)
+        amp = self.state()["amplitude"]
+        self.assertEqual((amp["ref_level"], amp["db_per_div"]), (-30.0, 10))
+
     def test_tables_and_files(self):
         t = json.loads(self.get("/api/v1/texts")[1])
         for name in ("NF_TEXTS", "NF_WIRING", "NF_ERRORS", "ENR_TABLE_REASONS", "NF_MARKER_NOTES"):
@@ -83,10 +91,13 @@ class NfBrowserTest(unittest.TestCase):
 
     def test_nf_mode_guide_fields_and_layout(self):
         page, app = self.page, self.app
+        app.call("set_amplitude", ref_level=-30.0, db_per_div=10)
         open_app(page, app, *SIZES[0])
         # NF に入ると（どの画面から入っても）つなぎ方の窓が1回だけ出る
         page.ev("gsApp.setMode('nf'); 1")
         page.wait("!!document.querySelector('.modal.nfguide')", "つなぎ方の窓")
+        # 縦軸は変えない（全部のモードで1つ: Qt と同じ）
+        self.assertEqual(page.ev("[gsApp.amp.ref, gsApp.amp.div]"), [-30, 10])
         page.settle()
         self.assertEqual(page.ev("document.querySelector('.modal.nfguide h3').textContent"), N["guide_title"])
         boxes = page.ev("[...document.querySelectorAll('.modal.nfguide .cal-box')].map(b => b.textContent.trim())")

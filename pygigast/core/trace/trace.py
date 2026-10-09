@@ -21,7 +21,6 @@ from typing import Optional, Union
 import numpy as np
 
 from ..types import FreqAxis, Frame, Mode, Quantity, ValueKind
-from . import formats
 from .average import (
     NOTICE_LOG_AVERAGE_READS_LOW,
     AverageType,
@@ -166,7 +165,6 @@ class Trace:
         average_after: AverageAfterCount = AverageAfterCount.EXPONENTIAL,
         hold_after: HoldAfterCount = HoldAfterCount.CONTINUE,
         line: TraceLine = TraceLine.SOLID,
-        fmt: str = formats.DB,
     ) -> None:
         if not isinstance(number, int) or not 1 <= number <= TRACE_COUNT:
             raise ValueError(f"トレースの番号は 1〜{TRACE_COUNT}")
@@ -179,8 +177,6 @@ class Trace:
         self.average_after = AverageAfterCount(average_after)
         self.hold_after = HoldAfterCount(hold_after)
         self.line = TraceLine(line)
-        # 表示の形式（設計R §3）。選んだ形式を覚えておき、値に当たらないとき（S11 の比でない）は dB で出す
-        self.format = fmt
         self._validate()
 
         # 表示する値と、その値の条件
@@ -190,7 +186,7 @@ class Trace:
         self.value_kind: Optional[ValueKind] = None
         self.flags: dict[str, np.ndarray] = {}
         self.profile: dict = {}
-        # 値を測ったモード（S11 の比かどうかで、表示の形式の |Γ|・SWR が当たるかが決まる: 設計R §3）
+        # 値を測ったモード（S11 の比かどうかで、縦軸の表示の形式の |Γ|・SWR が当たるかが決まる: 設計R §3）
         self.mode: Optional[Mode] = None
         self.display_start_hz: Optional[int] = None
         self.display_stop_hz: Optional[int] = None
@@ -215,13 +211,6 @@ class Trace:
             raise ValueError("回数は 1 以上の int か None")
         if self.action == TraceAction.AVERAGE and self.count is None:
             raise ValueError("平均は回数を持つ（設計F §2: 平均（回数指定））")
-        if not formats.is_format(self.format):
-            raise ValueError(f"表示の形式が不明: {self.format}")
-
-    @property
-    def effective_format(self) -> str:
-        """いま使う表示の形式（設計R §3）。選んだ形式が値に当たらなければ dB。"""
-        return formats.effective(self.format, self.mode, self.quantity)
 
     @property
     def effective_count(self) -> Optional[int]:
@@ -237,22 +226,18 @@ class Trace:
         hold_after=_UNSET,
         visible=_UNSET,
         line=_UNSET,
-        fmt=_UNSET,
     ) -> tuple[str, ...]:
         """設定を変える。渡した欄だけ変え、知らせのコードを返す。
 
         動作・回数・平均の種類が変わったら蓄積を捨てる（蓄積の意味が変わるため。設計に無い判断）。
         固定に変えたときは、いまの値を残す（比べるために残す: 設計F §5.2）。
-        表示するか・N 回に達した後の選び方・線（設計F §9）・表示の形式（設計R §3。値は同じで表し方だけ）は何も捨てない。
+        表示するか・N 回に達した後の選び方・線（設計F §9）は何も捨てない。表示の形式は縦軸に1つで、トレースは持たない
+        （表示の設定 view.s11_format: 設計R §3）。
         """
         old = (self.action, self.count, self.average_type, self.average_after,
-               self.hold_after, self.visible, self.line, self.format)
-        if fmt is not _UNSET and not formats.is_format(fmt):
-            raise ValueError(f"表示の形式が不明: {fmt}")  # ほかの欄はまだ変えていない
+               self.hold_after, self.visible, self.line)
         if line is not _UNSET:
             self.line = TraceLine(line)  # 読めない線は ValueError（ほかの欄はまだ変えていない）
-        if fmt is not _UNSET:
-            self.format = fmt
         if action is not _UNSET:
             self.action = TraceAction(action)
         if count is not _UNSET:
@@ -272,7 +257,7 @@ class Trace:
                     raise ValueError("この値の種類では選べない平均の種類")
         except ValueError:
             (self.action, self.count, self.average_type, self.average_after,
-             self.hold_after, self.visible, self.line, self.format) = old
+             self.hold_after, self.visible, self.line) = old
             raise
 
         notices: list[str] = []

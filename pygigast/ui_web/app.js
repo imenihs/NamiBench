@@ -404,7 +404,7 @@
       runSingle() { this.cmd("run", { mode: "single" }); },
       stop() { this.cmd("stop"); },
       toggleRun() {
-        if (this.running) this.stop();
+        if (this.running || this.run.state === "step_sweep") this.stop();  // ステップ掃引も「停止」でやめる（Qt と同じ）
         else if (this.run.state === "stopped") this.runCont();
       },
       setMode(code) { this.cmd("set_mode", { mode: code }); },
@@ -927,7 +927,7 @@
         if (hidden) this.fileHidden = hidden;
       },
 
-      // 基準（信号源のタブ: 設計E §6）・S11 のオープン/ショート・表示の形式は app_s11.js
+      // 基準（信号源のタブ: 設計E §6）・S11 のオープン/ショート・縦軸の表示の形式は app_s11.js
 
       // ------------------------------------------------------------ 列の幅（J §4.11・S-02）
       // トレースの表の列 A（動作・平均の種類）と列 B（回数・N 回の後）は、その列に出うる一番長い中身の幅に1つにそろえる
@@ -938,10 +938,8 @@
         try { if (document.fonts) await document.fonts.ready; } catch (e) { /* 字を待てなくても測る */ }
         const F = GSFields;
         const types = Object.values(X.dict("AVERAGE_TYPES"));
-        // 3行目の表示の形式（設計R §3）も列 A（S11 の「リターンロス（dB）」を含む。Qt の format_width_samples と同じ）
-        const fmts = [...Object.values(X.dict("TRACE_FORMATS")), ...Object.values(X.dict("S11_FORMAT_NAMES"))];
         const colA = Math.max(F.selectWidth(Object.values(X.dict("TRACE_ACTIONS"))),
-          F.selectWidth([W("default"), ...types.map((t) => W("default_with", { type: t })), ...types]), F.selectWidth(fmts));
+          F.selectWidth([W("default"), ...types.map((t) => W("default_with", { type: t })), ...types]));
         // 回数の欄は打てる欄＋▼: 一番長い回数の文字＋欄の左右の余白（6px×2）と枠（1px×2）＋▼（22px、欄に 1px 重ねる）
         const counts = [F.countText(null), ...F.COUNT_CHOICES.map((n) => F.countText(n)), F.countText(F.COUNT_MAX)];
         const countW = Math.max(...counts.map((t) => F.textWidth(t, F.rootPx("--font-m")))) + 2 * 6 + 2 + 21;
@@ -960,7 +958,8 @@
         const clearW = Math.max(F.rootPx("--btn-min-w"),
           Math.ceil(F.textWidth(W("clear"), F.rootPx("--font-m"))) + 2 * F.rootPx("--btn-pad-x") + 2);
         const line = Math.max(F.selectWidth(Object.values(X.dict("TRACE_LINES"))), clearW);
-        F.fitColumns({ a: colA, b: colB, reject, line });
+        // 「振幅の詳細」の単位と S11 の表示（同じ列: Qt の tab_display と同じ見本）
+        F.fitColumns({ a: colA, b: colB, reject, line, unitcol: X.list("UNIT_COLUMN_SAMPLES") });
         document.documentElement.style.setProperty("--top-freq-w", freqW + "px");
         document.documentElement.style.setProperty("--mode-w", modeW + "px");
       },

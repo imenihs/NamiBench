@@ -1,8 +1,10 @@
 """計測器の本体のうち、表示の設定・配色・プリセット・覚えた機器（設計O・J §4.4）。Instrument に混ぜる。
 
 - 表示の設定（view）: 単位 dBm／dBμV／dBmV・外部補正 dB・周波数オフセット・描き方（線・塗りつぶし）・
-  表示の組み合わせ・マーカーの機能の線を出すか（G §3.6）。換算そのものは core/view_units.py。測った値と機器へ
-  送るものは変えない
+  表示の組み合わせ・マーカーの機能の線を出すか（G §3.6）・縦軸の表示の形式（S11 の比のリターンロス dB・|Γ|・SWR:
+  設計R §3。単位と同じく縦軸に1つ）。換算そのものは core/view_units.py。測った値と機器へ送るものは変えない
+  - 形式を変えたら、比の形式で置いた XY カーソルの Y・決めたしきい値は同じ反射の大きさの新しい形式の値に直す
+    （instrument_display._follow_axis_format・markers.ThresholdSetting）。電力・NF で置いた値は直さない
   - 単位・外部補正を変えたら、REF レベル・XY カーソルの Y・しきい値も同じだけずらす（画面の絵は変わらず、
     数字だけ新しい単位になる。実機の計測器と同じ）。いまの縦軸が比（ノーマライズ中の dB）のときはずらさない
 - 配色（palette）: ユーザー設定の1つ。ライト・ダークは初期値に戻す命令（確認は画面: 変えた色の数は状態にある）
@@ -39,7 +41,13 @@ class ViewMixin:
     """表示の設定・配色・プリセット・覚えた機器（Instrument に混ぜる）。"""
 
     def _init_view(self, st: Optional[dict]) -> None:
+        from .instrument_display import legacy_axis_format
+
         self._view_opts = view_units.restore((st or {}).get("view"))
+        legacy = legacy_axis_format((st or {}).get("view"), (st or {}).get("traces"))
+        if legacy is not None:
+            # 前の版の状態（形式をトレースごとに持っていた）: そのとき縦軸を決めていたトレースの形式を縦軸の形式にする
+            self._view_opts["s11_format"] = legacy
         self._palette = Palette.from_saved(self._settings.get("theme"))
         self._presets = PresetStore(self._root / "presets")
         self._palettes = PaletteStore(self._root / "palettes")
@@ -134,14 +142,19 @@ class ViewMixin:
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
                       layout=_UNSET, function_lines=_UNSET, zero_span_s=_UNSET, leak_marks=_UNSET, wf_trace=_UNSET,
                       wf_color_auto=_UNSET, wf_color_lo=_UNSET, wf_color_hi=_UNSET, wf_rows=_UNSET,
-                      density_half=_UNSET, bandplan_shown=_UNSET, bookmarks_shown=_UNSET) -> dict:
+                      density_half=_UNSET, bandplan_shown=_UNSET, bookmarks_shown=_UNSET,
+                      s11_format=_UNSET) -> dict:
         """zero_span_s はゼロスパンの表示する長さ（秒。0 は1回の掃引: 設計N §1）。leak_marks は内部の漏れの印（設計L §1.4）。
-        wf_*・density_half はウォーターフォールと密度表示（設計P §9.2・§9.3）、*_shown はバンドプランとブックマーク（P §6）。"""
+        wf_*・density_half はウォーターフォールと密度表示（設計P §9.2・§9.3）、*_shown はバンドプランとブックマーク（P §6）。
+        s11_format は縦軸の表示の形式（db・gamma・swr: 設計R §3。S11 の比のトレースに当たる）。"""
+        if s11_format is not _UNSET:
+            self._check_axis_format(s11_format)
         given = {"level_unit": level_unit, "ext_db": ext_db, "freq_offset_hz": freq_offset_hz, "draw_style": draw_style,
                  "layout": layout, "function_lines": function_lines, "zero_span_s": zero_span_s,
                  "leak_marks": leak_marks, "wf_trace": wf_trace, "wf_color_auto": wf_color_auto,
                  "wf_color_lo": wf_color_lo, "wf_color_hi": wf_color_hi, "wf_rows": wf_rows,
-                 "density_half": density_half, "bandplan_shown": bandplan_shown, "bookmarks_shown": bookmarks_shown}
+                 "density_half": density_half, "bandplan_shown": bandplan_shown, "bookmarks_shown": bookmarks_shown,
+                 "s11_format": s11_format}
         kw = {k: v for k, v in given.items() if v is not _UNSET}
         for k in view_units.DEFAULTS:
             if k in kw and kw[k] is None:
@@ -378,7 +391,7 @@ class ViewMixin:
 
     def _cmd_preset_load(self, id: str) -> dict:  # noqa: A002
         """いまの状態をプリセットで置き換える（1回の命令。Ctrl+Z で戻せる）。"""
-        from .instrument_display import apply_trace_settings
+        from .instrument_display import apply_trace_settings, legacy_axis_format
 
         # 条件を置き換えるので、条件を変えてよいときだけ（再生中は断る: 設計P §5）。ほかの状態を書き換える前に確かめる
         self._check_live_conditions()
@@ -393,14 +406,16 @@ class ViewMixin:
             raise CommandError("preset_unreadable", "id", {"id": id, "message": str(e)}) from e
         self._rtlsdr_check_condition(new)
         before = self._undo_snapshot(("sweep", "view", "amplitude"))
-        self._set_view_opts(view_units.restore(c.get("view")), shift_levels=False)
-        from .instrument_display import amp_kind_of
-
+        view = view_units.restore(c.get("view"))
+        legacy = legacy_axis_format(c.get("view"), c.get("traces"))
+        if legacy is not None:
+            # 前の版のプリセット（形式をトレースごとに持っていた）: 縦軸を決めていたトレースの形式を縦軸の形式にする
+            view["s11_format"] = legacy
+        self._set_view_opts(view, shift_levels=False)
         amp = c.get("amplitude") or {}
-        # プリセットの縦軸は、プリセットのモードの縦軸へ入れる（NF は別の縦軸: instrument_display.AMPLITUDE_DEFAULTS）
-        target = self._amp_store[amp_kind_of(new.mode)]
+        # 縦軸は全部のモードで1つ（NF のプリセットも同じ縦軸へ: instrument_display.AMPLITUDE_DEFAULTS）
         for k in PRESET_AMPLITUDE_KEYS:
-            target[k] = amp.get(k)
+            self._amplitude[k] = amp.get(k)
         for td in c.get("traces") or []:
             try:
                 apply_trace_settings(self._traces[int(td["number"])], td)
