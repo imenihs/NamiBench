@@ -23,6 +23,7 @@ from pygigast.ui_qt import device_menu, sizes, texts
 from pygigast.ui_qt.files import UnfinishedDialog
 from tests.device_helpers import FakeGigaBackend
 from tests.qt_layout_check import problems
+from tests.test_ui_qt_plutosdr import PlutoUiBase
 from tests.test_ui_qt_rtlsdr import RtlUiBase
 from tests.test_ui_qt_support import UiBase, app
 
@@ -480,6 +481,32 @@ class LayoutRtlTest(RtlUiBase):
 
 
 class LayoutRtlWideTest(LayoutRtlTest):
+    size = (1920, 1080)
+
+
+class LayoutPlutoTest(PlutoUiBase):
+    """PlutoSDR に繋いだときだけ出る欄（受信・送信）と設定の PlutoSDR のページを、決めた解像度で開いて数える。"""
+
+    size = (1280, 720)
+
+    def test_receiver_and_transmitter_panels(self):
+        found = []
+        self.connect_pluto()
+        # 設定の利得がいまの範囲で使えない形（使う値の行が出る）
+        self.cmd("plutosdr_set", gain_db=73.0)
+        self.cmd("set_sweep", start_hz=2_400_000_000, stop_hz=2_402_000_000)
+        self.cmd("set_mode", mode="sg", sg_hz=2_401_000_000)
+        self.pump(0.4)
+        self.assertTrue(self.win.pluto_panel.gain_used.isVisibleTo(self.win.pluto_panel))
+        for key in ("tab-trace", "tab-source"):
+            self.win.show_part(key)
+            self.pump(0.2)
+            found += problems(self.win, f"主画面 PlutoSDR {key}")
+        self.assertTrue(self.win.source_tab.pluto_tx.isVisible())
+        self.assertEqual(sorted(set(found)), [])
+
+
+class LayoutPlutoWideTest(LayoutPlutoTest):
     size = (1920, 1080)
 
 

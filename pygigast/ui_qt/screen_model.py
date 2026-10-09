@@ -25,11 +25,12 @@ from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 @functools.lru_cache(maxsize=None)
 def _profiles() -> dict[str, dict]:
     from ..core.devices.base import load_profile
+    from ..core.devices.plutosdr.driver import PROFILE_PATH as PLUTO_PROFILE
     from ..core.devices.rtlsdr.driver import PROFILE_PATH as RTL_PROFILE
     from ..core.instrument import GIGAST_PROFILE_PATH
 
     out = {}
-    for path in (GIGAST_PROFILE_PATH, RTL_PROFILE):
+    for path in (GIGAST_PROFILE_PATH, RTL_PROFILE, PLUTO_PROFILE):
         p = load_profile(path)
         out[p["model"]] = p
     return out
