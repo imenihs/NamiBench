@@ -100,8 +100,11 @@
       <div class="field">
         <div class="field-head" data-tier="S"><span class="field-name">RBW</span></div>
         <!-- 選択肢は機器ごと。FFT の機器は窓ごとにまとめる（設計Q §6.4） -->
-        <!-- 欄には実際に使う RBW。いまの条件で使えない RBW は残して無効にし、理由をツールチップに（設計C §5.14） -->
-        <select class="field-select" :value="sw ? sw.rbw_hz : ''" :disabled="!!sweepReasons.rbw" :title="[rbwNote, sweepReasons.rbw].filter((x) => x).join('\n')" @change="setRbw($event.target.value)">
+        <!-- 欄には実際に使う RBW。いまの条件で使えない RBW は残して無効にし、理由をツールチップに（設計C §5.14）。
+             いまの RBW で信用できない条件は欄を注意の色にし、文はツールチップに（U-25。Qt と同じ screen_model.rbw_field_view）。
+             再生中は理由付きで使えない（設計P §5: rbw_field_view の reason） -->
+        <select class="field-select" :class="{warn: rbwField.warn}" :value="sw ? sw.rbw_hz : ''" :disabled="!!rbwField.reason" :title="rbwField.tip"
+                @change="setRbw($event.target.value)">
           <template v-for="g in rbwGroups" :key="g.window || 'rbw'">
             <optgroup v-if="g.label" :label="g.label" :title="g.note">
               <option v-for="c in g.choices" :key="c.hz" :value="c.hz" :disabled="!!c.reason" :title="c.reason || ''">{{ c.text }}</option>
@@ -158,7 +161,7 @@
     </div>
   </header>
 
-  <!-- 使っている RBW が好みと違う理由・信用できない条件（その場で出し続ける: U-02・U-08） -->
+  <!-- 条件の注意（周波数オフセットで換算中など。その場で出し続ける: U-02）。RBW の知らせは RBW の欄に付ける（U-25） -->
   <div class="cond" v-if="!part && condLines.length"><div v-for="(l, i) in condLines" :key="i">{{ l }}</div></div>
 
   <!-- ================= グラフ・マーカー表・右のタブ ================= -->
@@ -364,8 +367,9 @@
           <h3>{{ W('files') }}</h3>
           <div class="dim" v-if="!files.length">{{ W('no_files') }}</div>
           <div class="file" v-for="f in files" :key="f.file_id">
-            <div class="file-head"><b>{{ (ui.file_names || {})[f.file_id] || f.name }}</b><span class="dim">{{ f.created_at }} {{ f.device_model }} {{ f.device_serial }}</span>
-              <button @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
+            <!-- 見出しは名前だけ。場所・日時・機器・メモはツールチップ（Qt と同じ: サーバーの texts.file_heading_tip） -->
+            <div class="file-head"><span class="file-name" :title="(ui.file_tips || {})[f.file_id] || undefined">{{ (ui.file_names || {})[f.file_id] || f.name }}</span>
+              <button :title="W('close_file_tip')" @click="cmd('close_file', {file_id: f.file_id})">{{ W('close_file') }}</button></div>
             <label class="inline" v-for="tr in f.traces" :key="tr.id" :class="{disabled: !!fileUnitReason(tr.id)}" :title="fileUnitReason(tr.id) || undefined"><input type="checkbox" :checked="!fileHidden[tr.id]" :disabled="!!fileUnitReason(tr.id)" @change="toggleFileTrace(tr.id)">{{ W('file_trace_check', {number: tr.number, points: tr.points, unit: tr.unit}) }}</label>
           </div>
           <!-- 開く（Qt の参照トレースのまとまりの［開く…］と同じ: メニュー「ファイル → 開く…」と同じ項目を呼ぶ） -->
@@ -531,7 +535,7 @@
           </table>
           <div class="dim" v-if="peakText().found">{{ peakText().found }}</div>
           <div class="row">
-            <span>{{ W('top') }}</span><input class="w-int" v-model="topN"><span>{{ W('count_suffix').trim() }}</span>
+            <span>{{ W('top') }}</span><int-field data-field="top_n" :value="topN" :min="1" :max="8" :suffix="W('count_suffix')" @commit="topN = $event"></int-field>
             <button data-field="peak_top" :disabled="!!pkView.reason" :title="pkView.reason || ''" @click="topPeaks">{{ W('place_p_after') }}</button>
           </div>
         </section>
@@ -671,8 +675,8 @@
             <num-field :text="stepText('step_hz')" :note="notes.step_step" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
                        @clear-note="clearNote('step_step')" @commit="commitStepFreq('step_hz', 'step_step', $event)" @step="(e, d) => stepStepFreq('step_hz', 'step_step', e, d)"></num-field>
             <label>{{ W('step_per_step') }}</label>
-            <div class="row"><input class="w-int" type="number" data-field="step_per_step" :min="stepView.per_step_min" :max="stepView.per_step_max" v-steady="stepView.per_step"
-                   :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStepPerStep($event.target.value)"><span>{{ W('times_suffix').trim() }}</span></div>
+            <int-field data-field="step_per_step" :value="stepView.per_step" :min="stepView.per_step_min" :max="stepView.per_step_max"
+                       :suffix="W('times_suffix')" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @commit="setStepPerStep"></int-field>
             <label>{{ W('step_combine') }}</label>
             <select data-field="step_combine" :value="stepView.combine" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''" @change="setStep({combine: $event.target.value})">
               <option v-for="c in stepView.combines" :key="c.code" :value="c.code">{{ c.text }}</option></select>
@@ -697,7 +701,7 @@
             <label>{{ W('name') }}</label>
             <input class="w-name" data-field="ref_name" v-model="refName" :placeholder="W('take_name_placeholder')">
             <label>{{ W('average') }}</label>
-            <input class="w-int" data-field="ref_avg" type="number" min="1" max="64" v-model.number="refAvg">
+            <int-field data-field="ref_avg" :value="refAvg" :min="1" :max="64" :suffix="W('times_suffix')" @commit="refAvg = $event"></int-field>
             <label>{{ W('ref_value') }}</label>
             <db-field data-field="ref_value" :value="refValue" unit="dB" :choices="refValueSpec.choices" :signed="refValueSpec.signed"
                       :lo="refValueSpec.lo" :hi="refValueSpec.hi" :decimals="refValueSpec.decimals" :disabled="!!refValueView.reason"

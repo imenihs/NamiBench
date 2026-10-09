@@ -175,6 +175,29 @@ class LayoutTest(UiBase):
             found += self.check(self.win, f"主画面 S11（SWR） {key}")
         self.assertEqual(sorted(set(found)), [])
 
+    def test_rbw_warning_keeps_layout(self):
+        """RBW の欄の注意（U-25: 欄を注意の色にして文はツールチップ）が出ても出なくても、崩れは 0 件で、欄の大きさと
+        場所は変わらない（上段の下に行を足さないので、グラフの位置も動かない）。"""
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_sweep", start_hz=495_000_000, stop_hz=505_000_000, rbw_hz=180_000).result(5)
+        self.api.call("run", mode="single").result(5)
+        self.wait(lambda: (self.win.state.get("run") or {}).get("state") == "stopped" and self.win.traces.live,
+                  what="1回の掃引")
+        combo = self.win.rbw_combo
+        found = []
+        boxes = []
+        for rbw, warn in ((180_000, False), (15_000, True), (180_000, False)):
+            self.api.call("set_sweep", rbw_hz=rbw).result(5)
+            self.wait(lambda: bool(combo.property("warn")) == warn, what=f"RBW {rbw} の注意 {warn}")
+            for key in ("tab-trace", "tab-marker", "tab-view", "tab-source"):
+                self.win.show_part(key)
+                found += self.check(self.win, f"主画面 RBW {rbw} {key}")
+            boxes.append((combo.mapTo(self.win, combo.rect().topLeft()), combo.size(),
+                          self.win.plot.mapTo(self.win, self.win.plot.rect().topLeft())))
+        self.assertEqual(sorted(set(found)), [])
+        self.assertEqual(boxes[0], boxes[1])
+        self.assertEqual(boxes[1], boxes[2])
+
     def _single(self):
         n0 = self.api.call("get_state").result(5)["run"]["sweep_count"]
         self.api.call("run", mode="single").result(5)

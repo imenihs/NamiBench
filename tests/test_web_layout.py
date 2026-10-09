@@ -349,6 +349,11 @@ class EdgePage:
         self.send("Runtime.enable")
         self.send("Page.enable")
         self.send("Network.setCacheDisabled", cacheDisabled=True)
+        # 本番の画面は利用者が見ている（前にあり、フォーカスを持つ）タブ。ヘッドレスの窓は PC が重いと隠れた窓とみなされ、
+        # 描画（requestAnimationFrame）を止められた（全体の試験で visibilityState=hidden になり settle が落ちた）。
+        # 前に出し、フォーカスを持つ前提にそろえる
+        self.send("Emulation.setFocusEmulationEnabled", enabled=True)
+        self.send("Page.bringToFront")
 
     def send(self, method: str, **params):
         self._id += 1
@@ -385,9 +390,14 @@ class EdgePage:
     def settle(self) -> None:
         """Vue が描き直し、2回描画が回るまで待つ。描画が 10 秒回らなければ、そのときのページの見え方を添えて落とす
         （黙って 60 秒待って通信の時間切れにしない: 原因が分かるように）。"""
-        r = self.ev("new Promise((r) => { const t = setTimeout(() => r(`描画が回らない（visibilityState=${document.visibilityState}"
-                    ", hasFocus=${document.hasFocus()}）`), 10000); requestAnimationFrame(() => requestAnimationFrame("
-                    "() => setTimeout(() => { clearTimeout(t); r('ok'); }, 50))); })")
+        js = ("new Promise((r) => { const t = setTimeout(() => r(`描画が回らない（visibilityState=${document.visibilityState}"
+              ", hasFocus=${document.hasFocus()}）`), 10000); requestAnimationFrame(() => requestAnimationFrame("
+              "() => setTimeout(() => { clearTimeout(t); r('ok'); }, 50))); })")
+        r = self.ev(js)
+        if r != "ok" and "visibilityState=hidden" in r:
+            # ブラウザが窓を隠れたものにした（本番の見ているタブと違う前提）。前に出し直してから待ち直す
+            self.send("Page.bringToFront")
+            r = self.ev(js)
         if r != "ok":
             raise AssertionError(r)
 
@@ -722,6 +732,34 @@ class WebLayoutTest(unittest.TestCase):
 
     def test_1920x1080(self):
         self.check_size(*SIZES[1])
+
+    def test_rbw_warning_keeps_layout(self):
+        """RBW の欄の注意（U-25: 欄を注意の色にして文はツールチップ）が出ても出なくても、主画面の全部のタブの崩れは
+        0 件で、欄の大きさと場所・グラフの位置は変わらない（Qt の LayoutTest.test_rbw_warning_keeps_layout と同じ）。"""
+        box = ("(() => { const a = document.querySelector('[data-tier=L] .field-select').getBoundingClientRect();"
+               " const g = document.querySelector('.graph').getBoundingClientRect();"
+               " return [a.left, a.top, a.width, a.height, g.top]; })()")
+        self.app.call("set_sweep", start_hz=495_000_000, stop_hz=505_000_000, rbw_hz=180_000)
+        self.sweep_once()
+        try:
+            for w, h in SIZES:
+                open_app(self.page, self.app, w, h)
+                found: list[str] = []
+                boxes = []
+                for rbw, warn in ((180_000, False), (15_000, True)):
+                    self.app.call("set_sweep", rbw_hz=rbw)
+                    self.page.wait(f"gsApp.rbwField.warn === {'true' if warn else 'false'}", f"RBW {rbw} の注意")
+                    for where, root in views(self.page, tabs_only=True):
+                        found += self.page.problems(root, f"{w}×{h} RBW {rbw} {where}")
+                    self.page.ev("gsApp.tab = 'trace'; 1")
+                    self.page.settle()
+                    boxes.append(self.page.ev(box))
+                self.assertEqual(sorted(set(found)), [])
+                self.assertEqual(boxes[0], boxes[1], f"{w}×{h}")
+                self.assertEqual(self.page.errors, [])
+        finally:
+            self.app.call("set_sweep", start_hz=400_000_000, stop_hz=600_000_000, rbw_hz=180_000)
+            self.sweep_once()
 
     def test_top_freq_samples_fit(self):
         """見本の値を上段の周波数の欄に入れても、文字が欄からはみ出さない（scrollWidth <= clientWidth）。"""

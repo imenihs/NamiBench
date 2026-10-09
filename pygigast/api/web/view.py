@@ -29,6 +29,10 @@ def state_view(st: dict) -> dict:
     # 参照トレースの凡例の文字（Qt のグラフの凡例・PNG と同じ: 名前・番号・日時・機器）。id は "F1.1" の形
     ui["file_legend"] = {str(tr.get("id")): texts.file_trace_label(f, str(tr.get("id")))
                          for f in st.get("files") or [] for tr in f.get("traces") or []}
+    # 開いたファイルの見出しのツールチップ（見出しは名前だけ: Qt の tab_traces と同じ）と、重ねた直後に出すトレース
+    ui["file_tips"] = {str(f.get("file_id")): texts.file_heading_tip(f) for f in st.get("files") or []}
+    ui["file_shown"] = {str(tr.get("id")): screen_model.file_trace_shown_at_open(tr)
+                        for f in st.get("files") or [] for tr in f.get("traces") or []}
     # 参照トレースの一覧のファイルの名前（過去のトレースは「過去の掃引 時刻」: 設計P §3。Qt の一覧と同じ）
     ui["file_names"] = {str(f.get("file_id")): texts.file_display_name(f) for f in st.get("files") or []}
     ui["unit"] = default_unit(st)

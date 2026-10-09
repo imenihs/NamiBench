@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from ..api.local import LocalApi
+from ..core.report_layout import norm_out_of_range
 from ..core.units import drag_ref_level, format_freq, level_text
 from . import (device_menu, display_view, look, marker_rows, menu_table, menus, png_data, screen_model, screen_s11, sizes,
                texts, theme, widget_sync)
@@ -341,7 +342,8 @@ class MainWindow(QMainWindow):
         self.topbar.align_bottom()
         outer.addWidget(self.topbar)
 
-        # 使っている RBW が好みと違う理由・信用できない条件（その場で出し続ける: U-02・U-08）
+        # 条件の注意（周波数オフセットで換算中・末尾の欠け・振り切れ・チューナーの中心が固定。その場で出し続ける: U-02）。
+        # RBW の知らせはここに出さず、RBW の欄そのものに付ける（U-25: _apply_rbw）
         self.cond_label = QLabel("")
         self.cond_label.setObjectName("warn")
         self.cond_label.setWordWrap(True)
@@ -482,12 +484,12 @@ class MainWindow(QMainWindow):
                 widget_sync.set_index(combo, i)
 
         widget_sync.when_idle(combo, "rbw", show)
-        w = screen_model.rbw_window_of(st, pref)
-        notes = [screen_model.rbw_limit_text(st) or "", next((g["note"] for g in groups if g["window"] == w), "")]
-        # 再生中は RBW を変えない（ライブの条件: 設計P §5。理由をツールチップに）
-        lock = screen_model.sweep_reasons(st)["rbw"]
-        combo.setEnabled(lock is None)
-        combo.setToolTip("\n".join(n for n in notes + [lock or ""] if n))
+        # いまの RBW で信用できない条件は、欄を注意の色にして文はツールチップに（U-25。Web と同じ rbw_field_view）。
+        # 再生中は RBW を変えない（ライブの条件: 設計P §5。理由はツールチップの最後: rbw_field_view の reason）
+        v = screen_model.rbw_field_view(st)
+        theme.set_warn(combo, v["warn"])
+        combo.setEnabled(v["reason"] is None)
+        combo.setToolTip(v["tip"])
 
     def _rbw_chosen(self, i: int) -> None:
         hz = self.rbw_combo.itemData(i)
@@ -1091,8 +1093,8 @@ class MainWindow(QMainWindow):
             self._request_trace(n)
         for tid in self.traces.apply_files(st.get("files") or []):
             self._request_trace(tid)
-        n = st.get("normalization") or {}
-        self.traces.set_bands(n.get("out_of_range_hz") if n.get("used") else [])
+        # 基準の範囲外の帯（設計E §6.4。Web の画面・PNG と同じ区間: report_layout.norm_out_of_range）
+        self.traces.set_bands(norm_out_of_range(st))
         self.mark_bands.set_marks(screen_model.marks_view(st))
         self._update_unit()
         self._update_ref_auto()

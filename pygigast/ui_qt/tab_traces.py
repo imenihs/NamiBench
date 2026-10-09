@@ -505,9 +505,10 @@ class TraceTab(QWidget):
             w = QWidget()
             v = sizes.vbox(w, inset=False)
             head = sizes.hbox()
-            name = QLabel(f["name"])
-            name.setToolTip(f"{f['path']}\n{f.get('created_at') or ''}  {f.get('device_model') or ''} "
-                            f"{f.get('device_serial') or ''}\n{f.get('note') or ''}")
+            # 見出しは名前だけ（過去のトレースは「過去の掃引 時刻」: 設計P §3）。場所・日時・機器・メモはツールチップ
+            # （Web と同じ texts.file_display_name・file_heading_tip）
+            name = QLabel(texts.file_display_name(f))
+            name.setToolTip(texts.file_heading_tip(f))
             head.addWidget(name, 1)
             close = QPushButton(L["close_file"])
             close.setToolTip(L["close_file_tip"])
@@ -516,7 +517,10 @@ class TraceTab(QWidget):
             v.addLayout(head)
             for t in f.get("traces") or []:
                 cb = QCheckBox(texts.w("file_trace_check", number=t["number"], unit=t["unit"], points=t["points"]))
-                cb.setChecked(bool((t.get("info") or {}).get("visible", True)))
+                # 重ねた直後は保存したときに表示していたものだけ。前から重ねているものは、いま描いているかどうか
+                # （別のファイルを開いて並びを作り直しても、利用者が切り替えたチェックを戻さない）
+                e = layer.files.get(t["id"])
+                cb.setChecked(e["shown"] if e is not None and e["init"] else screen_model.file_trace_shown_at_open(t))
                 cb.toggled.connect(lambda on, tid=t["id"]: layer.set_file_shown(tid, on))
                 v.addWidget(cb)
                 self._file_checks[t["id"]] = cb

@@ -304,6 +304,7 @@ class _Painter:
             return plot.top() + (ref - v) / (ref - bottom) * plot.height()
 
         self.p.fillRect(plot, self.c("graph_bg"))
+        self._draw_norm_bands(plot, fx, start, stop)
         # 目盛線（縦も横も 10 区画。目盛の数字はこの線の上: AXES）
         self.p.setPen(QPen(self.c("grid"), 1))
         for i in range(DIVISIONS + 1):
@@ -341,6 +342,23 @@ class _Painter:
             self._draw_trace(tr, fx, fy, start, stop)
         self.p.restore()
         self._draw_markers(plot, fx, fy, start, stop, ref, bottom)
+
+    def _draw_norm_bands(self, plot: QRectF, fx, start: float, stop: float) -> None:
+        """基準の範囲外の帯（設計E §6.4）。画面（plot_layers.set_bands）と同じ注意の色の薄い塗りと縁で、トレースの下に敷く。"""
+        warn = self.c("warn")
+        fill, edge = QColor(warn), QColor(warn)
+        fill.setAlpha(pl.BAND_FILL_ALPHA)
+        edge.setAlpha(pl.BAND_EDGE_ALPHA)
+        for lo, hi in self.lay.get("norm_bands_hz") or []:
+            x0, x1 = fx(max(float(lo), start)), fx(min(float(hi), stop))
+            if x1 <= x0:
+                continue
+            self.p.fillRect(QRectF(x0, plot.top(), x1 - x0, plot.height()), fill)
+            self.p.setPen(QPen(edge, 1))
+            # 縁は区間の端が枠の中にあるときだけ（枠で切った側に線を足さない）
+            for edge_hz, x in ((float(lo), x0), (float(hi), x1)):
+                if start < edge_hz < stop:
+                    self.p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
 
     def _draw_x_axis(self, plot: QRectF) -> None:
         """横軸の数字（10 区画の線の上を x_every ごと）と、その下の見出し（単位）。置き場所は report_layout.graph_axes。"""

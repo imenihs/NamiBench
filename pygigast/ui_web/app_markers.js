@@ -29,7 +29,7 @@
         peakList: null,  // 結果（命令 peak_list の戻り値に、サーバーが文字 texts.peak_list を足したもの）
         peakTrace: 1,
         peakMargin: 10,
-        topN: "3",
+        topN: 3,  // 上位 N 個（Qt の top_n と同じ初期値と範囲 1〜8。欄は int-field）
       };
     },
     computed: {

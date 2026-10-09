@@ -107,14 +107,9 @@
       modes() { return X.list("MODES"); },
       modeReason() { return (code) => (this.ui.mode_reasons || {})[code] || null; },
       rbwGroups() { return this.ui.rbw || []; },
-      rbwNote() {
-        const s = this.sw;
-        if (!s) return "";
-        const g = this.rbwGroups.find((x) => x.choices.some((c) => c.hz === s.rbw_hz));
-        // 使えない RBW があるときはその理由を先に（設計C §5.14）
-        const limit = this.rbwGroups.flatMap((x) => x.choices).map((c) => c.reason).find((r) => r) || "";
-        return [limit, g ? g.note : ""].filter((t) => t).join("\n");
-      },
+      // RBW の欄の注意の色とツールチップ（信用できない条件の文・選べない RBW の理由・窓の説明。サーバーの
+      // screen_model.rbw_field_view: Qt と同じ）
+      rbwField() { return this.ui.rbw_field || { warn: false, tip: "" }; },
       sweepReasons() { return this.ui.sweep_reasons || {}; },
       // イメージ除去の選択（サーバーの screen_model.image_reject_view: 選択肢の文字・いまの値・使えない理由）
       rejectView() {
@@ -361,6 +356,9 @@
       },
       // 機器の範囲の外・意味の無い区間の帯（J §4.8）。区間・説明・色はサーバーが付けた ui.marks
       marks() { return (this.ui.marks || []).map((m) => ({ ...m, fill: this.palette[m.color] || this.palette.warn })); },
+      // 基準の範囲外の帯（設計E §6.4: 値なしの区間を注意の色の帯で示す。Qt の plot_layers.set_bands と同じ区間・色。
+      // 説明の文字は持たない: 範囲は状態バーの「基準の範囲外」）
+      normBands() { return (this.ui.norm_bands || []).map(([lo, hi]) => ({ start_hz: lo, stop_hz: hi, label: "", fill: this.palette.warn })); },
       // マウスの位置の読み値（設計G §2: マウスの縦の位置ではなく波形の値）。中身（周波数・最も近いトレースの点の値・
       // 印の付いた点の注意）はサーバーが Qt のツールチップと同じ関数（screen_model.mouse_reading）で作る。
       // 取りに行くのは1つずつ、HOVER_MS より詰めない。動かしている間に来た位置は最後の1つだけ取る
@@ -449,6 +447,7 @@
         this.onStateDevices(p);
         this.onStateCal(p);
         this.onStateS11(p);
+        this.onStateFiles(p);
         this.applyLook();
         this.watchPaletteOrigin();
         this.applyX();
@@ -620,7 +619,7 @@
         requestAnimationFrame(() => {
           this.rafPending = false;
           if (!this.$graph) return;
-          this.$graph.setBands(this.marks());
+          this.$graph.setBands([...this.normBands(), ...this.marks()]);
           this.$graph.setLeaks(this.leakMarks());  // 内部の漏れの印（設計L §1.4。app_step.js）
           // バンドプランの帯とブックマークの印（設計P §6。中身はサーバーの display_view.bandplan_view）
           this.$graph.setBandplan(this.bpView.bands, this.bpView.bookmarks);
@@ -905,6 +904,28 @@
         this.sweep({ points: v }, "points");
       },
       toggleFileTrace(id) { this.fileHidden = { ...this.fileHidden, [id]: !this.fileHidden[id] }; this.redraw(); },
+      // 重ねた直後は、保存したときに表示していたトレースだけを出す（隠していたものはチェックで出せる。決まりはサーバーの
+      // screen_model.file_trace_shown_at_open: Qt の plot_layers と同じ）。前から重ねているものは利用者の切り替えを保ち、
+      // 外した参照トレースの覚えは捨てる（同じ id で開き直したら、また保存したときの表示から）
+      onStateFiles(p) {
+        const shownAtOpen = (p.ui && p.ui.file_shown) || {};
+        const ids = new Set();
+        let hidden = null;
+        for (const f of p.files || []) {
+          for (const tr of f.traces || []) {
+            ids.add(tr.id);
+            if (tr.id in this.fileHidden) continue;
+            hidden = hidden || { ...this.fileHidden };
+            hidden[tr.id] = shownAtOpen[tr.id] === false;
+          }
+        }
+        for (const id of Object.keys(this.fileHidden)) {
+          if (ids.has(id)) continue;
+          hidden = hidden || { ...this.fileHidden };
+          delete hidden[id];
+        }
+        if (hidden) this.fileHidden = hidden;
+      },
 
       // 基準（信号源のタブ: 設計E §6）・S11 のオープン/ショート・表示の形式は app_s11.js
 
@@ -1099,6 +1120,7 @@
   const app = createApp(base);
   app.component("num-field", GSFields.NumField);
   app.component("count-field", GSFields.CountField);
+  app.component("int-field", GSFields.IntField);
   app.component("db-field", GSFields.DbField);
   // 状態を映す入力は、触っている間は書き直さない（fields.js の Steady）
   app.directive("steady", GSFields.Steady);
