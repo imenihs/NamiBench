@@ -57,12 +57,10 @@
     "note": "rbw_hz = round(ENBW x fs / fft_n) for periodic windows (Hann ENBW 1.5 bins, flat top 3.7702 bins)"
   },
   "timing": {
-    "retune_settle_s": 0.045,
+    "retune_settle_s": 0.030,
     "discard_samples": 0,
     "link_samples_per_s": 6000000,
-    "tx_retune_settle_s": 0.0,
-    "tx_retune_basis": "provisional_until_measured",
-    "note": "per LO position: retune_settle_s (LO write 1.7-24 ms + new RX buffer 20-45 ms, measured 2026-10-10) + averages x fft_n / min(sample_rate_hz, link_samples_per_s). The first samples of a new buffer were already at the new frequency (no discard). realtime (one fixed position) skips the LO write but still makes a new buffer"
+    "note": "per LO position: retune_settle_s (LO write 1.7-24 ms + new RX buffer; per-position time measured through this driver 26-41 ms incl. a 4-8 ms read, 2026-10-10) + averages x fft_n / min(sample_rate_hz, link_samples_per_s). The first samples of a new buffer were already at the new frequency (no discard). realtime (one fixed position) skips the LO write but still makes a new buffer"
   },
   "gain": {
     "default_db": 30,

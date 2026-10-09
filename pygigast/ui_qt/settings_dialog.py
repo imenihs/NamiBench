@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from . import screen_model, sizes, texts, widget_sync
+from .screen_pluto import pluto_view
 from .settings_colors import PalettePage
 from .settings_keys import KeysPage
 
@@ -100,6 +101,7 @@ class SettingsDialog(QDialog):
         self._add_page("web", P["web"], self._build_web())
         self._add_page("rtltcp", P["rtltcp"], self._build_rtltcp())
         self._add_page("rtlsdr", P["rtlsdr"], self._build_rtlsdr())
+        self._add_page("plutosdr", P["plutosdr"], self._build_plutosdr())
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.button(QDialogButtonBox.StandardButton.Close).setText(S["close"])
@@ -392,6 +394,48 @@ class SettingsDialog(QDialog):
         if folder:
             self.win.call("rtlsdr_set", dll_folder=folder)
 
+    # ---------------------------------------------------------------- PlutoSDR の DLL と URI（設計Q §7.2）
+
+    def _build_plutosdr(self) -> QWidget:
+        """見つけた libiio.dll の場所（無い・64 ビットでないなら注意の色で理由）と、繋ぐ URI。"""
+        S = texts.SETTINGS_LABELS
+        page, v = _page()
+        form = sizes.form()
+        self.pl_dll_state = _path_label()
+        self.pl_dll_reason = QLabel("")
+        self.pl_dll_reason.setObjectName("warn")
+        field = sizes.vbox(inset=False)
+        field.addWidget(self.pl_dll_state)
+        field.addWidget(self.pl_dll_reason)
+        form.addRow(S["plutosdr_dll"], field)
+        v.addLayout(form)
+        choose = QPushButton(S["rtlsdr_choose"])
+        choose.clicked.connect(self._choose_pluto_dll)
+        self.pl_dll_default = _reset_button(lambda: self.win.call("plutosdr_set", dll_folder=None),
+                                            S["rtlsdr_default_tip"])
+        v.addLayout(sizes.buttons_row(choose, self.pl_dll_default))
+        form = sizes.form()
+        self.pl_uri = QLineEdit("")
+        self.pl_uri.setToolTip(S["plutosdr_uri_tip"])
+        sizes.set_width(self.pl_uri, "name")
+        self.pl_uri.editingFinished.connect(self._set_pluto_uri)
+        form.addRow(S["plutosdr_uri"], self.pl_uri)
+        v.addLayout(form)
+        reset = _reset_button(lambda: self.win.call("plutosdr_set", uri="ip:192.168.2.1"))
+        v.addLayout(sizes.buttons_row(reset))
+        v.addStretch(1)
+        return page
+
+    def _choose_pluto_dll(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, texts.SETTINGS_LABELS["plutosdr_choose_title"])
+        if folder:
+            self.win.call("plutosdr_set", dll_folder=folder)
+
+    def _set_pluto_uri(self) -> None:
+        text = self.pl_uri.text().strip()
+        if text and text != (self.win.state.get("plutosdr") or {}).get("uri"):
+            self.win.call("plutosdr_set", field=self.pl_uri, uri=text)
+
     # ---------------------------------------------------------------- 状態を映す
 
     def apply(self, st: dict) -> None:
@@ -410,6 +454,14 @@ class SettingsDialog(QDialog):
         self.dll_reason.setText(rtl["dll_reason"])
         self.dll_reason.setVisible(bool(rtl["dll_reason"]))
         self.dll_default.setEnabled(bool((st.get("rtlsdr") or {}).get("dll_folder")))
+        pv = pluto_view(st)
+        self.pl_dll_state.setText(pv["dll_line"])
+        _restyle(self.pl_dll_state, "warn" if pv["dll_warn"] else "")
+        self.pl_dll_reason.setText(pv["dll_reason"])
+        self.pl_dll_reason.setVisible(bool(pv["dll_reason"]))
+        self.pl_dll_default.setEnabled(pv["dll_custom"])
+        if not self.pl_uri.hasFocus():
+            self.pl_uri.setText(pv["uri"])
         self._apply_known(st)
         self.palette_page.apply(st)
         self.apply_notify()

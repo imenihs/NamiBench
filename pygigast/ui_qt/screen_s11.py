@@ -244,6 +244,14 @@ def tg_take_reason(st: dict) -> Optional[str]:
     return texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
 
 
+def tg_wide_reason(st: dict) -> Optional[str]:
+    """TG の「広く取る」の使えない理由。FFT の機器（PlutoSDR）は RBW が同じでないと基準が当たらないので、
+    いまの条件で取る（設計E §6.4 の rbw_mismatch）。"""
+    if (st.get("connection") or {}).get("sweep_kind") == "fft" and (st.get("sweep") or {}).get("mode") == "tg":
+        return tg_take_reason(st) or texts.ERRORS["reference_wide_fft"]
+    return tg_take_reason(st)
+
+
 def s11_quick(st: dict) -> dict:
     """上段の S11 のボタン（「基準を取る」の場所: J §4.2）: 次の1段の名前・ツールチップ・送る中身・状態の文。"""
     from .texts_devices import hhmm

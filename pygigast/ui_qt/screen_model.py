@@ -662,9 +662,16 @@ def s11_ui(st: dict) -> dict:
         "trace_drawn": {str(t.get("number")): screen_s11.trace_drawn_reason(t, unit) for t in traces},
         "s11": screen_s11.s11_view(st),
         "tg_take_reason": screen_s11.tg_take_reason(st),
+        "tg_wide_reason": screen_s11.tg_wide_reason(st),
         "ref_state": screen_s11.ref_state_text(st),
         "ref_value": screen_s11.ref_value_view(st),  # 基準の値の欄（設計E §6.7）
     }
+
+
+def _pluto_view(st: dict) -> dict:
+    from .screen_pluto import pluto_view
+
+    return pluto_view(st)
 
 
 def ui_view(st: dict) -> dict:
@@ -681,6 +688,7 @@ def ui_view(st: dict) -> dict:
         "mode_reasons": mode_reasons(st),
         "fft": is_fft(st),
         "rtl": rtl_view(st),
+        "pluto": _pluto_view(st),  # PlutoSDR の受信・送信の欄と設定の行（screen_pluto.py）
         "listen": listen_view(st),
         "rtltcp": rtltcp_view(st),
         "tasks": {t.get("task_id"): texts.task_label(t) for t in st.get("tasks") or []},

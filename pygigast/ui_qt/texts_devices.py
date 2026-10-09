@@ -12,7 +12,7 @@ from typing import Optional
 from .texts_ui import TEMPLATES
 
 # 機器の種類（名前を持たない行・種類の見出しに使う）
-DEVICE_KINDS = {"gigast": "GigaSt", "rtlsdr": "RTL-SDR", "simulator": "シミュレータ"}
+DEVICE_KINDS = {"gigast": "GigaSt", "rtlsdr": "RTL-SDR", "plutosdr": "PlutoSDR", "simulator": "シミュレータ"}
 
 # 状態のコード → 利用者の言葉（J §4.7 の 3）
 DEVICE_STATES = {
@@ -29,7 +29,7 @@ DEVICE_STATE_CLS = {"busy_other_app": "warn", "dll_not_found": "warn", "in_use_h
 
 DEVICE_LABELS = {
     "title": "機器に接続",
-    "empty": "GigaSt や RTL-SDR を USB に挿すと、ここに出ます",
+    "empty": "GigaSt・RTL-SDR・PlutoSDR を USB に挿すと、ここに出ます",
     "try_sim": "シミュレータで試す",
     "connect": "接続",
     "rename": "名前…",
@@ -41,6 +41,7 @@ DEVICE_LABELS = {
     "close": "閉じる",
     "in_use_reason": "いま使っている機器です",
     "dll_folder_title": "RTL-SDR の DLL（rtlsdr.dll）のあるフォルダ",
+    "dll_folder_title_plutosdr": "PlutoSDR の DLL（libiio.dll）のあるフォルダ",
 }
 
 # 繋げなかったときの次の手（J §4.7 の 5。理由の文は ERRORS）
@@ -50,6 +51,7 @@ CONNECT_NEXT_STEPS = {
     "device_not_found": "一覧から選び直してください",
     "device_ambiguous": "一覧の行（番号付きのポート）から選んでください",
     "rtlsdr_dll_not_found": "［DLL のフォルダを選ぶ］で rtlsdr.dll のあるフォルダを選んでください",
+    "plutosdr_dll_not_found": "［DLL のフォルダを選ぶ］で libiio.dll（64 ビット版）のあるフォルダを選んでください",
 }
 
 TEMPLATES.update({

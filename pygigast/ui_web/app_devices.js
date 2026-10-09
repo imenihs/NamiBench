@@ -62,7 +62,7 @@
         }
       },
       deviceAction(d) {
-        if (d.state === "dll_not_found") this.chooseDll();
+        if (d.state === "dll_not_found") this.chooseDll(d.kind);
         else this.connectDevice(d);
       },
       toggleDetails(id) { this.devWin = { ...this.devWin, open: { ...this.devWin.open, [id]: !this.devWin.open[id] } }; },
@@ -70,9 +70,9 @@
         this.openModal(this.D("rename_title"), [{ key: "name", label: this.D("rename_label"), width: "w-name", placeholder: this.D("rename_placeholder"), value: d.custom_name || d.view.name }],
           (v) => this.cmd("rename_device", { kind: d.kind, serial: d.serial, name: String(v.name).trim() || null }));
       },
-      chooseDll() {
+      chooseDll(kind) {
         // ブラウザからは PC のフォルダを指定できない（サーバーが path_not_allowed で断る）ので、変える場所を知らせる
-        this.openModal(this.D("dll_folder_title"), [], null, X.w("dll_folder_web"));
+        this.openModal(this.D(kind === "plutosdr" ? "dll_folder_title_plutosdr" : "dll_folder_title"), [], null, X.w("dll_folder_web"));
       },
       disconnectAndList() { this.cmd("disconnect", {}, { ok: () => this.openDevices() }); },
     },

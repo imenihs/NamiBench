@@ -40,6 +40,8 @@ from .texts_display import (DISPLAY_ERRORS, DISPLAY_NORM_REASONS, DISPLAY_NOTICE
                             DISPLAY_TASKS, DISPLAY_TEXTS, clock_text, display_notice_text)
 from .texts_refvalue import *  # noqa: F401,F403 — 基準の値の語（設計E §6.7）
 from .texts_refvalue import REF_VALUE_ERRORS, REF_VALUE_NOTICES, ref_value_text, value_range_text
+from .texts_pluto import *  # noqa: F401,F403 — PlutoSDR の語（設計Q §7）
+from .texts_pluto import PLUTO_ERRORS, PLUTO_NOTICES, PLUTO_SETTINGS
 
 
 def tpl(key: str, **kw) -> str:
@@ -203,7 +205,7 @@ def condition_lines(st: dict, with_rbw: bool = False) -> list[str]:
         out += rbw_warning_lines(st)
     if sw.get("tail_gap"):
         out.append(TEMPLATES["cond_tail_gap"])
-    rtl = st.get("rtlsdr") or {}
+    rtl = sdr_state(st)
     if rtl.get("connected") and rtl.get("overload"):
         out.append(NOTICES["rtlsdr_overload"])
     fixed = rtl.get("fixed_center") if rtl.get("connected") else None
@@ -778,6 +780,13 @@ ERRORS.update({k: v for k, v in CAL_ERRORS.items() if k not in ERRORS})
 ERRORS.update({k: v for k, v in STEP_ERRORS.items() if k not in ERRORS})
 ERRORS.update({k: v for k, v in NF_ERRORS.items() if k not in ERRORS})  # NF の ENR（設計M）
 ERRORS.update({k: v for k, v in REF_VALUE_ERRORS.items() if k not in ERRORS})  # 基準の値（設計E §6.7）
+ERRORS.update(PLUTO_ERRORS)  # PlutoSDR（設計Q §7）
+NOTICES.update(PLUTO_NOTICES)
+SETTINGS_LABELS.update(PLUTO_SETTINGS)
+TASK_NAMES["plutosdr_fit_gain"] = TASK_NAMES["rtlsdr_fit_gain"]
+TASK_DONE["plutosdr_fit_gain"] = TASK_DONE["rtlsdr_fit_gain"]
+TASK_FAILED["plutosdr_fit_gain"] = TASK_FAILED["rtlsdr_fit_gain"]
+TASK_CANCELLED["plutosdr_fit_gain"] = "利得を合わせるのをやめました（利得は押す前の値に戻しました）"
 
 
 # ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語
@@ -797,6 +806,12 @@ def fmt_bytes(n) -> str:
     return f"{n:.1f} {units[i]}" if i else f"{int(n)} {units[i]}"
 
 
+def sdr_state(st: dict) -> dict:
+    """繋いでいる FFT の機器（RTL-SDR・PlutoSDR）の状態。どちらでもなければ RTL-SDR の状態（未接続）。"""
+    pl = st.get("plutosdr") or {}
+    return pl if pl.get("connected") else (st.get("rtlsdr") or {})
+
+
 def calibration_status(st: dict) -> str:
     """「補正: …」。RTL-SDR は個体の校正（ppm・レベル: 設計Q §6.6）と、単位（dB（未校正）など）。"""
     rtl = st.get("rtlsdr") or {}
@@ -809,6 +824,10 @@ def calibration_status(st: dict) -> str:
             return tpl("status_cal_rtl", ppm=f"{int(ppm):+d}", level=level, at=cal.get("created_at") or "",
                        unit=unit)
         return tpl("status_cal_rtl_none", ppm=f"{int(ppm or 0):+d}", unit=unit)
+    pl = st.get("plutosdr") or {}
+    if pl.get("connected"):
+        # PlutoSDR の個体の校正はまだ無い（設計Q §7.1）
+        return tpl("status_cal_pluto", unit=pl.get("level_unit") or "")
     cal = st.get("calibration")
     return tpl("status_cal", at=cal["created_at"]) if cal else TEMPLATES["status_cal_none"]
 
@@ -978,7 +997,7 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
             warns = [EXPORT_WARNINGS.get(w, w) for w in res.get("warnings") or []]
             if warns:
                 text += "・" + "・".join(warns)
-        elif kind == "rtlsdr_fit_gain":
+        elif kind in ("rtlsdr_fit_gain", "plutosdr_fit_gain"):
             text = fit_gain_text(res)
         elif kind == "reference_take":
             text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
@@ -1062,7 +1081,7 @@ def notice_view(n: dict, state: Optional[dict] = None) -> dict:
     if code in ("task_done", "task_failed", "task_cancelled"):
         text, path = task_end_text(code, d)
         res = d.get("result") or {}
-        if code == "task_done" and d.get("task") == "rtlsdr_fit_gain" and res.get("traces_reset"):
+        if code == "task_done" and d.get("task") in ("rtlsdr_fit_gain", "plutosdr_fit_gain") and res.get("traces_reset"):
             # 利得を合わせて捨てたトレースは、トレースの欄にも出す（知らせは1件のまま: 設計Q §6.5）
             t = trace_reset_text({"cause": "gain"})
             traces = {num: t for num in res["traces_reset"]}

@@ -51,6 +51,7 @@ from .marker_table import MarkerPanel
 from .mouse_reading import MouseReading
 from .plot_layers import MarkerLayer, TraceLayer
 from .prefs import UiPrefs
+from .pluto_panel import PlutoRxPanel
 from .rtl_panel import RtlPanel
 from .settings_dialog import SettingsDialog
 from .statusbar import StatusBar
@@ -356,6 +357,8 @@ class MainWindow(QMainWindow):
         self.trace_tab = TraceTab(self)
         self.rtl_panel = RtlPanel(self)
         self.trace_tab.add_device_section(self.rtl_panel)
+        self.pluto_panel = PlutoRxPanel(self)
+        self.trace_tab.add_device_section(self.pluto_panel)
         self.marker_tab = MarkerTab(self)
         self.listen = ListenControl(self)
         self.marker_tab.body.insertWidget(1, self.listen.panel)
@@ -1082,6 +1085,7 @@ class MainWindow(QMainWindow):
         self.display.apply_state(st)
         self.trace_tab.apply_state(st)
         self.rtl_panel.apply(st)
+        self.pluto_panel.apply(st)
         self.listen.apply(st)
         if self._settings is not None:
             self._settings.apply(st)

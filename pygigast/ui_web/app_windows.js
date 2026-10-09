@@ -184,6 +184,22 @@
         <button disabled :title="a.W('dll_folder_web')">{{ a.S('reset') }}</button>
       </div>
     </template>
+    <template v-else-if="page === 'plutosdr'">
+      <div class="form">
+        <label>{{ a.T('SETTINGS_LABELS', 'plutosdr_dll') }}</label>
+        <div :class="a.plutoView.dll_warn ? 'warn' : ''">{{ a.plutoView.dll_line }}</div>
+        <template v-if="a.plutoView.dll_reason"><label></label><div class="warn">{{ a.plutoView.dll_reason }}</div></template>
+      </div>
+      <div class="row" :title="a.W('dll_folder_web')">
+        <button disabled :title="a.W('dll_folder_web')">{{ a.T('SETTINGS_LABELS', 'rtlsdr_choose') }}</button>
+        <button disabled :title="a.W('dll_folder_web')">{{ a.S('reset') }}</button>
+      </div>
+      <div class="form">
+        <label>{{ a.T('SETTINGS_LABELS', 'plutosdr_uri') }}</label>
+        <input class="w-name" :value="a.plutoView.uri" readonly disabled :title="a.W('dll_folder_web')">
+      </div>
+      <div class="row"><button disabled :title="a.W('dll_folder_web')">{{ a.S('reset') }}</button></div>
+    </template>
   </div>
   <div class="modal-btns"><button @click="a.closeSettings()">{{ a.T('SETTINGS_LABELS', 'close') }}</button></div>
 </div>

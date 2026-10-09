@@ -167,6 +167,7 @@ class PlutoSdrMixin:
             limits = list(dev.gain_limits_for(self._adopted))
         setting = self._plutosdr_gain_setting()
         applied = None if dev is None else dev.gain_db
+        tgt = self._rtlsdr_fixed_target()
         return {
             "dll_folder": self._pluto_cfg["dll_folder"],
             "dll_found": self._pluto_dll_path is not None,
@@ -188,6 +189,8 @@ class PlutoSdrMixin:
             "fitting": any(t.kind == "plutosdr_fit_gain" for t in getattr(self, "_tasks", {}).values()),
             "tx_on": None if dev is None else dev.tx_on,
             "fw_version": None if dev is None else dev.fw_version,
+            # 中心を動かせないとき（rtl_tcp の相手: RTL-SDR と同じ扱い）
+            "fixed_center": None if (dev is None or tgt is None) else {"cause": tgt[0], "tuner_center_hz": tgt[1]},
         }
 
     def _plutosdr_save_settings(self) -> None:

@@ -402,6 +402,23 @@ class PlutoSdrDevice(Device):
             self._rx.set_attr("hardwaregain", g)
             self._gain_applied = g
 
+    def _gain_for_positions(self, centers) -> None:
+        """位置の全部で使える利得を入れる。機器は「いまの LO の帯」の範囲の外の利得を受け付けない（実機 2026-10-10）
+        ので、入れる利得がいまの LO の帯で使えなければ、先に LO を最初の位置へ動かしてから入れる。"""
+        if not centers:
+            return
+        if self._gain_setting is not None and self._tuned_hz is not None:
+            lo, hi = gain_limits(self._profile, centers)
+            g = min(max(self._gain_setting, lo), hi)
+            cur_lo, cur_hi = gain_limits(self._profile, [self._tuned_hz])
+            if not cur_lo <= g <= cur_hi:
+                self._rxlo.set_attr("frequency", int(centers[0]))
+                self._tuned_hz = int(centers[0])
+        elif self._tuned_hz is None:
+            self._rxlo.set_attr("frequency", int(centers[0]))
+            self._tuned_hz = int(centers[0])
+        self._apply_gain(centers)
+
     @property
     def gain_db(self) -> Optional[float]:
         """いま入れている手動の利得（dB）。自動なら None。"""
@@ -491,7 +508,7 @@ class PlutoSdrDevice(Device):
         axis = sweep.axis
         fixed = self.fixed_center_hz
         p, pl = make_plan(self._profile, axis, sweep.rbw_hz, fixed)
-        self._apply_gain(pl.centers)
+        self._gain_for_positions(pl.centers)
         if mode == Mode.SG:
             self._tx_tone(int(sweep.sg_hz))
         elif mode == Mode.TG:
@@ -678,6 +695,10 @@ class PlutoSdrDevice(Device):
             nonlocal hot, tried
             if _cancelled(cancel):
                 raise SweepDiscarded("cancelled", {"steps_done": tried})
+            if self._tuned_hz not in centers:
+                # 利得はいまの LO の帯で受け付けられる（g は全部の位置の帯で使える値）
+                self._rxlo.set_attr("frequency", int(centers[hot]))
+                self._tuned_hz = int(centers[hot])
             if self._auto_applied:
                 self._rx.set_attr("gain_control_mode", "manual")
                 self._auto_applied = False

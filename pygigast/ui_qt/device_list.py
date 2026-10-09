@@ -208,7 +208,7 @@ class DeviceListWindow(QDialog):
 
     def act(self, d: dict) -> None:
         if d.get("state") == "dll_not_found":
-            self.choose_dll()
+            self.choose_dll(d.get("kind") or "rtlsdr")
         else:
             self.connect_to(d)
 
@@ -247,7 +247,8 @@ class DeviceListWindow(QDialog):
             return
         self.win.call("rename_device", kind=d["kind"], serial=d["serial"], name=text.strip() or None)
 
-    def choose_dll(self) -> None:
-        folder = self.win.ask_folder(L["dll_folder_title"])
+    def choose_dll(self, kind: str = "rtlsdr") -> None:
+        pluto = kind == "plutosdr"
+        folder = self.win.ask_folder(L["dll_folder_title_plutosdr" if pluto else "dll_folder_title"])
         if folder:
-            self.win.call("rtlsdr_set", on_ok=lambda r: self.refresh(), dll_folder=folder)
+            self.win.call("plutosdr_set" if pluto else "rtlsdr_set", on_ok=lambda r: self.refresh(), dll_folder=folder)
