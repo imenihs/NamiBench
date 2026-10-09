@@ -647,7 +647,7 @@ class WebLayoutTest(unittest.TestCase):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
         # 数えた画面が揃っていること（開けずに数えなければ何も守らない）。設計P の3つ（ウォーターフォール・密度・再生）を含む
-        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 8 + 6 + CAL_VIEWS, seen)
+        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 9 + 6 + CAL_VIEWS, seen)  # 設定は 9 ページ（PlutoSDR を足した）
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 

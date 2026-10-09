@@ -49,6 +49,7 @@ DEFAULT_URI = "ip:192.168.2.1"
 IIOD_PORT = 30431
 # ip の URI に繋がるかを確かめる時間の上限（一覧を作るたびに待つので短く）
 PROBE_TIMEOUT_S = 0.3
+UNREACHABLE_CACHE_S = 3.0
 # 繋がっている ip の機器のシリアル番号を問い合わせ直す間隔（一覧は 0.5s ごとに作るので、毎回は文脈を作らない）
 SERIAL_CACHE_S = 5.0
 # 振り切れの判定（RTL-SDR と同じ割合: 設計Q §6.4）
@@ -156,13 +157,24 @@ class _SerialCache:
 _cache = _SerialCache()
 
 
+_unreachable_until: dict[str, float] = {}
+
+
 def _reachable(uri: str) -> bool:
-    """ip の URI の iiod に TCP で繋がるか（繋がらない宛先で文脈を作ると長く待つため、先に短く確かめる）。"""
+    """ip の URI の iiod に TCP で繋がるか（繋がらない宛先で文脈を作ると長く待つため、先に短く確かめる）。
+
+    繋がらなかった宛先は UNREACHABLE_CACHE_S の間は確かめ直さない（一覧は 0.5s ごとに作るので、時間切れまで待つ
+    確かめを毎回しない）。
+    """
+    if time.monotonic() < _unreachable_until.get(uri, 0.0):
+        return False
     host = uri[3:]
     try:
         with socket.create_connection((host, IIOD_PORT), timeout=PROBE_TIMEOUT_S):
+            _unreachable_until.pop(uri, None)
             return True
     except OSError:
+        _unreachable_until[uri] = time.monotonic() + UNREACHABLE_CACHE_S
         return False
 
 

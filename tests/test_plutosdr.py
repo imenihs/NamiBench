@@ -286,6 +286,8 @@ class TestInstrument(PlutoCase):
     def test_tg_reference_fine_only(self):
         self.call("connect", backend="plutosdr", serial=FAKE_SERIAL)
         self.call("set_mode", mode="tg")
+        # 偽物の直結（損失 30dB）で多トーンが雑音より十分上（約 50dB）になる減衰にする（比の揺れを雑音で決めない）
+        self.call("plutosdr_set", tx_atten_db=-10.0)
         with self.assertRaises(CommandError) as cm:
             self.call("reference_take", kind="wide")
         self.assertEqual(cm.exception.code, "reference_wide_fft")
