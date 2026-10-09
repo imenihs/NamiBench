@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from ..core.units import ParseError, level_text, parse_db
 from . import nf_view, screen_model, screen_s11, sizes, texts, widget_sync
 from .fields import DbField, FreqField, LocalDbChoiceField
+from .pluto_panel import PlutoTxPanel
 from .step_panel import StepPanel
 from .texts_nf import NF_TEXTS as N
 from .tab_traces import body, outer, set_enabled
@@ -94,6 +95,9 @@ class SourceTab(QWidget):
         self.sg_state.setObjectName("dim")
         form.addRow(self.sg_state)
         lay.addWidget(g)
+        # 送信の減衰（PlutoSDR: SG・TG の出力のレベル。設計Q §7）。PlutoSDR に繋いでいるときだけ出す
+        self.pluto_tx = PlutoTxPanel(win)
+        lay.addWidget(self.pluto_tx)
         # SG のステップ掃引（設計L §1.3）。SG の周波数を動かす機能なので SG の欄のすぐ下
         self.step = StepPanel(win)
         lay.addWidget(self.step)
@@ -286,6 +290,7 @@ class SourceTab(QWidget):
         # ステップ掃引の間は SG の周波数を掃引が動かす・再生中はライブの条件を変えない（欄は理由付きで変えられない: U-08）
         set_enabled(self.f_sg, screen_model.sg_reason(st))
         self.step.apply_state(st)
+        self.pluto_tx.apply(st)
         self.ref_state.setText(screen_s11.ref_state_text(st))  # Web と同じ文
         conn = st["connection"]
         serial = (conn.get("identity") or {}).get("serial")
@@ -294,7 +299,7 @@ class SourceTab(QWidget):
             self.refresh()
         # TG の「広く取る」「いまの条件で細かく取る」（S11 はオープン・ショートの2段で取る: 設計E §6.5）
         reason = screen_s11.tg_take_reason(st)
-        set_enabled(self.take_wide, reason, L["take_wide_tip"])
+        set_enabled(self.take_wide, screen_s11.tg_wide_reason(st), L["take_wide_tip"])
         set_enabled(self.take_fine, reason, L["take_fine_tip"])
         rv = screen_s11.ref_value_view(st)  # S11 の基準には使わない（Web と同じ）
         set_enabled(self.take_value, rv["reason"], rv["tip"])

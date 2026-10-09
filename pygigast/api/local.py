@@ -143,6 +143,55 @@ class _RtlSdrBackend(DeviceBackend):
         return open_rtlsdr_device(self._lib(), port=port, serial=None if port else serial, profile=self._profile)
 
 
+class _PlutoSdrBackend(DeviceBackend):
+    """PlutoSDR（設計Q §7.2）。libiio の DLL は設定で選んだフォルダから読む（本体が set_dll_folder で渡す）。
+
+    ポートは URI。一覧は USB で見える機器と、設定の URI（既定 ip:192.168.2.1）で繋がる機器を、シリアル番号で1行に
+    まとめる（devices/plutosdr/driver.discover）。確認の掃引は要らない（libiio が PlutoSDR と答えた機器だけを並べる）。
+    lib_factory は試験で libiio の偽物（devices/plutosdr/fake.py）を渡すためのもの。
+    """
+
+    def __init__(self, profile: Optional[dict] = None, lib_factory: Optional[Callable[[], object]] = None) -> None:
+        self._profile = profile
+        self._lib_factory = lib_factory
+        self._folder: Optional[str] = None
+        self._uri: Optional[str] = None
+
+    def set_dll_folder(self, folder: Optional[str]) -> None:
+        self._folder = folder
+
+    def set_uri(self, uri: Optional[str]) -> None:
+        self._uri = uri
+
+    def _lib(self):
+        if self._lib_factory is not None:
+            return self._lib_factory()
+        from ..core.devices.plutosdr.iio import IioLib
+
+        return IioLib.load(self._folder)  # 見つからなければ IioNotFound
+
+    def discover(self) -> list[dict]:
+        from ..core.devices.plutosdr.driver import DEFAULT_URI, discover
+
+        return [{"port": r.port, "serial": r.serial, "description": r.description, "available": r.available}
+                for r in discover(self._lib(), (self._uri or DEFAULT_URI,))]
+
+    def probe(self, port: str) -> bool:
+        return True
+
+    def open(self, serial: Optional[str], port: Optional[str]):
+        from ..core.instrument_plutosdr import open_plutosdr_device
+
+        if port is None:
+            rows = [r for r in self.discover() if r["serial"] == serial]
+            if not rows:
+                from ..core.types import DeviceDisconnected
+
+                raise DeviceDisconnected(f"シリアル番号 {serial} の PlutoSDR が見つからない")
+            port = rows[0]["port"]
+        return open_plutosdr_device(self._lib(), port, profile=self._profile)
+
+
 def create_default(traffic_log_dir=None) -> LocalApi:
     from ..core.devices.base import load_profile
     from ..core.instrument import GIGAST_PROFILE_PATH
@@ -152,5 +201,6 @@ def create_default(traffic_log_dir=None) -> LocalApi:
         "gigast": _GigaStBackend(profile, traffic_log_dir),
         "simulator": _SimulatorBackend(profile),
         "rtlsdr": _RtlSdrBackend(),
+        "plutosdr": _PlutoSdrBackend(),
     }
     return LocalApi(Instrument(backends, profile=profile))

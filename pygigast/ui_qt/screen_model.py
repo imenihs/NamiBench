@@ -25,11 +25,12 @@ from .texts import RTL_LABELS, SETTINGS_LABELS, TEMPLATES, tpl
 @functools.lru_cache(maxsize=None)
 def _profiles() -> dict[str, dict]:
     from ..core.devices.base import load_profile
+    from ..core.devices.plutosdr.driver import PROFILE_PATH as PLUTO_PROFILE
     from ..core.devices.rtlsdr.driver import PROFILE_PATH as RTL_PROFILE
     from ..core.instrument import GIGAST_PROFILE_PATH
 
     out = {}
-    for path in (GIGAST_PROFILE_PATH, RTL_PROFILE):
+    for path in (GIGAST_PROFILE_PATH, RTL_PROFILE, PLUTO_PROFILE):
         p = load_profile(path)
         out[p["model"]] = p
     return out
@@ -331,6 +332,12 @@ def rtltcp_view(st: dict) -> dict:
 
 # ---------------------------------------------------------------- 上段の「基準を取る」（設計J §4.2・E §6.2）
 
+def _tg_quick_kind(st: dict) -> str:
+    """上段の「基準を取る」（TG）の取り方。FFT の機器（PlutoSDR）は RBW が同じでないと基準が当たらないので、
+    いまの条件で取る（"fine"）。GigaSt は TG の範囲を広く取る（"wide"）。"""
+    return "fine" if (st.get("connection") or {}).get("sweep_kind") == "fft" else "wide"
+
+
 def ref_quick_view(st: dict) -> dict:
     """TG・S11 のときだけ上段に出す。ボタンの名前・使えない理由・押したときに送る中身・取っている間の進み具合・
     いまの基準の状態。TG は「基準を取る」、S11 は次の1段（オープンを測る → ショートを測る: 設計E §6.5）。"""
@@ -350,7 +357,7 @@ def ref_quick_view(st: dict) -> dict:
         label, button_tip, take = q["label"], q["tip"], q["take"]
     else:
         label, button_tip, take = REF_QUICK_LABELS["button"], REF_QUICK_LABELS["tip"], \
-            {"standard": None, "kind": "wide", "show_zero": True}
+            {"standard": None, "kind": _tg_quick_kind(st), "show_zero": True}
         q = {"open_text": ""}
     n = st.get("normalization") or {}
     sel = n.get("selected")
@@ -663,9 +670,16 @@ def s11_ui(st: dict) -> dict:
         "trace_drawn": {str(t.get("number")): screen_s11.trace_drawn_reason(t, unit) for t in traces},
         "s11": screen_s11.s11_view(st),
         "tg_take_reason": screen_s11.tg_take_reason(st),
+        "tg_wide_reason": screen_s11.tg_wide_reason(st),
         "ref_state": screen_s11.ref_state_text(st),
         "ref_value": screen_s11.ref_value_view(st),  # 基準の値の欄（設計E §6.7）
     }
+
+
+def _pluto_view(st: dict) -> dict:
+    from .screen_pluto import pluto_view
+
+    return pluto_view(st)
 
 
 def ui_view(st: dict) -> dict:
@@ -682,6 +696,7 @@ def ui_view(st: dict) -> dict:
         "mode_reasons": mode_reasons(st),
         "fft": is_fft(st),
         "rtl": rtl_view(st),
+        "pluto": _pluto_view(st),  # PlutoSDR の受信・送信の欄と設定の行（screen_pluto.py）
         "listen": listen_view(st),
         "rtltcp": rtltcp_view(st),
         "tasks": {t.get("task_id"): texts.task_label(t) for t in st.get("tasks") or []},

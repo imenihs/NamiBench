@@ -405,6 +405,22 @@
           <div class="fnote" v-if="notes.rtlcal">{{ notes.rtlcal.text }}</div>
           <div class="warn" v-if="rtlResult">{{ rtlResult }}</div>
         </section>
+        <!-- 受信（PlutoSDR: 設計Q §7）。PlutoSDR に繋いでいるときだけ出す（J §4.5）。Qt の pluto_panel.PlutoRxPanel と同じ並び・語。
+             設定の利得がいまの範囲で使えないときは、使う値を利得の欄の下に注意の色で出す（U-25） -->
+        <section class="tsec" data-sec="plutosdr" v-if="plutoView.shown">
+          <h3>{{ T('PLUTO_LABELS', 'group') }}</h3>
+          <div class="form" :class="{disabled: !!plutoView.reason}">
+            <label>{{ T('PLUTO_LABELS', 'gain') }}</label>
+            <select data-field="pluto_gain" :value="plutoGainValue" :disabled="!!plutoView.reason" :title="T('PLUTO_LABELS', 'gain_tip')" @change="setPlutoGain($event.target.value)">
+              <option v-for="g in plutoView.gains" :key="String(g.value)" :value="g.value == null ? 'agc' : String(g.value)">{{ g.text }}</option>
+            </select>
+            <template v-if="plutoView.gain_used_text"><label></label><div class="warn">{{ plutoView.gain_used_text }}</div></template>
+            <label></label>
+            <button data-act="pluto_fit" :disabled="!!plutoView.fit_reason || readOnly" :title="T('PLUTO_LABELS', 'fit_gain_tip') + (plutoView.fit_reason ? ' — ' + plutoView.fit_reason : '')" @click="cmd('plutosdr_fit_gain', {}, {field: 'pluto'})">{{ T('PLUTO_LABELS', 'fit_gain') }}</button>
+          </div>
+          <div class="fnote" v-if="notes.pluto">{{ notes.pluto.text }}</div>
+          <div v-if="plutoView.unit_text">{{ plutoView.unit_text }}</div>
+        </section>
       </div>
 
       <!-- ---- マーカー（J §4.5・設計G §3.5） ---- -->
@@ -660,6 +676,16 @@
           <!-- 出していないときは原因（未接続・モード・止めている）を言う（Qt と同じ文: ui.sg_state） -->
           <div class="dim">{{ ui.sg_state }}</div>
         </section>
+        <!-- 送信の減衰（PlutoSDR: SG・TG の出力のレベル。設計Q §7）。PlutoSDR に繋いでいるときだけ出す（Qt の PlutoTxPanel と同じ） -->
+        <section class="sec" data-part="pluto_tx" v-if="plutoView.shown">
+          <h3>{{ T('PLUTO_LABELS', 'tx_group') }}</h3>
+          <div class="form">
+            <label>{{ T('PLUTO_LABELS', 'tx_atten') }}</label>
+            <num-field data-field="tx_atten" :text="plutoAttenText" :note="notes.plutotx" @clear-note="clearNote('plutotx')" :disabled="!!plutoView.reason"
+                       :title="T('PLUTO_LABELS', 'tx_atten_tip')" @commit="setTxAtten($event)" @step="(e, d) => stepTxAtten(e, d)"></num-field>
+          </div>
+          <div class="dim" v-if="plutoView.tx_state">{{ plutoView.tx_state }}</div>
+        </section>
 
         <!-- SG のステップ掃引（設計L §1.3。SG の欄のすぐ下。Qt の step_panel と同じ並び・語: 中身は ui.step）。
              使えないときは理由付きで無効（U-08）。進み具合とやめるは窓の下の処理の帯 -->
@@ -709,8 +735,8 @@
                       :title="refValueView.tip + (refValueView.reason ? ' — ' + refValueView.reason : '')" @commit="refValue = $event"></db-field>
           </div>
           <div class="row">
-            <button data-act="take_wide" :disabled="!!ui.tg_take_reason" @click="takeRef('wide')"
-                    :title="W('take_wide_tip') + (ui.tg_take_reason ? ' — ' + ui.tg_take_reason : '')">{{ W('take_wide') }}</button>
+            <button data-act="take_wide" :disabled="!!ui.tg_wide_reason" @click="takeRef('wide')"
+                    :title="W('take_wide_tip') + (ui.tg_wide_reason ? ' — ' + ui.tg_wide_reason : '')">{{ W('take_wide') }}</button>
             <button data-act="take_fine" :disabled="!!ui.tg_take_reason" @click="takeRef('fine')"
                     :title="W('take_fine_tip') + (ui.tg_take_reason ? ' — ' + ui.tg_take_reason : '')">{{ W('take_fine') }}</button>
           </div>

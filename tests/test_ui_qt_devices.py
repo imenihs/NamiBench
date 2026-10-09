@@ -52,7 +52,7 @@ class DevUiBase(UiBase):
 class TestEmptyAndSimulator(DevUiBase):
     def test_empty_state_then_try_simulator(self):
         self.wait(lambda: self.dw.empty.isVisible(), what="空のときの案内")
-        self.assertEqual(self.dw.empty_label.text(), "GigaSt や RTL-SDR を USB に挿すと、ここに出ます")
+        self.assertEqual(self.dw.empty_label.text(), "GigaSt・RTL-SDR・PlutoSDR を USB に挿すと、ここに出ます")
         self.assertEqual(self.dw.row_widgets(), [])
         # 未接続の状態バーは選び方を出す（J §4.7 の 7）
         self.assertEqual(self.win.st_conn.text(), "● 未接続（機器 → 機器に接続… で選べます）")

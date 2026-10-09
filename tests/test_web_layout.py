@@ -348,7 +348,7 @@ class App:
     rtl=True は偽物の DLL の RTL-SDR に繋ぐ（受信・聞くの欄が出る: Qt の LayoutRtlTest と同じ）。
     """
 
-    def __init__(self, lan: bool = True, rtl: bool = False, zero_span: bool = False) -> None:
+    def __init__(self, lan: bool = True, rtl: bool = False, zero_span: bool = False, pluto: bool = False) -> None:
         from pygigast.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
         from pygigast.api.web import server as web
         from pygigast.core.devices.base import load_profile
@@ -366,10 +366,24 @@ class App:
             lib = FakeLib()
             lib.tones = [(84_700_000, 0.05)]
             backends["rtlsdr"] = _RtlSdrBackend(lib_factory=lambda: lib)
+        if pluto:
+            # PlutoSDR（libiio の偽物）: 受信の欄（トレース・掃引のタブ）と送信の欄（信号源のタブ）が出る
+            from pygigast.api.local import _PlutoSdrBackend
+            from pygigast.core.devices.plutosdr.fake import FakeIioLib
+
+            plib = FakeIioLib()
+            backends["plutosdr"] = _PlutoSdrBackend(lib_factory=lambda: plib)
         self.api = LocalApi(Instrument(backends, profile=profile, data_root=root / "data", cal_root=root / "cal"))
         if rtl:
             self.call("connect", backend="rtlsdr", port="rtlsdr:0")
             self.call("set_sweep", start_hz=84_000_000, stop_hz=85_500_000)
+        elif pluto:
+            self.call("connect", backend="plutosdr", port="ip:192.168.2.1")
+            self.call("set_sweep", start_hz=84_000_000, stop_hz=85_500_000)
+            # 設定の利得がいまの範囲で使えない（使う値の行が出る）形にする: 2.4GHz 帯は 71dB まで
+            self.call("plutosdr_set", gain_db=73.0)
+            self.call("set_sweep", start_hz=2_400_000_000, stop_hz=2_402_000_000)
+            self.call("set_mode", mode="sg", sg_hz=2_401_000_000)
         else:
             self.call("connect", backend="simulator", serial="SIM00001")
             self.call("set_sweep", start_hz=400_000_000, stop_hz=600_000_000)
@@ -382,10 +396,11 @@ class App:
             if time.monotonic() > end:
                 raise RuntimeError("掃引が終わらない")
             time.sleep(0.05)
-        m = self.call("marker_add", kind="M", trace=1, freq_hz=84_700_000 if rtl else 500_000_000)
+        mk = 84_700_000 if rtl else (2_401_000_000 if pluto else 500_000_000)
+        m = self.call("marker_add", kind="M", trace=1, freq_hz=mk)
         self.call("marker_offset_add", id=m["id"], type="freq", sign="+", delta=1_000_000)
         self.call("marker_function", id=m["id"], bandwidth_db=[3.0], threshold={"level": -20.0, "side": "above"})
-        self.call("set_xy", x1_hz=84_500_000 if rtl else 450_000_000, y1=-50.0)
+        self.call("set_xy", x1_hz=84_500_000 if rtl else (2_400_500_000 if pluto else 450_000_000), y1=-50.0)
         self.call("set_trace", number=2, action="average", count=16)
         self.call("preset_save", name="FM")
         # 保存した配色（J §4.4.1）: いまの配色と、読みにくい組のある取り込んだ配色（一覧の行の知らせも数える）
@@ -632,7 +647,7 @@ class WebLayoutTest(unittest.TestCase):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
         # 数えた画面が揃っていること（開けずに数えなければ何も守らない）。設計P の3つ（ウォーターフォール・密度・再生）を含む
-        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 8 + 6 + CAL_VIEWS, seen)
+        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 9 + 6 + CAL_VIEWS, seen)  # 設定は 9 ページ（PlutoSDR を足した）
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
@@ -1142,6 +1157,37 @@ class WebLayoutRtlTest(unittest.TestCase):
             self.assertTrue(self.page.ev("gsApp.listenView.shown"))
             for where, root in views(self.page, tabs_only=True):
                 found += self.page.problems(root, f"{w}×{h} RTL-SDR {where}")
+        self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+
+@unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
+class WebLayoutPlutoTest(unittest.TestCase):
+    """PlutoSDR に繋いだときだけ出る欄（受信・送信）を、決めた解像度で開いて数える（Qt の LayoutPlutoTest と同じ）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App(lan=False, pluto=True)
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def test_receiver_and_transmitter(self):
+        found: list[str] = []
+        for w, h in SIZES:
+            open_app(self.page, self.app, w, h)
+            self.assertTrue(self.page.ev("!!document.querySelector('[data-sec=plutosdr]')"))
+            self.assertTrue(self.page.ev("!!document.querySelector('[data-part=pluto_tx]')"))
+            self.assertTrue(self.page.ev("!!gsApp.plutoView.gain_used_text"))
+            for where, root in views(self.page, tabs_only=True):
+                found += self.page.problems(root, f"{w}×{h} PlutoSDR {where}")
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 

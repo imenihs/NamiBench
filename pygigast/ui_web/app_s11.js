@@ -124,7 +124,7 @@
           this.cmd("reference_take", args);
         } else {
           // 基準の値は信号源のタブの欄の値（設計E §6.7。Qt の ref_quick.take と同じ。S11 には送らない）
-          this.cmd("reference_take", { kind: "wide", name: X.fmt("ref_direct_name", { time }), show_zero: true,
+          this.cmd("reference_take", { kind: t.kind || "wide", name: X.fmt("ref_direct_name", { time }), show_zero: true,
             value_db: Number(this.refValue) || 0 });
         }
       },

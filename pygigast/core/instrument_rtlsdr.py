@@ -246,6 +246,8 @@ class RtlSdrInstrumentDevice(Device):
     - 利得・ppm・段の一覧などは中身の機器の口をそのまま使う
     """
 
+    fft_sdr = True
+
     def __init__(self, inner: rtl_driver.RtlSdrDevice, tap: IqTapLib) -> None:
         self.inner = inner
         self.tap = tap
@@ -362,6 +364,11 @@ class RtlSdrMixin:
 
     def _is_rtlsdr(self) -> bool:
         return isinstance(self._device, RtlSdrInstrumentDevice)
+
+    def _is_fft_sdr(self) -> bool:
+        """IQ を FFT でスペクトルにする機器（RTL-SDR・PlutoSDR）か。中心を動かせないときの扱い（rtl_tcp の相手）と
+        レベル・振り切れの扱いはこの2つで同じ。"""
+        return bool(getattr(self._device, "fft_sdr", False))
 
     def _rtlsdr_device(self) -> RtlSdrInstrumentDevice:
         if self._conn != "connected" or not self._is_rtlsdr():
@@ -573,7 +580,18 @@ class RtlSdrMixin:
         dev = self._rtlsdr_device()
         if self._rtlsdr_cfg["agc"]:
             raise CommandError("rtlsdr_fit_needs_manual_gain")
-        if any(t.kind == "rtlsdr_fit_gain" for t in self._tasks.values()):
+
+        def done(res: dict) -> None:
+            self._rtlsdr_cfg["gain_db"] = float(res["gain_db"])
+            self._rtlsdr_cfg["agc"] = False
+            self._rtlsdr_save_settings()
+            dev.set_gain(float(res["gain_db"]))
+
+        return self._sdr_start_fit_gain("rtlsdr_fit_gain", dev, done, len(dev.gain_steps_db))
+
+    def _sdr_start_fit_gain(self, kind: str, dev, on_done: Callable[[dict], None], total: int) -> dict:
+        """「利得を合わせる」の長い処理（RTL-SDR・PlutoSDR で同じ: 設計Q §6.5）。on_done は選んだ段を設定に残す。"""
+        if any(t.kind in ("rtlsdr_fit_gain", "plutosdr_fit_gain") for t in self._tasks.values()):
             raise CommandError("rtlsdr_fit_running")
         sweep = self._adopted
         previous = dev.gain_db
@@ -596,10 +614,7 @@ class RtlSdrMixin:
             return fut
 
         def then(res: dict) -> dict:
-            self._rtlsdr_cfg["gain_db"] = float(res["gain_db"])
-            self._rtlsdr_cfg["agc"] = False
-            self._rtlsdr_save_settings()
-            dev.set_gain(float(res["gain_db"]))
+            on_done(res)
             resets = self._traces.on_condition_change(ConditionChange.CALIBRATION)
             self._diff_refresh()
             self._rtlsdr_overload_key = None
@@ -609,8 +624,7 @@ class RtlSdrMixin:
             return {**res, "previous_gain_db": previous,
                     "traces_reset": sorted(resets), "codes": {str(k): v for k, v in resets.items()}}
 
-        return self._start_task("rtlsdr_fit_gain", submit, then, total=len(dev.gain_steps_db),
-                                detail={"gain_before_db": previous})
+        return self._start_task(kind, submit, then, total=total, detail={"gain_before_db": previous})
 
     def _rtlsdr_set_ppm(self, ppm: int, source: dict) -> None:
         dev = self._rtlsdr_device()
@@ -727,7 +741,7 @@ class RtlSdrMixin:
         （2h）以下なら中心を新しい表示の中心へ動かして受け付ける（相手の IQ もその中心になる）。
         それ以外（継ぎ合わせが要る条件）は理由付きで受け付けない（設計Q §6.7。U-08）。
         """
-        if not self._is_rtlsdr():
+        if not self._is_fft_sdr():
             return
         tgt = self._rtlsdr_fixed_target()
         if tgt is None:
@@ -785,7 +799,7 @@ class RtlSdrMixin:
         """相手の数が変わった: つながっている間はチューナーの中心を動かさない（掃引をしない）。"""
         s = self._rtl_server
         n = s.client_count if (s is not None and s.running) else 0
-        if not self._is_rtlsdr():
+        if not self._is_fft_sdr():
             self._rtl_tcp_center = None
             return
         if n > 0 and self._rtl_tcp_center is None:

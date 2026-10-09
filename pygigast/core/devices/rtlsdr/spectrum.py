@@ -25,6 +25,8 @@ OVERLOAD_RATIO = 0.001
 _FLATTOP = (0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368)
 
 WINDOWS = ("hann", "flattop")
+# 利用者は選ばない窓（RBW の選択肢に無い）
+RECT = "rect"
 
 
 def window(name: str, n: int) -> np.ndarray:
@@ -33,6 +35,9 @@ def window(name: str, n: int) -> np.ndarray:
     x = 2.0 * np.pi * k / n
     if name == "hann":
         return 0.5 - 0.5 * np.cos(x)
+    if name == RECT:
+        # 方形（PlutoSDR の TG だけで使う。送る多トーンは N 標本で繰り返すので、格子の上にちょうど乗り漏れない）
+        return np.ones(n)
     if name == "flattop":
         a = _FLATTOP
         return a[0] - a[1] * np.cos(x) + a[2] * np.cos(2 * x) - a[3] * np.cos(3 * x) + a[4] * np.cos(4 * x)

@@ -1,0 +1,100 @@
+{
+  "format": "pygigast-device-profile",
+  "version": 1,
+  "model": "plutosdr-ad9364",
+  "display_name": "PlutoSDR",
+  "value_kind": "real",
+  "measurements": ["sa", "tg", "sg"],
+  "sweep_kind": "fft",
+  "freq": {
+    "unit_hz": 1,
+    "min_hz": 70000000,
+    "max_hz": 6000000000,
+    "points_max": 200000,
+    "min_span_hz": 1000,
+    "default_start_hz": 76000000,
+    "default_stop_hz": 95000000,
+    "range_basis": "device_reported",
+    "note": "min_hz / max_hz are replaced on connect by the RX LO range the device reports (frequency_available)"
+  },
+  "fft": {
+    "sample_rate_hz": 4096000,
+    "rf_bandwidth_hz": 4096000,
+    "full_scale": 2048,
+    "usable_fraction": 0.66,
+    "averages": 8,
+    "dc_exclusion": {"min_bins": 2, "min_hz": 200000, "basis": "measured_on_one_unit"},
+    "dc_note": "the skirt around the LO stays 1 dB or more above the floor out to 50-100 kHz below 3.5 GHz and 150-200 kHz at 5.5 GHz (2026-10-10, gain 30/50/70 dB, 7 LO positions)",
+    "window_default": "hann",
+    "passband": {
+      "basis": "estimated_from_one_unit",
+      "note": "pass-band gain vs offset from the LO (dB, 0 at 200-500 kHz). Noise floor at gain 60 dB, median of 9 quiet LO positions, 10 kHz bins, per side, rf_bandwidth = sample rate (2026-10-10). Offsets below 200 kHz are inside the DC exclusion and set to 0. An FM carrier moved across the band agreed within 0.8 dB up to 1.35 MHz",
+      "offset_hz": [0, 10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000, 110000, 120000, 130000, 140000, 150000, 160000, 170000, 180000, 190000, 200000, 210000, 220000, 230000, 240000, 250000, 260000, 270000, 280000, 290000, 300000, 310000, 320000, 330000, 340000, 350000, 360000, 370000, 380000, 390000, 400000, 410000, 420000, 430000, 440000, 450000, 460000, 470000, 480000, 490000, 500000, 510000, 520000, 530000, 540000, 550000, 560000, 570000, 580000, 590000, 600000, 610000, 620000, 630000, 640000, 650000, 660000, 670000, 680000, 690000, 700000, 710000, 720000, 730000, 740000, 750000, 760000, 770000, 780000, 790000, 800000, 810000, 820000, 830000, 840000, 850000, 860000, 870000, 880000, 890000, 900000, 910000, 920000, 930000, 940000, 950000, 960000, 970000, 980000, 990000, 1000000, 1010000, 1020000, 1030000, 1040000, 1050000, 1060000, 1070000, 1080000, 1090000, 1100000, 1110000, 1120000, 1130000, 1140000, 1150000, 1160000, 1170000, 1180000, 1190000, 1200000, 1210000, 1220000, 1230000, 1240000, 1250000, 1260000, 1270000, 1280000, 1290000, 1300000, 1310000, 1320000, 1330000, 1340000, 1350000, 1360000, 1370000, 1380000, 1390000, 1400000, 1410000, 1420000, 1430000, 1440000, 1450000],
+      "upper_db": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.58, 0.33, 0.24, 0.09, -0.02, -0.26, -0.17, -0.27, -0.28, -0.27, -0.29, -0.15, -0.43, 0.03, -0.17, -0.05, -0.16, -0.17, 0.01, 0.28, 0.14, 0.47, 0.16, 0.35, 0.25, 0.15, 0.18, -0.05, 0.07, 0, -0.03, -0.27, -0.65, -0.54, -0.59, -0.86, -0.77, -0.89, -0.74, -0.75, -0.56, -0.83, -0.7, -0.64, -0.62, 0.06, -0.17, -0.35, 0.12, 0.01, 0.02, -0.26, 0.31, 0.16, 0.13, 0.06, -0.33, -0.06, -0.31, -0.44, -0.83, -0.35, -0.78, -0.68, -0.97, -0.7, -0.81, -0.82, -0.7, -1.16, -0.87, -0.7, -0.7, -0.23, -0.88, -0.28, -0.4, -0.45, -0.24, -0.08, 0.79, 0.13, 0.45, 0.45, 0.41, 0.65, 0.2, 0.37, -0.01, 0.01, 0.16, -0.26, -0.73, -0.71, -1.24, -1.1, -1.1, -1.19, -1.17, -1.25, -1.14, -0.72, -0.85, -0.33, -0.37, 0.05, 0.07, 0.1, 0.08, 0.25, 0.08, -0.14, -0.35, -0.39, -0.4, -0.96, -0.96, -1.28, -1.71, -2.2, -2.49, -2.96, -3.74, -4.31, -4.98, -5.73],
+      "lower_db": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.39, 0.44, 0.51, 0.2, -0.01, 0.34, -0.07, -0.27, -0.18, -0.3, -0.23, -0.31, -0.34, -0.04, -0.19, -0.32, -0.3, -0.12, -0.19, 0.56, 0.28, 0.16, 0.24, 0.06, 0.22, 0.33, 0.12, 0.35, 0.12, 0, -0.12, -0.36, -0.35, -0.1, -0.52, -0.6, -0.57, -0.51, -0.59, -0.65, -0.63, -0.37, -0.5, -0.52, -0.29, -0.35, -0.34, -0.06, -0.35, -0.2, 0.26, 0.14, 0.57, 0.02, 0.13, -0.04, 0, -0.03, -0.2, -0.27, -0.24, -0.23, 0.08, -0.58, -0.73, -0.7, -0.64, -0.8, -0.68, -0.51, -0.62, -0.4, -0.51, -0.5, -0.26, -0.11, 0.06, -0.04, 0.33, 0.27, 1.39, 0.76, 0.67, 0.57, 0.68, 0.4, 0.5, 0.63, 0.38, -0.15, -0.13, -0.55, -0.68, -0.64, -0.72, -0.88, -0.9, -0.8, -0.92, -0.86, -0.56, -0.45, -0.17, -0.05, 0.15, -0.3, 0.25, -0.01, 0.05, 0.12, 0.05, -0.28, 0.07, -0.25, -0.36, -0.6, -0.67, -0.83, -1.65, -1.78, -2.27, -2.68, -3.29, -4.06, -4.29, -5.23]
+    }
+  },
+  "rbw": {
+    "default_hz": 1500,
+    "choices": [
+      {"rbw_hz": 375, "window": "hann", "fft_n": 16384},
+      {"rbw_hz": 750, "window": "hann", "fft_n": 8192},
+      {"rbw_hz": 1500, "window": "hann", "fft_n": 4096},
+      {"rbw_hz": 3000, "window": "hann", "fft_n": 2048},
+      {"rbw_hz": 6000, "window": "hann", "fft_n": 1024},
+      {"rbw_hz": 12000, "window": "hann", "fft_n": 512},
+      {"rbw_hz": 24000, "window": "hann", "fft_n": 256},
+      {"rbw_hz": 48000, "window": "hann", "fft_n": 128},
+      {"rbw_hz": 943, "window": "flattop", "fft_n": 16384},
+      {"rbw_hz": 1885, "window": "flattop", "fft_n": 8192},
+      {"rbw_hz": 3770, "window": "flattop", "fft_n": 4096},
+      {"rbw_hz": 7540, "window": "flattop", "fft_n": 2048},
+      {"rbw_hz": 15081, "window": "flattop", "fft_n": 1024},
+      {"rbw_hz": 30162, "window": "flattop", "fft_n": 512},
+      {"rbw_hz": 60324, "window": "flattop", "fft_n": 256},
+      {"rbw_hz": 120648, "window": "flattop", "fft_n": 128}
+    ],
+    "note": "rbw_hz = round(ENBW x fs / fft_n) for periodic windows (Hann ENBW 1.5 bins, flat top 3.7702 bins)"
+  },
+  "timing": {
+    "retune_settle_s": 0.030,
+    "discard_samples": 0,
+    "link_samples_per_s": 6000000,
+    "note": "per LO position: retune_settle_s (LO write 1.7-24 ms + new RX buffer; per-position time measured through this driver 26-41 ms incl. a 4-8 ms read, 2026-10-10) + averages x fft_n / min(sample_rate_hz, link_samples_per_s). The first samples of a new buffer were already at the new frequency (no discard). realtime (one fixed position) skips the LO write but still makes a new buffer"
+  },
+  "gain": {
+    "default_db": 30,
+    "step_db": 1,
+    "modes": ["manual", "auto"],
+    "auto_mode": "slow_attack",
+    "steps_from_device": true,
+    "bands": [
+      {"lo_below_hz": 1300000000, "probe_hz": 1000000000, "min_db": -1, "max_db": 73},
+      {"lo_below_hz": 4000000000, "probe_hz": 2400000000, "min_db": -3, "max_db": 71},
+      {"lo_below_hz": 6000000001, "probe_hz": 5000000000, "min_db": -10, "max_db": 62}
+    ],
+    "bands_note": "the device rejects gains outside the range of the band the RX LO is in (1299/1301/3999/4001 MHz checked 2026-10-10); min/max are re-read from hardwaregain_available on connect"
+  },
+  "source": {
+    "tg": true,
+    "sg": {"min_hz": 47875001, "max_hz": 6000000000, "unit_hz": 1},
+    "tg_range_hz": [70000000, 6000000000],
+    "band_edges_hz": [],
+    "level_adjustable": true,
+    "tx_atten_db": {"min": -89.75, "max": 0.0, "step": 0.25, "default": -40.0},
+    "tx_lo_hz": [46875001, 6000000000],
+    "dds_offset_hz": 1000000,
+    "dds_scale": 0.5,
+    "dds_phase_i_mdeg": 90000,
+    "tg_multitone_peak": 0.5,
+    "tx_full_scale": 32767,
+    "basis": "provisional_until_measured",
+    "note": "SG: TX LO = SG frequency - dds_offset_hz and one DDS tone at +dds_offset_hz (the LO leakage stays 1 MHz away from the tone). TG: TX LO follows each RX LO position and a cyclic multitone buffer puts one tone on every FFT bin of the usable width (Schroeder phases, peak tg_multitone_peak of full scale). sg / tg_range_hz / tx_lo_hz are replaced on connect by the ranges the device reports. Nothing here has been checked on the device yet (TX not enabled)"
+  },
+  "raw": {
+    "encoding": "rtlsdr_power_w",
+    "level_reference": "dbfs",
+    "note": "same form as the RTL-SDR (linear power, full-scale sine = 1.0); level = dBFS - gain"
+  },
+  "rtl_tcp": {"mode": "iq"}
+}

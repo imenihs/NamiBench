@@ -186,6 +186,8 @@ class RtlTcpMixin:
         """
         if self._is_rtlsdr():
             return self._rtlsdr_rtltcp_header()
+        if self._is_plutosdr():
+            return self._plutosdr_rtltcp_header()
         return TUNER_UNKNOWN, 0
 
     def _rtltcp_update_header(self) -> None:
@@ -318,8 +320,8 @@ class RtlTcpMixin:
 
     def _rtltcp_set_freq(self, freq_hz: int, content: Optional[str]) -> None:
         """周波数の命令: GigaSt はゼロスパン、IQ の機器はその周波数を Center に。変わったときだけ1回知らせる。"""
-        if self._is_rtlsdr():
-            # RTL-SDR はその周波数をチューナーの中心にしたリアルタイムの動き（instrument_rtlsdr.py）
+        if self._is_fft_sdr():
+            # RTL-SDR・PlutoSDR はその周波数をチューナーの中心にしたリアルタイムの動き（instrument_rtlsdr.py）
             self._rtlsdr_tcp_set_freq(freq_hz)
             return
         before = self._adopted
@@ -348,6 +350,8 @@ class RtlTcpMixin:
         """
         if self._is_rtlsdr():
             self._rtlsdr_tcp_command(name, value)
+        elif self._is_plutosdr():
+            self._plutosdr_tcp_command(name, value)
 
     # ------------------------------------------------------------------ 機器の層から（どのスレッドからでもよい）
 

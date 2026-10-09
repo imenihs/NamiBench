@@ -73,12 +73,12 @@ class WebRtlTest(unittest.TestCase):
         self.assertTrue(any(i["key"] == "cal" and UNCAL in i["text"] for i in ui["status"]))
 
     def test_trace_tab_section_order(self):
-        # 「トレース・掃引」のタブ: ①掃引 ②トレース ③参照トレース ④機器に固有の欄（RTL-SDR のときだけ: J §4.5）
+        # 「トレース・掃引」のタブ: ①掃引 ②トレース ③参照トレース ④機器に固有の欄（RTL-SDR・PlutoSDR のときだけ: J §4.5）
         html = (UI_WEB / "index.html").read_text(encoding="utf-8")
         a = html.index('data-tab="trace"')
         b = html.index('data-tab="marker"')
         secs = re.findall(r'<section class="tsec" data-sec="(\w+)"([^>]*)>', html[a:b])
-        self.assertEqual([s[0] for s in secs], ["sweep", "traces", "files", "rtlsdr"])
+        self.assertEqual([s[0] for s in secs], ["sweep", "traces", "files", "rtlsdr", "plutosdr"])
         self.assertIn('v-if="rtlView.shown"', secs[3][1])
         # 受信の欄の部品はその section の中だけにある
         self.assertNotIn("RTL_LABELS", html[a:html.index('data-sec="rtlsdr"')])

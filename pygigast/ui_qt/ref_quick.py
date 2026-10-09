@@ -94,7 +94,7 @@ class RefQuick(QWidget):
                 kw["kind"] = t["kind"]
         else:
             # 基準の値は信号源のタブの欄の値（設計E §6.7。S11 には送らない: 全反射 = 0dB）
-            kw = {"kind": "wide", "name": texts.tpl("ref_direct_name", time=now), "show_zero": True,
+            kw = {"kind": t.get("kind") or "wide", "name": texts.tpl("ref_direct_name", time=now), "show_zero": True,
                   "value_db": self.win.source_tab.take_value.value()}
         self.win.call("reference_take", **kw)
 

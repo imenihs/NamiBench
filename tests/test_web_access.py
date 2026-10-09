@@ -510,6 +510,8 @@ class WebFilesServerTest(unittest.TestCase):
         self.sweep_once()
         ws = ws_connect(f"ws://127.0.0.1:{self.srv.port}/api/v1/events", open_timeout=10, max_size=None)
         try:
+            # 最初の state が届いてから書き出す（購読の前に終わりの知らせが出ると受け取れない: 全体の試験の負荷で時々起きた）
+            ws.recv(timeout=10)
             st, r = self.post("export_csv", {"name": "trace", "traces": [1]})
             self.assertEqual(st, 200, r)
             end = time.monotonic() + 20

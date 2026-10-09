@@ -21,6 +21,7 @@ SETTINGS_PAGES = {
     "web": "ブラウザから使う",
     "rtltcp": "rtl_tcp",
     "rtlsdr": "RTL-SDR",
+    "plutosdr": "PlutoSDR",
 }
 
 SETTINGS_TEXTS = {

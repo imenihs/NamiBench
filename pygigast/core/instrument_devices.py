@@ -16,13 +16,14 @@ import time
 from typing import Optional
 
 from .devices.base import load_profile
+from .devices.plutosdr.iio import IioNotFound
 from .devices.rtlsdr.dll import DllNotFound
 from .instrument_common import CommandError
 from .types import DeviceError, PortInUse
 
 # 一覧の並び（種類の順）。自動で繋ぐのは実機だけ（シミュレータへ黙って繋ぐと、作り物の値を測った値と取り違える）
-LIST_ORDER = ("gigast", "rtlsdr", "simulator")
-AUTO_BACKENDS = ("gigast", "rtlsdr")
+LIST_ORDER = ("gigast", "rtlsdr", "plutosdr", "simulator")
+AUTO_BACKENDS = ("gigast", "rtlsdr", "plutosdr")
 # 画面が一覧を見ていると言える最長の期限（秒）。画面はこれより短い間隔で延ばし直す
 DEVICE_WATCH_MAX_S = 30.0
 # 一覧を見直す間隔（設計B §7.3 の 0.5s と同じ）
@@ -74,13 +75,16 @@ class DevicesMixin:
         """機種名（既定の名前に使う）。RTL-SDR は機種のプロファイルの名前。"""
         name = self._model_names.get(backend)
         if name is None:
-            if backend == "rtlsdr":
-                from .devices.rtlsdr.driver import PROFILE_PATH
+            if backend in ("rtlsdr", "plutosdr"):
+                if backend == "rtlsdr":
+                    from .devices.rtlsdr.driver import PROFILE_PATH
+                else:
+                    from .devices.plutosdr.driver import PROFILE_PATH
 
                 try:
                     name = load_profile(PROFILE_PATH).get("display_name") or "RTL-SDR"
                 except (OSError, ValueError):
-                    name = "RTL-SDR"
+                    name = "RTL-SDR" if backend == "rtlsdr" else "PlutoSDR"
             else:
                 name = self._base_profile.get("display_name") or self._base_profile.get("model") or backend
             self._model_names[backend] = name
@@ -124,12 +128,12 @@ class DevicesMixin:
     def _backend_rows(self, backend: str, b) -> list[dict]:
         try:
             ports = b.discover()
-        except DllNotFound:
+        except (DllNotFound, IioNotFound):
             return [{"id": f"{backend}:dll", "kind": backend, "port": None, "serial": None, "description": "",
                      "usb_id": None, "known": False, "shared_serial": 0, "available": False,
                      "state": "dll_not_found", "name": None, "custom_name": None,
                      "default_name": self._model_name(backend),
-                     "dll_folder": (getattr(self, "_rtlsdr_cfg", None) or {}).get("dll_folder")}]
+                     "dll_folder": self._dll_folder_of(backend)}]
         except Exception:  # noqa: BLE001 — 一覧を作れない種類は出さない（他の種類の一覧は出す）
             return []
         known = set(self._settings.known_serials())
@@ -165,6 +169,15 @@ class DevicesMixin:
         except DllNotFound as e:
             raise CommandError("rtlsdr_dll_not_found", "dll_folder",
                                {"message": str(e), "dll_folder": self._rtlsdr_cfg["dll_folder"]}) from e
+        except IioNotFound as e:
+            raise CommandError("plutosdr_dll_not_found", "dll_folder",
+                               {"message": str(e), "dll_folder": self._pluto_cfg["dll_folder"]}) from e
+
+    def _dll_folder_of(self, backend: str) -> Optional[str]:
+        """設定で選んだ DLL のフォルダ（RTL-SDR は rtlsdr.dll、PlutoSDR は libiio.dll）。"""
+        if backend == "plutosdr":
+            return (getattr(self, "_pluto_cfg", None) or {}).get("dll_folder")
+        return (getattr(self, "_rtlsdr_cfg", None) or {}).get("dll_folder")
 
     def _backend(self, backend: Optional[str]):
         b = self._backends.get(backend or "")

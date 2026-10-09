@@ -38,6 +38,13 @@
         return t;
       },
       rtltcpView() { return this.ui.rtltcp || {}; },
+      // PlutoSDR の受信・送信の欄（設計Q §7。中身は screen_pluto.pluto_view: Qt の pluto_panel.py と同じ）
+      plutoView() { return this.ui.pluto || { reason: "", gains: [] }; },
+      plutoGainValue() {
+        const v = this.plutoView;
+        return v.agc || v.gain_db == null ? "agc" : String(v.gain_db);
+      },
+      plutoAttenText() { return (Number(this.plutoView.tx_atten_db) || 0).toFixed(2) + " dB"; },
     },
     methods: {
       onStateRtl(p) {
@@ -75,6 +82,17 @@
         const r = await this.cmd("rtlsdr_calibrate_level", { marker_id: this.rtlMarker, true_dbm: v }, { field: "rtlcal" });
         if (r && r.texts) { this.rtlResult = r.texts.done; this.note(null, r.texts.done); }
       },
+      // ---- PlutoSDR
+      setPlutoGain(value) {
+        if (value === "agc") this.cmd("plutosdr_set", { agc: true }, { field: "pluto" });
+        else this.cmd("plutosdr_set", { gain_db: Number(value), agc: false }, { field: "pluto" });
+      },
+      setTxAtten(text) {
+        let v;
+        try { v = GSUnits.parseDb(String(text).replace("dB", "")); } catch (e) { this.note("plutotx", X.w("bad_value")); return; }
+        this.cmd("plutosdr_set", { tx_atten_db: v }, { field: "plutotx" });
+      },
+      stepTxAtten(exp, dir) { this.cmd("plutosdr_set", { tx_atten_db: (Number(this.plutoView.tx_atten_db) || 0) + dir * Math.pow(10, exp) }, { field: "plutotx" }); },
       // ---- 聞く
       listenStart() {
         const why = this.listenStartReason;
