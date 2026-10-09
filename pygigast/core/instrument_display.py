@@ -567,6 +567,16 @@ class DisplayMixin:
 
     def _refresh_markers(self, emit: bool = True) -> None:
         self._marker_snap = self._markers.snapshot(self._views)
+        # XY の Y は置いたときの縦軸の単位で書く（電力で置いた −50 を SWR の縦軸で「−50.00 SWR」と出さない）
+        xy = self._marker_snap.get("xy") or {}
+        for k in ("y1", "y2"):
+            kind = getattr(self._markers.xy, k + "_kind", None)
+            if kind == Y_KIND_POWER:
+                xy[k + "_unit"] = self._level_shift(Quantity.POWER, self._profile)[1]
+            elif kind in (formats.GAMMA, formats.SWR):
+                xy[k + "_unit"] = formats.unit_of(kind, None)
+            elif kind in (formats.DB, Y_KIND_TG, Y_KIND_NF):
+                xy[k + "_unit"] = "dB"
         # 横軸の種類（"freq"・"time"）。時間軸では位置（freq_hz・x1_hz など）はマイクロ秒（設計N §1）。
         # 時間軸では区間の最大・最小・平均も出す
         self._marker_snap["x_kind"] = self._x_kind()

@@ -212,7 +212,7 @@ def xy_rows(xy: dict) -> list[dict]:
     for k, name in (("y1", "Y1"), ("y2", "Y2")):
         if xy.get(k) is not None:
             out.append({"id": name, "parent": None, "name": name, "kind": "level_cursor", "trace": None,
-                        "freq_hz": None, "value": xy[k], "unit": None,
+                        "freq_hz": None, "value": xy[k], "unit": xy.get(k + "_unit"),  # 置いたときの単位（無ければ縦軸）
                         "ref": "Y1" if name == "Y2" and xy.get("dy") is not None else None,
                         "delta_freq_hz": None, "delta_value": xy.get("dy") if name == "Y2" else None,
                         "child": False, "note": "", "status": "ok"})

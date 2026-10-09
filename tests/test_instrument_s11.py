@@ -464,6 +464,25 @@ class UnitFollowTest(S11Case):
         xy = self.call("get_state")["markers"]["xy"]
         self.assertEqual((xy["y1"], xy["y2"]), (-40.0, -60.0))
 
+    def test_xy_y_rows_carry_the_unit_they_were_set_in(self):
+        """表の Y の行は置いたときの単位で書く: 電力で置いた −50 を SWR の縦軸で「SWR」と書かない。"""
+        from pygigast.ui_qt import marker_rows
+        self.s11_reference()
+        self.call("set_mode", mode="sa")
+        self.single()
+        self.call("set_xy", y1=-50.0)
+        self.call("set_mode", mode="s11")
+        self.call("set_view", s11_format="swr")
+        self.ratio_trace()
+        self.call("set_xy", y2=2.0)
+        snap = self.call("get_state")["markers"]
+        rows = {r["id"]: r for r in marker_rows.rows_from_snapshot(snap)}
+        self.assertEqual(rows["Y1"]["unit"], "dBm")
+        self.assertEqual(rows["Y2"]["unit"], "SWR")
+        cells = {r["id"]: c for r, c in zip(marker_rows.rows_from_snapshot(snap),
+                                             marker_rows.format_rows(marker_rows.rows_from_snapshot(snap), "SWR"))}
+        self.assertIn("dBm", cells["Y1"][3])
+
     def test_xy_y_set_on_a_swr_axis_is_not_shifted_by_power_units(self):
         """SWR の縦軸で置いた Y は、電力の縦軸で外部補正を替えてもずらさず、SWR の縦軸に戻ればそのまま SWR 2。
         電力の縦軸で置いた Y は今までどおりずらす。"""
