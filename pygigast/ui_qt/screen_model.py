@@ -101,9 +101,13 @@ def sweep_reasons(st: dict) -> dict:
 
     イメージ除去は RTL-SDR・NF・ゼロスパンでは選べない（設計F §7.1）。
     """
+    lock = texts.live_lock_reason(st)
+    if lock:
+        # 再生中はライブの条件を変えない（設計P §5）。RBW・点数・イメージ除去・Span 固定を理由付きで使えなくする
+        return {"points": lock, "zero_span": None, "image_reject": lock, "rbw": lock, "span_lock": lock}
     if is_fft(st):
         return {"points": RTL_LABELS["points_fft"], "zero_span": RTL_LABELS["zero_span_fft"],
-                "image_reject": RTL_LABELS["image_reject_fft"]}
+                "image_reject": RTL_LABELS["image_reject_fft"], "rbw": None, "span_lock": None}
     sw = st.get("sweep") or {}
     reject = None
     if (st.get("step_sweep") or {}).get("running"):
@@ -112,7 +116,14 @@ def sweep_reasons(st: dict) -> dict:
         reject = texts.REASON_TEXTS["image_reject_nf"]
     elif sw.get("step_hz") == 0:
         reject = texts.REASON_TEXTS["image_reject_zero_span"]
-    return {"points": None, "zero_span": None, "image_reject": reject}
+    return {"points": None, "zero_span": None, "image_reject": reject, "rbw": None, "span_lock": None}
+
+
+def sg_reason(st: dict) -> Optional[str]:
+    """SG の周波数の欄を使えない理由: ステップ掃引の間（掃引が動かす: 設計L §1.3）・再生中（設計P §5）。"""
+    if (st.get("step_sweep") or {}).get("running"):
+        return texts.REASON_TEXTS["step_running"]
+    return texts.live_lock_reason(st)
 
 
 def image_reject_view(st: dict) -> dict:
@@ -132,7 +143,7 @@ def image_reject_width_samples() -> list[str]:
 def mode_reasons(st: dict) -> dict:
     """モードごとの使えない理由。まだ作っていないもの → 機器が測れないもの（Q §2.1）の順。"""
     meas = profile_of(st).get("measurements") or []
-    playing = texts.REASON_TEXTS["playback_active"] if (st.get("playback") or {}).get("active") else None
+    playing = texts.live_lock_reason(st)
     out = {}
     for code, _label, _name, why in texts.MODES:
         out[code] = why or (None if code in meas else texts.MODE_UNSUPPORTED) or playing
@@ -260,6 +271,8 @@ def listen_view(st: dict) -> dict:
     elif (st.get("rtlsdr") or {}).get("fixed_center", None) and \
             (st["rtlsdr"]["fixed_center"] or {}).get("cause") == "rtltcp_clients" and not lst.get("active"):
         reason = texts.ERRORS["listen_rtltcp_active"]
+    elif not lst.get("active"):
+        reason = texts.live_lock_reason(st)  # 再生中は聞かない（チューナーを動かすため: 設計P §5）
     else:
         reason = None
     return {"shown": iq, "active": bool(lst.get("active")), "reason": reason, "marker_id": lst.get("marker_id"),
@@ -305,7 +318,7 @@ def ref_quick_view(st: dict) -> dict:
     elif task is not None:
         reason = REF_QUICK_LABELS["taking_reason"]
     else:
-        reason = None
+        reason = texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
     if sw.get("mode") == "s11":
         q = screen_s11.s11_quick(st)
         label, button_tip, take = q["label"], q["tip"], q["take"]
@@ -653,6 +666,7 @@ def ui_view(st: dict) -> dict:
         "step": source_view.step_view(st),
         "leaks": source_view.leak_marks_view(st),
         "run_reason": run_reason(st),
+        "sg_reason": sg_reason(st),  # SG の周波数の欄（ステップ掃引の間・再生中）
         "display": display_view.ui(st),  # ウォーターフォール・密度・再生・バンドプラン（設計P）
     }
 

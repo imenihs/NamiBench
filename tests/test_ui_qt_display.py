@@ -187,7 +187,8 @@ class BandplanUiTest(UiBase):
 class PlaybackUiTest(UiBase):
     def test_playback_bar_live_indicator_and_back(self):
         self.cmd("connect", backend="simulator", serial="SIM00001")
-        self.cmd("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        self.cmd("set_sweep", start_hz=55 * MHZ, stop_hz=200 * MHZ)
+        self.cmd("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)  # 元に戻す列に条件の変更を積む
         self.cmd("record_start")
         for _ in range(5):
             n0 = self.state()["run"]["sweep_count"]
@@ -219,6 +220,14 @@ class PlaybackUiTest(UiBase):
         self.assertFalse(self.win.btn_cont.isEnabled())
         self.assertIn(texts.REASON_TEXTS["playback_active"], self.win.btn_cont.toolTip())
         self.assertFalse(self.win.mode_buttons["tg"].isEnabled())
+        # ライブの条件を変える欄・操作も理由付きで使えない（RBW・Span 固定・SG・元に戻す: 設計P §5）
+        why = texts.REASON_TEXTS["playback_active"]
+        for w in (self.win.rbw_combo, self.win.span_lock, self.win.source_tab.f_sg):
+            self.assertFalse(w.isEnabled(), w)
+            self.assertIn(why, w.toolTip())
+        undo = self.win.actions["undo"]  # 前に Start・Stop を変えた（次に戻す変更は条件）
+        self.assertFalse(undo.isEnabled())
+        self.assertIn(why, undo.toolTip())
         # 上段の欄は再生の表示の範囲（記録の範囲）
         self.assertEqual(self.win.f_start.hz(), st["playback"]["view"]["start_hz"])
         self.assertEqual(bar.slider.maximum(), st["playback"]["total"] - 1)
@@ -237,6 +246,17 @@ class PlaybackUiTest(UiBase):
         self.save_path = str(cut)
         ext.trigger()
         self.wait(lambda: cut.exists() and not self.state()["tasks"], what="切り出し")
+        # 時間の範囲を選んだまま別の記録を開く → 新しい記録は全体を出す（記録ごとの見方は捨てる: P §5）
+        rows = list(wf.shown_rows)
+        wf.sig.time_range.emit(rows[-1]["t"], rows[-1]["t"] + 1e-3)
+        self.wait(lambda: self.win.display.window is not None, what="時間の範囲")
+        h5b = self.root / "rec2.h5"
+        h5b.write_bytes(h5.read_bytes())
+        self.open_paths = [str(h5b)]
+        self.win.files.open_files()
+        self.wait(lambda: self.state()["playback"].get("name") == "rec2.h5", what="別の記録")
+        self.wait(lambda: self.win.display.window is None and len(wf.shown_rows) == len(rows), what="新しい記録の全体")
+        self.assertFalse(wf.follow_btn.isEnabled())  # 全体を出している（「全体」は理由付きで使えない）
         # 再生・一時停止
         bar.play.click()
         self.wait(lambda: self.state()["playback"]["playing"] or self.state()["playback"]["index"] == 4, what="再生")

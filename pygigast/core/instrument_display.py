@@ -278,7 +278,9 @@ class DisplayMixin:
             "markers": self._marker_snap,
             "normalization": self._normalization_state(),
             "amplitude": dict(self._amplitude),
-            "undo": {"can_undo": bool(self._undo), "can_redo": bool(self._redo)},
+            "undo": {"can_undo": bool(self._undo), "can_redo": bool(self._redo),
+                     # 次に戻す・やり直す変更が条件を変えるもので、いま条件を変えられない理由（再生中: 設計P §5）
+                     "undo_blocked": self._undo_blocked(self._undo), "redo_blocked": self._undo_blocked(self._redo)},
             # 機器の範囲の外・意味の無い区間の帯（設計J §4.8）。画面は計算し直さずに描く
             "display_marks": dm.display_marks(self._adopted.mode, self._profile, int(self._adopted.start_hz),
                                               int(self._adopted.stop_hz)),
@@ -751,7 +753,7 @@ class DisplayMixin:
             self._palette = Palette.from_saved(s["palette"])
             self._save_palette_setting()
         if "adopted" in s:
-            self._check_not_taking_reference()
+            self._check_live_conditions()
             adopted = dataclasses.replace(s["adopted"], adjustments=(), alternative=None)
             for d in s["traces"]:
                 apply_trace_settings(self._traces[int(d["number"])], d)
@@ -760,12 +762,18 @@ class DisplayMixin:
     def _undo_redo(self, src: list, dst: list) -> dict:
         top = src[-1]
         if "adopted" in top:
-            self._check_not_taking_reference()
-            self._rtlsdr_check_condition(top["adopted"])  # 取り出す前に確かめる（失敗で履歴を失わない）
+            # 条件を戻す変更は、条件を変えてよいときだけ（再生中は断る: 設計P §5）。取り出す前に確かめる（失敗で履歴を失わない）
+            self._check_live_conditions()
+            self._rtlsdr_check_condition(top["adopted"])
         cur = self._undo_snapshot(top.get("keys", ("sweep",)))
         self._restore_snapshot(src.pop())
         dst.append(cur)
         return self._undo_result()
+
+    def _undo_blocked(self, stack: list) -> Optional[str]:
+        if stack and "adopted" in stack[-1] and getattr(self, "_playback", None) is not None:
+            return "playback_active"
+        return None
 
     def _cmd_undo(self) -> dict:
         if not self._undo:
@@ -1177,4 +1185,5 @@ class DisplayMixin:
             raise self._error("bad_target", "target", {"target": target})
         if not cmd.ok:
             raise self._error(cmd.code, "id", {"id": m.id})
-        return self._apply(cmd.request)
+        # 再生中は周波数の範囲だけを表示の範囲として受ける（測り直さない: _apply・設計P §5）
+        return self._apply(cmd.request, view_in_playback=True)

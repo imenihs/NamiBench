@@ -60,6 +60,7 @@ DISPLAY_TEXTS = {
     "reading_merged": "{n} 回の掃引の最大",
     "boundary": "{start}〜{stop}・RBW {rbw}・{mode}",
     "boundary_zero": "ゼロスパン {start}・RBW {rbw}・{mode}",
+    "boundary_ref": "基準「{name}」",
     "density_seconds": "約 {t}分",
     "seconds": "{s} 秒",
     "minutes": "{m} 分 {s} 秒",
@@ -113,6 +114,7 @@ DISPLAY_ERRORS = {
     "playback_not_saved_file": "記録中の作業ファイルからは切り出せません（まとめた保存ファイルを開いてください）",
     "playback_zero_span": "ゼロスパンの区間がある記録は再生できません",
     "playback_nf": "NF の区間がある記録は再生できません",
+    "playback_listening": "音を聞いている間は記録を再生できません（聞くのをやめてから開いてください）",
     "playback_zero_span_live": "ゼロスパンの間は記録を再生できません（Span を 0 より大きくしてから開いてください）",
 }
 

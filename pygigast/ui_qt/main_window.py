@@ -484,7 +484,10 @@ class MainWindow(QMainWindow):
         widget_sync.when_idle(combo, "rbw", show)
         w = screen_model.rbw_window_of(st, pref)
         notes = [screen_model.rbw_limit_text(st) or "", next((g["note"] for g in groups if g["window"] == w), "")]
-        combo.setToolTip("\n".join(n for n in notes if n))
+        # 再生中は RBW を変えない（ライブの条件: 設計P §5。理由をツールチップに）
+        lock = screen_model.sweep_reasons(st)["rbw"]
+        combo.setEnabled(lock is None)
+        combo.setToolTip("\n".join(n for n in notes + [lock or ""] if n))
 
     def _rbw_chosen(self, i: int) -> None:
         hz = self.rbw_combo.itemData(i)
@@ -1067,6 +1070,10 @@ class MainWindow(QMainWindow):
                          + (f" — {why}" if why else ""))
             menus.set_reason(self.actions[f"mode_{code}"], why)
         self.span_lock.show_lock(sw.get("span_lock_hz"), sw["span_hz"], format_freq)
+        # Span 固定はライブの条件（再生中は理由付きで使えない: 設計P §5）
+        lock = screen_model.sweep_reasons(st)["span_lock"]
+        self.span_lock.setEnabled(lock is None)
+        self.span_lock.setToolTip(texts.LABELS["span_lock_tip"] + (f" — {lock}" if lock else ""))
         if self._amp_pending == 0:
             self._take_amplitude(st.get("amplitude") or {})
         self._update_x_axis()

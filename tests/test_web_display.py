@@ -268,6 +268,21 @@ class WebDisplayUiTest(unittest.TestCase):
         p.wait("gsApp.statusItems.some((s) => s.key === 'view' && s.text.startsWith('再生'))", "状態バーの再生")
         p.ev("gsApp.pbSlide(2); 1")
         p.wait("gsApp.pbView.index === 2", "つまみでカーソル")
+        # ライブの条件を変える欄は理由付きで使えない（RBW・Span 固定: 設計P §5。Qt と同じ）
+        why = texts.REASON_TEXTS["playback_active"]
+        r = p.ev("(() => { const s = document.querySelector('.field-select'); const l = document.querySelector('button.lock');"
+                 " return [s.disabled, s.title, l.disabled, l.title]; })()")
+        self.assertTrue(r[0] and r[2], r)
+        self.assertIn(why, r[1])
+        self.assertIn(why, r[3])
+        # 時間の範囲を選んだまま別の記録を開く → 新しい記録は全体を出す（記録ごとの見方は捨てる: P §5）
+        p.ev("(() => { const s = gsApp.$wf.shown; gsApp.wfTimeRange(s[s.length - 1].t, s[s.length - 1].t + 0.001); return 1; })()")
+        p.wait("!!gsApp.wfWindow", "時間の範囲")
+        h5b = Path(self.app.tmp.name) / "web_rec2.h5"
+        h5b.write_bytes(h5.read_bytes())
+        self.app.call("open", paths=[str(h5b)])
+        p.wait("gsApp.pbView.name === 'web_rec2.h5' && gsApp.wfWindow === null && gsApp.$wf.shown.length >= 3",
+               "新しい記録の全体")
         p.ev("document.querySelector('[data-field=pb_live]').click(); 1")
         p.wait("!gsApp.pbView.visible", "ライブに戻る")
         self.assertEqual(p.errors, [])

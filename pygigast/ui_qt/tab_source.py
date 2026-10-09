@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.units import ParseError, level_text, parse_db
-from . import nf_view, screen_s11, sizes, texts, widget_sync
+from . import nf_view, screen_model, screen_s11, sizes, texts, widget_sync
 from .fields import DbField, FreqField, LocalDbChoiceField
 from .step_panel import StepPanel
 from .texts_nf import NF_TEXTS as N
@@ -283,9 +283,8 @@ class SourceTab(QWidget):
             self.f_sg.set_hz(sw["sg_hz"])
         widget_sync.set_checked(self.sg_clear_holds, (st.get("trace_options") or {}).get("sg_clears_holds", True))
         self.sg_state.setText(texts.sg_state_text(self.win.state))
-        # ステップ掃引の間は SG の周波数を掃引が動かす（欄は理由付きで変えられない: U-08）
-        set_enabled(self.f_sg, texts.REASON_TEXTS["step_running"] if (st.get("step_sweep") or {}).get("running")
-                    else None)
+        # ステップ掃引の間は SG の周波数を掃引が動かす・再生中はライブの条件を変えない（欄は理由付きで変えられない: U-08）
+        set_enabled(self.f_sg, screen_model.sg_reason(st))
         self.step.apply_state(st)
         self.ref_state.setText(screen_s11.ref_state_text(st))  # Web と同じ文
         conn = st["connection"]

@@ -42,6 +42,9 @@ class DisplayControl:
         self.follow = True
         self.window: Optional[tuple[float, float]] = None
         self.playback = False
+        # いま再生している記録の通し番号（コアの playback.session）。記録ごとの見方（時間の範囲・付いていくか・
+        # つまみの送りかけ・取った行の範囲）は、再生に入る・出るときだけでなく、これが変わったら捨てる（P §5）
+        self.session: Optional[int] = None
         self.layout = "spectrum"
         self._busy = False
         self._again = False
@@ -117,10 +120,15 @@ class DisplayControl:
             self.waterfall.set_range(rng["lo"], rng["hi"])
         pb = st.get("playback") or {}
         active = bool(pb.get("active"))
-        if active != self.playback:
+        session = pb.get("session") if active else None
+        if active != self.playback or session != self.session:
+            # 再生に入った・出た・別の記録を開いた: 記録ごとの見方を捨てて全体（ライブは最新）を出す
             self.playback = active
+            self.session = session
             self.follow = not active
             self.window = None
+            self.rows_result = {}
+            self.bar.reset()
             self.fetch()
         elif wf.get("epoch") != self.epoch or (changed_layout and lay == "waterfall"):
             self.fetch()
@@ -146,6 +154,13 @@ class DisplayControl:
         for code in ("playback_extract", "playback_export_csv"):
             if code in a:
                 menus.set_reason(a[code], why)
+        # 再生中は条件を変える操作を理由付きで使えなくする（元に戻す・やり直すは次の変更が条件のとき: 設計P §5）
+        lk = display_view.locks(st)
+        for code in ("undo", "redo"):
+            if code in a:
+                menus.set_reason(a[code], lk[code])
+        if getattr(win, "_presets", None) is not None:
+            win._presets.apply_lock(lk["preset_load"])
         reasons = display_view.part_reasons(st)
         for key in ("waterfall", "density"):
             act = win.findChild(type(a["view_colors"]), "detach_" + key)
@@ -327,5 +342,7 @@ class DisplayControl:
         step = float(row["step_hz"]) or 1.0
         j = int(math.floor((x - float(row["start_hz"])) / step + 0.5))  # Web の Math.round と同じ
         freq = None if zero else int(row["start_hz"]) + int(row["step_hz"]) * j
-        return display_view.waterfall_reading(row["t"], int(row.get("sweeps") or 1), freq, level, self.unit,
+        # 単位はその行のもの（基準の前後で dBm と dB が並ぶ: 設計P §3）
+        unit = row.get("unit") or (row.get("cond") or {}).get("unit") or self.unit
+        return display_view.waterfall_reading(row["t"], int(row.get("sweeps") or 1), freq, level, unit,
                                               texts.freq_offset_of(self.win.state), j if zero else None)

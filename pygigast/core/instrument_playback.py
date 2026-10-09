@@ -107,6 +107,9 @@ class PlaybackMixin:
 
     def _init_playback(self) -> None:
         self._playback: Optional[_Session] = None
+        # 再生した記録の通し番号。記録を開くたびに増える（再生中に別の記録を開いても変わる）。画面は記録ごとの見方
+        # （ウォーターフォールで選んだ時間の範囲など）をこれが変わったら捨てる（P §5: 開いた記録は全体を出す）
+        self._pb_session = 0
         self._pb_timer: Optional[threading.Timer] = None
         self._rec_levels: dict = {}  # 記録中の作業ファイルの区間の換算（書き込みスレッドだけが触る）
 
@@ -209,6 +212,7 @@ class PlaybackMixin:
             self._last_stop_reason = "playback"
             self._push_job()
         self._playback = session
+        self._pb_session += 1
         self._on_condition(ConditionChange.MODE, cause="playback")
         self._density_src.clear()
         self._density.key = None
@@ -236,7 +240,7 @@ class PlaybackMixin:
         seg, i = self._pb_locate(s.cursor)
         view = self._pb_view(s, seg)
         return {
-            "active": True, "name": s.name, "path": s.path, "created_at": s.created_at,
+            "active": True, "session": self._pb_session, "name": s.name, "path": s.path, "created_at": s.created_at,
             "device_model": s.device_model, "device_serial": s.device_serial, "total": s.total,
             "index": s.cursor, "t": float(seg.times[i]), "t_first": s.segs[0].t_first, "t_last": s.segs[-1].t_last,
             "playing": s.playing, "speed": s.speed, "speeds": list(PLAYBACK_SPEEDS),
@@ -544,7 +548,7 @@ class PlaybackMixin:
             s1 = len(ts) if t_hi is None else int(np.searchsorted(ts, t_hi, side="right"))
             if s1 <= s0:
                 continue
-            levels, offset, _ref, _meta = self._segment_levels(src, pos)
+            levels, offset, _ref, meta = self._segment_levels(src, pos)
             ar = src.rows(pos, s0, s1, max_rows)
             db = levels.db_rows(ar.values)
             if offset is not None:
@@ -553,6 +557,8 @@ class PlaybackMixin:
             a = levels.adopted
             cond = {"start_hz": int(a.start_hz), "stop_hz": int(a.stop_hz), "rbw_hz": int(a.rbw_hz),
                     "mode": a.mode.value}
+            if offset is not None:
+                cond["ref"] = str((meta or {}).get("name") or "")  # 当てた基準（境目の条件: P §3。ライブの行と同じ形）
             quantity = "ratio" if offset is not None else "power"
             prof = levels.profile
             if levels.encoding != "gigast_ad_u16":
@@ -669,6 +675,17 @@ class PlaybackMixin:
 
     # ------------------------------------------------------------------ 再生中に断る命令
 
+    def _playback_request(self, req) -> dict:
+        """再生中に利用者が周波数の範囲を変えた（_apply の view_in_playback）。周波数の範囲だけなら表示の範囲を変え
+        （測り直さない: P §5）、ほかの条件（モード・RBW・点数・イメージ除去・Span 固定・SG の周波数・その1回だけ）を
+        含むものは断る（ライブの条件を変えない）。"""
+        others = (req.rbw_preference_hz, req.points, req.mode, req.sg_hz, req.image_reject, req.span_lock)
+        freq = (req.start_hz, req.stop_hz, req.center_hz, req.span_hz)
+        if any(v is not None for v in others) or req.one_shot or all(v is None for v in freq):
+            raise self._error("playback_active")
+        return self._playback_set_view(start_hz=req.start_hz, stop_hz=req.stop_hz, center_hz=req.center_hz,
+                                       span_hz=req.span_hz)
+
     def _check_not_playing(self) -> None:
         if self._playback is not None:
             raise self._error("playback_active")
@@ -681,6 +698,9 @@ class PlaybackMixin:
         """
         if self._adopted.axis.step_hz == 0:
             return {"code": "playback_zero_span_live", "detail": {}}
+        if getattr(self, "_listen", None) is not None:
+            # 音を聞いている間はライブの掃引でチューナーを動かしている（やめると聞く前の条件に戻す: instrument_listen）
+            return {"code": "playback_listening", "detail": {}}
         try:
             self._check_not_taking_reference()
         except CommandError as e:

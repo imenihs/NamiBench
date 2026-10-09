@@ -17,7 +17,7 @@
     data() {
       return {
         wfFollow: true, wfWindow: null, wfEpoch: null, wfSeq: 0, wfUnit: "dBm", wfInfo: {},
-        pbActive: false, lowerPct: 40, bmName: "", bmFreq: "", wfShownLayout: "spectrum", wfBusy: false, wfAgain: false,
+        pbActive: false, pbSession: null, lowerPct: 40, bmName: "", bmFreq: "", wfShownLayout: "spectrum", wfBusy: false, wfAgain: false,
       };
     },
     computed: {
@@ -52,6 +52,8 @@
       // 密度を描かない理由（行にするトレースの単位が縦軸と違う: display_view.density_reason）。題の行の秒の場所に出す
       densityReason() { return this.dv.density_reason || null; },
       runReason() { return this.ui.run_reason || null; },
+      // プリセットの呼び出しを使えない理由（再生中: display_view.locks）
+      presetLoadReason() { return (this.dv.locks || {}).preset_load || null; },
     },
     methods: {
       D,
@@ -114,12 +116,18 @@
         if (this.$wf && wf.range && wf.range.lo != null) this.$wf.setRange(wf.range.lo, wf.range.hi);
         const pb = st.playback || {};
         const active = !!pb.active;
+        // 記録の通し番号（コアの playback.session）。記録ごとの見方（時間の範囲・付いていくか・つまみの送りかけ）は、
+        // 再生に入る・出るときだけでなく、別の記録を開いたときも捨てる（P §5: 開いた記録は全体を出す。Qt と同じ）
+        const session = active ? (pb.session == null ? null : pb.session) : null;
         const layoutChanged = this.shownLayout !== this.wfShownLayout;
         this.wfShownLayout = this.shownLayout;
-        if (active !== this.pbActive) {
+        if (active !== this.pbActive || session !== this.pbSession) {
           this.pbActive = active;
+          this.pbSession = session;
           this.wfFollow = !active;
           this.wfWindow = null;
+          this.wfInfo = {};
+          clearTimeout(this.$pbSeekTimer);
           this.fetchRows();
         } else if (wf.epoch !== this.wfEpoch || (layoutChanged && this.shownLayout === "waterfall")) {
           this.fetchRows();
@@ -148,8 +156,13 @@
         const rbw = cond.rbw_hz ? U.formatFreq(cond.rbw_hz) : "";
         const off = this.freqOff;
         if (cond.start_hz == null) return "";
-        if (cond.start_hz === cond.stop_hz) return D("boundary_zero", { start: U.formatFreq(cond.start_hz + off), rbw, mode });
-        return D("boundary", { start: U.formatFreq(cond.start_hz + off), stop: U.formatFreq(cond.stop_hz + off), rbw, mode });
+        const parts = [cond.start_hz === cond.stop_hz
+          ? D("boundary_zero", { start: U.formatFreq(cond.start_hz + off), rbw, mode })
+          : D("boundary", { start: U.formatFreq(cond.start_hz + off), stop: U.formatFreq(cond.stop_hz + off), rbw, mode })];
+        // 単位・当てた基準（基準を取る・外す・替えるのも条件の変更: P §3。Qt と同じ）
+        if (cond.unit) parts.push(cond.unit);
+        if (cond.ref) parts.push(D("boundary_ref", { name: cond.ref }));
+        return parts.join("・");
       },
       // ---------------------------------------------------------- イベント
       onWaterfall(p) {
@@ -234,7 +247,8 @@
         this.$wfHoverBusy = true;
         const r = h.row;
         const zero = !!r.zero_span;
-        const body = { t: r.t, sweeps: r.sweeps || 1, level: h.level, unit: this.wfUnit };
+        // 単位はその行のもの（基準の前後で dBm と dB が並ぶ: Qt と同じ）
+        const body = { t: r.t, sweeps: r.sweeps || 1, level: h.level, unit: r.unit || (r.cond && r.cond.unit) || this.wfUnit };
         if (zero) body.point = h.j; else if (h.j != null) body.freq_hz = r.start_hz + r.step_hz * h.j;
         try {
           const res = await call0("waterfall_reading", body);

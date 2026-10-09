@@ -85,8 +85,9 @@
           case "record_start": return rec.active || rec.stopped ? X.get("ERRORS", "already_recording") : null;
           case "record_stop": return rec.active ? null : X.get("ERRORS", "not_recording");
           case "record_finish": return rec.active || rec.stopped ? null : X.get("ERRORS", "not_recording");
-          case "undo": return st.undo && !st.undo.can_undo ? R("no_undo") : null;
-          case "redo": return st.undo && !st.undo.can_redo ? R("no_redo") : null;
+          // 再生中は条件を戻す変更を使えない（理由: display_view.locks。Qt と同じ）
+          case "undo": return ((this.dv.locks || {}).undo) || (st.undo && !st.undo.can_undo ? R("no_undo") : null);
+          case "redo": return ((this.dv.locks || {}).redo) || (st.undo && !st.undo.can_redo ? R("no_redo") : null);
           case "run_cont": case "run_single": return this.runReason;
           case "playback_extract": case "playback_export_csv": return this.pbActive ? null : R("not_playing");
           case "ref_auto": return this.refAutoReason();

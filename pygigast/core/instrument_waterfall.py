@@ -144,9 +144,12 @@ class WaterfallMixin:
 
     # ------------------------------------------------------------------ 1回の掃引
 
-    def _wf_row_from_trace(self, frame, pos: Optional[tuple[int, int]] = None) -> Optional[wf.Row]:
+    def _wf_row_from_trace(self, frame, pos: Optional[tuple[int, int]] = None, live: bool = True) -> Optional[wf.Row]:
         """選んだトレースの、いま表示している範囲の点から行を作る（条件が変わったら並びの番号を変える）。
-        ゼロスパン（横軸が時間）の掃引は行にしない（設計N §1）。"""
+        ゼロスパン（横軸が時間）の掃引は行にしない（設計N §1）。
+
+        並び（seg）と境目の条件（cond）は、範囲・RBW・モードに加えて、量（電力 ⇔ 比）・単位・当てた基準（名前と基準の値:
+        設計E §6.7）が変わっても変える（基準を取る・外す・替えるのは条件の変更: 設計F §5.3。P §3 の境目の線と条件）。"""
         n = int(self._view_opts["wf_trace"])
         t = self._traces[n]
         if t.values is None or t.axis is None or t.quantity is None or t.axis.step_hz == 0:
@@ -163,7 +166,11 @@ class WaterfallMixin:
         cond = {"start_hz": int(t.display_start_hz), "stop_hz": int(t.display_stop_hz),
                 "rbw_hz": int(a.rbw_hz) if a is not None else None,
                 "mode": a.mode.value if a is not None else None}
-        key = (f0, int(t.axis.step_hz), int(vals.size), cond["rbw_hz"], cond["mode"], t.quantity.value, unit, n)
+        rec = self._normalization_record() if live and t.quantity == Quantity.RATIO else None
+        ref = None if rec is None else (rec.get("id"), rec.get("value_db"))
+        if rec is not None:
+            cond["ref"] = str(rec.get("name") or "")
+        key = (f0, int(t.axis.step_hz), int(vals.size), cond["rbw_hz"], cond["mode"], t.quantity.value, unit, n, ref)
         if key != self._wf_seg_key:
             self._wf_seg_key = key
             self._wf_seg += 1
@@ -173,23 +180,34 @@ class WaterfallMixin:
         return row
 
     def _waterfall_on_frame(self, frame, live: bool = True) -> None:
-        """トレースを更新した後に呼ぶ。ライブの掃引は行を足して画面へ送る。再生の掃引は色の範囲と密度だけ。"""
-        row = self._wf_row_from_trace(frame)
+        """トレースを更新した後に呼ぶ。ライブの掃引は行を足して画面へ送る。再生の掃引は色の範囲と密度だけ。
+
+        行の単位が前の行と変わった（基準を取った・外した: 電力 ⇔ 比）ら、色の範囲を新しい単位で決め直し（自動は追い直す）、
+        画面は行を取り直す（単位を変えたときと同じ: P §9.8）。前の行は前の単位のまま、境目の線と条件を出す（P §3）。"""
+        prev = self._wf_history.latest() if live else None
+        row = self._wf_row_from_trace(frame, live=live)
         if row is None:
             return
         self._wf_times.append(float(frame.time))
         self._wf_last = row
         self._wf_follow_format()
         _shift, unit, fmt = self._wf_shown(row)
+        unit_changed = prev is not None and self._wf_shown(prev)[1] != unit
+        if unit_changed:
+            self._wf_auto.reset()
         changed = False
         if fmt == formats.DB and self._view_opts["wf_color_auto"]:
             changed = self._wf_auto.feed(self._wf_values(row), time.monotonic())
         if live:
             self._wf_history.add(row)
             self._wf_seq += 1
-            self._wf_range_sent = self._wf_range()
-            self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "unit": unit,
-                                     "range": self._wf_range_sent, "rows": [self._wf_row_out(row)], "append": True})
+            if unit_changed:
+                self._wf_reset_rows()
+            else:
+                self._wf_range_sent = self._wf_range()
+                self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "unit": unit,
+                                         "range": self._wf_range_sent, "rows": [self._wf_row_out(row)],
+                                         "append": True})
         elif changed:
             self._wf_emit_range()
         self._density_src.append(row)
@@ -197,8 +215,12 @@ class WaterfallMixin:
             self._density_feed(row)
 
     def _wf_row_out(self, row: wf.Row) -> dict:
-        shift, _unit, _fmt = self._wf_shown(row)
-        return {**row.head(shift), "values": self._wf_values(row).astype(np.float32)}
+        """画面へ送る行。単位は行ごと（読み値はその行の単位: 基準の前後で dBm と dB が並ぶ）。境目の条件にも入れる。"""
+        shift, unit, _fmt = self._wf_shown(row)
+        head = row.head(shift)
+        head["cond"] = {**head["cond"], "unit": unit}
+        head["unit"] = unit
+        return {**head, "values": self._wf_values(row).astype(np.float32)}
 
     def _wf_emit_range(self) -> None:
         """色の範囲だけを送る（行は足さない）。"""
@@ -353,7 +375,8 @@ class WaterfallMixin:
         if not older:
             return self._wf_rows_result(wf.select_rows(rows, max_rows), "live")
         path = rec.path
-        hi = (first - 1e-6) if first is not None else t_hi
+        # ファイルから読むのは持っている行より前だけ。選んだ範囲の終わり（t_hi）は越えない
+        hi = t_hi if first is None else (first - 1e-6 if t_hi is None else min(float(t_hi), first - 1e-6))
 
         def job():
             from .storage.record_source import RecordSource

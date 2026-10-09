@@ -380,7 +380,8 @@ class ViewMixin:
         """いまの状態をプリセットで置き換える（1回の命令。Ctrl+Z で戻せる）。"""
         from .instrument_display import apply_trace_settings
 
-        self._check_not_taking_reference()
+        # 条件を置き換えるので、条件を変えてよいときだけ（再生中は断る: 設計P §5）。ほかの状態を書き換える前に確かめる
+        self._check_live_conditions()
         try:
             d = self._presets.get(id)
         except PresetError as e:

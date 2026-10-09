@@ -794,6 +794,13 @@ def calibration_status(st: dict) -> str:
     return tpl("status_cal", at=cal["created_at"]) if cal else TEMPLATES["status_cal_none"]
 
 
+def live_lock_reason(st: dict) -> Optional[str]:
+    """ライブの条件を変える欄（モード・RBW・点数・イメージ除去・Span 固定・SG の周波数・基準を取る・プリセットの呼び出し・
+    音を聞く）をいま使えない理由。記録の再生中は理由を返す（再生中はライブの条件を変えない: 設計P §5）。周波数の範囲の
+    欄と操作（Center・Span・Start・Stop・マーカーから）は再生の表示の範囲を変えるので、ここに入れない。"""
+    return REASON_TEXTS["playback_active"] if (st.get("playback") or {}).get("active") else None
+
+
 def playback_status(pb: dict) -> str:
     """状態バーの「ライブ」／「再生 名前 時刻」（設計P §5・§9.4）。"""
     if not pb.get("active"):

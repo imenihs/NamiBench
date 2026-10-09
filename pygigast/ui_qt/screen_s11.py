@@ -162,7 +162,7 @@ def _common_reason(st: dict) -> Optional[str]:
         return _r("s11_mode_only")
     if any(t.get("kind") == "reference_take" for t in st.get("tasks") or []):
         return REASON_TEXTS["taking_reference"]
-    return None
+    return texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
 
 
 def s11_view(st: dict) -> dict:
@@ -241,7 +241,7 @@ def tg_take_reason(st: dict) -> Optional[str]:
         return texts.ERRORS["mode_not_normalizable"]
     if any(t.get("kind") == "reference_take" for t in st.get("tasks") or []):
         return REASON_TEXTS["taking_reference"]
-    return None
+    return texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
 
 
 def s11_quick(st: dict) -> dict:

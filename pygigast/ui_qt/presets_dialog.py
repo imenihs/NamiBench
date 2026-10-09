@@ -90,6 +90,7 @@ class PresetsDialog(QDialog):
         btns.rejected.connect(self.close)
         lay.addWidget(btns)
         self.rows: list[dict] = []
+        self._lock: Optional[str] = texts.live_lock_reason(win.state)  # 呼び出せない理由（再生中: 設計P §5）
         self.resize(560, 420)
         self.table.itemSelectionChanged.connect(self._enable)
         self.reload()
@@ -113,8 +114,16 @@ class PresetsDialog(QDialog):
 
     def _enable(self) -> None:
         on = self.current() is not None
-        for b in (self.btn_load, self.btn_rename, self.btn_delete, self.btn_overwrite):
+        for b in (self.btn_rename, self.btn_delete, self.btn_overwrite):
             b.setEnabled(on)
+        # 呼び出しは条件を置き換えるので、再生中は理由付きで使えない（設計P §5）
+        self.btn_load.setEnabled(on and self._lock is None)
+        self.btn_load.setToolTip(P["load_tip"] + (f" — {self._lock}" if self._lock else ""))
+
+    def apply_lock(self, why: Optional[str]) -> None:
+        if why != self._lock:
+            self._lock = why
+            self._enable()
 
     def current(self) -> Optional[dict]:
         i = self.table.currentRow()
@@ -128,6 +137,9 @@ class PresetsDialog(QDialog):
     def load(self) -> None:
         p = self.current()
         if p is None:
+            return
+        if self._lock is not None:
+            self.win.status_note(self._lock)  # 一覧のダブルクリック（ボタンは理由付きで使えない）
             return
         self.win.call("preset_load", on_ok=lambda r: self.win.status_note(P["loaded"].replace("{name}", r["name"])),
                       id=p["id"])

@@ -192,6 +192,26 @@ class DisplayViewTest(unittest.TestCase):
         self.assertEqual(display_view.waterfall_reading(0.0, 1, 100, 0.12345, "|Γ|")[-1], "0.123 |Γ|")
 
 
+class PlaybackLockViewTest(unittest.TestCase):
+    """再生中に使えない、ライブの条件を変える欄（Qt と Web が同じ理由を出す: 設計P §5）。"""
+
+    def test_locks_and_reasons(self):
+        from pygigast.ui_qt import display_view, screen_model, texts
+
+        why = texts.REASON_TEXTS["playback_active"]
+        live = {"sweep": {"step_hz": 1000, "mode": "sa"}, "undo": {"undo_blocked": None, "redo_blocked": None}}
+        self.assertEqual(display_view.locks(live), {"preset_load": None, "undo": None, "redo": None})
+        self.assertIsNone(screen_model.sg_reason(live))
+        r = screen_model.sweep_reasons(live)
+        self.assertEqual((r["rbw"], r["span_lock"], r["points"]), (None, None, None))
+        pb = {**live, "playback": {"active": True}, "undo": {"undo_blocked": "playback_active", "redo_blocked": None}}
+        self.assertEqual(display_view.locks(pb), {"preset_load": why, "undo": why, "redo": None})
+        self.assertEqual(screen_model.sg_reason(pb), why)
+        r = screen_model.sweep_reasons(pb)
+        self.assertEqual((r["rbw"], r["span_lock"], r["points"], r["image_reject"]), (why, why, why, why))
+        self.assertEqual(screen_model.mode_reasons(pb)["tg"], why)
+
+
 class BandplanTest(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()

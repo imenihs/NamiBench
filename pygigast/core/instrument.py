@@ -797,7 +797,12 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
 
         step_sweep は SG のステップ掃引（設計L。まだ無い）が SG の周波数を動かすときに True で呼ぶ。最大・最小
         保持を選択によらず残す（設計F §8 の 2）。利用者の操作（set_mode・set_sweep・元に戻す・プリセット）は False。
+
+        記録の再生中は、どの道から来ても置き換えない（再生中はライブの条件を変えない: 設計P §5・H §3.1）。ここは最後の
+        関所で、変える道の入口は _check_live_conditions（ほかの状態を書き換える前に断る）。
         """
+        if self._playback is not None:
+            raise self._error("playback_active")
         old = self._adopted
         # 機器へ送る中身が変わったときだけ掃引をやり直す（固定の切り替え・知らせだけの違いではやり直さない）
         changed = _sweep_key(new) != _sweep_key(old)
@@ -816,9 +821,24 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             self._refresh_markers()
         self._changed()
 
-    def _apply(self, request: SweepRequest) -> dict:
-        """条件を変える（set_sweep・set_mode・マーカーから）。元に戻せるように前の条件を積む（設計J §3）。"""
+    def _check_live_conditions(self) -> None:
+        """ライブの条件（採用値）を変えてよいか。変える道（_apply と、_set_adopted を直接呼ぶ命令）の入口で、ほかの状態を
+        書き換える前に呼ぶ。基準・校正の測定とステップ掃引の最中（いまの条件と別の条件で測っている）と、記録の再生中
+        （再生中はライブの条件を変えない: 設計P §5・H §3.1）は断る。"""
         self._check_not_taking_reference()
+        if self._playback is not None:
+            raise self._error("playback_active")
+
+    def _apply(self, request: SweepRequest, view_in_playback: bool = False) -> dict:
+        """条件を変える（set_sweep・set_mode・マーカー・プリセット以外の全部の道）。元に戻せるように前の条件を積む（設計J §3）。
+
+        記録の再生中: view_in_playback（利用者が周波数の範囲を拡大・移動する操作: set_sweep・マーカーの Center・Span）で
+        周波数の範囲だけの命令なら、再生の表示の範囲を変える（測り直さない: instrument_playback._playback_request）。
+        ほか（モード・RBW などの条件、外のソフト・自動で条件を動かすもの）は理由を付けて断る。
+        """
+        if self._playback is not None and view_in_playback:
+            return self._playback_request(request)
+        self._check_live_conditions()
         before = self._undo_snapshot()
         try:
             new = self._model.apply(request, self._adopted)
@@ -854,12 +874,6 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
                 raise CommandError("not_integer", name)
         if image_reject is not None and image_reject not in ir.CHOICES:
             raise CommandError("bad_value", "image_reject", {"choices": list(ir.CHOICES)})
-        if self._playback is not None:
-            # 再生中は表示の範囲だけを変える（測り直さない: 設計P §5・H §3.1）。周波数のほかは断る
-            others = (rbw_hz, points, image_reject, span_lock)
-            if any(v is not None for v in others) or points_auto or one_shot:
-                raise CommandError("playback_active")
-            return self._playback_set_view(start_hz=start_hz, stop_hz=stop_hz, center_hz=center_hz, span_hz=span_hz)
         if edited is None:
             edited = [n for n, v in (("start_hz", start_hz), ("stop_hz", stop_hz), ("center_hz", center_hz),
                                      ("span_hz", span_hz)) if v is not None]
@@ -871,10 +885,10 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         )
         if points_auto:
             req = dataclasses.replace(req, points=0)
-        return self._apply(req)
+        # 再生中は周波数の範囲だけを表示の範囲として受ける（_apply）
+        return self._apply(req, view_in_playback=True)
 
     def _cmd_set_mode(self, mode: str, sg_hz: Optional[int] = None) -> dict:
-        self._check_not_playing()
         try:
             m = Mode(mode)
         except ValueError as e:

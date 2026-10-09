@@ -79,6 +79,18 @@ def part_reasons(st: dict) -> dict:
             "density": None if lay == "density" else texts.REASON_TEXTS["layout_density"]}
 
 
+def locks(st: dict) -> dict:
+    """再生中に使えない、ライブの条件を変える操作の理由（設計P §5: 再生中はライブの条件を変えない）。
+    プリセットの呼び出し（条件を置き換える）と、次に戻す・やり直す変更が条件を変えるものの元に戻す・やり直す。"""
+    u = st.get("undo") or {}
+
+    def code_text(code: Optional[str]) -> Optional[str]:
+        return texts.REASON_TEXTS.get(code, texts.ERRORS.get(code, code)) if code else None
+
+    return {"preset_load": texts.live_lock_reason(st), "undo": code_text(u.get("undo_blocked")),
+            "redo": code_text(u.get("redo_blocked"))}
+
+
 def wf_unit(st: dict) -> Optional[str]:
     return (st.get("waterfall") or {}).get("unit")
 
@@ -171,7 +183,7 @@ def bandplan_view(st: dict) -> dict:
 
 
 def boundary_label(cond: dict, freq_offset_hz: int = 0) -> str:
-    """条件が変わった境目に出す条件（P §3）: 範囲・RBW・モード。"""
+    """条件が変わった境目に出す条件（P §3）: 範囲・RBW・モード・単位・当てた基準（基準を取る・外す・替えるのも条件の変更）。"""
     mode = texts.MODE_LABELS.get(cond.get("mode"), cond.get("mode") or "")
     rbw = format_freq(int(cond["rbw_hz"])) if cond.get("rbw_hz") else ""
     lo, hi = cond.get("start_hz"), cond.get("stop_hz")
@@ -179,8 +191,15 @@ def boundary_label(cond: dict, freq_offset_hz: int = 0) -> str:
     if lo is None or hi is None:
         return ""
     if lo == hi:
-        return _t("boundary_zero", start=format_freq(int(lo) + off), rbw=rbw, mode=mode)
-    return _t("boundary", start=format_freq(int(lo) + off), stop=format_freq(int(hi) + off), rbw=rbw, mode=mode)
+        text = _t("boundary_zero", start=format_freq(int(lo) + off), rbw=rbw, mode=mode)
+    else:
+        text = _t("boundary", start=format_freq(int(lo) + off), stop=format_freq(int(hi) + off), rbw=rbw, mode=mode)
+    parts = [text]
+    if cond.get("unit"):
+        parts.append(str(cond["unit"]))
+    if cond.get("ref"):
+        parts.append(_t("boundary_ref", name=cond["ref"]))
+    return "・".join(parts)
 
 
 def waterfall_reading(t: float, sweeps: int, freq_hz: Optional[int], level: Optional[float], unit: str,
@@ -209,6 +228,7 @@ def ui(st: dict) -> dict:
         "shown_layout": shown_layout(st),
         "parts": part_reasons(st),
         "density_reason": density_reason(st),
+        "locks": locks(st),
         "tab": display_tab_view(st),
         "playback": playback_view(st),
         "bandplan": bandplan_view(st),

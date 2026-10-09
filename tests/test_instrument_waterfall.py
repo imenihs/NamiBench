@@ -355,6 +355,134 @@ class PlaybackTest(InstrumentCase):
         self.assertEqual(res["t"], first)
         self.call("record_stop")
 
+    def test_window_older_than_held_rows_ends_at_t_hi(self):
+        # 持っている行より古い範囲だけを選んだら、ファイルから読むのは選んだ範囲の終わりまで（P §3・§5）
+        self.connect(start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        self.call("record_start")
+        for _ in range(8):
+            sweep_once(self)
+        wait_state(self, lambda s: s["recording"].get("sweeps", 0) >= 8)
+        self.inst._q.put(("call", lambda: self.inst._wf_history.set_limit(2)))
+        for _ in range(2):
+            sweep_once(self)
+        wait_state(self, lambda s: s["recording"].get("sweeps", 0) >= 10)
+        st = self.call("get_state")
+        allrows = self.call("waterfall_rows", max_rows=50, t_lo=st["waterfall"]["t_first"] - 100,
+                            t_hi=time.time() + 10)
+        ts = [x["t"] for x in allrows["rows"]]
+        self.assertEqual(len(ts), 10)
+        r = self.call("waterfall_rows", max_rows=50, t_lo=ts[2] - 1e-3, t_hi=ts[4] + 1e-3)
+        self.assertEqual([x["t"] for x in r["rows"]], ts[2:5])
+        self.call("record_stop")
+
+    def run_in_control(self, fn):
+        """制御スレッドで fn を呼び、結果か例外を返す（命令の形を持たない道を試すため）。"""
+        box: list = []
+        self.inst._q.put(("call", lambda: box.append(self._try(fn))))
+        end = time.monotonic() + 10
+        while not box:
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.02)
+        return box[0]
+
+    @staticmethod
+    def _try(fn):
+        try:
+            return fn()
+        except CommandError as e:
+            return e
+
+    def test_playback_never_changes_live_conditions(self):
+        # 再生中はライブの条件を変えない（設計P §5・H §3.1）。どの道から来ても _apply・_set_adopted で止まる
+        from pygigast.core.types import SweepRequest
+
+        h5 = self.record(4)
+        self.call("set_mode", mode="tg")
+        self.call("preset_save", name="tgp")
+        self.call("set_mode", mode="sa")
+        live = dict(self.call("get_state")["sweep"])
+        self.open(h5)
+        self.call("playback_seek", index=1)
+        wait_state(self, lambda s: s["playback"]["index"] == 1)
+        # マーカーの Center に → 再生の表示の範囲だけ（ライブの範囲は変わらない）
+        self.call("set_sweep", start_hz=80 * MHZ, stop_hz=130 * MHZ)
+        m = self.call("marker_add", kind="M", trace=1, freq_hz=120 * MHZ)
+        r = self.call("marker_to", id=m["id"], target="center")
+        self.assertTrue(r.get("playback"))
+        st = self.call("get_state")
+        view = st["playback"]["view"]
+        self.assertEqual(view["start_hz"] + (view["stop_hz"] - view["start_hz"]) // 2,
+                         st["markers"]["markers"][0]["freq_hz"])
+        self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"]), (live["start_hz"], live["stop_hz"]))
+        # プリセットの呼び出し・条件を戻す元に戻すは理由付きで断る
+        pid = self.call("preset_list")["presets"][0]["id"]
+        with self.assertRaises(CommandError) as cm:
+            self.call("preset_load", id=pid)
+        self.assertEqual(cm.exception.code, "playback_active")
+        self.assertEqual(st["undo"]["undo_blocked"], "playback_active")  # 画面は元に戻すを理由付きで無効にする
+        with self.assertRaises(CommandError) as cm:
+            self.call("undo")
+        self.assertEqual(cm.exception.code, "playback_active")
+        for name, kw in (("set_mode", {"mode": "tg"}), ("set_sweep", {"rbw_hz": 30_000}),
+                         ("set_sweep", {"span_lock": True}), ("set_sweep", {"points_auto": True})):
+            with self.assertRaises(CommandError, msg=name) as cm:
+                self.call(name, **kw)
+            self.assertEqual(cm.exception.code, "playback_active")
+        # 外のソフト（rtl_tcp）・自動で条件を動かす道（view_in_playback なし）も断る。最後の関所の _set_adopted も
+        req = SweepRequest(center_hz=100 * MHZ, edited=("center_hz",))
+        self.assertEqual(self.run_in_control(lambda: self.inst._apply(req)).code, "playback_active")
+        a = self.inst._adopted
+        self.assertEqual(self.run_in_control(lambda: self.inst._set_adopted(a)).code, "playback_active")
+        st = self.call("get_state")
+        self.assertEqual((st["sweep"]["mode"], st["sweep"]["start_hz"], st["sweep"]["stop_hz"]),
+                         (live["mode"], live["start_hz"], live["stop_hz"]))
+        # ライブに戻っても前の条件のまま
+        self.call("playback_close")
+        st = self.call("get_state")
+        self.assertEqual((st["sweep"]["mode"], st["sweep"]["start_hz"], st["sweep"]["stop_hz"]),
+                         (live["mode"], live["start_hz"], live["stop_hz"]))
+        self.assertIsNone(st["undo"]["undo_blocked"])
+
+    def test_session_changes_with_each_recording(self):
+        # 再生中に別の記録を開くと記録の通し番号が変わる（画面は記録ごとの見方を捨てる: P §5）
+        h5 = self.record(3)
+        h5b = self.root / "rec2.h5"
+        h5b.write_bytes(h5.read_bytes())
+        self.open(h5)
+        s1 = self.call("get_state")["playback"]["session"]
+        self.open(h5b)
+        st = self.call("get_state")
+        self.assertEqual(st["playback"]["name"], "rec2.h5")
+        self.assertGreater(st["playback"]["session"], s1)
+
+
+class ReferenceSegmentTest(InstrumentCase):
+    def test_reference_take_is_a_new_segment_with_its_own_unit(self):
+        # 基準を取ると量（電力 → 比）と単位が変わる: 新しい並び・境目の条件に単位と基準・行ごとの単位・行を取り直す（P §3・§9.8）
+        self.connect(100 * MHZ, 200 * MHZ)
+        self.call("set_mode", mode="tg")
+        for _ in range(3):
+            sweep_once(self)
+        ep = self.call("get_state")["waterfall"]["epoch"]
+        r = self.call("reference_take", kind="fine", name="ケーブルA")
+        self.assertEqual(self.wait_task(r["task_id"])["code"], "task_done")
+        for _ in range(3):
+            sweep_once(self)
+        st = self.call("get_state")
+        self.assertGreater(st["waterfall"]["epoch"], ep)
+        rows = self.call("waterfall_rows", max_rows=10)["rows"]
+        old, new = rows[0], rows[-1]
+        self.assertNotEqual(old["seg"], new["seg"])
+        self.assertEqual((old["unit"], new["unit"]), ("dBm", "dB"))
+        self.assertEqual(old["cond"]["unit"], "dBm")
+        self.assertEqual((new["cond"]["unit"], new["cond"]["ref"]), ("dB", "ケーブルA"))
+        self.assertNotEqual(old["cond"], new["cond"])  # 画面は境目の線と条件を出す
+        from pygigast.ui_qt import display_view
+
+        label = display_view.boundary_label(new["cond"])
+        self.assertIn("dB", label)
+        self.assertIn("ケーブルA", label)
+
 
 class ZeroSpanAndFormatTest(S11Case):
     """ほかの設計と組んだときの動き: ゼロスパン（横軸が時間: 設計N §1）と |Γ|・SWR（設計R §3）。"""

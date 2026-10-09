@@ -81,7 +81,7 @@
                  @commit="commitFreq('span', 'span_hz', $event)" @step="(e, d) => stepFreq('span', 'span_hz', e, d)">
         <template #head>
           <!-- Span 固定（設計C §5.11 の 2）。状態を欄の上で文字と鍵の印で見せる -->
-          <button class="lock" :class="{on: sw && sw.span_lock_hz != null}" @click="toggleSpanLock" :disabled="!sw" :title="W('span_lock_tip')">
+          <button class="lock" :class="{on: sw && sw.span_lock_hz != null}" @click="toggleSpanLock" :disabled="!sw || !!sweepReasons.span_lock" :title="W('span_lock_tip') + (sweepReasons.span_lock ? ' — ' + sweepReasons.span_lock : '')">
             <svg class="lock-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path v-if="sw && sw.span_lock_hz != null" d="M4.5 7.5V5a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
               <path v-else d="M7.5 7.5V4a3.5 3.5 0 0 1 7 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/>
@@ -101,7 +101,7 @@
         <div class="field-head" data-tier="S"><span class="field-name">RBW</span></div>
         <!-- 選択肢は機器ごと。FFT の機器は窓ごとにまとめる（設計Q §6.4） -->
         <!-- 欄には実際に使う RBW。いまの条件で使えない RBW は残して無効にし、理由をツールチップに（設計C §5.14） -->
-        <select class="field-select" :value="sw ? sw.rbw_hz : ''" :title="rbwNote" @change="setRbw($event.target.value)">
+        <select class="field-select" :value="sw ? sw.rbw_hz : ''" :disabled="!!sweepReasons.rbw" :title="[rbwNote, sweepReasons.rbw].filter((x) => x).join('\n')" @change="setRbw($event.target.value)">
           <template v-for="g in rbwGroups" :key="g.window || 'rbw'">
             <optgroup v-if="g.label" :label="g.label" :title="g.note">
               <option v-for="c in g.choices" :key="c.hz" :value="c.hz" :disabled="!!c.reason" :title="c.reason || ''">{{ c.text }}</option>
@@ -647,7 +647,7 @@
           <h3>SG</h3>
           <div class="form">
             <label>{{ W('sg_freq') }}</label>
-            <num-field :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')" :disabled="!!stepView.field_reason" :title="stepView.field_reason || ''"
+            <num-field :text="freqText.sg" :note="notes.sg" @clear-note="clearNote('sg')" :disabled="!!ui.sg_reason" :title="ui.sg_reason || ''"
                        @commit="commitFreq('sg', 'sg_hz', $event)" @step="(e, d) => stepFreq('sg', 'sg_hz', e, d)"></num-field>
           </div>
           <!-- SG の周波数を変えたら最大・最小保持も消すか（設計F §8。コアの設定で Qt と共有） -->

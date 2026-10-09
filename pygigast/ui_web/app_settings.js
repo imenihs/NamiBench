@@ -434,6 +434,7 @@
       async presetLoad() {
         const p = this.presetSel();
         if (!p) return;
+        if (this.presetLoadReason) { this.note("presets", this.presetLoadReason); return; }  // 一覧のダブルクリック
         const r = await this.cmd("preset_load", { id: p.id }, { field: "presets" });
         if (r) { this.note(null, P("loaded", { name: r.name })); this.clearNote("presets"); }
       },

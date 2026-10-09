@@ -190,6 +190,7 @@
 </div>`;
 
   // ---- プリセットの窓（一覧と、呼び出す・名前・消す・上書き・新しく保存）。呼び出しの意味は「呼び出す」のツールチップ
+  // 呼び出しは条件を置き換えるので、再生中は理由付きで使えない（a.presetLoadReason = display_view.locks: Qt と同じ）
   const PRESETS = `
 <div class="modal-back settings-back" @click="a.closePresets()">
 <div class="modal presetwin" @click.stop>
@@ -202,7 +203,7 @@
   </tbody></table></div>
   <div class="warn" v-if="w.broken">{{ a.P('broken', {n: w.broken}) }}</div>
   <div class="row">
-    <button :disabled="!sel" :title="a.P('load_tip')" @click="a.presetLoad()">{{ a.P('load') }}</button>
+    <button :disabled="!sel || !!a.presetLoadReason" :title="a.P('load_tip') + (a.presetLoadReason ? ' — ' + a.presetLoadReason : '')" @click="a.presetLoad()">{{ a.P('load') }}</button>
     <button :disabled="!sel" @click="a.presetRename()">{{ a.P('rename') }}</button>
     <button :disabled="!sel" @click="a.presetDelete()">{{ a.P('delete') }}</button>
     <button :disabled="!sel" @click="a.presetOverwrite()">{{ a.P('overwrite') }}</button>

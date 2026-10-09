@@ -53,6 +53,10 @@ class PlaybackBar(QWidget):
         self._updating = False
         self.hide()
 
+    def reset(self) -> None:
+        """記録が替わった: 前の記録のつまみの送りかけを捨てる（前の記録の位置を新しい記録へ送らない）。"""
+        self._seek_timer.stop()
+
     def _toggle(self) -> None:
         self._call("playback_pause" if self._playing else "playback_play")
 

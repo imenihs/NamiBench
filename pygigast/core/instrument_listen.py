@@ -61,7 +61,7 @@ class ListenMixin:
             m = ListenMode(mode)
         except ValueError:
             raise CommandError("bad_value", "mode", {"choices": [x.value for x in ListenMode]}) from None
-        self._check_not_taking_reference()
+        self._check_live_conditions()  # チューナーの中心と条件を動かす（再生中は断る: 設計P §5）
         if self._rtl_tcp_center is not None and self._listen is None:
             # rtl_tcp の相手がチューナーの中心を決めている間は、マーカーの位置へ動かせない
             raise CommandError("listen_rtltcp_active")
