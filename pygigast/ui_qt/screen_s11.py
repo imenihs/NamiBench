@@ -1,12 +1,15 @@
-"""反射（S11）の基準の手順・トレースの表示の形式・|Γ|・SWR の縦軸について、コアの状態から画面に出すものを作る
+"""反射（S11）の基準の手順・縦軸の表示の形式・|Γ|・SWR の縦軸について、コアの状態から画面に出すものを作る
 （設計E §6.5・設計R §3・§5.1・設計J §4.1）。
 
 Qt と Web が同じものを使う（J §5: 同じ構成・同じ語。同じ処理を2回書かない）。Qt はここを直接呼び、Web の口は
 screen_model.ui_view が state に `ui` として付けて送る。Qt を import しない。
 
-- 表示の形式: トレースの行の欄の選択肢（使えないものは理由付きで無効: U-08。位相系は「この機器は振幅だけ」）
-- 縦軸の単位: 表示している測定中のトレースのうち番号の一番小さいものの単位（1つの目盛りに違う単位を混ぜない）。
-  単位の違うトレースは描かず、行に理由を出す
+- 表示の形式: 縦軸に1つ（表示の設定 view.s11_format。単位と同じく「振幅の詳細」の欄: 2026-10-09 ユーザー決定）。
+  S11 で測った比のトレース（測定中・固定・参照）は全部この形式で出る。使えない形式は理由付きで無効（U-08。位相系は
+  「この機器は振幅だけ」）
+- 縦軸の単位: 表示している測定中のトレースのうち番号の一番小さいものの単位（無ければ表示している固定のトレース）。
+  1つの目盛りに違う単位を混ぜない。単位の違う固定・参照トレースは描かず、「表示」のチェックを無効にして理由は
+  ツールチップだけに出す（行に文を書かない）
 - |Γ|・SWR の縦軸: 下端が決まっていて、1目盛の大きさだけを選ぶ（core/trace/formats.py）
 - S11 の基準: オープン → ショートを1段ずつ（次に押すボタンを強調し、測ったオープンの時刻と範囲を出す）
 """
@@ -32,64 +35,64 @@ def _r(key: str, **kw) -> str:
 
 # ---------------------------------------------------------------- 表示の形式（設計R §3）
 
-def format_name(code: str, measurement: Optional[str]) -> str:
-    """形式の名前。dB の形式は S11 では「リターンロス（dB）」、ほかは「振幅（dB）」。"""
-    if code == formats.DB and measurement == "s11":
-        return texts.S11_FORMAT_NAMES[code]
-    return texts.TRACE_FORMATS.get(code, code)
+def format_name(code: str) -> str:
+    """縦軸の形式の名前。形式が当たるのは S11 の比だけなので、dB の形式は「リターンロス（dB）」。"""
+    return texts.AXIS_FORMAT_NAMES.get(code, code)
 
 
-def trace_format_view(t: dict, st: dict) -> dict:
-    """トレースの行の「表示の形式」の欄。
+def _has_s11_traces(st: dict) -> bool:
+    """S11 で測った比の値を持つトレース（測定中・固定・開いたファイルの参照トレース）があるか。"""
+    for t in st.get("traces") or []:
+        if t.get("has_values") and t.get("quantity") == "ratio" and t.get("measurement") == "s11":
+            return True
+    for f in st.get("files") or []:
+        for t in f.get("traces") or []:
+            if t.get("quantity") == "ratio" and (t.get("info") or {}).get("measurement") == "s11":
+                return True
+    return False
 
-    形: {"value": 欄に出す形式, "items": [{"code", "text", "enabled", "tip"}], "reason": 欄ごと使えない理由 or None,
+
+def axis_format_view(st: dict) -> dict:
+    """「振幅の詳細」の「S11 の表示」の欄（縦軸の表示の形式: 表示の設定 view.s11_format）。
+
+    形: {"value": 選んでいる形式, "items": [{"code", "text", "enabled", "tip"}], "reason": 欄ごと使えない理由 or None,
          "tip": 欄のツールチップ}
-    - 選べるのは TG・S11 で基準との比を出しているトレースと、S11 モードのとき（基準を取る前に選んでおける）
-    - |Γ|・SWR は S11 のトレースだけ。位相系は位相を測れる機器だけ（GigaSt は振幅だけ: 設計R §2）
-    - 欄には、S11 のトレース（か S11 モード）なら選んだ形式、ほかはいま使う形式（S11 で選んだ形式は覚えていて、
-      S11 に戻ると使う）
+    - 選べるのは S11 モードのとき（基準を取る前に選んでおける）と、S11 で測った比のトレースがあるとき（固定・参照も
+      この形式で出る）。ほかのときは選んでも何も変わらないので、理由付きで無効（U-08）
+    - 位相系は位相を測れる機器だけ（GigaSt は振幅だけ: 設計R §2）。一覧に残して無効にし理由
     """
     mode = (st.get("sweep") or {}).get("mode")
-    ratio = t.get("quantity") == "ratio"
-    meas = t.get("measurement") if t.get("has_values") else None
-    # 比の値を持つトレースはその値を測ったモードで決まる（固定した S21 の値に |Γ|・SWR は当たらない）。比の値を持たない
-    # （まだ値が無い・基準を取る前の電力）ときは、いまのモードが S11 なら選んでおける
-    s11_ctx = (meas == "s11") if ratio and t.get("has_values") else mode == "s11"
-    phase = t.get("value_kind") == "complex"
-    name_meas = "s11" if s11_ctx else meas
+    # 位相を測れる機器か（トレースの値の種類。値の無いトレースはつないでいる機器のプロファイルの値の種類: コア）
+    phase = any(t.get("value_kind") == "complex" for t in st.get("traces") or [])
     items = []
     for code in formats.FORMATS:
         if code in formats.VECTOR_FORMATS:
             why = texts.S11_ERRORS["format_not_yet"] if phase else _r("format_vector")
-        elif code in formats.S11_FORMATS:
-            why = None if s11_ctx else _r("format_s11_only")
         else:
             why = None
-        items.append({"code": code, "text": format_name(code, name_meas), "enabled": why is None, "tip": why or ""})
-    setting = t.get("format") if formats.is_format(t.get("format")) else formats.DB
-    value = setting if s11_ctx and setting not in formats.VECTOR_FORMATS else (t.get("format_effective") or formats.DB)
-    reason = None if ratio or mode == "s11" else _r("format_power")
-    tip = LABELS["trace_format"] + (f" — {reason}" if reason else "")
+        items.append({"code": code, "text": format_name(code), "enabled": why is None, "tip": why or ""})
+    value = (st.get("view") or {}).get("s11_format")
+    value = value if value in formats.AXIS_FORMATS else formats.DB
+    reason = None if mode == "s11" or _has_s11_traces(st) else _r("format_s11_context")
+    tip = LABELS["axis_format_tip"] + (f" — {reason}" if reason else "")
     return {"value": value, "items": items, "reason": reason, "tip": tip}
-
-
-def format_width_samples() -> list[str]:
-    """表示の形式の欄の一番長い文字の見本（行ごと・モードごとに欄の幅を変えない: S-02）。"""
-    return list(texts.TRACE_FORMATS.values()) + list(texts.S11_FORMAT_NAMES.values())
 
 
 # ---------------------------------------------------------------- 縦軸（設計J §4.1・設計R §3）
 
 def axis_unit(st: dict) -> str:
-    """縦軸の単位: 表示している測定中のトレース（番号の小さい順）の最初の単位。無ければ振幅の単位か dBm。"""
-    for t in st.get("traces") or []:
-        if t.get("visible") and t.get("has_values") and t.get("unit"):
-            return t["unit"]
+    """縦軸の単位: 表示していて値のある測定中（固定でない）のトレース（番号の小さい順）の最初の単位。無ければ表示して
+    いて値のある固定のトレースの最初の単位。どれも無ければ振幅の単位か dBm（コアの _axis_trace と同じ決まり）。"""
+    shown = [t for t in st.get("traces") or [] if t.get("visible") and t.get("has_values") and t.get("unit")]
+    live = [t for t in shown if t.get("action") != "fixed"]
+    if live or shown:
+        return (live or shown)[0]["unit"]
     return (st.get("amplitude") or {}).get("unit") or "dBm"
 
 
 def trace_drawn_reason(t: dict, axis: str) -> Optional[str]:
-    """測定中のトレースを描かない理由（縦軸と単位が違う）。描くなら None。"""
+    """トレースを描かない理由（縦軸と単位が違う）。描くなら None。画面は「表示」のチェックのツールチップに出す（行に文を
+    書かない）。測定中のトレースは縦軸を決める側なので、ふつうは固定のトレースだけが当たる。"""
     unit = t.get("unit")
     if not unit or unit == axis or not t.get("has_values") or not t.get("visible"):
         return None

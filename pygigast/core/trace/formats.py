@@ -41,6 +41,8 @@ FORMATS = (DB, GAMMA, SWR, PHASE, GROUP_DELAY, SMITH, POLAR)
 VECTOR_FORMATS = (PHASE, GROUP_DELAY, SMITH, POLAR)
 # 反射（S11）の比のトレースだけで使える形式
 S11_FORMATS = (GAMMA, SWR)
+# 縦軸の形式として選べるもの（表示の設定 view.s11_format。位相系は位相を測れる機器を作るときに足す: 設計R §5.1）
+AXIS_FORMATS = (DB, GAMMA, SWR)
 
 UNIT_GAMMA = "|Γ|"
 UNIT_SWR = "SWR"

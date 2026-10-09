@@ -3,7 +3,8 @@
 - オープン → ショートの2段で基準を取り、被測定物（シミュレータは 145MHz で整合する共振）のリターンロスが出る
 - ショートはオープンと同じ範囲（kind を省いたらオープンの kind）。組めなくなったオープンは捨てて知らせる
 - シミュレータは基準を取る間、測る標準器を繋いだことにする（実機は利用者が繋ぎ替える）
-- トレースごとの表示の形式（|Γ|・SWR）: 読み値・しきい値・縦軸の1目盛・CSV・保存して開いた参照トレース
+- 縦軸の表示の形式（|Γ|・SWR。表示の設定 view.s11_format に1つ: 2026-10-09 ユーザー決定）: 読み値・しきい値・縦軸の
+  1目盛・CSV・保存して開いた参照トレース・プリセット・元に戻す・前の版の状態とプリセットの読み替え
 """
 from __future__ import annotations
 
@@ -129,26 +130,126 @@ class ReferenceFlowTest(S11Case):
 
 class FormatTest(S11Case):
     def test_format_rules(self):
+        """形式は縦軸に1つ（set_view の s11_format）。トレースの命令では選べない。位相系は位相を測れる機器だけ。"""
         self.connect(100 * MHZ, 200 * MHZ)
-        self.call("set_mode", mode="tg")
         with self.assertRaises(CommandError) as cm:
             self.call("set_trace", number=1, format="swr")
-        self.assertEqual(cm.exception.code, "format_s11_only")
+        self.assertEqual(cm.exception.code, "bad_arguments")
         for f in ("phase", "group_delay", "smith", "polar"):
             with self.assertRaises(CommandError) as cm:
-                self.call("set_trace", number=1, format=f)
+                self.call("set_view", s11_format=f)
             self.assertEqual(cm.exception.code, "format_needs_phase")
         with self.assertRaises(CommandError) as cm:
-            self.call("set_trace", number=1, format="nonsense")
-        self.assertEqual(cm.exception.code, "bad_trace_setting")
+            self.call("set_view", s11_format="nonsense")
+        self.assertEqual(cm.exception.code, "bad_value")
+        # S11 を測る前（TG モード）でも選んでおける。S11 の比でないトレースには当たらない
+        self.call("set_mode", mode="tg")
+        r = self.call("set_view", s11_format="swr")
+        self.assertEqual(r["view"]["s11_format"], "swr")
+        st = self.call("get_state")
+        self.assertNotIn("format", st["traces"][0])
+        self.call("set_view", s11_format=None)  # null は初期値（リターンロス dB）
+        self.assertEqual(self.call("get_state")["view"]["s11_format"], "db")
+
+    def test_every_s11_trace_follows_the_axis_format(self):
+        """S11 の比のトレースは全部が縦軸の形式で出る（測定中の 1・2 と固定した 3）。"""
+        self.s11_reference()
+        self.call("set_trace", number=2, action="max_hold")
+        self.ratio_trace()
+        self.call("set_trace", number=3, action="update")
+        self.single()
+        self.call("set_trace", number=3, action="fixed")
+        self.call("set_view", s11_format="gamma")
+        for n in (1, 2, 3):
+            t = self.call("get_trace", id=n)
+            self.assertEqual((t["unit"], t["format"]), ("|Γ|", "gamma"), n)
+            self.assertLessEqual(float(np.nanmax(np.asarray(t["values"], dtype=float))), 1.5)
+        units = [t["unit"] for t in self.call("get_state")["traces"][:3]]
+        self.assertEqual(units, ["|Γ|"] * 3)
+        # 元に戻す（Ctrl+Z）で形式も戻る
+        self.call("undo")
+        self.assertEqual(self.call("get_state")["view"]["s11_format"], "db")
+        self.assertEqual(self.call("get_trace", id=3)["unit"], "dB")
+
+    def test_axis_follows_the_live_trace_not_a_lower_fixed_one(self):
+        """縦軸（XY カーソルの Y の種類）は測定中のトレースで決まる。番号の小さい固定のトレース（電力）があっても、測定中の
+        S11 のトレースの形式（SWR）になる（2026-10-09 ユーザー決定: 単位の違う固定・参照トレースのほうを描かない）。"""
+        self.connect(100 * MHZ, 200 * MHZ)
         self.call("set_mode", mode="s11")
-        r = self.call("set_trace", number=1, format="swr")
-        self.assertEqual(r["trace"]["format"], "swr")
+        self.single()
+        self.call("set_trace", number=1, action="fixed")
+        self.call("set_trace", number=2, action="update", visible=True)
+        r = self.call("reference_take", kind="fine", standard="open")
+        self.wait_task(r["task_id"])
+        r = self.call("reference_take", standard="short")
+        self.assertEqual(self.wait_task(r["task_id"])["code"], "task_done")
+        self.single()
+        self.single()  # 基準を当てた掃引を待つ（tg_ratio と同じく2回）
+        self.call("set_view", s11_format="swr")
+        st = self.call("get_state")
+        self.assertEqual([st["traces"][0]["unit"], st["traces"][1]["unit"]], ["dBm", "SWR"])
+        self.call("set_xy", y1=2.0)
+        self.assertEqual(self.inst._markers.xy.y1_kind, "swr")
+
+    def test_tg_ratio_trace_is_not_converted(self):
+        """S21（TG）で測って固定した比のトレースには |Γ|・SWR は当たらない（dB のまま）。"""
+        self.connect(100 * MHZ, 200 * MHZ)
+        self.call("set_mode", mode="tg")
+        r = self.call("reference_take", kind="fine")
+        self.assertEqual(self.wait_task(r["task_id"])["code"], "task_done")
+        self.single()
+        self.call("set_trace", number=1, action="fixed")
+        self.call("set_view", s11_format="swr")
+        t = self.call("get_trace", id=1)
+        self.assertEqual((t["unit"], t["format"]), ("dB", "db"))
+
+    def test_preset_keeps_the_axis_format(self):
+        self.connect(100 * MHZ, 200 * MHZ)
+        self.call("set_view", s11_format="swr")
+        pid = self.call("preset_save", name="SWR")["id"]
+        self.call("set_view", s11_format="db")
+        self.call("preset_load", id=pid)
+        self.assertEqual(self.call("get_state")["view"]["s11_format"], "swr")
+        self.call("undo")
+        self.assertEqual(self.call("get_state")["view"]["s11_format"], "db")
+
+    def test_old_preset_with_trace_formats_is_read_as_the_axis_format(self):
+        """前の版のプリセット（形式をトレースごとに持ち、view に s11_format が無い）は、縦軸を決めていたトレース（表示して
+        いる一番番号の小さいトレース）の形式を縦軸の形式として読む。"""
+        import json
+
+        self.connect(100 * MHZ, 200 * MHZ)
+        pid = self.call("preset_save", name="old")["id"]
+        path = next((self.root / "data" / "presets").glob("*.json"))
+        d = json.loads(path.read_text(encoding="utf-8"))
+        d["content"]["view"].pop("s11_format")
+        for t in d["content"]["traces"]:
+            t["format"] = {1: "db", 2: "gamma", 3: "swr", 4: "db"}[t["number"]]
+            t["visible"] = t["number"] != 1
+        path.write_text(json.dumps(d), encoding="utf-8")
+        self.call("preset_load", id=pid)
+        self.assertEqual(self.call("get_state")["view"]["s11_format"], "gamma")
+
+    def test_old_state_with_trace_formats_is_read_as_the_axis_format(self):
+        self.inst.shutdown()
+        from pygigast.core.settings import Settings
+
+        st = Settings(self.root / "data" / "settings.json")
+        state = dict(st.get("state") or {})
+        view = dict(state.get("view") or {})
+        view.pop("s11_format", None)
+        state["view"] = view
+        state["traces"] = [{"number": n, "action": "update", "visible": True, "format": f}
+                           for n, f in ((1, "swr"), (2, "gamma"), (3, "db"), (4, "db"))]
+        st.set("state", state)
+        st.save()
+        self.inst = self.make_instrument()
+        self.assertEqual(self.call("get_state")["view"]["s11_format"], "swr")
 
     def test_swr_readings_threshold_and_axis(self):
         self.s11_reference()
         self.ratio_trace()
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         t = self.call("get_trace", id=1)
         self.assertEqual((t["unit"], t["format"]), ("SWR", "swr"))
         v = np.asarray(t["values"], dtype=float)
@@ -167,7 +268,7 @@ class FormatTest(S11Case):
         self.assertLess(th["left_hz"], 145 * MHZ)
         self.assertGreater(th["right_hz"], 145 * MHZ)
         # 形式を |Γ| に替えても、しきい値は同じ反射の大きさ（0.33）で同じ範囲
-        self.call("set_trace", number=1, format="gamma")
+        self.call("set_view", s11_format="gamma")
         m2 = self.call("get_state")["markers"]["markers"][0]
         self.assertEqual(m2["unit"], "|Γ|")
         self.assertEqual(m2["threshold"]["level"], 0.33)
@@ -193,10 +294,12 @@ class FormatTest(S11Case):
         with self.assertRaises(CommandError):
             self.call("set_amplitude", gamma_per_div=True)
 
-    def test_csv_and_saved_file_keep_the_format(self):
+    def test_csv_and_saved_file_follow_the_axis_format(self):
+        """CSV は画面と同じ形式で書く。保存したファイルを開いた参照トレースは、保存したときの形式（info.format: 前の版の
+        トレースごとの形式を含む）でなく、いまの縦軸の形式で出る。"""
         self.s11_reference()
         self.ratio_trace()
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         path = self.root / "s11.csv"
         r = self.call("export_csv", path=str(path), traces=[1])
         n = self.wait_task(r["task_id"])
@@ -215,6 +318,18 @@ class FormatTest(S11Case):
         self.assertEqual(res["files"][0]["traces"][0]["unit"], "SWR")
         ft = self.call("get_trace", id=tid)
         self.assertEqual((ft["unit"], ft["format"]), ("SWR", "swr"))
+        # 縦軸の形式を |Γ| にすると、開いたファイルのトレースも |Γ| で出る（保存したときの SWR は使わない）
+        self.call("set_view", s11_format="gamma")
+        ft = self.call("get_trace", id=tid)
+        self.assertEqual((ft["unit"], ft["format"]), ("|Γ|", "gamma"))
+        f = self.call("get_state")["files"][0]["traces"][0]
+        self.assertEqual((f["unit"], f["info"]["format"]), ("|Γ|", "swr"))
+        # 保存したときの形式が SWR のファイルを、リターンロス（dB）の縦軸で開き直しても dB で出る
+        self.call("close_file", file_id=res["files"][0]["file_id"])
+        self.call("set_view", s11_format="db")
+        r = self.call("open", paths=[str(h5)])
+        res = self.wait_task(r["task_id"])["detail"]["result"]
+        self.assertEqual(res["files"][0]["traces"][0]["unit"], "dB")
 
 
 def db_to_swr(db: float) -> float:
@@ -231,25 +346,20 @@ class UnitFollowTest(S11Case):
         self.s11_reference()
         self.ratio_trace()
         self.call("set_xy", y1=-3.0, y2=-10.0)
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         xy = self.call("get_state")["markers"]["xy"]
         self.assertAlmostEqual(xy["y1"], db_to_swr(-3.0), places=6)
         self.assertAlmostEqual(xy["y2"], db_to_swr(-10.0), places=6)
         self.assertAlmostEqual(xy["dy"], db_to_swr(-10.0) - db_to_swr(-3.0), places=6)
-        self.call("set_trace", number=1, format="gamma")
+        self.call("set_view", s11_format="gamma")
         xy = self.call("get_state")["markers"]["xy"]
         self.assertAlmostEqual(xy["y1"], 10 ** (-3.0 / 20), places=6)
-        self.call("set_trace", number=1, format="db")
+        self.call("set_view", s11_format="db")
         xy = self.call("get_state")["markers"]["xy"]
         self.assertAlmostEqual(xy["y1"], -3.0, places=6)
         self.assertAlmostEqual(xy["y2"], -10.0, places=6)
-        # 縦軸が SWR のトレースのままなら、ほかのトレースの形式を替えても Y カーソルは動かない
-        self.call("set_trace", number=1, format="swr")
-        y1 = self.call("get_state")["markers"]["xy"]["y1"]
-        self.call("set_trace", number=2, format="gamma")
-        self.assertAlmostEqual(self.call("get_state")["markers"]["xy"]["y1"], y1, places=9)
         # 元に戻す（Ctrl+Z）で形式が dB に戻っても、Y カーソルは同じ反射の大きさの dB に戻る
-        self.call("undo")
+        self.call("set_view", s11_format="swr")
         self.call("undo")
         self.assertAlmostEqual(self.call("get_state")["markers"]["xy"]["y1"], -3.0, places=6)
 
@@ -257,7 +367,7 @@ class UnitFollowTest(S11Case):
         """縦軸が SWR（基準を取る前に選んでおいた）なら、ショートで基準を取っても REF を動かさず知らせもしない。"""
         self.connect(100 * MHZ, 200 * MHZ)
         self.call("set_mode", mode="s11")
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         self.call("set_amplitude", ref_level=-60.0)
         r = self.call("reference_take", kind="fine", standard="open")
         self.wait_task(r["task_id"])
@@ -267,7 +377,7 @@ class UnitFollowTest(S11Case):
         self.assertNotIn("ref_level", n["detail"]["result"])
         self.assertEqual(self.call("get_state")["amplitude"]["ref_level"], -60.0)
         # dB の縦軸なら、0dB が見えるよう REF を動かす（J §4.7 の末尾のまま）
-        self.call("set_trace", number=1, format="db")
+        self.call("set_view", s11_format="db")
         r = self.call("reference_take", kind="fine", standard="open")
         self.wait_task(r["task_id"])
         r = self.call("reference_take", standard="short", show_zero=True)
@@ -278,7 +388,7 @@ class UnitFollowTest(S11Case):
         """SWR で決めたしきい値は、電力の単位・外部補正を替えてもずらさない。電力で決めたしきい値は今までどおりずらす。"""
         self.s11_reference()
         self.ratio_trace()
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         r = self.call("marker_peak", polarity="dip", trace=1)
         self.call("marker_function", id=r["id"], threshold={"level": 2.0, "side": "below"})
         before = self.call("get_state")["markers"]["markers"][0]["threshold"]
@@ -336,7 +446,7 @@ class UnitFollowTest(S11Case):
         for standard in ("open", "short"):
             r = self.call("reference_take", kind="fine", standard=standard)
             self.assertEqual(self.wait_task(r["task_id"])["code"], "task_done")
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         self.single()
         p = next(x for x in self.call("get_state")["markers"]["markers"] if x["id"] == m["id"])
         self.assertEqual((p["unit"], p["threshold"]["level"]), ("SWR", -50.0))
@@ -344,7 +454,7 @@ class UnitFollowTest(S11Case):
     def test_xy_y_set_on_a_power_axis_is_not_converted_as_a_ratio_format(self):
         """電力の縦軸で置いた Y は、比の縦軸（SWR を覚えていても）に戻っても形式の換算をしない。"""
         self.s11_reference()
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         self.ratio_trace()
         self.call("set_xy", y1=2.0)
         self.call("set_mode", mode="sa")
@@ -358,7 +468,7 @@ class UnitFollowTest(S11Case):
         """SWR の縦軸で置いた Y は、電力の縦軸で外部補正を替えてもずらさず、SWR の縦軸に戻ればそのまま SWR 2。
         電力の縦軸で置いた Y は今までどおりずらす。"""
         self.s11_reference()
-        self.call("set_trace", number=1, format="swr")
+        self.call("set_view", s11_format="swr")
         self.ratio_trace()
         self.call("set_xy", y1=2.0)
         self.call("set_mode", mode="sa")
@@ -371,7 +481,7 @@ class UnitFollowTest(S11Case):
         self.single()
         self.assertEqual(self.call("get_state")["markers"]["xy"]["y1"], 2.0)
         # 縦軸の形式を |Γ| に替えると、SWR で置いた Y だけを同じ反射の大きさに直す（電力で置いた Y は直さない）
-        self.call("set_trace", number=1, format="gamma")
+        self.call("set_view", s11_format="gamma")
         xy = self.call("get_state")["markers"]["xy"]
         self.assertAlmostEqual(xy["y1"], 1.0 / 3.0, places=6)
         self.assertEqual(xy["y2"], -50.0)

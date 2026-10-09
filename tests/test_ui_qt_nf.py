@@ -114,6 +114,7 @@ class NfQtTest(UiBase):
         self.assertTrue(row.avg.isEnabled())
 
     def test_unit_field_shows_nf(self):
+        self.cmd("set_amplitude", ref_level=-30.0, db_per_div=10)
         self.enter_nf()
         self.win.nf_guide.close()
         self.cmd("nf_set_enr", enr_db=15.0)
@@ -124,14 +125,22 @@ class NfQtTest(UiBase):
         self.pump(0.3)
         self.assertEqual(self.win.display_tab.unit.currentText(), N["level_unit_nf_item"])
         self.assertEqual(self.win.display_unit(), "dB")
-        # NF の縦軸（既定 REF 20dB・2dB/div: 設計M §1）
-        self.assertEqual((self.win.ref_level(), self.win.db_div()), (20.0, 2.0))
+        # 縦軸は全部のモードで1つ（NF に入っても REF・dB/div を変えない: 2026-10-09 ユーザー決定）
+        self.assertEqual((self.win.ref_level(), self.win.db_div()), (-30.0, 10.0))
+        # REF の自動は NF でも使え、NF の値の最大が上から1目盛下に来る REF にする
+        self.assertTrue(self.win.btn_ref_auto.isEnabled())
+        peak = self.state()["ref_auto"]["peaks"]["1"]["max"]
+        self.win.btn_ref_auto.click()
+        self.wait(lambda: self.win.ref_level() != -30.0, what="REF の自動")
+        self.assertGreater(self.win.ref_level(), peak)
+        self.assertLess(self.win.ref_level() - peak, 2 * 10.0)
+        ref = self.win.ref_level()
         # PNG（画面と同じ縦軸・単位で焼き込む: 設計I）
         from pygigast.ui_qt import png_data, png_export
 
         data = png_data.build(self.win)
         c = data["conditions"]
-        self.assertEqual((c["ref_level"], c["db_per_div"], c["unit"], data["mode"]), (20.0, 2.0, "dB", texts.MODE_NAMES["nf"]))
+        self.assertEqual((c["ref_level"], c["db_per_div"], c["unit"], data["mode"]), (ref, 10.0, "dB", texts.MODE_NAMES["nf"]))
         self.assertEqual(png_export.render_png(data)[:4], b"\x89PNG")
 
     def test_small_difference_points_are_dimmed(self):

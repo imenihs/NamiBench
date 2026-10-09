@@ -83,9 +83,9 @@ class WaterfallMixin:
     # ------------------------------------------------------------------ 表示の値（単位・形式）
 
     def _wf_format_setting(self) -> str:
-        """行にするトレースの表示の形式の設定（|Γ|・SWR は S11 の比の行だけに当たる: formats.effective）。"""
-        t = self._traces[int(self._view_opts["wf_trace"])]
-        return getattr(t, "format", None) or formats.DB
+        """行に当てる表示の形式の設定: 縦軸の形式（view.s11_format。|Γ|・SWR は S11 の比の行だけに当たる: formats.effective）。
+        形式を変えたら持っている行を新しい形式で出し直す（_wf_follow_format）。"""
+        return self._axis_format()
 
     def _wf_shown(self, row: wf.Row) -> tuple[float, Optional[str], str]:
         """行を出すときの (足す dB, 単位, 形式)。|Γ|・SWR はずらさず、単位はその名前（instrument_display._shown と同じ）。"""

@@ -18,6 +18,8 @@ from typing import Optional
 
 import numpy as np
 
+from .trace.formats import AXIS_FORMATS, DB
+
 # 単位のコード → 画面に出す名前
 LEVEL_UNITS = {"dBm": "dBm", "dBuV": "dBμV", "dBmV": "dBmV"}
 # 50Ω で 0dBm を各単位で言った値。0dBm = √(1e-3 W × 50Ω) = 0.2236V
@@ -51,7 +53,9 @@ ZERO_SPAN_LENGTHS_S = (0, 1, 10, 60)
 # wf_color_lo・wf_color_hi は手で決めた色の範囲（表示の単位）、wf_rows は画面に持つ行数の上限
 # density_half: 密度表示で重みが半分になるまでの掃引の回数（設計P §9.3）
 # bandplan_shown・bookmarks_shown: バンドプランの帯・ブックマークの印を出すか（設計P §6）
-DEFAULTS = {"level_unit": "dBm", "ext_db": 0.0, "freq_offset_hz": 0, "draw_style": "line", "layout": "spectrum",
+# s11_format: 反射（S11）の比の表示の形式（リターンロス dB・|Γ|・SWR: 設計E §6.5・設計R §3）。単位と同じく縦軸に1つ
+# （2026-10-09 ユーザー決定）。S11 の比のトレースは全部この形式で出し、ほかのトレースには当たらない
+DEFAULTS = {"level_unit": "dBm", "s11_format": DB, "ext_db": 0.0, "freq_offset_hz": 0, "draw_style": "line", "layout": "spectrum",
             "function_lines": True, "zero_span_s": 10, "leak_marks": True,
             "wf_trace": 1, "wf_color_auto": True, "wf_color_lo": -110.0, "wf_color_hi": -20.0,
             "wf_rows": 2000, "density_half": 20, "bandplan_shown": True, "bookmarks_shown": True}
@@ -93,8 +97,10 @@ def _is_level(v) -> bool:
 def check_options(level_unit=None, ext_db=None, freq_offset_hz=None, draw_style=None, layout=None,
                   function_lines=None, zero_span_s=None, leak_marks=None, wf_trace=None, wf_color_auto=None,
                   wf_color_lo=None, wf_color_hi=None, wf_rows=None, density_half=None, bandplan_shown=None,
-                  bookmarks_shown=None) -> Optional[str]:
+                  bookmarks_shown=None, s11_format=None) -> Optional[str]:
     """命令の値を確かめる。だめなら欄の名前を返す（None は全部よい）。"""
+    if s11_format is not None and s11_format not in AXIS_FORMATS:
+        return "s11_format"
     if zero_span_s is not None and (isinstance(zero_span_s, bool) or zero_span_s not in ZERO_SPAN_LENGTHS_S):
         return "zero_span_s"
     for name, v in (("function_lines", function_lines), ("leak_marks", leak_marks), ("wf_color_auto", wf_color_auto),

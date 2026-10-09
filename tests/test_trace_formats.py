@@ -101,28 +101,23 @@ def s11_frame(axis: FreqAxis, values: np.ndarray, mode: Mode = Mode.S11) -> Fram
 
 
 class TraceFormatTest(unittest.TestCase):
-    def test_format_does_not_discard_and_follows_mode(self):
-        axis, g = gamma_curve()
-        t = Trace(1, TraceAction.AVERAGE, count=4)
-        t.apply(s11_frame(axis, g))
-        t.apply(s11_frame(axis, g))
-        self.assertEqual(t.current_count, 2)
-        t.configure(fmt=formats.SWR)
-        # 表し方だけなので蓄積を捨てない（設計R §3）
-        self.assertEqual(t.current_count, 2)
-        self.assertEqual(t.effective_format, formats.SWR)
-        # TG で測った値には |Γ|・SWR が当たらない（選んだ形式は覚えている）
-        t2 = Trace(2, fmt=formats.SWR)
-        t2.apply(s11_frame(axis, g, Mode.TG))
-        self.assertEqual(t2.format, formats.SWR)
-        self.assertEqual(t2.effective_format, formats.DB)
-
-    def test_unknown_format_rejected_without_changing_others(self):
+    def test_trace_has_no_format(self):
+        """表示の形式はトレースごとに持たない（縦軸に1つ: 表示の設定 view.s11_format。2026-10-09 ユーザー決定）。"""
         t = Trace(1)
-        with self.assertRaises(ValueError):
-            t.configure(line="thick", fmt="nonsense")
-        self.assertEqual(t.line.value, "solid")
-        self.assertEqual(t.format, formats.DB)
+        self.assertFalse(hasattr(t, "format"))
+        with self.assertRaises(TypeError):
+            t.configure(fmt=formats.SWR)
+
+    def test_legacy_axis_format(self):
+        """前の版の状態・プリセットのトレースごとの形式は、縦軸を決めていたトレースの形式として読む。"""
+        from pygigast.core.instrument_display import legacy_axis_format
+
+        rows = [{"number": 2, "visible": True, "format": "swr"}, {"number": 1, "visible": False, "format": "gamma"}]
+        self.assertEqual(legacy_axis_format({}, rows), "swr")  # 表示している一番番号の小さいトレース
+        self.assertEqual(legacy_axis_format({}, [{"number": 1, "visible": False, "format": "gamma"}]), "gamma")
+        self.assertEqual(legacy_axis_format({}, [{"number": 1, "format": "smith"}]), "db")  # 読めない・位相系は dB
+        self.assertEqual(legacy_axis_format(None, None), "db")
+        self.assertIsNone(legacy_axis_format({"s11_format": "gamma"}, rows))  # 新しい版は読み替えない
 
 
 class MarkerFormatTest(unittest.TestCase):

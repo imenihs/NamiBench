@@ -1003,8 +1003,8 @@ class WebLayoutS11Test(unittest.TestCase):
 
     def check_size(self, w: int, h: int) -> None:
         a, p = self.app, self.page
-        a.call("set_trace", number=1, format="db")
-        a.call("set_trace", number=2, visible=False)
+        a.call("set_view", s11_format="db")
+        a.call("set_trace", number=2, visible=False, action="update")
         a.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000)
         a.call("set_mode", mode="s11")
         a.call("reference_take", kind="fine", standard="open")
@@ -1015,17 +1015,21 @@ class WebLayoutS11Test(unittest.TestCase):
         p.wait("!!document.querySelector('[data-field=\"s11_state\"]')", "オープンを測った")
         p.settle()
         found += p.problems(".app", f"{w}×{h} S11 オープンの後 source")
+        # 基準を取る前の電力（dBm）でトレース2を固定しておく（縦軸と単位が違うので描かない固定のトレース）
+        a.call("set_trace", number=2, visible=True, action="update")
+        a.call("run", mode="single")
+        p.wait("gsApp.st.traces[1].has_values && gsApp.st.run.state === 'stopped'", "トレース2")
+        a.call("set_trace", number=2, action="fixed")
         a.call("reference_take", standard="short")
         self.wait_tasks()
         a.call("run", mode="single")
-        a.call("set_trace", number=1, format="swr")
-        a.call("set_trace", number=2, visible=True, action="update")
+        a.call("set_view", s11_format="swr")
         mid = a.call("get_state")["markers"]["markers"][0]["id"]
         a.call("marker_peak", id=mid, polarity="dip")
         a.call("marker_function", id=mid, threshold={"level": 2.0, "side": "below"}, bandwidth_db=[])
-        p.wait("gsApp.axisUnit === 'SWR' && !!document.querySelector('.tunit')", "縦軸が SWR")
+        p.wait("gsApp.axisUnit === 'SWR' && document.querySelectorAll('.tvis input')[1].disabled", "縦軸が SWR")
         p.ev("gsApp.modal = null; gsApp.confirmBox = null; 1")
-        for tab in ("trace", "marker", "source"):
+        for tab in ("trace", "marker", "view", "source"):
             p.ev(f"gsApp.tab = '{tab}'; gsApp.selectedMarker = '{mid}'; 1")
             p.settle()
             found += p.problems(".app", f"{w}×{h} S11（SWR） {tab}")

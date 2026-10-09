@@ -21,15 +21,18 @@ TRACE_FORMATS = {
 }
 # S11 の dB の形式の名前（設計E §6.5: 測った値 ÷ 基準の dB。全反射が 0dB）
 S11_FORMAT_NAMES = {formats.DB: "リターンロス（dB）"}
+# 縦軸の表示の形式の欄（「S11 の表示」）の項目の名前。形式は S11 の比にだけ当たるので dB はリターンロス（dB）
+AXIS_FORMAT_NAMES = {code: S11_FORMAT_NAMES.get(code, name) for code, name in TRACE_FORMATS.items()}
 
 REASON_TEXTS.update({
     # 表示の形式（設計R §2・§5.1: 位相を測れない機器では消さずに無効にして理由）
     "format_vector": "この機器は振幅だけを測ります（位相を測れません）",
-    "format_s11_only": "|Γ|・SWR は S11（反射）のトレースで選べます",
-    "format_power": "表示の形式は TG・S11 で基準との比を出しているときに選べます",
+    # 縦軸の表示の形式（S11 の比にだけ当たる。S11 モードでも S11 のトレースも無いときは選んでも何も変わらない）
+    "format_s11_context": "S11 モードのときか、S11 で測ったトレースがあるときに選べます",
     # |Γ|・SWR の縦軸（下端が決まっていて REF レベルを持たない）
     "ref_linear": "{unit} の縦軸は下端を {bottom} に置き、1目盛の大きさで決めます",
-    # 縦軸と単位の違う測定中のトレース（1つの目盛りに違う単位を混ぜない: 設計E §6.4 と同じ考え）
+    # 縦軸と単位の違う固定のトレース（1つの目盛りに違う単位を混ぜない: 設計E §6.4 と同じ考え）。「表示」のチェックの
+    # ツールチップに出す
     "trace_unit_differs": "縦軸（{axis}）と単位が違う（{unit}）ので描きません",
     # S11 のオープン・ショート（設計E §6.5）
     "s11_mode_only": "オープン・ショートは S11 モードで測ります",
@@ -38,7 +41,9 @@ REASON_TEXTS.update({
 })
 
 LABELS.update({
-    "trace_format": "表示の形式",
+    # 縦軸の表示の形式（S11 の比: リターンロス（dB）・|Γ|・SWR。「振幅の詳細」の単位の下: 設計R §3）
+    "axis_format": "S11 の表示",
+    "axis_format_tip": "S11（反射）で測ったトレースの縦軸の表し方。固定・参照のトレースも同じ形式で出します",
     # 縦軸の1目盛の大きさの欄の名前（dB は dB/div）
     "per_div": "{unit}/div",
     # S11 のオープン・ショート（設計E §6.5。1段ずつ: 次に押すボタンを強調する）
@@ -68,7 +73,6 @@ S11_QUICK_LABELS = {
 S11_ERRORS = {
     "format_needs_phase": "この機器は振幅だけを測ります（位相を測れません）",
     "format_not_yet": "位相の表示はまだ使えません",
-    "format_s11_only": "|Γ|・SWR は S11（反射）のトレースで選べます",
     "ref_level_linear": "|Γ|・SWR の縦軸には REF レベルがありません（下端が決まっています）",
     "s11_standard_required": "S11 はオープンかショートを選んで測ります",
 }

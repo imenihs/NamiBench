@@ -13,6 +13,8 @@
     電力の単位は理由付きで選べない。中身は screen_model.unit_view（Web と同じ）
   - 単位の設定が変わったら（どこから変わっても）欄の下に一度知らせる（J §4.10 の 4。知らせはコアが出す）
   - 電力 → 比に変わったら窓で知らせる。「次から出さない」はこの画面の覚え書き（J §4.10 の 3・設計O §1.1）
+  - 単位の下に「S11 の表示」（縦軸の表示の形式: リターンロス（dB）・|Γ|・SWR。設計R §3）。単位と同じく縦軸に1つで、
+    S11 で測ったトレースは全部この形式で出る（2026-10-09 ユーザー決定）。中身は screen_s11.axis_format_view（Web と同じ）
 - 配色（J §4.4）: ライト・ダークの初期値にするボタン（変えた色の数を言ってから聞く）と、編集の画面への入口
 - PNG のメモ1行（大きさ・配色・保存先は設定の画面の「保存」: 同じ値の入口を2つ作らない U-09）
 - 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）、ボタンは文字の幅で左から詰める（S-03）
@@ -38,10 +40,10 @@ from PySide6.QtWidgets import (
 
 from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from ..core.view_units import LEVEL_UNITS
-from . import display_view, screen_model, sizes, texts, widget_sync
+from . import display_view, screen_model, screen_s11, sizes, texts, widget_sync
 from .display_groups import BandplanGroup, WaterfallGroup
 from .fields import DbField
-from .tab_traces import body, outer, set_enabled
+from .tab_traces import SameWidth, body, outer, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -130,6 +132,15 @@ class DisplayTab(QWidget):
         self._unit_note_timer.setSingleShot(True)
         self._unit_note_timer.timeout.connect(lambda: (self.unit_note.setText(""), self.unit_note.hide()))
         form.addRow(self.unit_note)
+        # 縦軸の表示の形式（S11 の比: 設計R §3）。位相系は位相を測れない機器では無効にして理由（R §5.1）
+        self.axis_format = QComboBox()
+        for code in screen_s11.formats.FORMATS:
+            self.axis_format.addItem(screen_s11.format_name(code), code)
+        self.axis_format.activated.connect(self._axis_format_chosen)
+        self._axis_format_key: tuple = ()
+        form.addRow(L["axis_format"], self.axis_format)
+        # 単位と同じ列の欄は同じ幅（S-02）。出しうる一番長い中身の幅
+        self._unit_col = SameWidth([self.unit, self.axis_format], texts.UNIT_COLUMN_SAMPLES)
         self.ext = DbField(V["ext_db"], "dB", lambda v: win.call("set_view", field=self.ext, ext_db=float(v)),
                            big=False)
         self.ext.setToolTip(V["ext_db_tip"])
@@ -187,6 +198,29 @@ class DisplayTab(QWidget):
         widget_sync.set_data(self.unit, u["current"])
         self.unit.setToolTip(u["tip"])
 
+    def _axis_format_chosen(self, i: int) -> None:
+        code = self.axis_format.itemData(i)
+        if code is not None and code != (self.win.state.get("view") or {}).get("s11_format"):
+            self.win.call("set_view", s11_format=code)
+
+    def _apply_axis_format(self, st: dict) -> None:
+        """S11 の表示の欄（screen_s11.axis_format_view）: 選んでいる形式・使えない形式（理由付き）・欄ごとの理由。"""
+        v = screen_s11.axis_format_view(st)
+        key = tuple((it["code"], it["enabled"], it["tip"]) for it in v["items"])
+        if key != self._axis_format_key:
+            self._axis_format_key = key
+            model = self.axis_format.model()
+            for it in v["items"]:
+                item = model.item(self.axis_format.findData(it["code"])) if isinstance(model, QStandardItemModel) \
+                    else None
+                if item is not None:
+                    # 使えない形式は一覧に残して無効にし、理由をツールチップに（U-08）
+                    item.setEnabled(bool(it["enabled"]))
+                    item.setToolTip(it["tip"])
+        widget_sync.set_data(self.axis_format, v["value"])
+        self.axis_format.setEnabled(v["reason"] is None)
+        self.axis_format.setToolTip(v["tip"])
+
     def flash_unit_note(self, text: str) -> None:
         self.unit_note.setText(text)
         self.unit_note.show()
@@ -230,6 +264,7 @@ class DisplayTab(QWidget):
         """コアの表示の設定（単位・外部補正・描き方）と配色を映す。"""
         v = st.get("view") or {}
         self._apply_unit(st)
+        self._apply_axis_format(st)
         lay = v.get("layout") or "spectrum"
         reasons = display_view.display_tab_view(st)["layout_reasons"]
         for code, b in (("spectrum", self.view_spectrum), ("waterfall", self.view_waterfall),

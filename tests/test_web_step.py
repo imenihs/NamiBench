@@ -210,10 +210,15 @@ class WebStepPageTest(unittest.TestCase):
         found += page.problems(".app", f"{w}×{h} 信号源（している間）")
         self.assertTrue(page.ev("document.querySelector('[data-field=step_combine]').disabled"))
         self.assertEqual(page.ev("gsApp.ui.image_reject.reason"), texts.REASON_TEXTS["image_reject_step"])
-        tid = self.app.call("get_state")["step_sweep"]["task_id"]
-        self.app.call("cancel_task", task_id=tid)
+        # 上段の「停止」もステップ掃引の間は使え、押すと「やめる」と同じ終わり方でやめる（Qt と同じ: 2026-10-09 ユーザー決定）
+        stop_btn = "[...document.querySelectorAll('.run-btn')].find((b) => b.textContent.trim() === %s)"             % json.dumps(texts.MENU_ITEMS["stop"])
+        page.wait(f"!{stop_btn}.disabled", "停止が使える")
+        page.ev(f"{stop_btn}.click(); 1")
         self.wait_idle()
         page.wait("!gsApp.st.step_sweep.running", "やめた")
+        page.wait("gsApp.status.includes('ステップ掃引をやめました')", "やめた知らせ")
+        self.assertEqual(self.app.call("get_state")["run"]["state"], "stopped")
+        page.wait(f"{stop_btn}.disabled", "止まったら停止は使えない")
         # 小さい段の数で最後まで回して、段ごとの線を確かめる
         self.app.call("set_step_sweep", start_hz=400 * MHZ, stop_hz=700 * MHZ, step_hz=100 * MHZ)
         page.ev("document.querySelector('[data-field=step_run]').click(); 1")

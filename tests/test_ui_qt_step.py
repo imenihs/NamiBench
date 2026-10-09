@@ -104,6 +104,25 @@ class StepUiTest(UiBase):
         self.wait(lambda: "ステップ掃引をやめました" in self.win.st_note.text(), what="やめた知らせ")
         self.assertTrue(self.win.trace_tab.image_reject.isEnabled())
 
+    def test_top_stop_button_ends_step_sweep(self):
+        """上段の「停止」もステップ掃引の間は使え、押すと「やめる」と同じ終わり方（そこまでの結果を残す）でやめ、掃引も
+        止まる（2026-10-09 ユーザー決定）。処理の帯の「やめる」も残る。"""
+        self.cmd("set_mode", mode="sg", sg_hz=500 * MHZ)
+        self.cmd("set_step_sweep", start_hz=1000 * MHZ, stop_hz=1500 * MHZ, step_hz=1 * MHZ, combine="max", trace=2)
+        r = self.cmd("step_sweep_start")
+        self.wait(lambda: (self.win.state.get("step_sweep") or {}).get("running"), what="している間")
+        self.wait(lambda: self.win.btn_stop.isEnabled(), what="停止が使える")
+        self.wait(lambda: self.win.task_panel.isVisible(), what="処理の帯（やめるも残る）")
+        self.assertIn(r["task_id"], self.win.task_panel._rows)
+        self.wait(lambda: self.state()["traces"][1]["has_values"], timeout=20, what="1段目の結果")
+        self.win.btn_stop.click()
+        self.wait_idle()
+        self.wait(lambda: "ステップ掃引をやめました" in self.win.st_note.text(), what="やめた知らせ")
+        st = self.state()
+        self.assertEqual(st["run"]["state"], "stopped")
+        self.assertEqual((st["traces"][1]["action"], st["traces"][1]["has_values"]), ("fixed", True))
+        self.wait(lambda: not self.win.btn_stop.isEnabled(), what="止まったら停止は使えない")
+
     def test_leak_marks_and_peak_list(self):
         self.cmd("set_mode", mode="sg", sg_hz=500 * MHZ)
         # イメージ除去「スピード」（初期値）では b3 で動く 956MHz のスプリアスは消えるので印は2つ

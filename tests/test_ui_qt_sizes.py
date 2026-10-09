@@ -152,8 +152,9 @@ class LayoutTest(UiBase):
         self.assertEqual(sorted(set(found)), [])
 
     def test_s11_screens(self):
-        """S11（設計E §6.5・設計R §3）: オープンを測った後の信号源のタブと上段（次はショート）、基準を取って SWR にした
-        トレースの表（表示の形式・縦軸と単位が違うトレースの理由）・マーカーのタブ（SWR のしきい値）・|Γ|・SWR の縦軸の上段。"""
+        """S11（設計E §6.5・設計R §3）: オープンを測った後の信号源のタブと上段（次はショート）、基準を取って縦軸を SWR に
+        したトレースの表（単位が違う固定のトレースの「表示」は無効）・表示のタブ（S11 の表示の欄）・マーカーのタブ（SWR の
+        しきい値）・|Γ|・SWR の縦軸の上段。"""
         found = []
         self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
         self.api.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000).result(5)
@@ -162,16 +163,20 @@ class LayoutTest(UiBase):
         self.wait(lambda: self.win.source_tab.s11_state.isVisible(), timeout=20, what="オープンを測った")
         self.win.show_part("tab-source")
         found += self.check(self.win, "主画面 S11 オープンの後 tab-source")
+        # 基準を取る前の電力（dBm）でトレース2を固定しておく（縦軸と単位が違うので描かない固定のトレース）
+        self.api.call("set_trace", number=2, visible=True, action="update").result(5)
+        self.api.call("run", mode="single").result(5)
+        self.wait(lambda: (self.win.traces.live_payload(2) or {}).get("unit") == "dBm", timeout=20, what="トレース2")
+        self.api.call("set_trace", number=2, action="fixed").result(5)
         self.api.call("reference_take", standard="short").result(5)
         self.wait(lambda: (self.win.state.get("display_quantity") == "ratio"), timeout=20, what="基準との比")
-        self.api.call("set_trace", number=1, format="swr").result(5)
-        self.api.call("set_trace", number=2, visible=True).result(5)
+        self.api.call("set_view", s11_format="swr").result(5)
         r = self.api.call("marker_peak", polarity="dip", trace=1).result(5)
         self.api.call("marker_function", id=r["id"], threshold={"level": 2.0, "side": "below"}).result(5)
         self.wait(lambda: self.win.display_unit() == "SWR", what="縦軸が SWR")
         self.win.select_marker(r["id"])
-        self.wait(lambda: self.win.trace_tab.rows[2].unit_note.isVisible(), what="描かない理由")
-        for key in ("tab-trace", "tab-marker", "tab-source"):
+        self.wait(lambda: not self.win.trace_tab.rows[2].visible.isEnabled(), what="描かないトレースの表示が無効")
+        for key in ("tab-trace", "tab-marker", "tab-view", "tab-source"):
             self.win.show_part(key)
             found += self.check(self.win, f"主画面 S11（SWR） {key}")
         self.assertEqual(sorted(set(found)), [])

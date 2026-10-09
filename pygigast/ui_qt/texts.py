@@ -41,6 +41,13 @@ from .texts_display import (DISPLAY_ERRORS, DISPLAY_NORM_REASONS, DISPLAY_NOTICE
 from .texts_refvalue import *  # noqa: F401,F403 — 基準の値の語（設計E §6.7）
 from .texts_refvalue import REF_VALUE_ERRORS, REF_VALUE_NOTICES, ref_value_text, value_range_text
 
+# 「振幅の詳細」の単位と「S11 の表示」は同じ列の欄で、同じ幅（S-02）。幅はこの中の一番長い文字で決める（Qt の
+# tab_display・Web の fitColumns が同じものを測る）
+from ..core.view_units import LEVEL_UNITS as _LEVEL_UNITS  # noqa: E402
+
+UNIT_COLUMN_SAMPLES = [*_LEVEL_UNITS.values(), NF_TEXTS["level_unit_nf_item"], VIEW_TEXTS["level_unit_ratio_item"],
+                       *AXIS_FORMAT_NAMES.values()]
+
 
 def tpl(key: str, **kw) -> str:
     """TEMPLATES の `{名前}` を差し込む（JavaScript の GSTexts.fmt と同じ動き）。"""
