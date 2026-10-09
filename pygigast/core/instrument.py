@@ -73,6 +73,8 @@ GIGAST_PROFILE_PATH = Path(__file__).parent / "devices" / "gigast" / "profile.js
 RECONNECT_POLL_S = 0.5
 # 条件の変更・停止でいまの掃引の終わりを待つとき、残りがこれを超えたら進み具合を出す（設計B §7.2.1）
 WAIT_PROGRESS_THRESHOLD_S = 1.0
+# アプリを終えるとき、機器スレッドが機器を閉じ終えるのを待つ上限（秒）。PlutoSDR は位置の間で止まる（1位置 約 40ms）
+SHUTDOWN_DEVICE_WAIT_S = 3.0
 
 EventCallback = Callable[[str, dict], None]
 
@@ -787,6 +789,26 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
 
     # ------------------------------------------------------------------ 命令
 
+    def _close_device_for_exit(self) -> None:
+        """アプリを終える: 機器を閉じ終える（送信を止め終える）まで待ってから戻る。
+
+        機器スレッドは daemon なので、待たずに戻るとプロセスの終わりで、閉じる（PlutoSDR は送信を止める）前に消える。
+        待つのは SHUTDOWN_DEVICE_WAIT_S まで。終わらなければ、閉じる側から送信を直接止める（emergency_tx_off）。
+        GigaSt は送信を掃引の要求の間だけ出す（止めると止まる）ので、待つのは送信を自分で止める機器（emergency_tx_off を
+        持つ PlutoSDR）だけ。
+        """
+        worker, dev = self._worker, self._device
+        off = getattr(dev, "emergency_tx_off", None) if dev is not None else None
+        self._drop_device()
+        if worker is None or off is None:
+            return
+        worker.join(SHUTDOWN_DEVICE_WAIT_S)
+        if worker.is_alive():
+            try:
+                off()
+            except Exception:  # noqa: BLE001 — 終える処理は続ける
+                pass
+
     def _cmd__shutdown(self) -> None:
         if self._step_job is not None:
             # SG の周波数を始める前に戻してから状態を残す（次の起動でステップ掃引の段の周波数にならない）
@@ -794,7 +816,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
 
             self._step_stop(Cancelled())
         self._shutdown_rtltcp()
-        self._drop_device()
+        self._close_device_for_exit()
         self._shutdown_playback()
         self._shutdown_waterfall()
         self._shutdown_files()

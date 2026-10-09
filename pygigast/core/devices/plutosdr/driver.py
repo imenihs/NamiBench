@@ -258,6 +258,7 @@ class PlutoSdrDevice(Device):
         self._tx_atten = float(self._profile["source"]["tx_atten_db"]["default"])
         self._tx_state: Optional[tuple] = None  # このアプリが出している送信（None は出していない）
         self._tx_buf = None
+        self._tx_forbidden = False
         self.fixed_center_hz: Optional[int] = None
         # rtl_tcp の出口へ IQ を見せる口: (complex64 の IQ（振り切れ ±1.0）, LO の Hz, 標本化の Hz)。機器スレッドから呼ぶ
         self.iq_sink: Optional[Callable[[np.ndarray, int, int], None]] = None
@@ -524,7 +525,7 @@ class PlutoSdrDevice(Device):
         if mode == Mode.SG:
             self._tx_tone(int(sweep.sg_hz))
         elif mode == Mode.TG:
-            self._tx_multitone(p)
+            self._tx_multitone(p, int(pl.centers[0]))
         else:
             self._tx_off()
         # TG は方形の窓で読む: 多トーンは全部の格子にあり、Hann などでは隣の格子のトーンが漏れ込んで位相しだいで
@@ -603,62 +604,105 @@ class PlutoSdrDevice(Device):
         if b is not None:
             b.destroy()
 
+    def _atten_min_text(self) -> str:
+        return f"{float(self._profile['source']['tx_atten_db']['min']):.2f}"
+
     def _tx_off(self) -> None:
-        """このアプリが出した送信を止める（出していなければ何もしない）。"""
+        """このアプリが出した送信を止める（出していなければ何もしない）。減衰を最大にしてから LO を止め、波形を消す。"""
         if self._tx_state is None:
             return
         self._tx_state = None
         self._tx_tuned_hz = None
+        self._txc.set_attr("hardwaregain", self._atten_min_text())
+        self._txlo.set_attr("powerdown", 1)
         self._destroy_tx_buffer()
         self._dds_off()
-        self._txc.set_attr("hardwaregain", f"{float(self._profile['source']['tx_atten_db']['min']):.2f}")
+
+    def _tx_safe_start(self, lo_hz: int) -> None:
+        """送信を始める（種類を変える）ときの決まった手順の前半: 出力をいちばん小さくして LO を止め、前の波形を消し、
+        LO を出したい周波数に合わせる。電源を入れた直後の状態（送信の LO 2450MHz で動作・減衰 −10dB）や前の種類の
+        波形のまま、利用者の周波数・減衰より先に出力が出ないようにする。後半は波形 → LO を動かす → 利用者の減衰。"""
+        self._txc.set_attr("hardwaregain", self._atten_min_text())
         self._txlo.set_attr("powerdown", 1)
+        self._destroy_tx_buffer()
+        self._dds_off()
+        self._txlo.set_attr("frequency", int(lo_hz))
+        self._tx_tuned_hz = int(lo_hz)
+
+    def _tx_retune(self, lo_hz: int) -> None:
+        """出している間に送信の LO を動かす（SG の周波数を変えた）: 動かす間は出力をいちばん小さくする。"""
+        self._txc.set_attr("hardwaregain", self._atten_min_text())
+        self._txlo.set_attr("frequency", int(lo_hz))
+        self._tx_tuned_hz = int(lo_hz)
+        self._txc.set_attr("hardwaregain", self._atten_text())
+
+    def _check_tx_allowed(self) -> None:
+        if self._tx_forbidden:
+            raise DeviceDisconnected("閉じている途中（送信は出さない）")
 
     def _tx_tone(self, sg_hz: int) -> None:
         """SG: 送信の LO を SG の周波数 − DDS のずらし に合わせ、DDS で1本のトーンを出す。"""
+        self._check_tx_allowed()
         src = self._profile["source"]
         off = int(src["dds_offset_hz"])
+        lo = int(sg_hz) - off
         want = ("sg", int(sg_hz), self._atten_text())
         if self._tx_state == want:
             return
         if self._tx_state is None or self._tx_state[0] != "sg":
-            self._destroy_tx_buffer()
+            self._tx_safe_start(lo)
             scale = f"{float(src['dds_scale']):.6f}"
             ph = int(src.get("dds_phase_i_mdeg", 90000))
-            self._dds[_DDS_I2].set_attr("scale", "0")
-            self._dds[_DDS_Q2].set_attr("scale", "0")
             for name, phase in ((_DDS_I1, ph), (_DDS_Q1, 0)):
                 ch = self._dds[name]
                 ch.set_attr("frequency", off)
                 ch.set_attr("phase", phase)
                 ch.set_attr("scale", scale)
             self._dds[_DDS_I1].set_attr("raw", 1)
-        lo = int(sg_hz) - off
-        self._txlo.set_attr("frequency", lo)
-        self._tx_tuned_hz = lo
-        self._txc.set_attr("hardwaregain", self._atten_text())
-        self._txlo.set_attr("powerdown", 0)
+            self._txlo.set_attr("powerdown", 0)
+            self._txc.set_attr("hardwaregain", self._atten_text())
+        elif self._tx_tuned_hz != lo:
+            self._tx_retune(lo)
+        else:
+            self._txc.set_attr("hardwaregain", self._atten_text())
         self._tx_state = want
 
-    def _tx_multitone(self, p: FftParams) -> None:
-        """TG: 受信の FFT の格子に乗る多トーンを循環バッファで出す（LO は位置ごとに受信へ合わせる）。"""
+    def _tx_multitone(self, p: FftParams, first_lo_hz: int) -> None:
+        """TG: 受信の FFT の格子に乗る多トーンを循環バッファで出す（LO は位置ごとに受信へ合わせる）。
+        first_lo_hz は最初の位置の LO（始めるときは、ここへ合わせてから出す）。"""
+        self._check_tx_allowed()
         src = self._profile["source"]
         want = ("tg", p.n, p.grid, p.half, p.delta, self._atten_text())
         if self._tx_state == want:
             return
         if self._tx_state is None or self._tx_state[:5] != want[:5]:
-            self._destroy_tx_buffer()
-            self._dds_off()
+            self._tx_safe_start(first_lo_hz)
             for ch in self._dac_iq:
                 ch.enable()
             x = tones.multitone(p.n, p.grid, p.half, p.delta, float(src.get("tg_multitone_peak", 0.5)))
             buf = self._dac.create_buffer(p.n, cyclic=True)
             buf.push(tones.to_int16_iq(x, int(src.get("tx_full_scale", 32767))))
             self._tx_buf = buf
-            self._tx_tuned_hz = None
+            self._txlo.set_attr("powerdown", 0)
         self._txc.set_attr("hardwaregain", self._atten_text())
-        self._txlo.set_attr("powerdown", 0)
         self._tx_state = want
+
+    def emergency_tx_off(self, wait_s: float = 0.5) -> None:
+        """閉じる途中（アプリを終える）で、機器スレッドがまだ終わらないときにほかのスレッドから呼ぶ: 送信を止め、以後は
+        出させない。機器スレッドの測定が口を握ったままでも、待つのは wait_s まで（その後は握らずに書く。終わる直前の
+        1回だけなので、測定の書き込みと重なっても止める方を優先する）。"""
+        self._tx_forbidden = True
+        got = self._lock.acquire(timeout=wait_s)
+        try:
+            if self._ctx is None or self._tx_state is None:
+                return
+            try:
+                self._tx_off()
+            except IioError:
+                pass
+        finally:
+            if got:
+                self._lock.release()
 
     def on_idle(self) -> None:
         """掃引を渡されていない間（機器スレッド）: このアプリが出した送信を止める（設計L: 出しているのは掃引の間）。"""

@@ -327,6 +327,170 @@ class TestInstrument(PlutoCase):
             self.call("stop")
 
 
+def _output_on_wrong(log, start_attrs, target_lo, atten_min=-89.75):
+    """送信の書き込みを順に再生し、「出力が出ている（LO が動作・DDS の大きさ > 0 か循環バッファあり）のに、減衰が最小より
+    大きく、LO が目的の周波数でない」瞬間があれば、その書き込みを返す（無ければ None）。"""
+    pd_ = start_attrs["powerdown"]
+    att = start_attrs["atten"]
+    lo = start_attrs["lo"]
+    scale = start_attrs["scale"]
+    buf = False
+    for dev, name, val in log:
+        if dev == "ad9361-phy/altvoltage1_out" and name == "powerdown":
+            pd_ = str(val)
+        elif dev == "ad9361-phy/altvoltage1_out" and name == "frequency":
+            lo = int(val)
+        elif dev == "ad9361-phy/voltage0_out" and name == "hardwaregain":
+            att = float(val)
+        elif dev == "cf-ad9361-dds-core-lpc/altvoltage0_out" and name == "scale":
+            scale = float(val)
+        elif dev == "cf-ad9361-dds-core-lpc/buffer_out":
+            buf = name == "push"
+        on = pd_ == "0" and (scale > 0 or buf)
+        if on and att > atten_min and lo != target_lo:
+            return (dev, name, val, {"lo": lo, "atten": att})
+    return None
+
+
+class TestTxSafety(unittest.TestCase):
+    """送信の安全（レビュー 1巡目）: 始める順番と、アプリを終えるときに止め終えること。"""
+
+    def setUp(self):
+        self.lib = fake_lib()
+        self.dev = pd.PlutoSdrDevice(lib=self.lib)
+        self.dev.open(FAKE_URI)
+        self.model = SweepModel(self.dev.profile(), pd.timing_fn(self.dev.profile()))
+        # 電源を入れた直後の状態（実機で読んだ値: 送信の LO 2450MHz で動作・減衰 −10dB・DDS の大きさ 0）
+        self.start = {"powerdown": "0", "atten": -10.0, "lo": 2_450_000_000, "scale": 0.0}
+
+    def tearDown(self):
+        self.dev.close()
+
+    def tx_log(self, n0):
+        return [w for w in self.lib.pluto.log[n0:] if w[0].startswith("cf-ad9361-dds-core-lpc")
+                or w[0] in ("ad9361-phy/altvoltage1_out", "ad9361-phy/voltage0_out")]
+
+    def check_order(self, log, target_lo, user_atten):
+        self.assertEqual(log[0][:2], ("ad9361-phy/voltage0_out", "hardwaregain"))  # まず出力をいちばん小さく
+        self.assertEqual(float(log[0][2]), -89.75)
+        self.assertIsNone(_output_on_wrong(log, self.start, target_lo))
+        names = [(w[0], w[1]) for w in log]
+        i_lo = names.index(("ad9361-phy/altvoltage1_out", "frequency"))
+        i_up = max(i for i, n in enumerate(names) if n == ("ad9361-phy/altvoltage1_out", "powerdown") and log[i][2] in (0, "0"))
+        self.assertLess(i_lo, i_up)
+        self.assertEqual(log[-1][:2], ("ad9361-phy/voltage0_out", "hardwaregain"))  # 利用者の減衰は最後
+        self.assertEqual(float(log[-1][2]), user_atten)
+
+    def test_sg_start_order_from_power_up(self):
+        self.dev.set_tx_atten(-80)
+        a = self.model.apply(SweepRequest(mode=Mode.SG, sg_hz=433 * MHZ), self.model.default())
+        n0 = len(self.lib.pluto.log)
+        self.dev.measure(a)
+        self.check_order(self.tx_log(n0), 432 * MHZ, -80.0)
+
+    def test_tg_start_order_from_power_up(self):
+        self.dev.set_tx_atten(-80)
+        a = self.model.apply(SweepRequest(mode=Mode.TG), self.model.default())
+        p, pl = pd.make_plan(self.dev.profile(), a.axis, a.rbw_hz)
+        n0 = len(self.lib.pluto.log)
+        self.dev.measure(a)
+        log = self.tx_log(n0)
+        # 追従で LO が動く前（最初の位置）までの書き込みで確かめる
+        first = [i for i, w in enumerate(log) if w[1] == "frequency" and w[0] == "ad9361-phy/altvoltage1_out"]
+        upto = first[1] if len(first) > 1 else len(log)
+        self.check_order(log[:upto], pl.centers[0], -80.0)
+
+    def test_sg_frequency_change_while_on_is_muted(self):
+        a = self.model.apply(SweepRequest(mode=Mode.SG, sg_hz=433 * MHZ), self.model.default())
+        self.dev.set_tx_atten(-20)
+        self.dev.measure(a)
+        b = self.model.apply(SweepRequest(sg_hz=500 * MHZ), a)
+        n0 = len(self.lib.pluto.log)
+        self.dev.measure(b)
+        st = {"powerdown": "0", "atten": -20.0, "lo": 432 * MHZ, "scale": 0.5}
+        self.assertIsNone(_output_on_wrong(self.tx_log(n0), st, 499 * MHZ))
+
+    def test_emergency_off_from_other_thread_while_measuring(self):
+        a = self.model.apply(SweepRequest(mode=Mode.SG, sg_hz=433 * MHZ), self.model.default())
+        self.dev.measure(a)
+        pl = self.lib.pluto
+        gate = threading.Event()
+        orig = pl.samples
+
+        def slow(n):
+            gate.wait(5)
+            return orig(n)
+
+        pl.samples = slow
+        t = threading.Thread(target=lambda: self._swallow(a), daemon=True)
+        t.start()
+        time.sleep(0.2)  # 測定が口を握って止まっている
+        self.dev.emergency_tx_off(wait_s=0.1)
+        self.assertEqual(pl.attrs[("ad9361-phy", "altvoltage1", True, "powerdown")], "1")
+        gate.set()
+        t.join(5)
+        pl.samples = orig
+        with self.assertRaises(DeviceDisconnected):
+            self.dev.measure(a)  # 閉じる途中は送信を出し直さない
+        self.assertEqual(pl.attrs[("ad9361-phy", "altvoltage1", True, "powerdown")], "1")
+
+    def _swallow(self, a):
+        try:
+            self.dev.measure(a)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class TestShutdownStopsTx(PlutoCase):
+    def tearDown(self):
+        if not getattr(self, "_shut", False):
+            self.inst.shutdown()
+        self.tmp.cleanup()
+
+    def start_output(self, mode):
+        self.call("connect", backend="plutosdr", serial=FAKE_SERIAL)
+        self.call("set_mode", mode=mode, sg_hz=90_500_000)
+        self.call("run", mode="continuous")
+        pl = self.lib.pluto
+        end = time.monotonic() + 5
+        while pl.attrs[("ad9361-phy", "altvoltage1", True, "powerdown")] != "0":
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.02)
+        return pl
+
+    def shutdown_and_check(self, pl, slow=True):
+        if slow:
+            # 1回の読みを遅くして、機器スレッドが閉じる前に shutdown が戻る形を確実に作る（直す前は戻った時点で出力中）
+            orig = pl.samples
+            pl.samples = lambda n: (time.sleep(0.3), orig(n))[1]
+            time.sleep(0.1)
+        self.inst.shutdown()
+        self._shut = True
+        self.assertEqual(pl.attrs[("ad9361-phy", "altvoltage1", True, "powerdown")], "1")
+        self.assertEqual(float(pl.attrs[("ad9361-phy", "voltage0", True, "hardwaregain")].split()[0]), -89.75)
+
+    def test_shutdown_returns_after_sg_off(self):
+        self.shutdown_and_check(self.start_output("sg"))
+
+    def test_shutdown_returns_after_tg_off(self):
+        self.shutdown_and_check(self.start_output("tg"))
+    def test_shutdown_turns_tx_off_when_device_thread_hangs(self):
+        import pygigast.core.instrument as ins
+
+        pl = self.start_output("sg")
+        gate = threading.Event()
+        orig = pl.samples
+        pl.samples = lambda n: (gate.wait(10), orig(n))[1]
+        time.sleep(0.2)
+        old = ins.SHUTDOWN_DEVICE_WAIT_S
+        ins.SHUTDOWN_DEVICE_WAIT_S = 0.3
+        try:
+            self.shutdown_and_check(pl, slow=False)
+        finally:
+            ins.SHUTDOWN_DEVICE_WAIT_S = old
+            gate.set()
+
+
 def _free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
