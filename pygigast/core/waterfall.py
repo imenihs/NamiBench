@@ -203,6 +203,14 @@ class AutoRange:
         self._commit_t: Optional[float] = None
         self.range: Optional[tuple[float, float]] = None
 
+    def shift(self, delta_db: float) -> None:
+        """追っている範囲を delta_db だけ動かす（行の値が同じだけ動いたとき: 基準の値を直した 設計E §6.7）。"""
+        if self._lo is not None:
+            self._lo += delta_db
+            self._hi += delta_db
+        if self.range is not None:
+            self.range = (round(self.range[0] + delta_db, 2), round(self.range[1] + delta_db, 2))
+
     def feed(self, values_display: np.ndarray, now: float) -> bool:
         """1行の値（表示の単位）を入れる。見せる範囲が変わったら True。"""
         st = finite_stats(values_display)

@@ -148,9 +148,9 @@ class FilesMixin:
         self._cur_fut = None
         sel = (st or {}).get("reference") or {}
         self._saved_reference = sel if isinstance(sel, dict) and sel.get("id") and sel.get("serial") else None
-        # トレースの値がどの基準の比か（番号 → 基準の id。比でなければ None）。基準の値を直したとき、その基準の比を
-        # 持っているトレースだけを動かすため（設計E §6.7。固定のトレースは固定したときの基準のまま）
-        self._trace_refs: dict[int, Optional[str]] = {}
+        # トレースの値がどの基準の比か（番号 → (基準の id, 当てた基準の値)。比でなければ None）。基準の値を直したとき、
+        # その基準の比を持っているトレースだけを動かすため（設計E §6.7。固定のトレースは固定したときの基準のまま）
+        self._trace_refs: dict[int, Optional[tuple[str, float]]] = {}
 
     def _files_state_to_save(self) -> dict:
         ref = self._ref
@@ -376,8 +376,9 @@ class FilesMixin:
         raise self._error("bad_value", "value_db", {"value": value_db})
 
     def _cmd_reference_set_value(self, id, value_db) -> object:  # noqa: A002
-        """基準の値を直す（測り直さない: 設計E §6.7）。いま使っている基準なら、その比を持つトレースと、縦軸が
-        その比の間は REF・しきい値・XY カーソルの Y も同じだけずらす（絵は変えない: 設計書 O §1.4 と同じ）。
+        """基準の値を直す（測り直さない: 設計E §6.7）。その基準の比で表した値（トレース・XY カーソルの Y・しきい値・
+        ウォーターフォールの行など）を同じだけずらす（絵は変えない: 設計書 O §1.4 と同じ。_ref_value_moved）。いま使って
+        いない基準でも、その比の値（固定したトレース・再生している記録）は動かす。
         S11 の基準は全反射が 0dB と決まっているので直せない（reference_value_s11）。"""
         v = self._value_arg(value_db)
         if self._ref_job is not None:
@@ -399,40 +400,71 @@ class FilesMixin:
         def then(res) -> dict:
             ref, old = res
             cur = self._ref
-            if cur is not None and cur.ref_id == ref.ref_id and cur.value_db != v:
-                self._ref_value_moved(cur.value_db, v)
+            if cur is not None and cur.ref_id == ref.ref_id:
+                old = cur.value_db
                 cur.value_db = v
+            if old != v:
+                self._ref_value_moved(ref.ref_id, ref.name, old, v)
                 self._changed()
             return {"id": ref.ref_id, "value_db": v, "previous": old}
 
         return self._io(job, then)
 
-    def _note_trace_refs(self, ref_id: Optional[str]) -> None:
-        """この掃引を受けるトレース（固定のほか全部）の値が、どの基準の比になるかを覚える（_normalize から）。"""
+    def _note_trace_refs(self, ref_id: Optional[str], value_db: float = 0.0) -> None:
+        """この掃引を受けるトレース（固定のほか全部）の値が、どの基準の比（と基準の値）になるかを覚える
+        （_normalize・再生の _pb_normalize から）。"""
+        ent = None if ref_id is None else (ref_id, float(value_db))
         for t in self._traces:
             if t.action != TraceAction.FIXED:
-                self._trace_refs[t.number] = ref_id
+                self._trace_refs[t.number] = ent
 
-    def _ref_value_moved(self, old: float, new: float) -> None:
-        """いま使っている基準の値が old → new になった（直した・上書き合成で変わった）。
+    def _tg_ref_of(self, t) -> Optional[str]:
+        """トレースが TG の基準との比の値を持っていれば、その基準の id（S11 の比・電力・NF・値なしは None）。"""
+        ent = self._trace_refs.get(t.number)
+        if ent is None or t.values is None or t.quantity != Quantity.RATIO or t.mode != Mode.TG:
+            return None
+        return ent[0]
 
-        その基準の比を持っているトレース（流す表示の点も）を同じだけ動かす。いまの縦軸がその基準の比（TG で当てた
-        比を出している）なら、縦軸に結び付いた REF・ピーク探索のしきい値・比の dB で置いた XY カーソルの Y・比の dB で
-        決めたマーカーのしきい値も同じだけずらす（core/ref_value.py）。電力の縦軸の間はずらさない（単位の変更と同じ）。
+    def _axis_ref(self) -> Optional[str]:
+        """いまの縦軸が TG の基準との比なら、その基準の id（値のあるトレースが無ければ、TG モードで比の縦軸のとき
+        いま選んでいる基準）。"""
+        from .marker.markers import Y_KIND_TG
+
+        t = self._axis_trace()
+        if t is not None:
+            return self._tg_ref_of(t)
+        ref = self._ref
+        return ref.ref_id if self._axis_kind() == Y_KIND_TG and ref is not None and ref.mode == Mode.TG else None
+
+    def _ref_value_moved(self, ref_id: str, name: str, old: float, new: float) -> None:
+        """基準 ref_id の値が old → new になった（直した・上書き合成で変わった）。その基準の比で表した値だけを、
+        同じだけ動かす（絵は変えず数字だけが新しい値になる: 設計書 O §1.4 と同じ。決まりは core/ref_value.py）。
+
+        - トレース（固定も。値・平均と保持の蓄積・流す表示の点）: その基準の比を持つものだけ（当てた値から新しい値へ）
+        - XY カーソルの Y・マーカーのしきい値: その基準の比で決めたものだけ
+        - REF・ピーク探索のしきい値: いまの縦軸がその基準の比のときだけ（電力・S11・NF の縦軸の間は動かさない）
+        - ウォーターフォールのライブの行・密度・色の範囲・過去のトレース（instrument_waterfall.py）
+        記録（再生・記録の作業ファイル）は記録したときの値のまま動かさない（instrument_playback.py）。再生中は画面が
+        記録の絵なので、REF・XY カーソルの Y・しきい値・色の範囲も動かさない（動かすのはライブで測った値だけ）。
         """
         delta = float(new) - float(old)
-        ref = self._ref
-        if not delta or ref is None:
+        if not delta:
             return
         # どの口から変わっても全部の画面が一度知らせる（黙って数字を変えない: J §4.10 の 4 と同じ）
-        self._notice("reference_value_changed", {"name": ref.name, "value_db": float(new), "previous": float(old)})
+        self._notice("reference_value_changed", {"name": name, "value_db": float(new), "previous": float(old)})
+        live = self._playback is None
+        axis = live and self._axis_ref() == ref_id  # 動かす前の縦軸で決める
         for t in self._traces:
-            if t.values is not None and t.quantity == Quantity.RATIO and self._trace_refs.get(t.number) == ref.ref_id:
-                t.scale_db(delta)
-                self._zs.shift_db(t.number, delta)
-        if (self._adopted.mode == Mode.TG and self._last_quantity == Quantity.RATIO
-                and self._norm_state.get("applied")):
-            shift_ratio_levels(self._amplitude, self._marker_tables.values(), delta)
+            ent = self._trace_refs.get(t.number)
+            if ent is None or ent[0] != ref_id:
+                continue
+            self._trace_refs[t.number] = (ref_id, float(new))
+            if t.values is not None and t.quantity == Quantity.RATIO:
+                t.scale_db(float(new) - ent[1])
+                self._zs.shift_db(t.number, float(new) - ent[1])
+        if live:
+            shift_ratio_levels(self._marker_tables.values(), ref_id, delta, self._amplitude if axis else None)
+        self._wf_ref_value_moved(ref_id, float(new))
         self._emit_visible_traces()
 
     def _load_saved_reference(self) -> None:
@@ -670,8 +702,8 @@ class FilesMixin:
                     self._end_task(job.task, exc)
                     return
                 if merge and self._ref is cur and cur.value_db != target.value_db:
-                    # 上書き合成で基準の値が変わった: 直したのと同じく、持っている比と縦軸の数字を同じだけずらす
-                    self._ref_value_moved(cur.value_db, target.value_db)
+                    # 上書き合成で基準の値が変わった: 直したのと同じく、その基準の比の値を同じだけずらす
+                    self._ref_value_moved(cur.ref_id, cur.name, cur.value_db, target.value_db)
                 self._set_reference(target)
                 # 0dB が見える REF にするのは dB の縦軸だけ（|Γ|・SWR の縦軸は REF を持たず、黙って REF の数字を変えない）
                 extra = (self._show_zero_level(target.applied_value_db)
