@@ -5,7 +5,10 @@
 - 時刻のカーソル（掃引の番号）を動かすと、その掃引をトレースの処理に通してスペクトルに出す（マーカー・Max Hold・
   書き出し・切り出しはライブと同じに使える: P §5）。再生・一時停止・速さ（等倍・数倍）
 - 掃引はそのとき使った条件・校正で換算する（record_frames.py）。基準との比で記録した区間は、記録に書いた基準の
-  ファイルを読んで当てる（読めなければ電力のまま、理由を状態に出す）
+  ファイルを読んで当てる（読めなければ電力のまま、理由を状態に出す）。基準の値は記録に書いた値（記録したときの
+  値。書いていない前の版は 0 dB）で当て、いまの基準のファイルの値は使わない（記録は測ったときの設定ごと再現する。
+  基準の値を後で直しても過去の記録は変わらない: 設計E §6.7）。再生のトレースはどの基準の比としても覚えない
+  （基準の値を直しても動かさない）
 - 周波数方向の拡大（上段の欄・グラフのドラッグ・ホイール）は、再生中は表示の範囲を変えるだけ（測り直さない。
   保存時の Step より細かくはならない: H §3.1）。範囲は記録の区間の中に収め、収めたら知らせる（M-02）
 - 読むのは書き込みスレッド（設計A §4.2）。次の掃引を出す時刻は記録の時刻の差 ÷ 速さ（間が長いところは
@@ -102,6 +105,16 @@ def _norm_offset(levels: SegmentLevels, ref, serial: str, connected_at: float, n
         return (20.0 * np.log10(np.asarray(res.frame.values, dtype=np.float64)) - 30.0).astype(np.float32)
 
 
+def _recorded_value(meta: dict) -> float:
+    """記録に書いた基準の値（dB）。書いていない前の版・読めない値は 0 dB。"""
+    from .normalize import check_value_db
+
+    try:
+        return check_value_db(meta.get("value_db", 0.0))
+    except ValueError:
+        return 0.0
+
+
 class PlaybackMixin:
     """記録の再生（Instrument に混ぜる）。"""
 
@@ -149,6 +162,8 @@ class PlaybackMixin:
         if s.quantity == "ratio" and meta:
             ref = self._load_ref_by_id(src.header.device_serial, meta.get("id"))
             if ref is not None:
+                # 記録したときの基準の値で当てる（いまのファイルの値ではない。書いていない前の版は 0 dB: 設計E §6.7）
+                ref.value_db = _recorded_value(meta)
                 offset = _norm_offset(levels, ref, src.header.device_serial, float(meta.get("connected_at") or 0.0),
                                       float(s.t_first) if s.n_sweeps else 0.0)
         hit = (levels, offset, ref, meta)
@@ -323,6 +338,8 @@ class PlaybackMixin:
 
     def _pb_normalize(self, s: _Session, seg: _PbSegment, frame: Frame) -> Frame:
         """記録した区間が基準との比なら、記録に書いた基準を当てる。当てられなければ電力のまま理由を出す。"""
+        # 再生のトレースは記録したときの値のまま（どの基準の比としても覚えず、基準の値を直しても動かさない: 設計E §6.7）
+        self._note_trace_refs(None)
         if seg.quantity != "ratio":
             self._norm_state = {"used": False}
             return frame

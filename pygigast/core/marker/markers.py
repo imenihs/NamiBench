@@ -79,17 +79,21 @@ class ThresholdSetting:
     いまの形式の値に直して探す・出す（SWR 2 で決めたしきい値は |Γ| では 0.33。数字のまま別の意味にしない）。
     power は電力のトレース（dBm・dBμV など）で決めたしきい値か。電力の単位・外部補正を替えたときに同じだけずらすのは
     これだけ（設計書 O §1.4。比の dB・|Γ|・SWR のしきい値は電力の単位に関係しない）。
+    ref は TG の基準との比のトレースで決めたしきい値なら、その基準の id（設計E §6.7）。基準の値を直したときに同じだけ
+    ずらすのはこれだけ（S11 のリターンロス・NF の dB・電力・|Γ|・SWR で決めたしきい値は基準の値に関係しない）。TG の比は
+    反射の形式（|Γ|・SWR）へ直さない。
     """
 
     level: float
     side: str
     fmt: str = an.formats.DB
     power: bool = False
+    ref: Optional[str] = None
 
     def level_in(self, fmt: str, ratio_view: bool = True) -> float:
         """fmt の形式のトレースで使うしきい値。直すのは、比で決めたしきい値を比のトレースで読むときだけ（比の形式の間:
-        設計R §3）。電力で決めたしきい値・電力のトレースでは数字のまま（電力と比の間では直さない）。"""
-        if self.power or not ratio_view:
+        設計R §3）。電力で決めたしきい値・TG の基準との比で決めたしきい値・電力のトレースでは数字のまま。"""
+        if self.power or self.ref is not None or not ratio_view:
             return self.level
         return an.formats.convert_value(self.level, self.fmt, fmt)
 
@@ -128,10 +132,11 @@ class XYCursors:
     """自由な XY カーソル（設計G §3.5）。トレースに載らず、値を読まない。
 
     x は周波数（Hz の int）、y はレベル（縦軸の単位の数値）。None は置いていない。
-    y1_kind・y2_kind は y を置いたときの縦軸の単位の種類（Y_KINDS: "power"＝電力の単位・"db"・"gamma"・"swr"＝比の
-    表示の形式・"nf"＝NF の dB。None は分からない前の版）。y は置いたときの単位にだけ従って直す: 電力の値は電力の縦軸のときに電力の
-    単位・外部補正の分だけずらし、比の形式の値は比の縦軸の形式が替わったときに同じ反射の大きさへ直す
-    （設計書 O §1.4・設計R §3）。
+    y1_kind・y2_kind は y を置いたときの縦軸の単位の種類（Y_KINDS: "power"＝電力の単位・"db"・"gamma"・"swr"＝S11 の
+    比の表示の形式・"tg"＝TG の基準との比の dB・"nf"＝NF の dB。None は分からない前の版）。y は置いたときの単位にだけ従って
+    直す: 電力の値は電力の縦軸のときに電力の単位・外部補正の分だけずらし、S11 の比の形式の値は比の縦軸の形式が替わったときに
+    同じ反射の大きさへ直し（設計書 O §1.4・設計R §3）、TG の基準との比の値はその基準の値を直したときだけ同じだけずらす
+    （y1_ref・y2_ref はその基準の id: 設計E §6.7）。
     """
 
     x1_hz: Optional[int] = None
@@ -140,13 +145,17 @@ class XYCursors:
     y2: Optional[float] = None
     y1_kind: Optional[str] = None
     y2_kind: Optional[str] = None
+    y1_ref: Optional[str] = None
+    y2_ref: Optional[str] = None
 
 
-# XY カーソルの y を置いたときの縦軸の単位の種類（電力・比の表示の形式・NF の dB）。NF の縦軸（設計M）で置いた y は
-# 電力の単位でずらさず、比の形式としても直さない
+# XY カーソルの y を置いたときの縦軸の単位の種類（電力・S11 の比の表示の形式・TG の基準との比・NF の dB）。NF の縦軸
+# （設計M）で置いた y は電力の単位でずらさず、比の形式としても直さない。TG の基準との比（設計E §6.7）で置いた y は
+# その基準の値を直したときだけずらし、反射の形式（|Γ|・SWR）へは直さない
 Y_KIND_POWER = "power"
 Y_KIND_NF = "nf"
-Y_KINDS = (Y_KIND_POWER, an.formats.DB, an.formats.GAMMA, an.formats.SWR, Y_KIND_NF)
+Y_KIND_TG = "tg"
+Y_KINDS = (Y_KIND_POWER, an.formats.DB, an.formats.GAMMA, an.formats.SWR, Y_KIND_NF, Y_KIND_TG)
 
 
 @dataclass(frozen=True)
@@ -307,7 +316,8 @@ class MarkerTable:
         return {
             "markers": [marker_to_def(m) for m in self.markers()],
             "xy": {"x1_hz": self.xy.x1_hz, "x2_hz": self.xy.x2_hz, "y1": self.xy.y1, "y2": self.xy.y2,
-                   "y1_kind": self.xy.y1_kind, "y2_kind": self.xy.y2_kind},
+                   "y1_kind": self.xy.y1_kind, "y2_kind": self.xy.y2_kind,
+                   "y1_ref": self.xy.y1_ref, "y2_ref": self.xy.y2_ref},
             "excursion_db": float(self.excursion_db),
             "peak_threshold": None if self.peak_threshold is None else float(self.peak_threshold),
         }
@@ -349,7 +359,8 @@ class MarkerTable:
                 self.set_xy(**{k: xy.get(k) for k in ("x1_hz", "x2_hz", "y1", "y2")})
                 for k in ("y1", "y2"):
                     kind = xy.get(k + "_kind")
-                    self.set_y_kind(k, kind if kind in Y_KINDS else None)
+                    ref = xy.get(k + "_ref")
+                    self.set_y_kind(k, kind if kind in Y_KINDS else None, ref if isinstance(ref, str) else None)
             except (KeyError, TypeError, ValueError):
                 self.xy = XYCursors()
         try:
@@ -739,12 +750,16 @@ class MarkerTable:
             setattr(self.xy, k, val)
             if k.startswith("y"):
                 setattr(self.xy, k + "_kind", None)  # 置いたときの単位は呼ぶ側が入れる（set_y_kind）
+                setattr(self.xy, k + "_ref", None)
 
-    def set_y_kind(self, k: str, kind: Optional[str]) -> None:
-        """y1・y2 を置いたときの縦軸の単位の種類（Y_KINDS か None）。y が無ければ None。"""
+    def set_y_kind(self, k: str, kind: Optional[str], ref: Optional[str] = None) -> None:
+        """y1・y2 を置いたときの縦軸の単位の種類（Y_KINDS か None）。y が無ければ None。ref は TG の基準との比（"tg"）の
+        ときだけ持つ、その基準の id（設計E §6.7）。"""
         if k not in ("y1", "y2") or (kind is not None and kind not in Y_KINDS):
             raise ValueError(f"{k} の単位の種類が不明: {kind}")
-        setattr(self.xy, k + "_kind", kind if getattr(self.xy, k) is not None else None)
+        has = getattr(self.xy, k) is not None
+        setattr(self.xy, k + "_kind", kind if has else None)
+        setattr(self.xy, k + "_ref", ref if has and kind == Y_KIND_TG else None)
 
     # ---- マーカーから条件を変える（設計G §3.4） ----
 
@@ -801,8 +816,10 @@ def marker_to_def(m: Marker) -> dict:
         "freq_offsets": [{"sign": o.sign.value, "delta_hz": int(o.delta_hz)} for o in m.freq_offsets],
         "level_offsets": [{"sign": o.sign.value, "delta_db": float(o.delta_db)} for o in m.level_offsets],
         "bandwidth_n_db": [float(x) for x in m.bandwidth_n_db],
-        "threshold": None if m.threshold is None else {"level": m.threshold.level, "side": m.threshold.side,
-                                                       "format": m.threshold.fmt, "power": m.threshold.power},
+        "threshold": None if m.threshold is None else {
+            "level": m.threshold.level, "side": m.threshold.side, "format": m.threshold.fmt, "power": m.threshold.power,
+            # TG の基準との比で決めたしきい値だけ、その基準の id（設計E §6.7）
+            **({"reference": m.threshold.ref} if m.threshold.ref is not None else {})},
         "polarity": m.polarity,
     }
 
@@ -833,4 +850,5 @@ def _threshold_from_def(th: dict) -> ThresholdSetting:
     （前の版は電力の単位を替えると、しきい値を電力として同じだけずらしていた）。"""
     fmt = th.get("format") if an.formats.is_format(th.get("format")) else an.formats.DB
     power = th["power"] if isinstance(th.get("power"), bool) else fmt == an.formats.DB
-    return ThresholdSetting(float(th["level"]), str(th["side"]), fmt, power)
+    ref = th.get("reference") if isinstance(th.get("reference"), str) and not power else None  # 設計E §6.7
+    return ThresholdSetting(float(th["level"]), str(th["side"]), fmt, power, ref)

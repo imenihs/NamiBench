@@ -18,7 +18,7 @@ from . import display_marks as dm
 from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
-from .marker.markers import Y_KIND_NF, Y_KIND_POWER, Marker
+from .marker.markers import Y_KIND_NF, Y_KIND_POWER, Y_KIND_TG, Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference
@@ -410,7 +410,7 @@ class DisplayMixin:
             return frame
         serial = (self._identity or {}).get("serial") or ""
         res = apply_reference(frame, self._ref, serial=serial, connected_at=self._connected_at or 0.0, now=time.time())
-        self._note_trace_refs(res.reference_id if res.applied else None)  # 基準の値を直したときに動かす相手（設計E §6.7）
+        self._note_trace_refs(res.reference_id if res.applied else None, res.value_db)  # 基準の値を直したとき動かす相手（設計E §6.7）
         self._norm_state = {
             "used": True,
             "applied": res.applied,
@@ -505,22 +505,27 @@ class DisplayMixin:
         """いまの縦軸の単位の種類（XY カーソルの Y を置いたときに記録する: markers.Y_KINDS）。
 
         縦軸は、表示していて値のある一番番号の小さいトレースの単位（画面の screen_s11.axis_unit と同じ決まり）。
-        そのトレースが比なら表示の形式（"db"・"gamma"・"swr"）、NF なら "nf"（設計M）、電力なら "power"。値のある
-        トレースが無ければ、NF モードは "nf"、ほかは縦軸の単位（振幅の単位: 比の dB なら "db"、無い・電力の単位なら
-        "power"）。without_traces が偽なら None。
+        そのトレースが TG の基準との比なら "tg"（設計E §6.7）、S11 の比なら表示の形式（"db"・"gamma"・"swr"）、NF なら
+        "nf"（設計M）、電力なら "power"。値のあるトレースが無ければ、NF モードは "nf"、ほかは縦軸の単位（振幅の単位: 比の
+        dB なら TG モードは "tg"・ほかは "db"、無い・電力の単位なら "power"）。without_traces が偽なら None。
         """
-        t = next((t for t in self._traces if t.visible and t.values is not None and t.quantity is not None), None)
+        t = self._axis_trace()
         if t is None:
             if not without_traces:
                 return None
             if self._adopted.mode == Mode.NF:
                 return Y_KIND_NF  # NF の縦軸（設計M）。掃引の前でも電力・比の値として扱わない
-            return _RATIO_AXIS_FORMATS.get(self._amplitude.get("unit"), Y_KIND_POWER)
+            kind = _RATIO_AXIS_FORMATS.get(self._amplitude.get("unit"), Y_KIND_POWER)
+            return Y_KIND_TG if kind == formats.DB and self._adopted.mode == Mode.TG else kind
         if t.quantity == Quantity.NF:
             return Y_KIND_NF
         if t.quantity != Quantity.RATIO:
             return Y_KIND_POWER
-        return self._trace_display(t)[2]
+        return Y_KIND_TG if t.mode == Mode.TG else self._trace_display(t)[2]
+
+    def _axis_trace(self):
+        """縦軸を決めるトレース（表示していて値のある一番番号の小さいもの）。無ければ None。"""
+        return next((t for t in self._traces if t.visible and t.values is not None and t.quantity is not None), None)
 
     def _follow_axis_format(self) -> None:
         """縦軸が比の dB・|Γ|・SWR のどれかのとき、XY カーソルの Y のうち別の比の形式で置いたものを、同じ反射の
@@ -532,12 +537,12 @@ class DisplayMixin:
         残っている振幅の単位で形式を行き来させない）。電力の単位の替え方は _set_view_opts。
         """
         fn = self._axis_kind(without_traces=False)
-        if fn in (None, Y_KIND_POWER, Y_KIND_NF):
+        if fn in (None, Y_KIND_POWER, Y_KIND_NF, Y_KIND_TG):
             return
         xy = self._markers.xy
         for k in ("y1", "y2"):
             v, fp = getattr(xy, k), getattr(xy, k + "_kind")
-            if v is None or fp in (None, Y_KIND_POWER, Y_KIND_NF) or fp == fn:
+            if v is None or fp in (None, Y_KIND_POWER, Y_KIND_NF, Y_KIND_TG) or fp == fn:
                 continue
             setattr(xy, k, formats.convert_value(v, fp, fn))
             setattr(xy, k + "_kind", fn)
@@ -1108,7 +1113,8 @@ class DisplayMixin:
                 self._markers.set_threshold(
                     m.id, None if threshold is None else ThresholdSetting(
                         float(threshold["level"]), str(threshold["side"]), v.fmt if v is not None else formats.DB,
-                        power=(v.quantity == Quantity.POWER) if v is not None else self._last_quantity == Quantity.POWER))
+                        power=(v.quantity == Quantity.POWER) if v is not None else self._last_quantity == Quantity.POWER,
+                        ref=self._tg_ref_of(self._traces[m.trace])))  # TG の基準との比なら基準の id（設計E §6.7）
         except (ValueError, TypeError, KeyError) as e:
             raise self._error("bad_marker_function", None, {"message": str(e)}) from e
         self._markers_changed()
@@ -1125,9 +1131,10 @@ class DisplayMixin:
         # Y は、置いたときの縦軸の単位の値として持つ（あとで単位・外部補正・形式を替えたときは、その単位に従ってだけ
         # ずらす・直す: _set_view_opts・_follow_axis_format）
         kind = self._axis_kind()
+        ref = self._axis_ref() if kind == Y_KIND_TG else None  # TG の基準との比ならその基準（設計E §6.7）
         for k in ("y1", "y2"):
             if k in kw:
-                self._markers.set_y_kind(k, kind)
+                self._markers.set_y_kind(k, kind, ref)
         self._markers_changed()
         return {"xy": self._marker_snap["xy"]}
 

@@ -20,7 +20,7 @@ import numpy as np
 
 from pygigast.core.instrument import CommandError
 from pygigast.core.marker import MarkerTable, ThresholdSetting
-from pygigast.core.marker.markers import Y_KIND_NF, Y_KIND_POWER, Kind
+from pygigast.core.marker.markers import Y_KIND_NF, Y_KIND_POWER, Y_KIND_TG, Kind
 from pygigast.core.normalize import (
     VALUE_DB_LIMIT,
     ReferenceFileError,
@@ -158,34 +158,45 @@ class HistoryShiftTest(unittest.TestCase):
 
 
 class ShiftLevelsTest(unittest.TestCase):
-    def test_only_values_set_in_ratio_db(self):
+    def test_only_values_set_in_that_references_ratio(self):
+        """動かすのは、その基準の比（種類 "tg" と基準の id）で決めた値だけ。S11 のリターンロス（"db"）・NF・電力・
+        |Γ|・SWR・別の基準・種類の分からない前の版は動かさない。REF・ピーク探索のしきい値は縦軸を渡したときだけ。"""
         amp = {"ref_level": 0.0}
         t = MarkerTable()
-        t.xy.y1, t.xy.y1_kind = -20.0, "db"
+        t.xy.y1, t.xy.y1_kind, t.xy.y1_ref = -20.0, Y_KIND_TG, "A"
         t.xy.y2, t.xy.y2_kind = -50.0, Y_KIND_POWER
         t.peak_threshold = -60.0
         tables = [t]
-        m_db = t.add(Kind.MANUAL, 1, 100 * MHZ, None)
-        self.assertTrue(m_db.ok, m_db)
-        t.get(m_db.marker_id).threshold = ThresholdSetting(-3.0, "below", fmt="db", power=False)
-        m_pw = t.add(Kind.MANUAL, 1, 101 * MHZ, None)
-        t.get(m_pw.marker_id).threshold = ThresholdSetting(-40.0, "below", fmt="db", power=True)
-        m_swr = t.add(Kind.MANUAL, 1, 102 * MHZ, None)
-        t.get(m_swr.marker_id).threshold = ThresholdSetting(2.0, "below", fmt="swr", power=False)
-        shift_ratio_levels(amp, tables, 40.0)
+        ths = {}
+        for i, (name, th) in enumerate((
+                ("tg_a", ThresholdSetting(-3.0, "below", fmt="db", power=False, ref="A")),
+                ("tg_b", ThresholdSetting(-6.0, "below", fmt="db", power=False, ref="B")),
+                ("s11_db", ThresholdSetting(-10.0, "below", fmt="db", power=False)),
+                ("nf", ThresholdSetting(3.0, "above", fmt="db", power=False)),
+                ("power", ThresholdSetting(-40.0, "below", fmt="db", power=True)),
+                ("swr", ThresholdSetting(2.0, "below", fmt="swr", power=False)))):
+            r = t.add(Kind.MANUAL, 1, (100 + i) * MHZ, None)
+            self.assertTrue(r.ok, r)
+            t.get(r.marker_id).threshold = th
+            ths[name] = r.marker_id
+        shift_ratio_levels(tables, "A", 40.0, amp)
         self.assertEqual(amp["ref_level"], 40.0)
         self.assertEqual((t.xy.y1, t.xy.y2), (20.0, -50.0))
         self.assertEqual(t.peak_threshold, -20.0)
-        self.assertEqual(t.get(m_db.marker_id).threshold.level, 37.0)
-        self.assertEqual(t.get(m_pw.marker_id).threshold.level, -40.0)
-        self.assertEqual(t.get(m_swr.marker_id).threshold.level, 2.0)
-        # |Γ|・SWR・NF・種類の分からない前の版の Y は動かさない。REF が未設定（画面の既定 0）なら 0 からずらす
-        for kind in ("gamma", "swr", Y_KIND_NF, None):
-            t.xy.y1, t.xy.y1_kind = 0.5, kind
-            shift_ratio_levels({"ref_level": None}, tables, 10.0)
-            self.assertEqual(t.xy.y1, 0.5, kind)
+        levels = {k: t.get(v).threshold.level for k, v in ths.items()}
+        self.assertEqual(levels, {"tg_a": 37.0, "tg_b": -6.0, "s11_db": -10.0, "nf": 3.0, "power": -40.0,
+                                  "swr": 2.0})
+        # 縦軸を渡さなければ REF・ピーク探索のしきい値は動かさない
+        shift_ratio_levels(tables, "A", 5.0)
+        self.assertEqual((amp["ref_level"], t.peak_threshold, t.xy.y1), (40.0, -20.0, 25.0))
+        # S11 の dB・|Γ|・SWR・NF・電力・種類の分からない前の版・別の基準の "tg" の Y は動かさない
+        for kind, ref in (("db", None), ("gamma", None), ("swr", None), (Y_KIND_NF, None), (None, None),
+                          (Y_KIND_TG, "B"), (Y_KIND_TG, None)):
+            t.xy.y1, t.xy.y1_kind, t.xy.y1_ref = 0.5, kind, ref
+            shift_ratio_levels(tables, "A", 10.0, {"ref_level": None})
+            self.assertEqual(t.xy.y1, 0.5, (kind, ref))
         amp = {"ref_level": None}
-        shift_ratio_levels(amp, [], -10.0)
+        shift_ratio_levels([], "A", -10.0, amp)
         self.assertEqual(amp["ref_level"], -10.0)
 
 
@@ -211,7 +222,7 @@ class InstrumentValueTest(InstrumentCase):
             st = self.call("get_state")
             ref = self.inst._ref
             if (st["run"]["state"] == "stopped" and st["normalization"].get("applied") and ref is not None
-                    and self.inst._trace_refs.get(1) == ref.ref_id):
+                    and (self.inst._trace_refs.get(1) or (None,))[0] == ref.ref_id):
                 return st
             self.assertLess(time.monotonic(), end, "基準の比の掃引が来ない")
             time.sleep(0.05)
@@ -230,8 +241,9 @@ class InstrumentValueTest(InstrumentCase):
         ref_id = res["reference_id"]
         # 縦軸に結び付いた値: 比の dB で置いた Y・電力で置いた Y・ピーク探索のしきい値・比の dB のしきい値
         self.call("set_xy", y1=30.0, y2=-50.0)
-        self.assertEqual(self.inst._markers.xy.y1_kind, "db")
-        self.inst._markers.xy.y2_kind = Y_KIND_POWER  # 電力の縦軸で置いた Y（前の掃引の）
+        # TG の基準との比の縦軸で置いた Y は種類 "tg" とその基準の id を持つ
+        self.assertEqual((self.inst._markers.xy.y1_kind, self.inst._markers.xy.y1_ref), (Y_KIND_TG, ref_id))
+        self.inst._markers.xy.y2_kind, self.inst._markers.xy.y2_ref = Y_KIND_POWER, None  # 電力の縦軸で置いた Y
         m = self.call("marker_add", kind="M", trace=1, freq_hz=150_000_000)
         self.call("marker_function", id=m["id"], threshold={"level": 37.0, "side": "below"})
         self.call("set_amplitude", ref_level=45.0)

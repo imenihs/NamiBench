@@ -16,10 +16,14 @@
   出し直す）
 - ゼロスパン（横軸が時間: 設計N §1）の掃引は行にしない（周波数の横軸に載らない。表示の組み合わせは画面が理由付きで
   スペクトルのみにする: ui_qt/display_view.py）
+- TG の基準との比の行は、どの基準の比か（id と当てた基準の値）を持つ。基準の値を直したら、その基準の行（ライブの行・
+  密度の元の行・過去のトレース）を新しい値へ動かし、色の範囲も同じだけずらす（設計E §6.7: 単位の変更と同じく絵は
+  変えない）。記録（再生・作業ファイル）から読む行は記録したときの値のまま（_wf_ref_value_moved）
 """
 from __future__ import annotations
 
 import collections
+import dataclasses
 import datetime
 import time
 from typing import Optional
@@ -170,6 +174,10 @@ class WaterfallMixin:
         row = wf.row_from_values(frame.time, f0, int(t.axis.step_hz), vals, unit=unit, seg=self._wf_seg, cond=cond,
                                  pos=pos)
         row.extra = {"quantity": t.quantity.value, "profile": t.profile, "trace": n}
+        ref_id = self._tg_ref_of(t)
+        if ref_id is not None:
+            # TG の基準との比の行: どの基準と、どの基準の値で当てたか（基準の値を直したときに動かす: 設計E §6.7）
+            row.extra.update({"ref_id": ref_id, "ref_value_db": self._trace_refs[n][1]})
         return row
 
     def _waterfall_on_frame(self, frame, live: bool = True) -> None:
@@ -228,6 +236,48 @@ class WaterfallMixin:
             self._density.key = None
             self._density_rebuild()
         return True
+
+    # ------------------------------------------------------------------ 基準の値を直した（設計E §6.7）
+
+    def _wf_ref_value_moved(self, ref_id: str, new: float) -> None:
+        """基準 ref_id の値が new になった。その基準の比の行（画面に持つライブの行・密度の元の行・いちばん新しい行）を
+        新しい値へ動かし（行ごとに当てた値から）、密度を作り直し、画面に行を取り直させる。過去のトレース（行をクリック
+        した掃引）も動かす。手で決めた色の範囲と自動の範囲は、いまの行がその基準の比の dB でライブを出している間だけ
+        同じだけずらす（単位を変えたときの _wf_range_is_power と同じ決まり。再生中は記録の絵なので動かさない）。
+        記録（再生・作業ファイル）から読む行は記録したときの値で作るので、ここでは動かない。"""
+        latest = self._wf_last or self._wf_history.latest()
+        ext = (latest.extra or {}) if latest is not None else {}
+        if (self._playback is None and ext.get("ref_id") == ref_id and self._wf_shown(latest)[2] == formats.DB):
+            d = float(new) - float(ext["ref_value_db"])
+            for k in ("wf_color_lo", "wf_color_hi"):
+                self._view_opts[k] = round(float(self._view_opts[k]) + d, 2)
+            self._wf_auto.shift(d)
+        seen: set[int] = set()
+        moved = False
+        for row in [*self._wf_history.rows(), *self._density_src, *([self._wf_last] if self._wf_last else [])]:
+            ext = row.extra or {}
+            if id(row) in seen or ext.get("ref_id") != ref_id:
+                continue
+            seen.add(id(row))
+            d = float(new) - float(ext["ref_value_db"])
+            row.values = (row.values.astype(np.float64) + d).astype(np.float32)
+            ext["ref_value_db"] = float(new)
+            moved = True
+        past = self._files.get(PAST_FILE_ID)
+        if past is not None and past.get("ref_id") == ref_id:
+            d = float(new) - float(past["ref_value_db"])
+            tid = f"{PAST_FILE_ID}.1"
+            td = past["traces"][tid]
+            past["traces"][tid] = dataclasses.replace(td, values=td.values * 10.0 ** (d / 20.0))
+            past["ref_value_db"] = float(new)
+            self._emit("trace", self._file_trace_payload(tid))
+        if moved:
+            self._wf_reset_rows()
+            if self._view_opts.get("layout") == "density":
+                self._density.key = None
+                self._density_rebuild()
+        else:
+            self._wf_emit_range()
 
     # ------------------------------------------------------------------ 表示の設定が変わった
 
@@ -454,6 +504,8 @@ class WaterfallMixin:
             "file_id": PAST_FILE_ID, "kind": "past", "path": "", "name": when.strftime("%H:%M:%S"),
             "created_at": when.isoformat(timespec="milliseconds"), "device_model": "", "device_serial": "",
             "note": "", "traces": {f"{PAST_FILE_ID}.1": td}, "markers": [], "t": row.t, "sweeps": row.sweeps,
+            # ライブの TG の基準との比の行なら、その基準と当てた値（基準の値を直したら動かす: 設計E §6.7）
+            "ref_id": (row.extra or {}).get("ref_id"), "ref_value_db": (row.extra or {}).get("ref_value_db"),
         }
         self._emit("trace", self._file_trace_payload(f"{PAST_FILE_ID}.1"))
         self._diff_refresh()
