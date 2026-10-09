@@ -1,6 +1,8 @@
 """右のタブ「表示」（設計J §4.5・P §2・O・I §3）。
 
-- 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（後の2つは設計P。消さずに無効にし理由: U-08）
+- 表示の組み合わせ: スペクトルのみ／＋ウォーターフォール／＋密度（設計P §2: 1操作で切り替える。コアの表示の設定）。
+  ゼロスパン（横軸が時間）の間は＋ウォーターフォール・＋密度を理由付きで選べない（display_view.display_tab_view）
+- ウォーターフォール・密度とバンドプラン・ブックマークの欄は display_groups.py（設計P §9.2・§9.3・§9.5）
 - 描き方: 線／塗りつぶし（旧 Line/Dot。測定値は変わらない）。コアの表示の設定（Qt と Web で同じ・プリセットに入る）。
   内部の漏れの印を出すか（設計L §1.4。同じくコアの表示の設定）
 - ゼロスパン（設計N §1）: 表示する長さ（掃引1回・1/10/60 秒）。コアの表示の設定 view.zero_span_s。ゼロスパンでない
@@ -36,17 +38,13 @@ from PySide6.QtWidgets import (
 
 from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from ..core.view_units import LEVEL_UNITS
-from . import screen_model, sizes, texts, widget_sync
+from . import display_view, screen_model, sizes, texts, widget_sync
+from .display_groups import BandplanGroup, WaterfallGroup
 from .fields import DbField
 from .tab_traces import body, outer, set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
-
-# まだ作っていない欄の理由（設計P §3・§4・§6）
-REASON_WATERFALL = texts.NOT_YET["waterfall"]
-REASON_DENSITY = texts.NOT_YET["density"]
-REASON_BANDPLAN = texts.NOT_YET["bandplan"]
 
 V = texts.VIEW_TEXTS
 S = texts.SETTINGS_TEXTS
@@ -74,12 +72,14 @@ class DisplayTab(QWidget):
         self.view_waterfall = QRadioButton(L["plus_waterfall"])
         self.view_density = QRadioButton(L["plus_density"])
         self.view_spectrum.setChecked(True)
-        set_enabled(self.view_waterfall, REASON_WATERFALL)
-        set_enabled(self.view_density, REASON_DENSITY)
-        for b in (self.view_spectrum, self.view_waterfall, self.view_density):
+        for code, b in (("spectrum", self.view_spectrum), ("waterfall", self.view_waterfall),
+                        ("density", self.view_density)):
             self.view_group.addButton(b)
             v.addWidget(b)
+            b.clicked.connect(lambda _=False, c=code: win.call("set_view", layout=c))
         lay.addWidget(g)
+        self.wf_group = WaterfallGroup(win)
+        lay.addWidget(self.wf_group)
 
         g = QGroupBox(L["draw_style"])
         v = sizes.vbox(g)
@@ -140,6 +140,9 @@ class DisplayTab(QWidget):
         form.addRow(sizes.buttons_row(reset))
         lay.addWidget(g)
 
+        self.bandplan_group = BandplanGroup(win)
+        lay.addWidget(self.bandplan_group)
+
         g = QGroupBox(L["colors"])
         v = sizes.vbox(g)
         self.reset_light = QPushButton(S["palette_reset_light"])
@@ -149,9 +152,7 @@ class DisplayTab(QWidget):
         v.addLayout(sizes.buttons_row(self.reset_light, self.reset_dark))
         self.colors = QPushButton(texts.MENU_ITEMS["view_colors"])
         self.colors.clicked.connect(lambda: win.actions["view_colors"].trigger())
-        self.bandplan = QPushButton(L["show_bandplan"])
-        set_enabled(self.bandplan, REASON_BANDPLAN)
-        v.addLayout(sizes.buttons_row(self.colors, self.bandplan))
+        v.addLayout(sizes.buttons_row(self.colors))
         lay.addWidget(g)
 
         g = QGroupBox(L["png_group"])
@@ -229,6 +230,14 @@ class DisplayTab(QWidget):
         """コアの表示の設定（単位・外部補正・描き方）と配色を映す。"""
         v = st.get("view") or {}
         self._apply_unit(st)
+        lay = v.get("layout") or "spectrum"
+        reasons = display_view.display_tab_view(st)["layout_reasons"]
+        for code, b in (("spectrum", self.view_spectrum), ("waterfall", self.view_waterfall),
+                        ("density", self.view_density)):
+            widget_sync.set_checked(b, lay == code)
+            set_enabled(b, reasons.get(code))  # ゼロスパンの間は＋ウォーターフォール・＋密度を選べない（理由付き）
+        self.wf_group.apply_state(st)
+        self.bandplan_group.apply_state(st)
         zv = screen_model.zero_span_view(st)
         widget_sync.set_data(self.zs_length, zv["value"])
         set_enabled(self.zs_length, zv["reason"], texts.ZERO_SPAN_TEXTS["length_tip"])

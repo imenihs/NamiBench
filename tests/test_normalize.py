@@ -307,7 +307,7 @@ class TestStore(unittest.TestCase):
             self.assertEqual(Path(p).suffix, ".h5")
             import h5py
             with h5py.File(p, "r") as f:
-                self.assertEqual(int(f.attrs["version"]), 2)
+                self.assertEqual(int(f.attrs["version"]), 3)  # 3: 基準の値（設計E §6.7）
                 self.assertEqual(f["segments/1"].attrs["image_reject"], "accurate")
                 self.assertNotIn("image_cancel", f["segments/1"].attrs)
                 self.assertEqual(f["segments/0"].attrs["start_hz"].dtype, np.int64)

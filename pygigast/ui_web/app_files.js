@@ -9,7 +9,8 @@
   const W = (k, kw) => X.w(k, kw);
   const WL = (k, kw) => X.fmtText(X.get("WEB_LABELS", k), kw);
   // 見るだけの接続でも送れる命令（サーバーの guard.py の READ_COMMANDS と同じ）
-  const READ_COMMANDS = new Set(["get_state", "get_trace", "peak_list", "reference_list", "png_layout", "mouse_reading"]);
+  const READ_COMMANDS = new Set(["get_state", "get_trace", "peak_list", "reference_list", "png_layout", "mouse_reading",
+    "waterfall_rows", "waterfall_reading", "density_get"]);
 
   function nowName() {
     const d = new Date();
@@ -61,6 +62,10 @@
     history.replaceState(null, "", location.pathname + location.search);
     return decodeURIComponent(m[1]);
   }
+
+  // 表示のバンドプランの読み込み・書き出し（app_display.js）も同じ選び方・ダウンロードを使う
+  root.GSPickFiles = pickFiles;
+  root.GSDownload = download;
 
   root.GSAppFiles = {
     data() {

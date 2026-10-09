@@ -238,7 +238,7 @@
 <div class="menu-list" data-same-width>
   <template v-for="(it, i) in items" :key="i">
     <hr v-if="!it">
-    <button v-else class="menu-item" :class="{dis: !!it.why || !it.run}" :aria-disabled="!!it.why || !it.run" :title="a.itemTitle(it)" @click="a.trigger(it.code)">
+    <button v-else class="menu-item" :class="{dis: !!it.why || !it.run, on: it.on}" :aria-disabled="!!it.why || !it.run" :title="a.itemTitle(it)" @click="a.trigger(it.code)">
       <span>{{ it.label }}</span><span class="keys">{{ a.keysText(it) }}</span>
     </button>
   </template>

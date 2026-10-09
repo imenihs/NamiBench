@@ -23,7 +23,7 @@ I §3.1 の「配置（帯の項目・順・文字の大きさ）はコアのデ
                      "x_axis" (ゼロスパンだけ: {"kind": "time", "x0", "x1"（μs）, "factor", "unit", "length_s",
                                "point_time_s"}。横軸・トレース・マーカーの位置は μs: 設計N §1)},
       "calibration": {"source": "...", "at": "..."} | None,      # None は「校正データ: なし」
-      "normalization": {"name", "at", "applied", "before_power_cycle", "reason"} | None,
+      "normalization": {"name", "at", "applied", "before_power_cycle", "reason", "value_db"} | None,
       "traces": [{"number", "action", "average", "count", "count_target", "label", "color", "visible",
                   "line",                                    # 線（TRACE_LINE_STYLES の名前・参照トレースは reference）
                   "start_hz", "step_hz", "points", "values_db", "flags"}],   # 値は Qt が描くときだけ
@@ -316,6 +316,9 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
         s = f"ノーマライズ: {nz.get('name', '')}"
         if nz.get("at"):
             s += f"（{nz['at']}）"
+        if nz.get("value_db"):
+            # 基準の値（設計E §6.7: 表示 = 基準との比 + 基準の値）。0 dB のときは出さない（外部補正と同じ）
+            s += f" 基準の値 {minus_sign(format(float(nz['value_db']), '+.1f'))} dB"
         if nz.get("before_power_cycle"):
             s += " 電源の入れ直し前の基準"
         if nz.get("applied") is False:
@@ -641,6 +644,7 @@ def normalization_of(state: dict, reasons: Optional[dict] = None) -> Optional[di
     sel = norm.get("selected") or {}
     reason = norm.get("reason") or ""
     return {"name": sel.get("name", ""), "at": _when(sel.get("taken_at")),
+            "value_db": float(sel.get("value_db") or 0.0),
             "applied": bool(norm.get("applied")), "before_power_cycle": bool(norm.get("power_cycled")),
             "reason": (reasons or {}).get(reason, reason) if not norm.get("applied") else "",
             # グラフに描く帯（画面と同じ: 設計E §6.4）。tEXt にも残る

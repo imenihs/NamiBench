@@ -143,7 +143,7 @@ class PeakListTest(PolarityUiBase):
         self.assertAlmostEqual(diffs[0], -30.0, delta=1.5)
         self.assertAlmostEqual(float(self.tab.pk_table.item(0, 0).text()), 120.0, delta=1.0)  # 周波数 (MHz)
         # 「P に登録」は谷の P
-        self.tab.pk_table.cellWidget(0, 3).click()
+        self.tab.pk_table.cellWidget(0, 3).findChildren(QPushButton)[0].click()  # 行の「P に登録」（隣は Center に: P §9.6）
         self.wait(lambda: "P1" in self.markers(), what="P に登録")
         self.assertEqual(self.markers()["P1"]["polarity"], "dip")
         # 上位 N 個も谷（深い順に P1・P2）

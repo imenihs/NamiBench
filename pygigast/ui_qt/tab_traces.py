@@ -505,8 +505,9 @@ class TraceTab(QWidget):
             w = QWidget()
             v = sizes.vbox(w, inset=False)
             head = sizes.hbox()
-            # 見出しは名前だけ。場所・日時・機器・メモはツールチップ（Web と同じ texts.file_heading_tip）
-            name = QLabel(f["name"])
+            # 見出しは名前だけ（過去のトレースは「過去の掃引 時刻」: 設計P §3）。場所・日時・機器・メモはツールチップ
+            # （Web と同じ texts.file_display_name・file_heading_tip）
+            name = QLabel(texts.file_display_name(f))
             name.setToolTip(texts.file_heading_tip(f))
             head.addWidget(name, 1)
             close = QPushButton(L["close_file"])

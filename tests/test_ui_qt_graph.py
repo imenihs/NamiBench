@@ -371,7 +371,7 @@ class MenuAndKeyTest(_Base):
         for code, key in expect.items():
             self.assertEqual(acts[code].shortcut().toString(), key, code)
         # まだ無い機能は消さずに無効にし、理由をツールチップに出す（U-08）
-        for code in ("view_density", "view_waterfall"):
+        for code in ("self_test",):
             self.assertFalse(acts[code].isEnabled(), code)
             self.assertIn("—", acts[code].toolTip(), code)
         # S11（反射）と NF は使える（設計E §6.5・設計L §1.1・設計M）

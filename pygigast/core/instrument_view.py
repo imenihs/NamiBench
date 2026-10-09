@@ -16,12 +16,11 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Optional
-
 import json
 from pathlib import PurePath
+from typing import Optional
 
-from . import view_units
+from . import colormaps, view_units
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict
 from .instrument_zerospan import zero_span_request
 from .marker.markers import Y_KIND_POWER
@@ -111,6 +110,12 @@ class ViewMixin:
                 for m in table.markers():
                     if m.threshold is not None and m.threshold.power:
                         m.threshold = dataclasses.replace(m.threshold, level=round(m.threshold.level + delta, 2))
+            same_range = all(old.get(k) == new.get(k) for k in ("wf_color_lo", "wf_color_hi"))
+            if shift_levels and same_range and self._wf_range_is_power():
+                # ウォーターフォールの手で決めた色の範囲も同じだけずらす（絵は変わらず数字だけ新しい単位に: 設計O §1.4）。
+                # 色の範囲が電力の値のときだけ（比の dB・|Γ|・SWR の行の範囲は電力の単位に関係しない: 設計R §3）
+                for k in ("wf_color_lo", "wf_color_hi"):
+                    self._view_opts[k] = round(float(self._view_opts[k]) + delta, 2)
         # 値の単位が変わるので、トレース・マーカー・REF の自動を出し直す
         self._emit_visible_traces()
         for e in self._files.values():
@@ -119,28 +124,41 @@ class ViewMixin:
                     self._emit("trace", self._file_trace_payload(tid))
                 except CommandError:
                     pass
+        # ウォーターフォール・密度表示（設計P）: 行数の上限・行にするトレース・密度の N・単位が変わったら合わせる
+        self._waterfall_view_changed(old, self._view_opts)
         if new.get("level_unit") != old.get("level_unit"):
             # 単位の設定が変わったら、どこから変わっても（この画面・別の画面・プリセット・元に戻す）全部の画面が
             # 一度知らせる。いまの表示が比でも知らせる（J §4.10 の 4）。起動で戻すときはここを通らない
             self._notice("level_unit_changed", {"unit": new.get("level_unit"), "previous": old.get("level_unit")})
 
     def _cmd_set_view(self, level_unit=_UNSET, ext_db=_UNSET, freq_offset_hz=_UNSET, draw_style=_UNSET,
-                      layout=_UNSET, function_lines=_UNSET, zero_span_s=_UNSET, leak_marks=_UNSET) -> dict:
-        """zero_span_s はゼロスパンの表示する長さ（秒。0 は1回の掃引: 設計N §1）。leak_marks は内部の漏れの印（設計L §1.4）。"""
-        kw = {k: v for k, v in (("level_unit", level_unit), ("ext_db", ext_db), ("freq_offset_hz", freq_offset_hz),
-                                ("draw_style", draw_style), ("layout", layout), ("function_lines", function_lines),
-                                ("zero_span_s", zero_span_s), ("leak_marks", leak_marks))
-              if v is not _UNSET}
+                      layout=_UNSET, function_lines=_UNSET, zero_span_s=_UNSET, leak_marks=_UNSET, wf_trace=_UNSET,
+                      wf_color_auto=_UNSET, wf_color_lo=_UNSET, wf_color_hi=_UNSET, wf_rows=_UNSET,
+                      density_half=_UNSET, bandplan_shown=_UNSET, bookmarks_shown=_UNSET) -> dict:
+        """zero_span_s はゼロスパンの表示する長さ（秒。0 は1回の掃引: 設計N §1）。leak_marks は内部の漏れの印（設計L §1.4）。
+        wf_*・density_half はウォーターフォールと密度表示（設計P §9.2・§9.3）、*_shown はバンドプランとブックマーク（P §6）。"""
+        given = {"level_unit": level_unit, "ext_db": ext_db, "freq_offset_hz": freq_offset_hz, "draw_style": draw_style,
+                 "layout": layout, "function_lines": function_lines, "zero_span_s": zero_span_s,
+                 "leak_marks": leak_marks, "wf_trace": wf_trace, "wf_color_auto": wf_color_auto,
+                 "wf_color_lo": wf_color_lo, "wf_color_hi": wf_color_hi, "wf_rows": wf_rows,
+                 "density_half": density_half, "bandplan_shown": bandplan_shown, "bookmarks_shown": bookmarks_shown}
+        kw = {k: v for k, v in given.items() if v is not _UNSET}
         for k in view_units.DEFAULTS:
             if k in kw and kw[k] is None:
                 kw[k] = view_units.DEFAULTS[k]  # null は初期値に戻す（設定の画面の「初期値に戻す」）
         bad = view_units.check_options(**kw)
         if bad:
-            code = "not_integer" if bad == "freq_offset_hz" and not isinstance(kw[bad], int) else "bad_value"
+            ints = ("freq_offset_hz", "wf_trace", "wf_rows", "density_half")
+            code = "not_integer" if bad in ints and not isinstance(kw[bad], int) else "bad_value"
             raise CommandError(code, bad, {"value": kw[bad]})
-        if "ext_db" in kw:
-            kw["ext_db"] = float(kw["ext_db"])
+        for k in view_units.FLOAT_KEYS:
+            if k in kw:
+                kw[k] = float(kw[k])
         new = {**self._view_opts, **kw}
+        if new["wf_color_hi"] - new["wf_color_lo"] < view_units.WF_MIN_SPAN_DB:
+            # 色の範囲は下限 < 上限（幅 1dB 以上）。打った側の欄に理由を出す（設計P §3）
+            field = "wf_color_lo" if "wf_color_lo" in kw else "wf_color_hi"
+            raise CommandError("wf_range_order", field, {"lo": new["wf_color_lo"], "hi": new["wf_color_hi"]})
         if new != self._view_opts:
             before = self._undo_snapshot(("view",))
             self._set_view_opts(new)
@@ -150,19 +168,27 @@ class ViewMixin:
 
     # ------------------------------------------------------------------ 配色（設計J §4.4）
 
-    def _cmd_palette_set(self, colors: dict) -> dict:
-        """色を変える（{名前: "#rrggbb"}）。読めない名前・色は変えずに失敗にする。"""
-        if not isinstance(colors, dict) or not colors:
+    def _cmd_palette_set(self, colors: Optional[dict] = None, colormap: Optional[str] = None) -> dict:
+        """色を変える（{名前: "#rrggbb"}）・ウォーターフォールと密度表示の色の並び（colormap: 設計P §9.1）を変える。
+        読めない名前・色は変えずに失敗にする。"""
+        if colors is None and colormap is None:
             raise CommandError("bad_value", "colors")
+        if colors is not None and (not isinstance(colors, dict) or not colors):
+            raise CommandError("bad_value", "colors")
+        if colormap is not None and not colormaps.valid(colormap):
+            raise CommandError("bad_value", "colormap", {"choices": list(colormaps.CHOICES)})
         clean = {}
-        for k, v in colors.items():
+        for k, v in (colors or {}).items():
             c = normalize_color(v)
             if k not in self._palette.colors or c is None:
                 raise CommandError("bad_color", "colors", {"name": k, "value": v})
             clean[k] = c
-        if all(self._palette.colors[k] == c for k, c in clean.items()):
+        if all(self._palette.colors[k] == c for k, c in clean.items()) \
+                and (colormap is None or colormap == self._palette.colormap):
             return {"palette": self._palette.state()}
         before = self._undo_snapshot(("palette",))
+        if colormap is not None:
+            self._palette.colormap = colormap
         self._palette.colors.update(clean)
         self._record_undo(before)
         self._save_palette_setting()

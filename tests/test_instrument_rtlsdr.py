@@ -331,9 +331,16 @@ class TestConnectAndLevels(RtlSdrCase):
             self.assertEqual(int(r.adopted.axis.freqs()[peak]), 84_700_000)
             # 根の校正は RTL-SDR の個体の校正（無ければ null）。GigaSt の校正を写さない
             self.assertNotEqual((h.header.calibration or {}).get("format"), "pygigast-calibration")
+        # 記録のファイル（掃引が2つ以上）は再生する（設計H §4・設計P §5）。RTL-SDR の記録も記録した換算で出す
         opened = self.call("open", paths=[str(path)])
         self.wait_task(opened["task_id"])
-        self.assertEqual(len(self.call("get_state")["files"]), 1)
+        st = self.call("get_state")
+        self.assertTrue(st["playback"]["active"])
+        self.assertEqual(st["playback"]["problems"], [])
+        self.clear_events()
+        self.call("playback_seek", index=st["playback"]["total"] - 1)
+        tr = self.wait_for(lambda k, p: k == "trace" and p.get("trace") == 1)
+        self.assertEqual(int(np.nanargmax(tr["values"])), peak)
 
 
 class TestHannNote(RtlSdrCase):

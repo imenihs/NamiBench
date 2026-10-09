@@ -30,7 +30,8 @@ _BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _RESERVED = re.compile(r"^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$", re.I)
 
 # 名前を受ける命令と、作るファイルの拡張子
-NAMED_OUTPUTS = {"save": ".h5", "export_csv": ".csv", "record_finish": ".h5", "finish_unfinished": ".h5"}
+NAMED_OUTPUTS = {"save": ".h5", "export_csv": ".csv", "record_finish": ".h5", "finish_unfinished": ".h5",
+                 "bandplan_save": ".json", "playback_extract": ".h5", "playback_export_csv": ".csv"}
 
 
 class WebArgError(Exception):
@@ -222,7 +223,7 @@ def translate(files: WebFiles, command: str, args: dict) -> Translated:
         args["paths"] = [str(files.upload_path(u)) for u in ids]
         return Translated(args, ident)
 
-    if command in ("import_legacy_calibration", "cal_legacy_load"):
+    if command in ("import_legacy_calibration", "cal_legacy_load", "bandplan_load"):
         args["path"] = str(files.upload_path(args.pop("upload_id", None)))
         return Translated(args, ident)
 

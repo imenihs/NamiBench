@@ -5,6 +5,9 @@
 スパン・センターを変えても使い続けられる（設計E §2）。
 - 使えない点（前置き不足など）は NaN で持つ。NaN の点は基準として使わない
 - 新しい区間を足すと、同じ条件の既存の区間の、新しい区間の範囲に入る点を捨てる（上書き合成。範囲の外は残る）
+- 基準の値（value_db。設計E §6.7）: 基準の経路が持つ既知の利得・損失（ATT 40dB を入れて取ったなら +40）。
+  表示 = 基準との比 + 基準の値。基準ごとに1つ持ち、取った後でも直せる（測り直さない）。S11 の基準は全反射が 0dB と
+  決まっているので持たない（いつも 0）
 - 純粋な計算だけ。スレッド・入出力を持たない（保存は store.py）
 """
 from __future__ import annotations
@@ -24,9 +27,22 @@ KIND_FINE = "fine"  # 「いまの条件で細かく取る」: いまの Start�
 # 「広く取る」の Step（設計E §2・§6.2）
 WIDE_STEP_HZ = 1_000_000
 
+# 基準の値の範囲（dB。設計E §6.7）。アッテネータ・アンプの利得として意味のある広さ（設計に値は無い。打ち間違いで
+# 画面が使えなくなるのを防ぐ）
+VALUE_DB_LIMIT = 100.0
+
 
 class ReferenceBuildError(ValueError):
     """基準を作れない（フレームの条件がそろわない・電力でない など）。"""
+
+
+def check_value_db(v: object) -> float:
+    """基準の値（dB）を確かめて float で返す。数でない・有限でない・範囲（±VALUE_DB_LIMIT）の外は ValueError。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v):
+        raise ValueError("基準の値は有限の数")
+    if abs(float(v)) > VALUE_DB_LIMIT:
+        raise ValueError(f"基準の値は ±{VALUE_DB_LIMIT:g} dB の中")
+    return float(v)
 
 
 @dataclass(frozen=True, eq=False)
@@ -70,6 +86,7 @@ class Reference:
 
     mode は TG（通過）か S11（反射）。band_edges_hz は取った機器の出力の帯の境目
     （機種のプロファイル source.band_edges_hz の写し。設計E §4.1）で、ここをまたいで補間しない。
+    value_db は基準の値（設計E §6.7: 表示 = 基準との比 + 基準の値）。S11 では当てない（全反射 = 0dB）。
     """
 
     name: str
@@ -79,12 +96,19 @@ class Reference:
     band_edges_hz: tuple[int, ...] = ()
     segments: list[ReferenceSegment] = field(default_factory=list)
     ref_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    value_db: float = 0.0
 
     def __post_init__(self) -> None:
         for e in self.band_edges_hz:
             if not isinstance(e, int) or isinstance(e, bool):
                 raise TypeError("band_edges_hz は int（Hz）で持つ")
         self.band_edges_hz = tuple(sorted(self.band_edges_hz))
+        self.value_db = check_value_db(self.value_db)
+
+    @property
+    def applied_value_db(self) -> float:
+        """当てるときに比へ足す dB。S11 の基準は全反射が 0dB と決まっているので当てない（設計E §6.7）。"""
+        return self.value_db if self.mode == Mode.TG else 0.0
 
     @property
     def taken_at(self) -> Optional[float]:
@@ -191,11 +215,12 @@ def segment_from_frames(
     )
 
 
-def new_reference(name: str, profile: dict, serial: str, mode: Mode = Mode.TG) -> Reference:
-    """空の基準を作る。帯の境目は機種のプロファイルから写す（設計Q §2.1・設計E §4.1）。"""
+def new_reference(name: str, profile: dict, serial: str, mode: Mode = Mode.TG, value_db: float = 0.0) -> Reference:
+    """空の基準を作る。帯の境目は機種のプロファイルから写す（設計Q §2.1・設計E §4.1）。value_db は基準の値（設計E §6.7）。"""
     edges = tuple(int(e) for e in profile.get("source", {}).get("band_edges_hz", []))
     return Reference(
-        name=name, model=str(profile.get("model", "")), serial=serial, mode=mode, band_edges_hz=edges
+        name=name, model=str(profile.get("model", "")), serial=serial, mode=mode, band_edges_hz=edges,
+        value_db=value_db,
     )
 
 

@@ -200,7 +200,34 @@ def ref_state_text(st: dict) -> str:
         return LABELS["ref_none"]  # 無いこと自体が情報（U-15）
     ts = sel.get("taken_at")
     when = datetime.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M") if ts else ""
+    value = texts.ref_value_text(sel.get("value_db"))  # 基準の値（設計E §6.7。0 dB なら出さない）
+    if value:
+        return tpl("ref_selected_value", name=sel.get("name", ""), when=when, value=value)
     return tpl_label("ref_selected", name=sel.get("name", ""), when=when)
+
+
+def ref_value_view(st: dict) -> dict:
+    """信号源のタブの「基準の値」の欄（設計E §6.7）: 使えない理由とツールチップ。S11 の基準には使わない（全反射 = 0dB）。
+    欄の値は画面ごとに持つ（名前・平均の欄と同じく、取るときに送る値）。"""
+    reason = REASON_TEXTS["ref_value_s11"] if (st.get("sweep") or {}).get("mode") == "s11" else None
+    return {"reason": reason, "tip": LABELS["ref_value_tip"]}
+
+
+def ref_row(r: dict) -> dict:
+    """基準の一覧の1行（Qt の一覧と Web の表で同じ）: 文と「基準の値…」の使えない理由（S11 の基準には無い）。
+
+    文は「● 名前  TG  取得日時」に、基準の値が 0 dB でなければ「  +40.0 dB」を足す（U-15）。
+    """
+    import datetime
+
+    ts = r.get("taken_at")
+    when = datetime.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M") if ts else ""
+    mark = "● " if r.get("selected") else "   "
+    text = f"{mark}{r.get('name', '')}  {str(r.get('mode') or '').upper()}  {when}"
+    value = texts.ref_value_text(r.get("value_db"))
+    if value:
+        text += f"  {value}"
+    return {"text": text, "value_reason": REASON_TEXTS["ref_value_s11"] if r.get("mode") == "s11" else None}
 
 
 def tg_take_reason(st: dict) -> Optional[str]:

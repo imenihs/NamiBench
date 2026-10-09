@@ -362,7 +362,7 @@ class DisplayMixin:
         sel = None
         if ref is not None:
             sel = {"id": ref.ref_id, "name": ref.name, "mode": ref.mode.value, "serial": ref.serial,
-                   "taken_at": ref.taken_at}
+                   "taken_at": ref.taken_at, "value_db": ref.applied_value_db}  # 基準の値（設計E §6.7）
         # s11_open: 測ってあるオープン（S11 の基準の1段目。次はショート: 設計E §6.5）
         return {"selected": sel, **self._norm_state, "s11_open": self._s11_open_state()}
 
@@ -406,9 +406,11 @@ class DisplayMixin:
         if a is None or a.mode not in NORMALIZED_MODES:
             self._norm_state = {"used": False}
             self._norm_key = None
+            self._note_trace_refs(None)
             return frame
         serial = (self._identity or {}).get("serial") or ""
         res = apply_reference(frame, self._ref, serial=serial, connected_at=self._connected_at or 0.0, now=time.time())
+        self._note_trace_refs(res.reference_id if res.applied else None)  # 基準の値を直したときに動かす相手（設計E §6.7）
         self._norm_state = {
             "used": True,
             "applied": res.applied,
@@ -434,7 +436,9 @@ class DisplayMixin:
             return None
         return {"id": self._ref.ref_id, "name": self._ref.name, "taken_at": self._ref.taken_at,
                 "connected_at": self._connected_at, "accuracy": self._norm_state.get("accuracy"),
-                "power_cycled": self._norm_state.get("power_cycled")}
+                "power_cycled": self._norm_state.get("power_cycled"),
+                # 基準の値（設計E §6.7）。比の値はこの値を足したもの
+                "value_db": self._ref.applied_value_db}
 
     def _trace_notes(self) -> tuple[str, ...]:
         """読み値に添える注意（設計G §3.3）。掃引条件の信用できない条件と、基準の精度・電源の入れ直し前。"""
@@ -549,10 +553,14 @@ class DisplayMixin:
         if emit:
             self._emit("markers", {"sweep_no": self._sweep_count, **self._marker_snap})
 
-    def _process_frame(self, frame: Frame) -> None:
-        """基準 → トレース → マーカー → イベント（設計A §4.3.1: トレースは番号ごと、マーカー表は掃引ごと）。"""
+    def _process_frame(self, frame: Frame, normalize=None, live: bool = True) -> None:
+        """基準 → トレース → マーカー → イベント（設計A §4.3.1: トレースは番号ごと、マーカー表は掃引ごと）。
+
+        normalize は基準を当てる関数（省略はいまの基準: _normalize。再生は記録に書いた基準: instrument_playback.py）。
+        live は機器の掃引か（ウォーターフォールの行に足す。再生の掃引は色の範囲と密度だけ: instrument_waterfall.py）。
+        """
         frame = self._mark_frame(frame)
-        frame = self._normalize(frame)
+        frame = (normalize or self._normalize)(frame)
         self._last_quantity = frame.quantity
         shown_before, self._shown_quantity = self._shown_quantity, frame.quantity
         if shown_before == Quantity.POWER and frame.quantity == Quantity.RATIO:
@@ -585,6 +593,7 @@ class DisplayMixin:
         # A か B が生きたトレースなら差も変わる（設計F §5.4）
         self._diff_refresh(swept=frozenset(u.number for u in updates if u.changed))
         self._emit("markers", {"sweep_no": self._sweep_count, "moved": moved, **self._marker_snap})
+        self._waterfall_on_frame(frame, live)  # ウォーターフォールの行・密度（設計P §9.2・§9.3）
 
     @staticmethod
     def _mark_frame(frame: Frame) -> Frame:
@@ -715,7 +724,8 @@ class DisplayMixin:
         if "amplitude_store" in s:
             out.append(tuple(sorted((k, tuple(sorted(v.items()))) for k, v in s["amplitude_store"].items())))
         if "palette" in s:
-            out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items()))))
+            out.append((s["palette"]["base"], tuple(sorted(s["palette"]["colors"].items())),
+                        s["palette"].get("colormap")))
         return tuple(out)
 
     def _record_undo(self, before: dict) -> None:

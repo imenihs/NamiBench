@@ -377,13 +377,13 @@ globalThis.window = globalThis; window.addEventListener = () => {};
 let opts; globalThis.Vue = { createApp: (o) => { opts = o; return { component() {}, directive() {}, mount() {} }; }, markRaw: (x) => x };
 globalThis.GSUnits = {}; globalThis.GSTexts = { w: (k) => "W:" + k, get: () => "", dict: () => ({}), fmt: (k) => k };
 globalThis.GSApi = { call: async () => ({}) };
-for (const n of ["GSAppMenu", "GSAppMarkers", "GSAppFiles", "GSAppRtl", "GSAppDevices"]) globalThis[n] = {};
+for (const n of ["GSAppMenu", "GSAppMarkers", "GSAppFiles", "GSAppRtl", "GSAppDevices", "GSAppDisplay"]) globalThis[n] = {};
 globalThis.GSFields = { NumField: {} };
 require(process.argv[1]);
 const out = {};
 for (const lock of [null, 2e9]) {
   const sent = [], notes = [];
-  const self = { freqOpsReason: null, sw: { start_hz: 0, stop_hz: 2e9, span_lock_hz: lock },
+  const self = { freqOpsReason: null, sw: { start_hz: 0, stop_hz: 2e9, span_lock_hz: lock }, fv: { start_hz: 0, stop_hz: 2e9, playback: false },
                  sweep: (a, f) => sent.push([a, f]), note: (f, t) => notes.push([f, t]) };
   opts.methods.onFreqWheel.call(self, 5e8, 1);
   out[lock == null ? "off" : "on"] = { sent, notes };

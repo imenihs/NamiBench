@@ -97,6 +97,8 @@ class StepSweepMixin:
             return "step_sweep_no_sg"
         if self._conn != "connected":
             return "not_connected"
+        if getattr(self, "_playback", None) is not None:
+            return "playback_active"  # 記録の再生中は機器の掃引を受けない（ライブに戻ってから: 設計P §9.4）
         if self._adopted.mode != Mode.SG:
             return "step_sweep_needs_sg"
         if self._ref_job is not None:

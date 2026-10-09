@@ -130,6 +130,7 @@ class NfBrowserTest(unittest.TestCase):
         self.assertEqual(page.ev("gsApp.unitView.current"), "nf")
         # HOT と COLD の差が小さい点は控えめな色で重ねる（Qt の plot_layers.marked_points と同じ点）
         app.api._inst._device.config.nf_hot_db = 0.7
+        app.call("clear_trace", number=1)  # 単発は1組ずつ足す（設計F §5.2.1）: 前の組の HOT・COLD を混ぜない
         st = self.wait_sweep()
         page.wait(f"gsApp.st && gsApp.st.run.sweep_count >= {st['run']['sweep_count']}", "掃引の状態")
         page.settle()

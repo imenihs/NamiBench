@@ -701,6 +701,47 @@ def _attr_str(attrs, key: str, default: str = "") -> str:
     return v.decode("utf-8") if isinstance(v, bytes) else str(v)
 
 
+def raw_sweep_of(s: "SegmentInfo", b: "RawBlock") -> RawSweep:
+    """区間 s から読んだ掃引1回分（b の 0 行目）を RawSweep に戻す（換算は呼び側が level の LevelConverter で行う）。
+
+    保存ファイル（H5Record）と記録中の作業ファイル（recording.RecordingReader）の両方が使う（読む側の経路を1つにする）。
+    adopted.axis は保存した点（Stop までで切ったもの）に合わせる。duration_s は保存していないので NaN。
+    extra は区間の raw_extra（RTL-SDR の利得など換算に要るもの）。NaN を値の無い点とする形では
+    flags.no_value を NaN から作り直す（機器の層が返したときと同じ形にする）。
+    """
+    adopted = adopted_from_dict(s.conditions)
+    adopted = dataclasses.replace(adopted, axis=FreqAxis(s.start_hz, s.step_hz, s.points))
+    r1 = b.raw[0]
+    r2 = None if b.raw2 is None else b.raw2[0]
+    enc = encoding_info(s.raw_encoding)
+    extra = dict(s.raw_extra or {})
+    if enc.dtype.kind == "f":
+        r1 = r1.astype(np.float64)
+        r2 = None if r2 is None else r2.astype(np.float64)
+    if enc.nan_is_no_value:
+        extra["flags"] = {"no_value": np.isnan(adopted_values(s.raw_layout, r1, r2))}
+    kw: dict = {}
+    if s.raw_layout == LAYOUT_IMAGE_REJECT:
+        kw = {"raw_segments": rs.to_segments(r2, b.raw_segments or [])}
+    elif s.raw_layout == LAYOUT_IMAGE_CANCEL_4:
+        kw = {"raw_passes": r2}
+        extra.setdefault("pass_b3", [0, 1, 0, 1])
+    elif s.raw_layout == LAYOUT_IMAGE_CANCEL:
+        kw = {"raw_b3_1": r1, "raw_b3_0": r2}
+    elif s.raw_layout == LAYOUT_NF:
+        kw = {"raw_hot": r1, "raw_cold": r2}
+    return RawSweep(
+        adopted=adopted,
+        raw=adopted_values(s.raw_layout, r1, r2),
+        encoding=s.raw_encoding,
+        started_at=float(b.t_start[0]),
+        duration_s=math.nan,
+        transient_head_points=adopted.transient_head_points,
+        extra=extra,
+        **kw,
+    )
+
+
 class H5Record:
     """保存ファイルを開いて、必要な範囲だけ読む（設計H §3.1）。
 
@@ -889,39 +930,7 @@ class H5Record:
         extra は区間の raw_extra（RTL-SDR の利得など換算に要るもの）。NaN を値の無い点とする形では
         flags.no_value を NaN から作り直す（機器の層が返したときと同じ形にする）。
         """
-        s = self.segments[seg]
-        b = self.read(seg, (i, i + 1))
-        adopted = adopted_from_dict(s.conditions)
-        adopted = dataclasses.replace(adopted, axis=FreqAxis(s.start_hz, s.step_hz, s.points))
-        r1 = b.raw[0]
-        r2 = None if b.raw2 is None else b.raw2[0]
-        enc = encoding_info(s.raw_encoding)
-        extra = dict(s.raw_extra or {})
-        if enc.dtype.kind == "f":
-            r1 = r1.astype(np.float64)
-            r2 = None if r2 is None else r2.astype(np.float64)
-        if enc.nan_is_no_value:
-            extra["flags"] = {"no_value": np.isnan(adopted_values(s.raw_layout, r1, r2))}
-        kw: dict = {}
-        if s.raw_layout == LAYOUT_IMAGE_REJECT:
-            kw = {"raw_segments": rs.to_segments(r2, b.raw_segments or [])}
-        elif s.raw_layout == LAYOUT_IMAGE_CANCEL_4:
-            kw = {"raw_passes": r2}
-            extra.setdefault("pass_b3", [0, 1, 0, 1])
-        elif s.raw_layout == LAYOUT_IMAGE_CANCEL:
-            kw = {"raw_b3_1": r1, "raw_b3_0": r2}
-        elif s.raw_layout == LAYOUT_NF:
-            kw = {"raw_hot": r1, "raw_cold": r2}
-        return RawSweep(
-            adopted=adopted,
-            raw=adopted_values(s.raw_layout, r1, r2),
-            encoding=s.raw_encoding,
-            started_at=float(b.t_start[0]),
-            duration_s=math.nan,
-            transient_head_points=adopted.transient_head_points,
-            extra=extra,
-            **kw,
-        )
+        return raw_sweep_of(self.segments[seg], self.read(seg, (i, i + 1)))
 
     def traces(self) -> list[TraceData]:
         """保存したトレース（参照トレースとして重ねる: 設計F §5.4・設計H §6）。origin に出どころを入れる。"""

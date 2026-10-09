@@ -9,6 +9,8 @@
 - 全点に当たらないときは比にせず、受けた電力のフレームをそのまま返し、理由をコードで返す
 - 値の表し方: Frame の比はリニアの振幅比（types.Frame）なので √(測った電力 ÷ 基準の電力) を入れる。
   dB は 20·log10 で、10·log10(電力比) と同じ値になる
+- 基準の値（設計E §6.7）: 表示 = 基準との比 + 基準の値。比に 10^(基準の値/20) を掛けた値をフレームに入れる
+  （トレース・マーカー・保存・書き出しが同じ値を使う）。S11 の基準には当てない（全反射 = 0dB）
 文言は画面側が決める（U-22）。ここはコードと数値だけを返す。
 """
 from __future__ import annotations
@@ -62,6 +64,7 @@ class NormalizeResult:
     detail: dict = field(default_factory=dict)
     reference_id: Optional[str] = None
     reference_name: Optional[str] = None
+    value_db: float = 0.0  # 比に足した基準の値（設計E §6.7。当てなかったときは 0）
     accuracy: str = ACCURACY_NONE
     out_of_range_hz: list[tuple[int, int]] = field(default_factory=list)
     power_cycled: bool = False
@@ -243,8 +246,11 @@ def apply_reference(
         return _not_applied(frame, OUT_OF_RANGE, reference)
 
     meas = np.array(np.real(frame.values), dtype=np.float64)
+    value_db = reference.applied_value_db
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.sqrt(meas / np.power(10.0, np.where(has_ref, ref_db, 0.0) / 10.0))
+    if value_db:
+        ratio *= 10.0 ** (value_db / 20.0)
     ratio[~has_ref] = np.nan
 
     flags = dict(frame.flags)
@@ -267,6 +273,7 @@ def apply_reference(
         applied=True,
         reference_id=reference.ref_id,
         reference_name=reference.name,
+        value_db=value_db,
         accuracy=accuracy,
         out_of_range_hz=_runs(f, ~has_ref & in_disp),
         power_cycled=bool((cycled & used).any()),

@@ -349,6 +349,11 @@ class EdgePage:
         self.send("Runtime.enable")
         self.send("Page.enable")
         self.send("Network.setCacheDisabled", cacheDisabled=True)
+        # 本番の画面は利用者が見ている（前にあり、フォーカスを持つ）タブ。ヘッドレスの窓は PC が重いと隠れた窓とみなされ、
+        # 描画（requestAnimationFrame）を止められた（全体の試験で visibilityState=hidden になり settle が落ちた）。
+        # 前に出し、フォーカスを持つ前提にそろえる
+        self.send("Emulation.setFocusEmulationEnabled", enabled=True)
+        self.send("Page.bringToFront")
 
     def send(self, method: str, **params):
         self._id += 1
@@ -385,9 +390,14 @@ class EdgePage:
     def settle(self) -> None:
         """Vue が描き直し、2回描画が回るまで待つ。描画が 10 秒回らなければ、そのときのページの見え方を添えて落とす
         （黙って 60 秒待って通信の時間切れにしない: 原因が分かるように）。"""
-        r = self.ev("new Promise((r) => { const t = setTimeout(() => r(`描画が回らない（visibilityState=${document.visibilityState}"
-                    ", hasFocus=${document.hasFocus()}）`), 10000); requestAnimationFrame(() => requestAnimationFrame("
-                    "() => setTimeout(() => { clearTimeout(t); r('ok'); }, 50))); })")
+        js = ("new Promise((r) => { const t = setTimeout(() => r(`描画が回らない（visibilityState=${document.visibilityState}"
+              ", hasFocus=${document.hasFocus()}）`), 10000); requestAnimationFrame(() => requestAnimationFrame("
+              "() => setTimeout(() => { clearTimeout(t); r('ok'); }, 50))); })")
+        r = self.ev(js)
+        if r != "ok" and "visibilityState=hidden" in r:
+            # ブラウザが窓を隠れたものにした（本番の見ているタブと違う前提）。前に出し直してから待ち直す
+            self.send("Page.bringToFront")
+            r = self.ev(js)
         if r != "ok":
             raise AssertionError(r)
 
@@ -539,6 +549,46 @@ def open_app(page: EdgePage, app: App, w: int, h: int) -> None:
     page.settle()
 
 
+def display_views(page: EdgePage, app: "App"):
+    """設計P の部分（ウォーターフォール・密度表示・再生の帯・表示のタブのブックマークの一覧）を開いて (どこ, 範囲) を返す。"""
+    page.ev("gsApp.closeSettings(); gsApp.closePresets(); gsApp.tab = 'view'; 1")
+    app.call("bookmark_add", name="ビーコン", hz=500_000_000)
+    app.call("bookmark_add", name="FM", hz=450_000_000)
+    app.call("record_start")
+    app.call("set_view", layout="waterfall")
+    for _ in range(2):
+        n0 = app.call("get_state")["run"]["sweep_count"]
+        app.call("run", mode="single")
+        end = time.monotonic() + 30
+        while app.call("get_state")["run"]["sweep_count"] <= n0 or app.call("get_state")["run"]["state"] != "stopped":
+            if time.monotonic() > end:
+                raise RuntimeError("掃引が終わらない")
+            time.sleep(0.05)
+    page.wait("gsApp.layoutCode === 'waterfall' && !!gsApp.$wf && gsApp.$wf.shown.length >= 2", "ウォーターフォールの行")
+    page.settle()
+    yield "主画面 ＋ウォーターフォール", ".app"
+    app.call("set_view", layout="density")
+    page.wait("gsApp.layoutCode === 'density' && !!(gsApp.$dens && gsApp.$dens.d)", "密度の絵")
+    page.settle()
+    yield "主画面 ＋密度", ".app"
+    app.call("record_stop")
+    h5 = Path(app.tmp.name) / "layout_rec.h5"
+    app.call("record_finish", path=str(h5))
+    end = time.monotonic() + 30
+    while not h5.exists():
+        if time.monotonic() > end:
+            raise RuntimeError("記録をまとめられない")
+        time.sleep(0.05)
+    app.call("open", paths=[str(h5)])
+    page.wait("gsApp.pbView.visible && !!document.querySelector('.pbbar')", "再生の帯")
+    page.settle()
+    yield "主画面 再生", ".app"
+    app.call("playback_close")
+    app.call("set_view", layout="spectrum")
+    page.wait("!gsApp.pbView.visible && gsApp.layoutCode === 'spectrum'", "ライブに戻る")
+    page.settle()
+
+
 def cal_views(page: EdgePage, app: "App"):
     """校正の画面（設計K）の手順を開く: 準備・測る（周波数特性・RBW・NF の増幅度）・確かめる（周波数特性・旧校正ファイル）。
     測った点と結果がある形で数える（Qt の LayoutTest.cal_pages と同じ手順）。"""
@@ -593,13 +643,15 @@ CAL_VIEWS = 6
 
 
 def views(page: EdgePage, tabs_only: bool = False, app: "App" = None):
-    """数える画面を順に開き、(どこ, 数える範囲) を返す。tabs_only は主画面の右のタブだけ。app を渡すと校正の画面も。"""
+    """数える画面を順に開き、(どこ, 数える範囲) を返す。tabs_only は主画面の右のタブだけ。app を渡すと設計P の部分と校正の画面も。"""
     for tab in TABS:
         page.ev(f"gsApp.closeSettings(); gsApp.closePresets(); gsApp.tab = '{tab}'; 1")
         page.settle()
         yield f"主画面 {tab}", ".app"
     if tabs_only:
         return
+    if app is not None:
+        yield from display_views(page, app)
     # 探すもの「谷」（G §3.8）: マーカー表の上のボタンの名前が変わる（場所は同じ）。マーカーのタブのピークの一覧も
     page.ev("gsApp.setPolarity('dip'); gsApp.tab = 'marker'; 1")
     page.settle()
@@ -670,8 +722,8 @@ class WebLayoutTest(unittest.TestCase):
         for where, root in views(self.page, app=self.app):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
-        # 数えた画面が揃っていること（開けずに数えなければ何も守らない）
-        self.assertEqual(len(seen), len(TABS) + 2 + 8 + 6 + CAL_VIEWS, seen)
+        # 数えた画面が揃っていること（開けずに数えなければ何も守らない）。設計P の3つ（ウォーターフォール・密度・再生）を含む
+        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 8 + 6 + CAL_VIEWS, seen)
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
@@ -1012,6 +1064,68 @@ class WebLayoutS11Test(unittest.TestCase):
             p.ev(f"gsApp.tab = '{tab}'; gsApp.selectedMarker = '{mid}'; 1")
             p.settle()
             found += p.problems(".app", f"{w}×{h} S11（SWR） {tab}")
+        self.assertEqual(p.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_1280x720(self):
+        self.check_size(*SIZES[0])
+
+    def test_1920x1080(self):
+        self.check_size(*SIZES[1])
+
+
+@unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
+class WebLayoutRefValueTest(unittest.TestCase):
+    """基準の値（設計E §6.7）の画面を、決めた解像度で開いて数える（Qt の LayoutTest.test_reference_value_screens と同じ
+    場面）: 値を付けた基準を一覧で選んだ信号源のタブ（基準の値の欄・行の値・「基準の値…」）と上段、「基準の値…」の窓、
+    S11 で欄を使えなくした信号源のタブ。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App(lan=False)
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def check_size(self, w: int, h: int) -> None:
+        a, p = self.app, self.page
+        a.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000)
+        a.call("set_mode", mode="tg")
+        if not a.call("reference_list")["references"]:
+            a.call("reference_take", kind="wide", name="ATT", value_db=-40.0, show_zero=True)
+            end = time.monotonic() + 30
+            while a.call("get_state")["tasks"]:
+                self.assertLess(time.monotonic(), end, "基準を取り終えない")
+                time.sleep(0.05)
+        open_app(p, a, w, h)
+        found: list[str] = []
+        p.ev("gsApp.modal = null; gsApp.confirmBox = null; gsApp.tab = 'source'; 1")
+        p.wait("gsApp.refs.length === 1", "基準の一覧")
+        p.ev("gsApp.refSel = gsApp.refs[0].id; 1")
+        btn = "document.querySelector('[data-act=\"ref_value\"]')"
+        p.ev(btn + ".scrollIntoView({block: 'center'}); 1")
+        p.settle()
+        self.assertFalse(p.ev(btn + ".disabled"))
+        found += p.problems(".app", f"{w}×{h} 基準の値 source")
+        p.ev(btn + ".click(); 1")
+        p.wait("!!document.querySelector('.modal.input-win input')", "基準の値の窓")
+        p.settle()
+        found += p.problems(".app", f"{w}×{h} 基準の値の窓")
+        p.ev("gsApp.modal = null; 1")
+        a.call("set_mode", mode="s11")
+        try:
+            p.wait("document.querySelector('[data-field=\"ref_value\"] input').disabled", "S11 では使えない")
+            p.settle()
+            found += p.problems(".app", f"{w}×{h} 基準の値 S11 source")
+        finally:
+            a.call("set_mode", mode="sa")
         self.assertEqual(p.errors, [])
         self.assertEqual(sorted(set(found)), [])
 

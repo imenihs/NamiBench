@@ -1,4 +1,5 @@
-// 信号源のタブの基準（TG の「広く取る」「いまの条件で細かく取る」・S11 のオープン → ショート・基準の一覧: 設計E §6・§6.5）と、
+// 信号源のタブの基準（TG の「広く取る」「いまの条件で細かく取る」・基準の値（設計E §6.7）・S11 のオープン → ショート・
+// 基準の一覧: 設計E §6・§6.5）と、
 // トレースの表示の形式（設計R §3: リターンロス（dB）・|Γ|・SWR。位相系は位相を測れない機器では無効にして理由: R §5.1）、
 // |Γ|・SWR の縦軸（下端が決まっていて 1目盛だけを選ぶ）。Qt の ui_qt/tab_source.py・tab_traces.py・main_window.py と
 // 同じ並び・同じ語・同じ動き（J §5）。app.js が読み込んで合わせる。
@@ -25,6 +26,8 @@
         refs: [],
         refName: "",
         refAvg: 1,
+        // 基準の値（設計E §6.7）。取るときに送る値で、画面ごとに持つ（名前・平均と同じ。Qt の tab_source.take_value）
+        refValue: 0,
         refSel: null,  // 一覧で選んでいる基準（Qt の一覧の選択と同じ。使う・名前・消すの相手）
         refSerial: null,
         s11Range: "wide",
@@ -36,6 +39,15 @@
       axis() { return this.ui.axis || DB_AXIS; },
       s11() { return this.ui.s11 || {}; },
       refSelected() { return this.refs.find((r) => r.id === this.refSel) || null; },
+      // 基準の値の欄の決まり（一覧・範囲・桁: texts.REF_VALUE_SPEC）と使えない理由（S11: サーバーの screen_s11.ref_value_view）
+      refValueSpec() { return X.dict("REF_VALUE_SPEC") || {}; },
+      refValueView() { return (this.ui && this.ui.ref_value) || { reason: null, tip: "" }; },
+      // 「基準の値…」の使えない理由（選んでいない・S11 の基準。行の理由はサーバーの screen_s11.ref_row: Qt と同じ）
+      refValueReason() {
+        const r = this.refSelected;
+        if (!r) return X.dict("REASON_TEXTS").select_reference;
+        return r.value_reason || null;
+      },
       refAnySelected() { return this.refs.some((r) => r.selected); },
       // しきい値との交点の欄の決まり（一覧・符号・範囲・桁: texts.THRESHOLD_SPECS。Qt の screen_s11.threshold_spec と同じ）。
       // 選んでいるマーカーのトレースの単位（無ければ縦軸の単位）。|Γ|・SWR はその値の一覧（例 SWR 2 以下: 設計G §3.5）
@@ -88,15 +100,9 @@
         this.refs = (r && r.references) || [];
         if (this.refSel && !this.refs.some((x) => x.id === this.refSel)) this.refSel = null;
       },
-      refWhen(ts) {
-        if (!ts) return "";
-        const d = new Date(ts * 1000);
-        const p = (n) => String(n).padStart(2, "0");
-        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-      },
-      refRowText(r) { return `${r.selected ? "● " : "   "}${r.name}  ${String(r.mode || "").toUpperCase()}  ${this.refWhen(r.taken_at)}`; },
       async takeRef(kind) {
-        await this.cmd("reference_take", { kind, name: this.refName || null, averages: Number(this.refAvg) || 1 }, { field: "refs" });
+        await this.cmd("reference_take", { kind, name: this.refName || null, averages: Number(this.refAvg) || 1,
+          value_db: Number(this.refValue) || 0 }, { field: "refs" });
       },
       // S11 のオープン・ショート（設計E §6.5）。オープンは選んだ範囲、ショートはオープンと同じ範囲（コアが合わせる）
       async takeS11(standard) {
@@ -116,7 +122,9 @@
           if (t.kind) args.kind = t.kind;
           this.cmd("reference_take", args);
         } else {
-          this.cmd("reference_take", { kind: "wide", name: X.fmt("ref_direct_name", { time }), show_zero: true });
+          // 基準の値は信号源のタブの欄の値（設計E §6.7。Qt の ref_quick.take と同じ。S11 には送らない）
+          this.cmd("reference_take", { kind: "wide", name: X.fmt("ref_direct_name", { time }), show_zero: true,
+            value_db: Number(this.refValue) || 0 });
         }
       },
       async refAction(name, args) { await this.cmd(name, args, { field: "refs" }); this.loadRefs(); },
@@ -126,6 +134,18 @@
         if (!r) return;
         this.openModal(W("rename_ref_title"), [{ key: "name", label: W("new_name"), value: r.name }], (v) => {
           if (v.name && v.name.trim() && v.name !== r.name) this.refAction("reference_rename", { id: r.id, name: v.name.trim() });
+        });
+      },
+      // 一覧で選んだ基準の値を直す（測り直さない: 設計E §6.7。Qt の tab_source._edit_value と同じ）
+      refEditValue() {
+        const r = this.refSelected;
+        if (!r || this.refValueReason) return;
+        this.openModal(W("ref_value_title"), [{ key: "value", label: W("ref_value_new"), value: GSUnits.levelText(r.value_db || 0), width: "w-value" }], (v) => {
+          const t = String(v.value == null ? "" : v.value).trim();
+          if (!t) return;
+          let db;
+          try { db = GSUnits.parseDb(t); } catch (e) { this.note("refs", W("bad_value")); return; }
+          if (db !== (r.value_db || 0)) this.refAction("reference_set_value", { id: r.id, value_db: db });
         });
       },
       async refDelete() {
@@ -152,6 +172,8 @@
       onNoticeS11(p) {
         const d = p.detail || {};
         if (p.code === "task_done" && d.task === "reference_take" && (d.result || {}).next !== "short") this.loadRefs();
+        // 一覧の行の基準の値（別の画面から直したときも: 設計E §6.7。Qt と同じ）
+        if (p.code === "reference_value_changed") this.loadRefs();
       },
     },
   };
