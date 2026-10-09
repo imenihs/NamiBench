@@ -997,6 +997,8 @@ class MainWindow(QMainWindow):
 
             open_guide(self)
             return
+        if code == "reference_value_changed":
+            self.source_tab.refresh()  # 一覧の行の基準の値（別の画面から直したときも: 設計E §6.7。Web と同じ）
         v = texts.notice_view(n, self.state)
         for num, text in v["traces"].items():
             row = self.trace_tab.rows.get(int(num)) if str(num).isdigit() else None

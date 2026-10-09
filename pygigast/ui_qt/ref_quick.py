@@ -2,11 +2,12 @@
 
 - TG・S11 のときだけ、連続/単発/停止の隣に出す（位置を動かさない: U-08）
 - 押したら「広く取る」（機種の TG の範囲を 1MHz 刻み）で基準を取り、すぐ1回測って 0dB を見せる。0dB が縦軸の
-  外なら見える REF レベルにする（コアの reference_take の show_zero。変えたことは知らせに出る）
+  外なら見える REF レベルにする（コアの reference_take の show_zero。変えたことは知らせに出る）。基準の値は信号源の
+  タブの「基準の値」の欄の値を使い（設計E §6.7）、0dB の代わりにその値を見せる
 - S11 では同じ場所のボタンが次の1段になる: 「オープンを測る」→「ショートを測る」（設計E §6.5）。ショートで基準が
   できたら、すぐ1回測って見せる
 - 取っている間は進み具合と「やめる」をその場に出す（U-19）
-- 隣に、いま使っている基準（名前・取得の時刻・電源の入れ直し前の印）か「基準なし（dBm で表示）」
+- 隣に、いま使っている基準（名前・取得の時刻・基準の値（0dB でなければ）・電源の入れ直し前の印）か「基準なし（dBm で表示）」
 - 細かい操作（名前・平均・いまの条件で細かく取る・一覧）は右の「信号源」タブに残す
 中身（出すか・理由・文）は screen_model.ref_quick_view（Web と同じ）。
 """
@@ -92,7 +93,9 @@ class RefQuick(QWidget):
             if t.get("kind"):
                 kw["kind"] = t["kind"]
         else:
-            kw = {"kind": "wide", "name": texts.tpl("ref_direct_name", time=now), "show_zero": True}
+            # 基準の値は信号源のタブの欄の値（設計E §6.7。S11 には送らない: 全反射 = 0dB）
+            kw = {"kind": "wide", "name": texts.tpl("ref_direct_name", time=now), "show_zero": True,
+                  "value_db": self.win.source_tab.take_value.value()}
         self.win.call("reference_take", **kw)
 
     def _cancel(self) -> None:

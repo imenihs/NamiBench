@@ -1036,6 +1036,68 @@ class WebLayoutS11Test(unittest.TestCase):
         self.check_size(*SIZES[1])
 
 
+@unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
+class WebLayoutRefValueTest(unittest.TestCase):
+    """基準の値（設計E §6.7）の画面を、決めた解像度で開いて数える（Qt の LayoutTest.test_reference_value_screens と同じ
+    場面）: 値を付けた基準を一覧で選んだ信号源のタブ（基準の値の欄・行の値・「基準の値…」）と上段、「基準の値…」の窓、
+    S11 で欄を使えなくした信号源のタブ。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App(lan=False)
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def check_size(self, w: int, h: int) -> None:
+        a, p = self.app, self.page
+        a.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000)
+        a.call("set_mode", mode="tg")
+        if not a.call("reference_list")["references"]:
+            a.call("reference_take", kind="wide", name="ATT", value_db=-40.0, show_zero=True)
+            end = time.monotonic() + 30
+            while a.call("get_state")["tasks"]:
+                self.assertLess(time.monotonic(), end, "基準を取り終えない")
+                time.sleep(0.05)
+        open_app(p, a, w, h)
+        found: list[str] = []
+        p.ev("gsApp.modal = null; gsApp.confirmBox = null; gsApp.tab = 'source'; 1")
+        p.wait("gsApp.refs.length === 1", "基準の一覧")
+        p.ev("gsApp.refSel = gsApp.refs[0].id; 1")
+        btn = "document.querySelector('[data-act=\"ref_value\"]')"
+        p.ev(btn + ".scrollIntoView({block: 'center'}); 1")
+        p.settle()
+        self.assertFalse(p.ev(btn + ".disabled"))
+        found += p.problems(".app", f"{w}×{h} 基準の値 source")
+        p.ev(btn + ".click(); 1")
+        p.wait("!!document.querySelector('.modal.input-win input')", "基準の値の窓")
+        p.settle()
+        found += p.problems(".app", f"{w}×{h} 基準の値の窓")
+        p.ev("gsApp.modal = null; 1")
+        a.call("set_mode", mode="s11")
+        try:
+            p.wait("document.querySelector('[data-field=\"ref_value\"] input').disabled", "S11 では使えない")
+            p.settle()
+            found += p.problems(".app", f"{w}×{h} 基準の値 S11 source")
+        finally:
+            a.call("set_mode", mode="sa")
+        self.assertEqual(p.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_1280x720(self):
+        self.check_size(*SIZES[0])
+
+    def test_1920x1080(self):
+        self.check_size(*SIZES[1])
+
+
 class TopFreqSampleTest(unittest.TestCase):
     def test_web_uses_the_same_samples_as_qt(self):
         """上段の周波数の欄の幅を決める見本は Qt と Web で同じ（同じ並び・同じ文字。同じ幅になる: U-09）。"""

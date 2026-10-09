@@ -688,7 +688,8 @@
 
         <section class="sec">
           <h3>{{ W('references') }}</h3>
-          <!-- Qt の tab_source と同じ並び: 基準の状態・名前と平均・TG の2つの取り方・S11 の範囲とオープン → ショート（1段ずつ。
+          <!-- Qt の tab_source と同じ並び: 基準の状態・名前と平均と基準の値（設計E §6.7。上段の「基準を取る」もこの値）・
+               TG の2つの取り方・S11 の範囲とオープン → ショート（1段ずつ。
                次に押すボタンを強調し、測ったオープンの時刻と範囲を出す: 設計E §6.5）・一覧（選んで下のボタン）。
                使えない理由・次の1段・状態の文はサーバーの screen_s11（Qt と同じ） -->
           <div class="ref-state">{{ ui.ref_state }}</div>
@@ -697,6 +698,10 @@
             <input class="w-name" data-field="ref_name" v-model="refName" :placeholder="W('take_name_placeholder')">
             <label>{{ W('average') }}</label>
             <input class="w-int" data-field="ref_avg" type="number" min="1" max="64" v-model.number="refAvg">
+            <label>{{ W('ref_value') }}</label>
+            <db-field data-field="ref_value" :value="refValue" unit="dB" :choices="refValueSpec.choices" :signed="refValueSpec.signed"
+                      :lo="refValueSpec.lo" :hi="refValueSpec.hi" :decimals="refValueSpec.decimals" :disabled="!!refValueView.reason"
+                      :title="refValueView.tip + (refValueView.reason ? ' — ' + refValueView.reason : '')" @commit="refValue = $event"></db-field>
           </div>
           <div class="row">
             <button data-act="take_wide" :disabled="!!ui.tg_take_reason" @click="takeRef('wide')"
@@ -723,7 +728,7 @@
           <table class="mtable ref-list">
             <tbody>
               <tr v-for="r in refs" :key="r.id" :class="{sel: r.id === refSel}" @click="refSel = r.id" @dblclick="refSel = r.id; refUse()">
-                <td>{{ refRowText(r) }}</td>
+                <td>{{ r.text }}</td>
               </tr>
             </tbody>
           </table>
@@ -732,6 +737,7 @@
             <button data-act="ref_unuse" :disabled="!refAnySelected" :title="refAnySelected ? '' : T('REASON_TEXTS', 'no_reference_selected')"
                     @click="refAction('reference_select', {id: null})">{{ W('not_use') }}</button>
             <button data-act="ref_rename" :disabled="!refSel" :title="refSel ? '' : T('REASON_TEXTS', 'select_reference')" @click="refRename">{{ W('rename_dots') }}</button>
+            <button data-act="ref_value" :disabled="!!refValueReason" :title="refValueReason || ''" @click="refEditValue">{{ W('ref_value_dots') }}</button>
             <button data-act="ref_delete" :disabled="!refSel" :title="refSel ? '' : T('REASON_TEXTS', 'select_reference')" @click="refDelete">{{ W('erase_dots') }}</button>
           </div>
         </section>

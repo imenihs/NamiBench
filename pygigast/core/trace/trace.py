@@ -364,6 +364,27 @@ class Trace:
         """持っている値の軸がいまの軸と違うか（固定のトレースの凡例に出す: 設計F §5.3）。"""
         return self.axis is not None and current_axis is not None and self.axis != current_axis
 
+    def scale_db(self, delta_db: float) -> None:
+        """持っている比の値を delta_db だけ動かす（基準の値を直したとき: 設計E §6.7。測り直さない）。
+
+        蓄積（平均の領域の値・保持の値）も同じだけ動かすので、次の掃引の値と平均・保持がそろう。比（振幅）の
+        トレースにだけ使う: 平均の領域は振幅（電圧平均・ベクトル平均）は ×g、電力（パワー平均）は ×g²、
+        dB（対数平均）は +delta_db（core/trace/average.py の領域）。
+        """
+        if not delta_db or self.values is None:
+            return
+        g = 10.0 ** (float(delta_db) / 20.0)
+        self.values = self.values * g
+        if self._acc is not None:
+            if self._acc_kind == AverageType.POWER:
+                self._acc = self._acc * (g * g)
+            elif self._acc_kind == AverageType.LOG:
+                self._acc = self._acc + float(delta_db)
+            else:
+                self._acc = self._acc * g  # 電圧平均・ベクトル平均・最大/最小保持（リニアの振幅）
+        if self.steps is not None:
+            self.steps = self.steps * g
+
     # ---- 掃引を受ける ----
 
     def apply(self, frame: Frame) -> TraceUpdate:

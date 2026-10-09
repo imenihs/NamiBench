@@ -318,8 +318,13 @@ def ref_quick_view(st: dict) -> dict:
     tip = ""
     if sel and (n.get("applied") or not n.get("used")):
         name, when = sel.get("name", ""), hhmm(sel.get("taken_at"))
+        value = texts.ref_value_text(sel.get("value_db"))  # 基準の値（設計E §6.7。0 dB なら出さない）
         # 既定の名前（「TG 12:24」）は時刻を含むので、同じ時刻を重ねて出さない
-        text = tpl("ref_quick_name", name=name) if when and when in name else             tpl("ref_quick_now", name=name, time=when)
+        if when and when in name:
+            text = tpl("ref_quick_name_value", name=name, value=value) if value else tpl("ref_quick_name", name=name)
+        else:
+            text = (tpl("ref_quick_now_value", name=name, time=when, value=value) if value
+                    else tpl("ref_quick_now", name=name, time=when))
         if n.get("power_cycled"):
             text += "・" + TEMPLATES["ref_quick_power_cycled"]
             tip = TEMPLATES["norm_power_cycled"]
@@ -612,6 +617,7 @@ def s11_ui(st: dict) -> dict:
         "s11": screen_s11.s11_view(st),
         "tg_take_reason": screen_s11.tg_take_reason(st),
         "ref_state": screen_s11.ref_state_text(st),
+        "ref_value": screen_s11.ref_value_view(st),  # 基準の値の欄（設計E §6.7）
     }
 
 

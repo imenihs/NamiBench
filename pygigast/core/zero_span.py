@@ -133,6 +133,15 @@ class History:
         else:
             self._stores.pop(int(trace), None)
 
+    def shift_db(self, trace: int, delta_db: float) -> None:
+        """トレース1本の持っている点を delta_db だけ動かす（基準の値を直したとき: 設計E §6.7。流す表示の絵を変えない）。"""
+        s = self._stores.get(int(trace))
+        if s is None or not delta_db:
+            return
+        s.level = (s.level.astype(np.float64) + float(delta_db)).astype(np.float32)
+        for p in s.pieces:
+            p.level_db = (np.asarray(p.level_db, dtype=np.float64) + float(delta_db)).astype(np.float32)
+
     def has(self, trace: int) -> bool:
         s = self._stores.get(int(trace))
         return bool(s and s.pieces)
