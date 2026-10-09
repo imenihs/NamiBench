@@ -8,3 +8,6 @@
 /venv/
 __pycache__/
 *.py[cod]
+
+# PlutoSDR の libiio（同梱しない: 設定で DLL のフォルダを選ぶ。既定の置き場所）
+/libiio/

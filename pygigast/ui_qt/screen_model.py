@@ -325,6 +325,12 @@ def rtltcp_view(st: dict) -> dict:
 
 # ---------------------------------------------------------------- 上段の「基準を取る」（設計J §4.2・E §6.2）
 
+def _tg_quick_kind(st: dict) -> str:
+    """上段の「基準を取る」（TG）の取り方。FFT の機器（PlutoSDR）は RBW が同じでないと基準が当たらないので、
+    いまの条件で取る（"fine"）。GigaSt は TG の範囲を広く取る（"wide"）。"""
+    return "fine" if (st.get("connection") or {}).get("sweep_kind") == "fft" else "wide"
+
+
 def ref_quick_view(st: dict) -> dict:
     """TG・S11 のときだけ上段に出す。ボタンの名前・使えない理由・押したときに送る中身・取っている間の進み具合・
     いまの基準の状態。TG は「基準を取る」、S11 は次の1段（オープンを測る → ショートを測る: 設計E §6.5）。"""
@@ -344,7 +350,7 @@ def ref_quick_view(st: dict) -> dict:
         label, button_tip, take = q["label"], q["tip"], q["take"]
     else:
         label, button_tip, take = REF_QUICK_LABELS["button"], REF_QUICK_LABELS["tip"], \
-            {"standard": None, "kind": "wide", "show_zero": True}
+            {"standard": None, "kind": _tg_quick_kind(st), "show_zero": True}
         q = {"open_text": ""}
     n = st.get("normalization") or {}
     sel = n.get("selected")

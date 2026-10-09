@@ -24,6 +24,8 @@ DEFAULTS: dict[str, Any] = {
     "rtltcp": {"enabled": False, "port": 1234, "bind": "local"},
     # RTL-SDR（設計Q §6.2・§6.5）: DLL のフォルダ（None は既定の探し方）・受信の利得（None は機種の既定）・AGC
     "rtlsdr": {"dll_folder": None, "gain_db": None, "agc": False},
+    # PlutoSDR（設計Q §7）: libiio の DLL のフォルダ・URI・受信の利得（None は機種の既定）・自動利得・送信の減衰（dB）
+    "plutosdr": {"dll_folder": None, "uri": "ip:192.168.2.1", "gain_db": None, "agc": False, "tx_atten_db": None},
     # 利用者が機器に付けた名前（設計J §4.7）。キーは "種類:シリアル番号"
     "device_names": {},
 }

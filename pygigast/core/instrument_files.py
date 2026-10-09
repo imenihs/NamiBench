@@ -583,6 +583,10 @@ class FilesMixin:
             kind = self._s11_open["kind"] if mode == Mode.S11 and standard == "short" and self._s11_open else KIND_WIDE
         if kind not in (KIND_WIDE, KIND_FINE):
             raise self._error("bad_reference_kind", "kind", {"kind": kind})
+        if kind == KIND_WIDE and self._profile.get("sweep_kind") == "fft":
+            # FFT の機器（PlutoSDR）は基準と測定の RBW（FFT の点数）が同じでないと当たらない（設計E §6.4 の rbw_mismatch）。
+            # 全範囲を1回で取ると RBW が広がって当たらないので、いまの条件で取る
+            raise self._error("reference_wide_fft", "kind", {"kind": kind})
         if isinstance(averages, bool) or not isinstance(averages, int) or averages < 1:
             raise self._error("not_integer", "averages")
         if mode == Mode.S11:

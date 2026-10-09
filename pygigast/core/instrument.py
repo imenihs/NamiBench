@@ -40,6 +40,7 @@ from .instrument_nf import NfMixin
 from .instrument_playback import PlaybackMixin
 from .instrument_progress import ProgressReporter, SweepProgressMixin
 from .instrument_waterfall import WaterfallMixin
+from .instrument_plutosdr import PlutoSdrMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_step import RUN_STATE as STEP_RUN_STATE, StepSweepMixin
@@ -128,6 +129,13 @@ class _DeviceWorker(threading.Thread):
             self._cancel.set()
             self._cv.notify_all()
 
+    def _device_idle(self) -> None:
+        """掃引を渡されていない: 機器に知らせる（PlutoSDR は出していた送信を止める。設計L: 出しているのは掃引の間）。"""
+        try:
+            self.device.on_idle()
+        except Exception:  # noqa: BLE001 — 知らせの失敗で機器スレッドを止めない（切れたら次の measure が知らせる）
+            pass
+
     def close(self) -> None:
         with self._cv:
             self._closing = True
@@ -140,6 +148,7 @@ class _DeviceWorker(threading.Thread):
             with self._cv:
                 while self._job is None and not self._closing:
                     self._post(("idle",))
+                    self._device_idle()
                     self._cv.wait()
                 if self._closing:
                     break
@@ -181,7 +190,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
-                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
+                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
                  SweepProgressMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
@@ -254,6 +263,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._init_bandplan()
         self._init_rtltcp()
         self._init_rtlsdr()
+        self._init_plutosdr()
         self._init_listen()
         self._init_devices()
         self._init_step(saved if isinstance(saved, dict) else None)  # SG のステップ掃引（設計L §1.3）
@@ -483,6 +493,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             "tasks": self._tasks_state(),
             "rtltcp": self._rtltcp_state(),
             "rtlsdr": self._rtlsdr_state(),
+            "plutosdr": self._plutosdr_state(),
             "listen": self._listen_state(),
             "step_sweep": self._step_state(),  # SG のステップ掃引の設定と動き（設計L §1.3）
             "nf": self._nf_state(),  # NF の ENR・増幅度（設計M）
@@ -618,6 +629,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         if self._is_rtlsdr():
             # 個体の校正（ppm）と利得は、最初の測定より前に入れる（設計Q §6.6）
             self._rtlsdr_prepare(device)
+        elif self._is_plutosdr():
+            self._plutosdr_prepare(device)
         self._worker = _DeviceWorker(device, self._post)
         self._worker.start()
         self._load_calibration(ident.serial)
@@ -634,6 +647,10 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         """機種のプロファイルに合う1回の掃引の見積もり（機器の層が作る: 設計C §5・設計Q §6.4）。"""
         if profile.get("model") == self._base_profile.get("model"):
             return self._base_timing_fn
+        if str(profile.get("model", "")).startswith("plutosdr"):
+            from .devices.plutosdr.driver import timing_fn as plutosdr_timing_fn
+
+            return plutosdr_timing_fn(profile)
         if (profile.get("raw") or {}).get("encoding") == RTLSDR_ENCODING:
             from .devices.rtlsdr.driver import timing_fn as rtlsdr_timing_fn
 

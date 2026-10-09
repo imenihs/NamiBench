@@ -61,6 +61,10 @@ class Device(abc.ABC):
     def close(self) -> None:
         """閉じる。"""
 
+    def on_idle(self) -> None:
+        """掃引を渡されていない間に機器スレッドから呼ぶ。送信を自分で止める必要のある機器（PlutoSDR）だけが使う。"""
+        return None
+
     def on_reference_standard(self, standard: Optional[str]) -> None:
         """S11 の基準を取る間、いま測る標準器（"open"・"short"）を伝える。取り終えたら None（設計E §6.5）。
 
