@@ -137,6 +137,11 @@ class WebRbwAndParityTest(unittest.TestCase):
             self.assertEqual(self.page.ev(f"{self.field('top_n')}.value"), "5" + L["count_suffix"], bad)
         self.type_in("top_n", "", key="ArrowUp")
         self.assertEqual(self.page.ev("gsApp.topN"), 6)
+        # 打ちかけの値から刻む（Qt の QSpinBox と同じ）: 「2」と打って ↑ → 3。範囲の外を打っていたら寄せてから刻む
+        self.type_in("top_n", "2", key="ArrowUp")
+        self.assertEqual(self.page.ev("gsApp.topN"), 3)
+        self.type_in("top_n", "20", key="ArrowDown")
+        self.assertEqual(self.page.ev("gsApp.topN"), 7)
         # 1段の回数はコアの設定（Qt と同じ set_step_sweep）
         self.page.ev("gsApp.tab = 'source'; 1")
         self.page.settle()

@@ -356,9 +356,20 @@
         e.preventDefault();
         this.step(e.deltaY < 0 ? 1 : -1);
       },
+      // 打ちかけの値があればそれから刻む（Qt の QSpinBox は打った値がすぐ値になり、↑↓はそこから 1 ずつ）。範囲の外を
+      // 打っていたら範囲の中へ寄せてから刻む。読めなければ確定済みの値から
       step(dir) {
+        let base = this.value;
+        if (this.editing) {
+          const typed = parseIntIn(this.draft, this.suffix, null, null);
+          if (typed !== null) {
+            base = typed;
+            if (this.min != null) base = Math.max(base, this.min);
+            if (this.max != null) base = Math.min(base, this.max);
+          }
+        }
         this.editing = false;
-        this.send(stepInt(this.value, dir, this.min, this.max));
+        this.send(stepInt(base, dir, this.min, this.max));
       },
     },
     template: `
