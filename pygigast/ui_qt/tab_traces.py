@@ -18,6 +18,7 @@ from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -502,8 +503,11 @@ class TraceTab(QWidget):
         self._file_checks = {}
         layer = self.win.traces
         for i, f in enumerate(files):
-            w = QWidget()
-            v = sizes.vbox(w, inset=False)
+            # 開いたファイルごとに枠で囲む（Web の .file と同じ）。枠は、どのトレースがどのファイルのもので、［外す］が
+            # どこまでを外すかを示す（ファイルを2つ開くと、同じ名前のトレースの行「#1  dBm  501 点」が並ぶ）
+            w = QFrame()
+            w.setObjectName("fileBox")
+            v = sizes.vbox(w)
             head = sizes.hbox()
             # 見出しは名前だけ（過去のトレースは「過去の掃引 時刻」: 設計P §3）。場所・日時・機器・メモはツールチップ
             # （Web と同じ texts.file_display_name・file_heading_tip）

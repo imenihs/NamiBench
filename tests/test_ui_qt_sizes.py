@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QFontMetrics
 
 from pygigast.api.local import LocalApi, _SimulatorBackend
@@ -204,6 +205,40 @@ class LayoutTest(UiBase):
         self.wait(lambda: (self.win.state.get("run") or {}).get("state") == "stopped"
                   and self.win.state["run"]["sweep_count"] > n0, what="単発")
 
+    def add_marker_rows(self, freq_hz: int) -> None:
+        """マーカー表に行を出す（マーカー・オフセットのカーソル・機能の結果・XY カーソル: Web の App と同じ形）。
+        表の行が無いと、表が横にはみ出すか・列が切れるかを数えられない。"""
+        r = self.api.call("marker_add", kind="M", trace=1, freq_hz=freq_hz).result(5)
+        self.win.select_marker(r["id"])
+        self.api.call("marker_offset_add", id=r["id"], type="freq", sign="+", delta=1_000_000).result(5)
+        self.api.call("marker_function", id=r["id"], bandwidth_db=[3.0], threshold={"level": -20.0, "side": "above"}).result(5)
+        self.api.call("set_xy", x1_hz=freq_hz - 10_000_000, y1=-50.0).result(5)
+        self.wait(lambda: len(self.win.marker_panel.rows) >= 6, what="マーカー表の行")
+
+    def test_marker_table_in_every_layout(self):
+        """どの表示の組み合わせ（スペクトルのみ・＋ウォーターフォール・＋密度: 設計P §2）でも、行のあるマーカー表が横に
+        はみ出さず、右端の「操作」まで見える。機能の結果が長い文（交点が見つかった N dB 帯域幅）でも、注意の列で折り返す。"""
+        found = []
+        call = lambda n, **kw: self.api.call(n, **kw).result(10)  # noqa: E731
+        call("connect", backend="simulator", serial="SIM00001")
+        self.api._inst._device.config.signals = [(120_000_000, -30.0)]
+        try:
+            call("set_sweep", start_hz=100_000_000, stop_hz=140_000_000)
+            self._single()
+            self.add_marker_rows(120_000_000)
+            self.wait(lambda: any(r.get("kind") == "function" and r.get("status") == "ok"
+                                  for r in self.win.marker_panel.rows), what="N dB 帯域幅の結果")
+            for layout in ("spectrum", "waterfall", "density"):
+                call("set_view", layout=layout)
+                self._single()
+                for key in ("tab-trace", "tab-view"):
+                    self.win.show_part(key)
+                    found += self.check(self.win, f"主画面 {layout} {key}")
+        finally:
+            self.api._inst._device.config.signals = []
+            call("set_view", layout="spectrum")
+        self.assertEqual(sorted(set(found)), [])
+
     def test_display_parts(self):
         """設計P の部分（ウォーターフォール・密度表示・再生の帯・表示のタブの欄とブックマークの一覧・別の窓）も数える。"""
         found = []
@@ -279,6 +314,60 @@ class LayoutTest(UiBase):
         self.assertTrue(any("並びの 2 列目" in p for p in found), found)
         self.assertTrue(any("クリア" in p and "伸びている" in p for p in found), found)
         self.assertTrue(any("100px が値の種類の幅" in p for p in found), found)
+
+    def test_checker_finds_broken_table(self):
+        """表の検査そのものが働くこと: 本物のマーカー表をわざと横にはみ出させ（注意の列を広げる）、列の文字を切る
+        （値の列を狭める）と、はみ出し・右端の「操作」の見切れ・切れた文字が見つかる。"""
+        from PySide6.QtWidgets import QHeaderView
+
+        from pygigast.ui_qt.marker_table import COL_NOTE, COL_VALUE
+
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self._single()
+        self.add_marker_rows(500_000_000)
+        self.win.show_part("tab-trace")
+        self.assertEqual(self.check(self.win, "x"), [])
+        hdr = self.win.marker_panel.tree.header()
+        hdr.setSectionResizeMode(COL_NOTE, QHeaderView.ResizeMode.Fixed)
+        hdr.resizeSection(COL_NOTE, 3000)
+        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.ResizeMode.Fixed)
+        hdr.resizeSection(COL_VALUE, 20)
+        found = self.check(self.win, "x")
+        self.assertTrue(any("横にはみ出している" in p for p in found), found)
+        self.assertTrue(any("列「操作」" in p and "切れている" in p for p in found), found)
+        self.assertTrue(any("dBm」の文字が切れている" in p for p in found), found)
+
+    def test_marker_table_wraps_long_notes(self):
+        """表が狭いとき（マーカー表を別の窓にして狭くした）も横にはみ出さない: 注意の列は残りの幅で折り返し、折り返した
+        行は文が入る高さになり、その行の「操作」は段の高さのまま行の縦の真ん中にある。"""
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self._single()
+        self.add_marker_rows(500_000_000)
+        panel = self.win.marker_panel
+        tree = panel.tree
+        self.win.parts.docks["markers"].setFloating(True)
+        self.win.parts.docks["markers"].resize(900, 320)
+        self.pump(0.5)
+        try:
+            self.assertEqual(problems(self.win.parts.docks["markers"], "狭い表"), [])
+            heights = {}
+            from PySide6.QtWidgets import QTreeWidgetItemIterator
+            it = QTreeWidgetItemIterator(tree)
+            while it.value():
+                i = it.value()
+                heights[i.data(0, Qt.ItemDataRole.UserRole)] = tree.visualItemRect(i).height()
+                it += 1
+            # しきい値の行の注意（長い文）は折り返して2行以上、注意の無い行は1行の高さ
+            self.assertGreater(heights["M1.th"], heights["Y1"], heights)
+            from PySide6.QtWidgets import QToolButton
+
+            ops = tree.itemWidget(panel._items["M1.th"], len(texts.MARKER_COLUMNS)).findChild(QToolButton)
+            row = tree.visualItemRect(panel._items["M1.th"])
+            self.assertEqual(ops.height(), sizes.H_M)
+            center = ops.mapTo(tree.viewport(), ops.rect().center()).y()
+            self.assertLessEqual(abs(center - row.center().y()), 1)
+        finally:
+            self.win.parts.docks["markers"].setFloating(False)
 
     def cal_pages(self) -> list[str]:
         """校正の画面（設計K）の手順: 準備・測る（周波数特性・RBW・NF の増幅度）・確かめる（周波数特性・旧校正ファイル）。

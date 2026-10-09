@@ -13,12 +13,16 @@
 - 標準の段の入力欄の幅が、値の種類の幅（整数・値・名前・色）のどれでもない（S-02）
 - 並び（QGridLayout）の同じ列の欄・ドロップダウンの幅か左端が 1px より違う（列がガタガタで、行を移るたびにマウスを
   横へ探しに行くことになる: 2026-10-03 ユーザー指摘）
+- 行のある表が横にはみ出す（横のスクロールが出る）・列が見える範囲の外で切れる・セルの文字が切れる（折り返す表は、
+  折り返した文が行の高さに入らない）
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QAbstractItemView,
     QAbstractSpinBox,
     QCheckBox,
     QComboBox,
@@ -29,8 +33,11 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollBar,
+    QStyle,
+    QTableView,
     QTabBar,
     QToolButton,
+    QTreeView,
     QWidget,
 )
 
@@ -196,6 +203,7 @@ def problems(root: QWidget, where: str = "") -> list[str]:
         if isinstance(s, (QCheckBox, QRadioButton)) and s.height() != sizes.H_M:
             out.append(f"{where}: {type(s).__name__}「{s.text()[:16]}」の高さ {s.height()}px（段の値 {sizes.H_M}px）")
     out += _grid_columns(root, where)
+    out += _tables(root, where)
     # 名前を左に置く形: 名前と欄の縦の真ん中
     for form in root.findChildren(QFormLayout):
         for r in range(form.rowCount()):
@@ -210,6 +218,74 @@ def problems(root: QWidget, where: str = "") -> list[str]:
             lg = li.geometry()
             if abs(lg.center().y() - fg.center().y()) > 2 and fg.height() <= sizes.ROW_H + 4:
                 out.append(f"{where}: 名前「{lab.text()[:16]}」の縦の真ん中が欄と {lg.center().y() - fg.center().y()}px ずれている")
+    return out
+
+
+def _view_rows(view, parent=None):
+    """表の全部の行の（列 0 の）位置。木の表は子の行も（開いている行だけ）。"""
+    from PySide6.QtCore import QModelIndex
+
+    m = view.model()
+    parent = parent if parent is not None else QModelIndex()
+    for r in range(m.rowCount(parent)):
+        idx = m.index(r, 0, parent)
+        yield idx
+        if isinstance(view, QTreeView) and view.isExpanded(idx):
+            yield from _view_rows(view, idx)
+
+
+def _tables(root: QWidget, where: str) -> list[str]:
+    """行のある表（マーカー表・ピークの一覧・設定の表など）: 横にはみ出さない（横のスクロールを出さない）・列が見える
+    範囲の外で切れない・セルの文字が切れない（折り返す表は、折り返した文が行の高さに入る）。
+
+    マーカー表が 1280×720 で横にはみ出し、右端の列「操作」が見切れたのを数えていなかった（2026-10-09）。"""
+    out = []
+    for v in root.findChildren(QAbstractItemView):
+        if not _shown(v, root) or v.window() is not root.window() or v.model() is None:
+            continue
+        if isinstance(v, QTreeView):
+            hdr = v.header()
+        elif isinstance(v, QTableView):
+            hdr = v.horizontalHeader()
+        else:
+            continue  # 一覧（QListView）は列を持たない
+        if v.model().rowCount() == 0 or _skip(v):
+            continue
+        title = f"{type(v).__name__}（列 {hdr.count()}）"
+        vp = v.viewport().width()
+        bar = v.horizontalScrollBar()
+        if bar.maximum() > bar.minimum():
+            out.append(f"{where}: 表 {title} が横にはみ出している（中身 {hdr.length()}px・見える幅 {vp}px）")
+        model = v.model()
+        for c in range(hdr.count()):
+            if hdr.isSectionHidden(c):
+                continue
+            x = hdr.sectionViewportPosition(c)
+            name = str(model.headerData(c, Qt.Orientation.Horizontal) or c)
+            if x < 0 or x + hdr.sectionSize(c) > vp + 1:
+                out.append(f"{where}: 表 {title} の列「{name}」が見える範囲（0〜{vp}px）の外で切れている"
+                           f"（{x}〜{x + hdr.sectionSize(c)}px）")
+        margin = v.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, v) + 1
+        wrap = isinstance(v, QTreeView) and v.wordWrap() or isinstance(v, QTableView) and v.wordWrap()
+        for first in _view_rows(v):
+            for c in range(hdr.count()):
+                idx = first.siblingAtColumn(c)
+                text = idx.data(Qt.ItemDataRole.DisplayRole)
+                if not isinstance(text, str) or not text.strip() or hdr.isSectionHidden(c) or v.indexWidget(idx):
+                    continue
+                rect = v.visualRect(idx)
+                if not rect.isValid():
+                    continue
+                fm = QFontMetrics(idx.data(Qt.ItemDataRole.FontRole) or v.font())
+                room = rect.width() - 2 * margin
+                w, h = fm.horizontalAdvance(text.strip()), fm.height()
+                if w > room + 1 and wrap:
+                    # 折り返す表: 折り返した文（語の途中では折り返さない）がセルの幅と行の高さに入るか
+                    b = fm.boundingRect(QRect(0, 0, max(room, 1), 1 << 20), int(Qt.TextFlag.TextWordWrap), text)
+                    w, h = b.width(), b.height()
+                if w > room + 1 or h > rect.height():
+                    out.append(f"{where}: 表 {title} のセル「{text.strip()[:16]}」の文字が切れている（文 {w}×{h}px・"
+                               f"セルの中 {room}×{rect.height()}px）")
     return out
 
 

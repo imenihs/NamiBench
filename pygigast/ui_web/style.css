@@ -262,6 +262,9 @@ select.warn option:not(:disabled), select.warn optgroup { color: var(--text); }
 .mtable.wrap td:not(.ops), .mtable.keys td.fill { white-space: normal; }
 .cell-row { display: flex; gap: var(--gap); align-items: center; }
 .note-cell { color: var(--warn); font-size: var(--font-s); }
+/* マーカー表の注意の列は残りの幅を全部取り、入らない文は折り返す（表を横にはみ出させない。はみ出すと右端の「操作」が
+   見切れた）。ほかの列は中身の幅。文は切らない（Qt の marker_table と同じ） */
+.mtable td.note-cell { white-space: normal; width: 100%; }
 .detached-bar { display: flex; align-items: center; gap: var(--label-gap); padding: var(--gap) var(--inset); color: var(--text-dim); background: var(--grid); }
 
 /* 右のパネル。幅は利用者が決めた幅と、一番広いタブの中身の幅の大きい方（Qt のドックと同じ: 欄を縮めない S-02）。
@@ -281,6 +284,8 @@ select.warn option:not(:disabled), select.warn optgroup { color: var(--text); }
             scrollbar-gutter: stable; } /* スクロールバーの有無でパネルの幅を変えない */
 .sec, .tsec { display: flex; flex-direction: column; gap: var(--gap); align-items: flex-start; min-width: min-content; }
 .file { display: flex; flex-direction: column; gap: var(--gap); align-self: stretch; padding: var(--inset); border: 1px solid var(--grid); }
+/* トレースの行の名前の区切り（「#1  dBm  501 点」の2つの空白）を Qt と同じに残す */
+.file label.inline { white-space: pre; }
 .file-head { display: flex; gap: var(--gap); align-items: center; flex-wrap: wrap; }
 /* 見出しは名前だけ（詳しくはツールチップ）。名前が残りの幅を取り、外すは右端（Qt の tab_traces と同じ並び） */
 .file-name { flex: 1 1 auto; min-width: 0; }

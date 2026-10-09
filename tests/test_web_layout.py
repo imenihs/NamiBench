@@ -23,6 +23,7 @@ Qt の tests/qt_layout_check.py と同じ決まりを、ヘッドレスの Edge 
 - メニューバーの題・並び・項目が Qt と違う。広い画面の上段に Qt に無い部品（「≡」・保存・PNG）がある
 - 1行の文字（名前・状態）とチェックボックス・ラジオが、同じ行の部品と縦の真ん中で 2px より違う
 - 名前の付いたチェックボックス・ラジオの高さが標準の段の値でない
+- 行のある表が横にはみ出す（横のスクロールが出る）・列が見える範囲の外で切れる・セルの文字が切れる
 
 段は置き場所で決まる（S-01）。画面は置き場所に data-tier（L・S。無ければ標準）を付けて段を示す。
 
@@ -32,17 +33,15 @@ views）を使う。
 """
 from __future__ import annotations
 
-import base64
 import json
-import shutil
-import subprocess
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
-EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+# ヘッドレスの Edge の道具は tests/edge_page.py。ここではそれに崩れを数える台本を足す（ほかの Web の試験もここから読む）
+from tests import edge_page
+from tests.edge_page import EDGE, edge_available  # noqa: F401
 SIZES = ((1280, 720), (1920, 1080))
 # 主画面の右のタブ（app.js の tabList と同じ並び）
 TABS = ("trace", "marker", "view", "source")
@@ -302,133 +301,43 @@ window.__gsLayout = function (rootSel, where, cfg) {
       }
     }
   }
+  // 行のある表: 横にはみ出さない（横のスクロールを出さない）・列が見える範囲の外で切れない・セルの文字が切れない
+  // （マーカー表が 1280×720 で横にはみ出し、右端の列「操作」が見切れたのを数えていなかった: 2026-10-09）
+  for (const t of document.querySelectorAll("table")) {
+    if (!inScope(t) || !shown(t) || !t.querySelector("tbody tr")) continue;
+    let box = null;  // 表を切り取る一番近い枠（スクロールする枠・はみ出しを隠す枠）
+    for (let p = t.parentElement; p && !box; p = p.parentElement)
+      if (/auto|scroll|hidden/.test(getComputedStyle(p).overflowX)) box = p;
+    const label = `表（${t.className || "table"}）`;
+    if (box && box.scrollWidth > box.clientWidth + 1)
+      out.push(`${where}: ${label}が横にはみ出している（中身 ${box.scrollWidth}px・見える幅 ${box.clientWidth}px）`);
+    const br = box ? box.getBoundingClientRect() : { left: 0 };
+    const lo = box ? br.left + box.clientLeft : 0;
+    const hi = box ? lo + box.clientWidth : document.documentElement.clientWidth;
+    const heads = t.tHead ? [...t.tHead.rows[0].cells] : [...(t.querySelector("tbody tr") || { cells: [] }).cells];
+    heads.forEach((c, i) => {
+      const r = c.getBoundingClientRect();
+      if (r.width > 0 && (r.left < lo - 1 || r.right > hi + 1))
+        out.push(`${where}: ${label}の列「${textOf(c) || i}」が見える範囲（${lo.toFixed(0)}〜${hi.toFixed(0)}px）の外で切れている`);
+    });
+    for (const c of t.querySelectorAll("td, th")) {
+      if (shown(c) && (c.scrollWidth > c.clientWidth + 1 || c.scrollHeight > c.clientHeight + 1))
+        out.push(`${where}: ${label}のセル「${textOf(c).slice(0, 16)}」の文字が切れている（中 ${c.clientWidth}×${c.clientHeight}px・文字 ${c.scrollWidth}×${c.scrollHeight}px）`);
+    }
+  }
   return out;
 };
 true;
 """
 
 
-def edge_available() -> bool:
-    return EDGE.exists()
-
-
-class EdgePage:
-    """ヘッドレスの Edge の1枚のページ（DevTools の口で動かす）。"""
-
-    def __init__(self) -> None:
-        from websockets.sync.client import connect
-
-        self.profile = tempfile.mkdtemp(prefix="gs_edge_")
-        self.proc = subprocess.Popen(
-            [str(EDGE), "--headless=new", "--disable-gpu", "--remote-debugging-port=0", f"--user-data-dir={self.profile}",
-             "--no-first-run", "--no-default-browser-check",
-             # 本番のブラウザの画面は見えているタブで、描画（requestAnimationFrame）が回る。ヘッドレスの窓は、PC が重いと
-             # 隠れた窓・裏のタブとみなされて描画と時計を止められることがある（全体の試験で settle が 60 秒返らなかった）。
-             # 本番と同じ「見えているタブ」の前提にそろえる
-             "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
-             "--disable-renderer-backgrounding", "--disable-features=CalculateNativeWinOcclusion",
-             "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        port_file = Path(self.profile) / "DevToolsActivePort"
-        end = time.monotonic() + 30
-        page = None
-        while page is None:
-            if time.monotonic() > end:
-                self.close()
-                raise RuntimeError("Edge の DevTools の口が開かない")
-            try:
-                port = int(port_file.read_text().split()[0])
-                tabs = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=5).read())
-                page = next(t for t in tabs if t["type"] == "page")
-            except (OSError, ValueError, StopIteration, IndexError):
-                time.sleep(0.1)
-        self._ws_cm = connect(page["webSocketDebuggerUrl"], max_size=None, open_timeout=10)
-        self.ws = self._ws_cm.__enter__()
-        self._id = 0
-        self.errors: list[str] = []
-        self.send("Runtime.enable")
-        self.send("Page.enable")
-        self.send("Network.setCacheDisabled", cacheDisabled=True)
-        # 本番の画面は利用者が見ている（前にあり、フォーカスを持つ）タブ。ヘッドレスの窓は PC が重いと隠れた窓とみなされ、
-        # 描画（requestAnimationFrame）を止められた（全体の試験で visibilityState=hidden になり settle が落ちた）。
-        # 前に出し、フォーカスを持つ前提にそろえる
-        self.send("Emulation.setFocusEmulationEnabled", enabled=True)
-        self.send("Page.bringToFront")
-
-    def send(self, method: str, **params):
-        self._id += 1
-        mid = self._id
-        self.ws.send(json.dumps({"id": mid, "method": method, "params": params}))
-        while True:
-            m = json.loads(self.ws.recv(timeout=60))
-            if m.get("method") == "Runtime.exceptionThrown":
-                self.errors.append(json.dumps(m["params"]["exceptionDetails"], ensure_ascii=False)[:500])
-            if m.get("id") == mid:
-                if "error" in m:
-                    raise RuntimeError(f"{method}: {m['error']}")
-                return m.get("result")
-
-    def ev(self, js: str):
-        r = self.send("Runtime.evaluate", expression=js, awaitPromise=True, returnByValue=True)
-        if r.get("exceptionDetails"):
-            raise RuntimeError(json.dumps(r["exceptionDetails"], ensure_ascii=False)[:800])
-        return r.get("result", {}).get("value")
-
-    def size(self, w: int, h: int) -> None:
-        self.send("Emulation.setDeviceMetricsOverride", width=w, height=h, deviceScaleFactor=1, mobile=False)
-
-    def goto(self, url: str) -> None:
-        self.send("Page.navigate", url=url)
-
-    def wait(self, js: str, what: str, timeout: float = 30) -> None:
-        end = time.monotonic() + timeout
-        while not self.ev(js):
-            if time.monotonic() > end:
-                raise AssertionError(f"{what} にならない")
-            time.sleep(0.1)
-
-    def settle(self) -> None:
-        """Vue が描き直し、2回描画が回るまで待つ。描画が 10 秒回らなければ、そのときのページの見え方を添えて落とす
-        （黙って 60 秒待って通信の時間切れにしない: 原因が分かるように）。"""
-        js = ("new Promise((r) => { const t = setTimeout(() => r(`描画が回らない（visibilityState=${document.visibilityState}"
-              ", hasFocus=${document.hasFocus()}）`), 10000); requestAnimationFrame(() => requestAnimationFrame("
-              "() => setTimeout(() => { clearTimeout(t); r('ok'); }, 50))); })")
-        r = self.ev(js)
-        if r != "ok" and "visibilityState=hidden" in r:
-            # ブラウザが窓を隠れたものにした（本番の見ているタブと違う前提）。前に出し直してから待ち直す
-            self.send("Page.bringToFront")
-            r = self.ev(js)
-        if r != "ok":
-            raise AssertionError(r)
-
-    def shot(self, path: Path) -> None:
-        s = self.send("Page.captureScreenshot", format="png")
-        Path(path).write_bytes(base64.b64decode(s["data"]))
+class EdgePage(edge_page.EdgePage):
+    """ヘッドレスの Edge の1枚のページ（tests/edge_page.py）に、崩れを数える台本（CHECK_JS）を足したもの。"""
 
     def problems(self, root: str, where: str) -> list[str]:
         self.ev(CHECK_JS)
         return self.ev(f"window.__gsLayout({json.dumps(root)}, {json.dumps(where)}, "
                        f"{json.dumps(layout_config(), ensure_ascii=False)})")
-
-    def close(self) -> None:
-        # ブラウザを閉じてから（ページの接続を閉じさせる）、残っていれば止める
-        try:
-            self._id += 1
-            self.ws.send(json.dumps({"id": self._id, "method": "Browser.close", "params": {}}))
-            self.proc.wait(10)
-        except Exception:  # noqa: BLE001 - 閉じるときの失敗は試験の結果に関係しない
-            pass
-        try:
-            self._ws_cm.__exit__(None, None, None)
-        except Exception:  # noqa: BLE001
-            pass
-        if self.proc.poll() is None:
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True)
-            try:
-                self.proc.wait(10)
-            except subprocess.TimeoutExpired:
-                pass
-        shutil.rmtree(self.profile, ignore_errors=True)
 
 
 class App:
@@ -975,6 +884,62 @@ class WebLayoutTest(unittest.TestCase):
         self.assertTrue(any("伸びている" in p for p in found), found)
         self.assertTrue(any("の文字 12px（段の値 13px）" in p for p in found), found)
         self.assertEqual(self.page.problems(".app", "戻した後"), [])
+
+    def test_checker_finds_a_broken_table(self):
+        """表の検査そのものが働くこと: 本物のマーカー表をわざと横にはみ出させ、セルの文字を切ると、はみ出し・右端の
+        「操作」の見切れ・切れた文字が見つかる（Qt の LayoutTest.test_checker_finds_broken_table と同じ）。"""
+        open_app(self.page, self.app, *SIZES[0])
+        self.assertEqual(self.page.problems(".app", "崩す前"), [])
+        self.page.ev("(() => { document.querySelector('.marker-box .mtable').style.minWidth = '3000px';"
+                     " const c = document.querySelector('.marker-box .mtable tbody td:nth-child(4)');"
+                     " c.style.display = 'block'; c.style.width = '8px'; c.style.overflow = 'hidden'; return 1; })()")
+        found = self.page.problems(".app", "壊した表")
+        self.page.ev("(() => { document.querySelector('.marker-box .mtable').removeAttribute('style');"
+                     " document.querySelector('.marker-box .mtable tbody td:nth-child(4)').removeAttribute('style');"
+                     " return 1; })()")
+        self.assertTrue(any("が横にはみ出している" in p for p in found), found)
+        self.assertTrue(any("列「操作」" in p and "切れている" in p for p in found), found)
+        self.assertTrue(any("dBm」の文字が切れている" in p for p in found), found)
+        self.page.settle()
+        self.assertEqual(self.page.problems(".app", "戻した後"), [])
+
+    def test_marker_table_long_note_in_every_layout(self):
+        """どの表示の組み合わせ（スペクトルのみ・＋ウォーターフォール・＋密度: 設計P §2）でも、行のあるマーカー表が横に
+        はみ出さず、右端の「操作」まで見える。機能の結果が長い文（交点が見つかった N dB 帯域幅）でも、注意の列で折り返す
+        （Qt の LayoutTest.test_marker_table_in_every_layout と同じ場面）。"""
+        dev = self.app.api._inst._device
+        dev.config.signals = [(500_000_000, -30.0)]
+        found: list[str] = []
+        try:
+            # 信号の山が何点かに載る幅（M1 は 500 MHz）。帯域の端を補間で求められる
+            self.app.call("set_sweep", start_hz=480_000_000, stop_hz=520_000_000)
+            self.sweep_once()
+            for w, h in SIZES:
+                open_app(self.page, self.app, w, h)
+                # 交点が両側で見つかった（線の縦線が2本ある）N dB 帯域幅の行: 注意の列に下端〜上端・中心・幅・Q の長い文
+                self.page.wait("gsApp.markerRows.some((r) => r.kind === 'function' && r.line"
+                               " && r.line.freqs_hz.length === 2)", "N dB 帯域幅の結果")
+                for layout in ("spectrum", "waterfall", "density"):
+                    self.app.call("set_view", layout=layout)
+                    self.sweep_once()
+                    self.page.wait(f"gsApp.layoutCode === '{layout}'", f"表示の組み合わせ {layout}")
+                    for tab in ("trace", "view"):
+                        self.page.ev(f"gsApp.tab = '{tab}'; 1")
+                        self.page.settle()
+                        found += self.page.problems(".app", f"{w}×{h} {layout} {tab}")
+                # 折り返した行がある（1280×720 では注意の列が狭い）ことも確かめる: 注意のセルが1行より高い
+                if w == SIZES[0][0]:
+                    tall = self.page.ev("[...document.querySelectorAll('.marker-box td.note-cell')]"
+                                        ".some((c) => c.getBoundingClientRect().height > "
+                                        "parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-h')) + 1)")
+                    self.assertTrue(tall)
+        finally:
+            dev.config.signals = []
+            self.app.call("set_view", layout="spectrum")
+            self.app.call("set_sweep", start_hz=400_000_000, stop_hz=600_000_000)
+            self.sweep_once()
+        self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
 
 
 class WebLayoutZeroSpanTest(unittest.TestCase):

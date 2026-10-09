@@ -174,7 +174,8 @@ class RowOpsTest(PolarityUiBase):
         self.cmd("marker_set", id="M1", ref="M2")
         self.pump()
         from PySide6.QtWidgets import QToolButton
-        ops = self.panel.tree.itemWidget(self.panel._items["M1"], self.panel.tree.columnCount() - 1)
+        # 行の「操作」のボタンは、行の縦の真ん中に置く入れ物の中（marker_table._cell）
+        ops = self.panel.tree.itemWidget(self.panel._items["M1"], self.panel.tree.columnCount() - 1).findChild(QToolButton)
         self.assertIsInstance(ops, QToolButton)
         self.assertEqual(ops.text(), L["row_ops"])
         ops.menu().aboutToShow.emit()

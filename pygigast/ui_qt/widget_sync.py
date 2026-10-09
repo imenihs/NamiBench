@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from PySide6.QtCore import QEvent, QObject, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QTimer
 from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QLineEdit, QWidget
 
 # 開いた一覧の行の左右の余白（行の字の外側。字の幅に足す）
@@ -175,8 +175,18 @@ class _Fit(QObject):
         return False
 
     def update(self, *_a) -> None:
-        self.combo.view().setMinimumWidth(popup_width_needed(self.combo))
-        self.combo.updateGeometry()
+        c = self.combo
+        # Qt の QComboBox は、選択肢が変わると大きさの見積もり（sizeHint）を測り直すが、最小の大きさの見積もり
+        # （minimumSizeHint）は最初に聞かれたときの値を持ち続ける（測り直すのは見た目の決まりが変わったときだけ）。
+        # 空で作って状態が届いてから選択肢を入れるドロップダウンは、選択肢が入る前に並びが最小の大きさを聞くと、
+        # 「選択肢なし」の幅（x の字 7 つ分）が残り、並びと崩れの試験が一番長い選択肢と違う幅を見た（PC が重いと
+        # 並びが状態より先に回るので、ときどきだけ起きた）。2つの見積もりは同じ求め方なので、違えば見た目の決まりが
+        # 変わった知らせを送って、両方を今の選択肢で測り直させる
+        if c.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToContents and c.minimumContentsLength() == 0 \
+                and c.minimumSizeHint() != c.sizeHint():
+            QCoreApplication.sendEvent(c, QEvent(QEvent.Type.StyleChange))
+        c.view().setMinimumWidth(popup_width_needed(c))
+        c.updateGeometry()
 
 
 def combo_width(combo: QComboBox, items) -> int:
