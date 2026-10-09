@@ -443,6 +443,23 @@ class PlaybackTest(InstrumentCase):
                          (live["mode"], live["start_hz"], live["stop_hz"]))
         self.assertIsNone(st["undo"]["undo_blocked"])
 
+    def test_trace_only_undo_works_during_playback(self):
+        # トレースの設定だけの変更は、再生中も元に戻せる（条件を変えないので断らない: 設計P §5）
+        h5 = self.record(3)
+        self.open(h5)
+        live = dict(self.call("get_state")["sweep"])
+        self.call("set_trace", number=1, line="dash")
+        st = self.call("get_state")
+        self.assertIsNone(st["undo"]["undo_blocked"])
+        self.call("undo")
+        st = self.call("get_state")
+        self.assertNotEqual(st["traces"][0]["line"], "dash")
+        self.assertIsNone(st["undo"]["redo_blocked"])
+        self.call("redo")
+        st = self.call("get_state")
+        self.assertEqual(st["traces"][0]["line"], "dash")
+        self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"]), (live["start_hz"], live["stop_hz"]))
+
     def test_session_changes_with_each_recording(self):
         # 再生中に別の記録を開くと記録の通し番号が変わる（画面は記録ごとの見方を捨てる: P §5）
         h5 = self.record(3)
@@ -482,6 +499,16 @@ class ReferenceSegmentTest(InstrumentCase):
         label = display_view.boundary_label(new["cond"])
         self.assertIn("dB", label)
         self.assertIn("ケーブルA", label)
+        # 基準の名前を変えても境目にしない（並びと境目は基準の id。文はいまの名前）
+        rid = new["cond"]["ref_id"]
+        self.call("reference_rename", id=rid, name="ケーブルB")
+        for _ in range(2):
+            sweep_once(self)
+        rows = [x for x in self.call("waterfall_rows", max_rows=20)["rows"] if x["unit"] == "dB"]
+        self.assertGreaterEqual(len(rows), 4)
+        self.assertEqual(len({x["seg"] for x in rows}), 1)
+        self.assertEqual({x["cond"]["ref"] for x in rows}, {"ケーブルB"})
+        self.assertEqual(len({str(x["cond"]) for x in rows}), 1)  # 画面は境目を描かない
 
 
 class ZeroSpanAndFormatTest(S11Case):

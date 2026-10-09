@@ -67,6 +67,8 @@ class WaterfallMixin:
         self._wf_rec_src = None  # 記録中の作業ファイルを読む RecordSource（書き込みスレッドだけが触る）
         self._wf_last: Optional[wf.Row] = None  # いちばん新しく入れた行（ライブ・再生とも。単位と色の範囲を決める）
         self._wf_format_key: Optional[tuple] = None  # 行にするトレースの番号と表示の形式（変わったら出し直す）
+        # 基準の id → いまの名前（境目の条件は id で比べ、文にはいまの名前を出す。名前を変えても境目にしない）
+        self._wf_ref_names: dict[str, str] = {}
         self._wf_range_sent: Optional[dict] = None
 
     def _shutdown_waterfall(self) -> None:
@@ -176,7 +178,8 @@ class WaterfallMixin:
         # （_wf_ref_value_moved: 設計E §6.7）
         ref = None if rec is None else rec.get("id")
         if rec is not None:
-            cond["ref"] = str(rec.get("name") or "")
+            cond["ref_id"] = str(rec.get("id") or "")
+            self._wf_ref_names[cond["ref_id"]] = str(rec.get("name") or "")
         key = (f0, int(t.axis.step_hz), int(vals.size), cond["rbw_hz"], cond["mode"], t.quantity.value, unit, n, ref)
         if key != self._wf_seg_key:
             self._wf_seg_key = key
@@ -230,6 +233,12 @@ class WaterfallMixin:
         shift, unit, _fmt = self._wf_shown(row)
         head = row.head(shift)
         head["cond"] = {**head["cond"], "unit": unit}
+        rid = head["cond"].get("ref_id")
+        if rid is not None:
+            # 境目の文に出す基準の名前は、いま覚えている名前（id が同じ行は同じ名前になる: 名前の変更で境目を作らない）
+            cur = self._ref if getattr(self, "_ref", None) is not None and self._ref.ref_id == rid else None
+            name = cur.name if cur is not None else self._wf_ref_names.get(rid, head["cond"].get("ref", ""))
+            head["cond"]["ref"] = str(name or "")
         head["unit"] = unit
         return {**head, "values": self._wf_values(row).astype(np.float32)}
 

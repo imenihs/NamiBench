@@ -575,7 +575,9 @@ class PlaybackMixin:
             cond = {"start_hz": int(a.start_hz), "stop_hz": int(a.stop_hz), "rbw_hz": int(a.rbw_hz),
                     "mode": a.mode.value}
             if offset is not None:
-                cond["ref"] = str((meta or {}).get("name") or "")  # 当てた基準（境目の条件: P §3。ライブの行と同じ形）
+                # 当てた基準（境目の条件は id で比べ、文は名前: P §3。ライブの行と同じ形）
+                cond["ref_id"] = str((meta or {}).get("id") or "")
+                cond["ref"] = str((meta or {}).get("name") or "")
             quantity = "ratio" if offset is not None else "power"
             prof = levels.profile
             if levels.encoding != "gigast_ad_u16":

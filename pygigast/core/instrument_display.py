@@ -758,15 +758,20 @@ class DisplayMixin:
             self._palette = Palette.from_saved(s["palette"])
             self._save_palette_setting()
         if "adopted" in s:
-            self._check_live_conditions()
+            # 掃引の条件が今と同じ（トレースの設定だけの変更）なら、トレースの設定だけを戻す（再生中も戻せる）。
+            # 条件が違うときだけ、条件を変えてよいかを確かめて置き換える（再生中は断る: 設計P §5）
+            changes = self._undo_changes_conditions(s)
+            if changes:
+                self._check_live_conditions()
             adopted = dataclasses.replace(s["adopted"], adjustments=(), alternative=None)
             for d in s["traces"]:
                 apply_trace_settings(self._traces[int(d["number"])], d)
-            self._set_adopted(adopted)
+            if changes:
+                self._set_adopted(adopted)  # トレースだけのときは呼ぶ側（_undo_result）がトレースを出し直す
 
     def _undo_redo(self, src: list, dst: list) -> dict:
         top = src[-1]
-        if "adopted" in top:
+        if self._undo_changes_conditions(top):
             # 条件を戻す変更は、条件を変えてよいときだけ（再生中は断る: 設計P §5）。取り出す前に確かめる（失敗で履歴を失わない）
             self._check_live_conditions()
             self._rtlsdr_check_condition(top["adopted"])
@@ -775,8 +780,18 @@ class DisplayMixin:
         dst.append(cur)
         return self._undo_result()
 
+    def _undo_changes_conditions(self, s: dict) -> bool:
+        """戻すとライブの掃引の条件が変わるか（積んだ条件と今の条件を、元に戻すが比べる欄で比べる）。トレースの設定だけの
+        変更でも「sweep」の積み方は条件を一緒に持つので、持っているかではなく違うかで決める。"""
+        if "adopted" not in s:
+            return False
+        a, b = s["adopted"], self._adopted
+        fields = ("start_hz", "stop_hz", "axis", "rbw_hz", "rbw_preference_hz", "mode", "sg_hz", "image_reject",
+                  "points_setting", "span_lock_hz")
+        return any(getattr(a, f) != getattr(b, f) for f in fields)
+
     def _undo_blocked(self, stack: list) -> Optional[str]:
-        if stack and "adopted" in stack[-1] and getattr(self, "_playback", None) is not None:
+        if stack and getattr(self, "_playback", None) is not None and self._undo_changes_conditions(stack[-1]):
             return "playback_active"
         return None
 
