@@ -451,6 +451,18 @@ class MarkerTab(QWidget):
         if self.pk_table.rowCount() == 0:  # 出している結果があれば、その結果の列の名前のまま
             self.pk_table.setHorizontalHeaderItem(2, QTableWidgetItem(v["diff_header"]))
 
+    def _fit_peak_table(self) -> None:
+        """一覧の最小の幅を、全部の列（右端の「内部の漏れ」の印まで）が入る幅にする。タブの幅はこの幅より狭くならない
+        （Web の一覧と同じく、表を横にはみ出させて右端の列を見切れさせない）。"""
+        t = self.pk_table
+        hdr = t.horizontalHeader()
+        cols = [max(t.sizeHintForColumn(c), hdr.sectionSizeHint(c)) for c in range(t.columnCount())]
+        # 右端の列は残りの幅まで伸ばす列で、表はその列を既定の列の幅より狭くしない
+        cols[-1] = max(cols[-1], hdr.defaultSectionSize())
+        w = sum(cols) + 2 * t.frameWidth() + t.verticalScrollBar().sizeHint().width()
+        if w != t.minimumWidth():
+            t.setMinimumWidth(w)
+
     def _find_peaks(self) -> None:
         trace = self.pk_trace.currentData()
 
@@ -482,6 +494,7 @@ class MarkerTab(QWidget):
                 leak.setForeground(QColor(self.win.pal["warn"]))
                 self.pk_table.setItem(i, 4, leak)
             self.pk_note.setText(view["found"])
+            self._fit_peak_table()
 
         self.win.call("peak_list", on_ok=show, trace=trace, floor_margin_db=self.pk_margin.value(),
                       polarity=self._polarity())

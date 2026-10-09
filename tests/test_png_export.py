@@ -18,8 +18,10 @@ from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pygigast.ui_qt import png_export as pe  # noqa: E402
+from tests import release_qt_clipboard_at_exit  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
+release_qt_clipboard_at_exit()  # 終わるときに落ちない（test_clipboard が置いた PNG を先に外す）
 
 SAMPLE_DIR = Path(__file__).resolve().parent.parent / "ref" / "capture" / "2026-10-01" / "png_samples"
 

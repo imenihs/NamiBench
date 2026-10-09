@@ -182,6 +182,7 @@ def stylesheet(c: dict[str, str] = DARK) -> str:
         QStatusBar QLabel {{ padding: 0 6px; }}
         QGroupBox {{ border: 1px solid {c['axis']}; margin-top: 10px; padding-top: 4px; }}
         QGroupBox::title {{ subcontrol-origin: margin; left: 6px; padding: 0 3px; }}
+        QFrame#fileBox {{ border: 1px solid {c['grid']}; }}
         QTreeWidget, QTableWidget, QListWidget {{ background: {c['graph_bg']}; alternate-background-color: {c['panel_bg']};
                                                   border: 1px solid {c['axis']}; }}
         QTreeWidget::item:selected, QTableWidget::item:selected, QListWidget::item:selected {{

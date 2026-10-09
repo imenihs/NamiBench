@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Optional
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer
+from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyle,
     QStyledItemDelegate,
     QToolButton,
     QTreeWidget,
@@ -70,11 +71,53 @@ class _CellEdit(QLineEdit):
 
 class _RowHeight(QStyledItemDelegate):
     """行の高さを表の行の値にする（中に置く基準のドロップダウンと「操作」が標準の段の高さで収まる: J §4.11）。
-    列の幅には左右に部品の間の余白を足す（右寄せの数の列どうしが詰まって「500 -76.05 dBm」が1つの値に見えた）。"""
+    列の幅には左右に部品の間の余白を足す（右寄せの数の列どうしが詰まって「500 -76.05 dBm」が1つの値に見えた）。
+
+    注意の列は残りの幅を取り、入らない文は折り返す（表を横にはみ出させない。Web の表と同じ）。折り返した行は文が入る
+    高さにし、その行のドロップダウンと「操作」は標準の段の高さのまま行の縦の真ん中に置く。"""
 
     def sizeHint(self, option, index) -> QSize:
         s = super().sizeHint(option, index)
-        return QSize(s.width() + 2 * sizes.GAP, max(s.height(), sizes.ROW_H))
+        h = max(s.height(), sizes.ROW_H)
+        if index.column() == COL_NOTE:
+            h = max(h, self._note_height(index))
+        return QSize(s.width() + 2 * sizes.GAP, h)
+
+    def _note_height(self, index) -> int:
+        """注意の列の文を、いまの列の幅で折り返したときの高さ（文と上下の余白）。表は行の高さを列の幅で
+        測らないので、ここで測る（列の幅が変わったら MarkerPanel が行を測り直させる）。"""
+        tree = self.parent()
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        if not text:
+            return 0
+        margin = tree.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, tree) + 1
+        room = tree.header().sectionSize(COL_NOTE) - 2 * margin
+        if room <= 0:
+            return 0
+        fm = QFontMetrics(index.data(Qt.ItemDataRole.FontRole) or tree.font())
+        r = fm.boundingRect(QRect(0, 0, room, 1 << 20), int(Qt.TextFlag.TextWordWrap), text)
+        return r.height() + 2 * sizes.LABEL_GAP
+
+    def updateEditorGeometry(self, editor, option, index) -> None:
+        super().updateEditorGeometry(editor, option, index)
+        # 行が文の折り返しで高いときも、部品は段の高さのまま縦の真ん中（上に寄せると同じ行の文とずれる）
+        r = option.rect
+        h = min(editor.height(), r.height())
+        editor.setGeometry(editor.x(), r.y() + (r.height() - h) // 2, editor.width(), h)
+
+
+def _cell(w: QWidget) -> QWidget:
+    """注意の列より右の列に置く部品の入れ物。部品は段の高さのまま、行の縦の真ん中に置く。
+
+    部品をそのまま行に置くと、表は行の高さをその部品の一番大きい高さ（段の値）で打ち切るので、注意の列で折り返した
+    文が行に入らなかった（表は行の高さを左の列から順に測り、部品の列でその部品の高さに収める）。入れ物は高さを
+    打ち切らない。入れ物の背景は描かない（行の色・選んだ行の色をそのまま見せる）。"""
+    box = QWidget()
+    box.setObjectName("rowCell")
+    box.setStyleSheet("#rowCell { background: transparent; }")
+    lay = sizes.hbox(box)
+    lay.addWidget(w, 0, Qt.AlignmentFlag.AlignVCenter)
+    return box
 
 
 class MarkerPanel(QWidget):
@@ -126,7 +169,9 @@ class MarkerPanel(QWidget):
         self._x_kind = "freq"  # 位置の列の名前（ゼロスパンは時間: 設計N §1）
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
-        self.tree.setUniformRowHeights(True)
+        # 注意の列は折り返すので、文が長い行だけ高くなる（_RowHeight）
+        self.tree.setUniformRowHeights(False)
+        self.tree.setWordWrap(True)
         self.tree.setItemDelegate(_RowHeight(self.tree))
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -141,10 +186,14 @@ class MarkerPanel(QWidget):
             item = self.tree.headerItem()
             item.setTextAlignment(i, (Qt.AlignmentFlag.AlignRight if right else Qt.AlignmentFlag.AlignLeft)
                                   | Qt.AlignmentFlag.AlignVCenter)
-        # 注意の列も中身の幅を取り、入らなければ表を横にスクロールする（文字を切らない: C-01）
-        hdr.setSectionResizeMode(COL_NOTE, QHeaderView.ResizeMode.Interactive)
+        # 注意の列は残りの幅を全部取り、入らない文は折り返す。表を横にはみ出させない（はみ出すと右端の「操作」が
+        # 見切れ、横にスクロールしないと使えなかった）。文は切らない（C-01）
+        hdr.setSectionResizeMode(COL_NOTE, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(COL_REF, QHeaderView.ResizeMode.Interactive)  # 幅は _fit_ref_column が入れる
         hdr.setSectionResizeMode(COL_OPS, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.sectionResized.connect(self._section_resized)
+        self._relayout_pending = False
+        self._notes: tuple = ()
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._num_font = number_font(self.tree.font())
         self._fitted_structure: tuple = ()
@@ -225,12 +274,26 @@ class MarkerPanel(QWidget):
             # 選択肢が入った後の大きさで、基準の列を測り直す（行の組み立てが変わったときだけ）
             self._fitted_structure = structure
             self._fit_ref_column()
-        # 表の外に隠れた行も含めて、注意の列の幅を一番長い文字に合わせる（表は横にスクロールする）
-        fm = self.tree.fontMetrics()
-        widest = max([fm.horizontalAdvance(c[COL_NOTE]) for c in texts_] + [fm.horizontalAdvance(marker_rows.COLUMNS[COL_NOTE])])
-        # 字形の置き換え（和文の書体）で測った幅より広く描かれることがあるので、1割の余白を足す
-        self.tree.header().resizeSection(COL_NOTE, int(widest * 1.1) + 24)
+        notes = tuple(c[COL_NOTE] for c in texts_)
+        if notes != self._notes:
+            # 注意の文が変わった: 折り返しで行の高さが変わりうるので、行と中の部品の位置を測り直す
+            self._notes = notes
+            self._schedule_relayout()
         self.select(selected)
+
+    def _section_resized(self, col: int, _old: int, _new: int) -> None:
+        # 注意の列の幅が変わったら、折り返した行の高さを測り直す（表は列の幅で行の高さを測り直さない）
+        if col == COL_NOTE:
+            self._schedule_relayout()
+
+    def _schedule_relayout(self) -> None:
+        if not self._relayout_pending:
+            self._relayout_pending = True
+            QTimer.singleShot(0, self, self._relayout_rows)  # 表が先に消えたら呼ばない
+
+    def _relayout_rows(self) -> None:
+        self._relayout_pending = False
+        self.tree.doItemsLayout()  # 行の高さと、行に置いた部品（基準・操作）の位置を測り直す
 
     def _rebuild(self, rows: list[dict]) -> None:
         self.tree.blockSignals(True)
@@ -266,7 +329,7 @@ class MarkerPanel(QWidget):
             menu = QMenu(ops)
             menu.aboutToShow.connect(lambda mm=menu, rid=r["id"]: self._fill_row_menu(mm, rid))
             ops.setMenu(menu)
-            self.tree.setItemWidget(it, COL_OPS, ops)
+            self.tree.setItemWidget(it, COL_OPS, _cell(ops))
         self.tree.blockSignals(False)
         self._fit_ref_column()
 
@@ -274,8 +337,11 @@ class MarkerPanel(QWidget):
         """基準のドロップダウンの列: 出しうる一番長い名前が入る幅を、実際のドロップダウンで測って列と部品の両方に入れる。
 
         表に任せると、列の幅は行を作った時に測ったまま後から変わらず、選択肢が入ったり見た目の決まりが当たったりした後の
-        ドロップダウンが列に押し込まれて一番長い選択肢より狭くなった（試験がときどき落ちた）。"""
+        ドロップダウンが列に押し込まれる。出しうる一番長い名前で決めるので、マーカーが増えても列の幅は動かない（S-02）。"""
         if not self._ref_combos:
+            # 行が無いときも列の名前「基準」は切らない
+            hdr = self.tree.header()
+            hdr.resizeSection(COL_REF, max(hdr.sectionSize(COL_REF), hdr.sectionSizeHint(COL_REF)))
             return
         probe = next(iter(self._ref_combos.values()))
         probe.ensurePolished()

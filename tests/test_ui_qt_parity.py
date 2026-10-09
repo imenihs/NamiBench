@@ -132,6 +132,11 @@ class QtOpenedFileTest(UiBase):
         self.open(p)
         f = self.state()["files"][0]
         row = self.win.trace_tab._file_rows[f["file_id"]]
+        # 開いたファイルごとに枠で囲む（Web の .file と同じ）: 見出し・［外す］・そのファイルのトレースが枠の中
+        self.assertEqual(row.objectName(), "fileBox")
+        self.assertEqual(row.contentsRect(), row.rect().adjusted(1, 1, -1, -1))
+        for t in f["traces"]:
+            self.assertIs(self.win.trace_tab._file_checks[t["id"]].parentWidget(), row)
         name = next(lab for lab in row.findChildren(QLabel))
         self.assertEqual(name.text(), f["name"])
         self.assertEqual(name.toolTip(), texts.file_heading_tip(f))

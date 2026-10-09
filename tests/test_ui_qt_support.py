@@ -17,8 +17,10 @@ from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E4
 from pygigast.ui_qt.main_window import MainWindow  # noqa: E402
 from pygigast.ui_qt.prefs import UiPrefs  # noqa: E402
 from pygigast.ui_qt import wheel_guard  # noqa: E402
+from tests import release_qt_clipboard_at_exit  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
+release_qt_clipboard_at_exit()  # 終わるときに落ちない（PNG のコピーが残したクリップボードの中身を先に外す）
 if os.name == "nt":
     # 画面を出さない試験（offscreen）でも、字は本番の Windows の既定（Yu Gothic UI 9.75pt = 13px）にする。offscreen の
     # 既定の字は別の書体（幅が狭い）で、崩れを数える試験が本番と違う前提で通っていた（設計の PDCA 2巡目・CLAUDE.md §6.6）

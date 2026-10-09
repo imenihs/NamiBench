@@ -199,6 +199,10 @@ class WebRbwAndParityTest(unittest.TestCase):
         self.assertEqual(self.page.ev(f"{head}.querySelector('.file-name').title"), texts.file_heading_tip(f))
         # 見出しの行に日時・機器を並べない（ツールチップだけ: Qt と同じ）
         self.assertNotIn("TEST0001", self.page.ev(f"{head}.textContent"))
+        # 開いたファイルごとに枠で囲む（Qt の fileBox と同じ）: 見出し・［外す］・そのファイルのトレースが枠の中
+        box = "document.querySelector('section[data-sec=files] .file')"
+        self.assertEqual(self.page.ev(f"getComputedStyle({box}).borderTopWidth"), "1px")
+        self.assertEqual(self.page.ev(f"{box}.querySelectorAll('label.inline input').length"), len(f["traces"]))
         # 重ねた直後は、保存したときに表示していたトレースだけ
         t1, t2 = (t["id"] for t in f["traces"])
         self.page.wait(f"gsApp.$traces.has('{t1}') && gsApp.$traces.has('{t2}')", "値が届く")
