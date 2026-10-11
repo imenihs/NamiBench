@@ -78,8 +78,9 @@ class StateViewTest(unittest.TestCase):
         self.assertEqual(ui["ref_quick"]["label"], qt_texts.S11_QUICK_LABELS["short"])
         self.assertEqual(ui["ref_quick"]["take"], {"standard": "short", "kind": None, "show_zero": True})
         self.assertEqual(ui["unit"], "SWR")
-        # 隠したトレースには描かない理由を出さない
-        self.assertIsNone(view.state_view(s11_state(visible2=False))["ui"]["trace_drawn"]["2"])
+        # チェックを外したトレースも、縦軸と単位が違う間は「表示」のチェックを無効にする（入れると描かれず外せなくなる:
+        # 設計E §6.5.1）
+        self.assertIn("SWR", view.state_view(s11_state(visible2=False))["ui"]["trace_drawn"]["2"])
         # S11 でも S11 のトレースも無いときは、S11 の表示の欄ごと理由付きで無効
         st = s11_state()
         st["sweep"]["mode"] = "tg"

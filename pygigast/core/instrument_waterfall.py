@@ -130,8 +130,10 @@ class WaterfallMixin:
             # |Γ|・SWR: 縦軸と同じ範囲（自動も手で決めた範囲も使わない。表示の設定の値は dB 系の行のために残す）
             lo, hi = self._linear_axis_range(unit)
             return {"lo": lo, "hi": hi, "auto": False, "axis": True}
-        if o["wf_color_auto"] and self._wf_auto.range is not None:
-            lo, hi = self._wf_auto.range
+        # 再生中の自動は、出している行の全体で決めた範囲（カーソルの掃引で追わない: P §9.2。instrument_playback）
+        auto = self._wf_auto.fixed.get(unit) if self._playback is not None else self._wf_auto.range
+        if o["wf_color_auto"] and auto is not None:
+            lo, hi = auto
         else:
             lo, hi = float(o["wf_color_lo"]), float(o["wf_color_hi"])
         return {"lo": lo, "hi": hi, "auto": bool(o["wf_color_auto"]), "axis": False}
@@ -144,7 +146,9 @@ class WaterfallMixin:
                 "unit": self._wf_unit_now(), "density": self._density_info()}
 
     def _density_info(self) -> dict:
-        interval = wf.sweep_interval_s(list(self._wf_times))
+        # 再生中は密度の元の記録の掃引の時刻から（画面に出した時刻ではない: P §9.3）
+        times = [r.t for r in self._density_src] if self._playback is not None else list(self._wf_times)
+        interval = wf.sweep_interval_s(times)
         half = int(self._view_opts["density_half"])
         return {"half": half, "interval_s": interval, "seconds": None if interval is None else half * interval}
 
@@ -194,7 +198,9 @@ class WaterfallMixin:
         return row
 
     def _waterfall_on_frame(self, frame, live: bool = True) -> None:
-        """トレースを更新した後に呼ぶ。ライブの掃引は行を足して画面へ送る。再生の掃引は色の範囲と密度だけ。
+        """トレースを更新した後に呼ぶ。ライブの掃引は行を足して画面へ送り、色の範囲の自動を追い、密度に足す。再生の掃引は
+        行の単位を決めるだけ（色の範囲の自動は出している行の全体で、密度は記録のカーソルまでの掃引で決める:
+        instrument_playback。P §9.2・§9.3）。
 
         行の単位が前の行と変わった（基準を取った・外した: 電力 ⇔ 比）ら、色の範囲を新しい単位で決め直し（自動は追い直す）、
         画面は行を取り直す（単位を変えたときと同じ: P §9.8）。前の行は前の単位のまま、境目の線と条件を出す（P §3）。"""
@@ -202,28 +208,26 @@ class WaterfallMixin:
         row = self._wf_row_from_trace(frame, live=live)
         if row is None:
             return
-        self._wf_times.append(float(frame.time))
         self._wf_last = row
         self._wf_follow_format()
         _shift, unit, fmt = self._wf_shown(row)
+        if not live:
+            return
+        self._wf_times.append(float(frame.time))
         unit_changed = prev is not None and self._wf_shown(prev)[1] != unit
         if unit_changed:
             self._wf_auto.reset()
-        changed = False
         if fmt == formats.DB and self._view_opts["wf_color_auto"]:
-            changed = self._wf_auto.feed(self._wf_values(row), time.monotonic())
-        if live:
-            self._wf_history.add(row)
-            self._wf_seq += 1
-            if unit_changed:
-                self._wf_reset_rows()
-            else:
-                self._wf_range_sent = self._wf_range()
-                self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "unit": unit,
-                                         "range": self._wf_range_sent, "rows": [self._wf_row_out(row)],
-                                         "append": True})
-        elif changed:
-            self._wf_emit_range()
+            self._wf_auto.feed(self._wf_values(row), time.monotonic())
+        self._wf_history.add(row)
+        self._wf_seq += 1
+        if unit_changed:
+            self._wf_reset_rows()
+        else:
+            self._wf_range_sent = self._wf_range()
+            self._emit("waterfall", {"epoch": self._wf_epoch, "seq": self._wf_seq, "unit": unit,
+                                     "range": self._wf_range_sent, "rows": [self._wf_row_out(row)],
+                                     "append": True})
         self._density_src.append(row)
         if self._view_opts["layout"] == "density":
             self._density_feed(row)
@@ -329,8 +333,12 @@ class WaterfallMixin:
             self._wf_reset_rows()
         elif any(old.get(k) != new.get(k) for k in ("wf_color_auto", "wf_color_lo", "wf_color_hi")):
             self._wf_emit_range()
-        if new.get("layout") == "density" and (old.get("layout") != "density" or unit_changed
-                                               or old.get("density_half") != new.get("density_half")):
+        half_changed = old.get("density_half") != new.get("density_half")
+        if new.get("layout") == "density" and (old.get("layout") != "density" or unit_changed or half_changed):
+            if self._playback is not None and (old.get("layout") != "density" or half_changed):
+                # 再生中の密度の元は記録の中のカーソルまでの直近の掃引（読み直す: instrument_playback・P §9.3）
+                self._pb_density_refresh()
+                return
             self._density.key = None
             self._density_rebuild()
 

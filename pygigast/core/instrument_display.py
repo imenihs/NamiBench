@@ -1182,16 +1182,14 @@ class DisplayMixin:
         self._no_dips_on_power(v, polarity)
         pl = an.peak_list(v, float(floor_margin_db), self._markers.excursion_db, polarity)
         # 内部の漏れの周波数から幅の内にある行は、その漏れを添える（設計P §9.6・L §1.4。SG・TG のときだけ）。
-        # ステップ掃引の結果のトレースは、それを測った条件の漏れ（段ごとの SG からのずれ・b3=1 の位置:
-        # instrument_step._step_leaks）。ほかのトレースはいまの条件の漏れ
-        lk = self._leaks_state()
-        step_leaks = self._step_leaks(self._traces[trace])
-        leaks = lk["leaks"] if step_leaks is None else step_leaks
+        # ステップ掃引の結果のトレースは、それを測った条件（範囲・RBW・点の間隔・b3）の漏れと幅（段ごとの SG からの
+        # ずれ・b3=1 の位置: instrument_step._step_leaks・設計L §1.5）。ほかのトレースはいまの条件の漏れ
+        lk = self._step_leaks(self._traces[trace]) or self._leaks_state()
         # 探すのは dB（盛り上がり・基準からの N dB）。レベルは表示の形式の値で返す（|Γ|・SWR: 設計R §3）
         return {"trace": trace, "unit": v.unit, "base": pl.base, "base_level": v.display(pl.base_level),
                 "polarity": pl.polarity,
                 "peaks": [{"freq_hz": r.freq_hz, "level": v.display(r.level), "diff_db": r.diff_db,
-                           "leak": dm.leak_at(r.freq_hz, leaks, lk["tolerance_hz"])} for r in pl.rows]}
+                           "leak": dm.leak_at(r.freq_hz, lk["leaks"], lk["tolerance_hz"])} for r in pl.rows]}
 
     def _cmd_marker_to(self, id, target: str) -> dict:  # noqa: A002
         """マーカーから条件を変える（設計G §3.4）。Center・Span は設計C §5.11 の規則を通る。"""
@@ -1217,5 +1215,10 @@ class DisplayMixin:
             raise self._error("bad_target", "target", {"target": target})
         if not cmd.ok:
             raise self._error(cmd.code, "id", {"id": m.id})
-        # 再生中は周波数の範囲だけを表示の範囲として受ける（測り直さない: _apply・設計P §5）
-        return self._apply(cmd.request, view_in_playback=True)
+        req = cmd.request
+        if self._playback is not None:
+            # 再生中は周波数の範囲だけを表示の範囲として受ける（測り直さない: _apply・設計P §5）。「デルタの2点を
+            # Start・Stop に」の Span 固定を外す指定はライブの掃引の条件なので落とす（固定が ON でも OFF でも表示の範囲を
+            # 2点にし、固定は変えず「Span 固定を外しました」も出さない: 設計C §5.13・P §9.8）
+            req = dataclasses.replace(req, span_lock=None)
+        return self._apply(req, view_in_playback=True)

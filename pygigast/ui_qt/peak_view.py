@@ -3,7 +3,7 @@
 - 山／谷の選択は画面ごとの覚え書き（設計O §1.1: Qt は画面の覚え書き、Web はブラウザ）。マーカー表の上の切り替えと
   ピークの一覧が同じ選択を使う（2か所で別々に選ばせない: U-09）。既定は山
 - 探すボタン・メニューの項目は場所を変えず、選んだほうで名前が変わる
-- ピークの一覧の基準は、電力（SA）ではノイズフロア、基準との比（TG・S11）では表示範囲の最大。どちらかは最後に画面へ
+- ピークの一覧の基準は、電力（SA）ではノイズフロア、基準との比（TG・S11）と NF では表示範囲の最大。どちらかは最後に画面へ
   出した掃引の量（状態の display_quantity: J §4.10 と同じ）で決める。電力では一覧の谷を探さない（無効にして理由）
 - Qt を import しない（Web の口が画面なしで使う）
 """
@@ -39,9 +39,12 @@ def menu_label(code: str, polarity: str) -> str:
     return texts.MENU_ITEMS[code]
 
 
-def ratio_shown(st: Optional[dict]) -> bool:
-    """最後に画面へ出した掃引が基準との比か（TG・S11 で基準を使っている）。まだ掃引が無ければ電力として扱う。"""
-    return (st or {}).get("display_quantity") == "ratio"
+def base_is_max(st: Optional[dict]) -> bool:
+    """ピークの一覧の基準が表示範囲の最大か。最後に画面へ出した掃引が電力でなければ最大（基準との比の TG・S11 と NF:
+    どちらもノイズフロアが無い。コアの marker.analysis.list_base と同じ決まり: 設計P §9.7）。まだ掃引が無ければ電力
+    として扱う。"""
+    q = (st or {}).get("display_quantity")
+    return q is not None and q != "power"
 
 
 def list_view(st: Optional[dict], polarity: str) -> dict:
@@ -53,7 +56,7 @@ def list_view(st: Optional[dict], polarity: str) -> dict:
     # ゼロスパンは横軸が時間なので、周波数のピークの一覧は使わない（設計N §1。理由: U-08）
     zero = ((st or {}).get("sweep") or {}).get("step_hz") == 0
     freq_only = texts.ZERO_SPAN_TEXTS["freq_only"] if zero else None
-    if ratio_shown(st):
+    if base_is_max(st):
         return {"base": "max", "label": L["from_max"], "tip": L["max_tip_dip" if polarity == DIP else "max_tip_peak"],
                 "diff_header": L["col_below_max_db"], "reason": freq_only}
     return {"base": "noise_floor", "label": L["from_floor"], "tip": L["floor_tip"], "diff_header": L["col_height_db"],

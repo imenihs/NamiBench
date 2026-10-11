@@ -239,8 +239,14 @@ class StepSweepMixin:
 
     def _step_info(self, job: _StepJob) -> dict:
         c = job.cfg
+        a = job.adopted
         return {"combine": c["combine"], "steps_done": job.steps_done, "steps": len(job.freqs),
-                "per_step": c["per_step"], "start_hz": c["start_hz"], "stop_hz": c["stop_hz"], "step_hz": c["step_hz"]}
+                "per_step": c["per_step"], "start_hz": c["start_hz"], "stop_hz": c["stop_hz"], "step_hz": c["step_hz"],
+                # 測った条件（周波数の範囲・RBW・点の間隔・送った b3）。結果のトレースの内部の漏れは、あとで Center・Span・
+                # RBW を変えてもこの条件で判定する（_step_leaks: 設計L §1.5）。ステップ掃引はいつもイメージ除去なし
+                # （b3=1 だけ）で送る
+                "measured": {"start_hz": int(a.start_hz), "stop_hz": int(a.stop_hz), "rbw_hz": int(a.rbw_hz),
+                             "point_step_hz": int(a.axis.step_hz), "b3_both": False}}
 
     def _step_put_result(self, job: _StepJob, marked) -> None:
         vals = job.combiner.result()
@@ -314,28 +320,30 @@ class StepSweepMixin:
         if job is not None and number == job.trace and set(kw) - {"visible", "line"}:
             raise self._error("step_sweep_trace", "number", {"number": number})
 
-    def _step_leaks(self, t) -> Optional[list[dict]]:
-        """ステップ掃引の結果のトレースが持つ、段ごとの SG からのずれの内部の漏れ（表示範囲の中。設計L §1.4）。
+    def _step_leaks(self, t) -> Optional[dict]:
+        """ステップ掃引の結果のトレースの内部の漏れと、漏れとみなす幅（{"leaks", "tolerance_hz"}。設計L §1.4・§1.5）。
+        ステップ掃引の結果でなければ None。
 
-        段ごとに SG の周波数が違うので、SG + ずれ の漏れも段の数だけ別の周波数に重なっている。SG で測ったトレースなので
-        固定の周波数の漏れも持つ（いまのモードが SA でも）。ステップ掃引はいつもイメージ除去なし（b3=1 だけ）で送るので、
-        b3 で動く漏れは b3=1 の位置（956MHz → 946MHz: display_marks.fixed_leaks）。ステップ掃引の結果でなければ None。
+        判定はそのトレースを測った条件（step_info の measured: 周波数の範囲・RBW・点の間隔・送った b3）で行う。いまの
+        条件（_adopted）で判定すると、あとで Center・Span・RBW を変えたりゼロスパンにしたりしたときに、測ったときの山が
+        漏れと分からなくなる。段ごとに SG の周波数が違うので、SG + ずれ の漏れも段の数だけ別の周波数に重なっている。
+        SG で測ったトレースなので固定の周波数の漏れも持つ（いまのモードが SA でも）。b3 で動く漏れは送った b3 の位置
+        （ステップ掃引は b3=1 だけ: 956MHz → 946MHz。display_marks.fixed_leaks）。
         """
         info = getattr(t, "step_info", None)
-        a = self._adopted
-        if not info:
+        m = (info or {}).get("measured")
+        if not m:
             return None
-        if a.axis.step_hz <= 0:
-            return []
-        spurs = self._profile.get("internal_spurs_hz") or {}
-        offs = spurs.get("sg_offset") or []
-        out = [lk for lk in dm.fixed_leaks(self._profile, b3_both=False) if a.start_hz <= lk["freq_hz"] <= a.stop_hz]
+        lo, hi = int(m["start_hz"]), int(m["stop_hz"])
+        profile = t.profile or self._profile
+        offs = (profile.get("internal_spurs_hz") or {}).get("sg_offset") or []
+        out = [lk for lk in dm.fixed_leaks(profile, b3_both=bool(m["b3_both"])) if lo <= lk["freq_hz"] <= hi]
         for f in ss.plan(info):
             for off in offs:
                 g = int(f) + int(off)
-                if a.start_hz <= g <= a.stop_hz:
+                if lo <= g <= hi:
                     out.append({"freq_hz": g, "kind": "sg_offset", "offset_hz": int(off)})
-        return out
+        return {"leaks": out, "tolerance_hz": dm.leak_tolerance_hz(int(m["rbw_hz"]), int(m["point_step_hz"]))}
 
     # ------------------------------------------------------------------ 画面へ送る形
 

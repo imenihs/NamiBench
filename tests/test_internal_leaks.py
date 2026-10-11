@@ -167,6 +167,29 @@ class InstrumentLeakTest(InstrumentCase):
         pl = self.call("peak_list", trace=1, floor_margin_db=10.0)
         self.assertTrue(all(p["leak"] is None for p in pl["peaks"]))
 
+    def test_step_sweep_result_keeps_measured_conditions(self):
+        """結果のトレースの漏れは、それを測った条件（範囲・RBW・点の間隔・送った b3）で判定する（設計L §1.5）。あとで
+        Center・Span・RBW を変えても一覧の「内部の漏れ」を保つ。格子を 400kHz ずらし、山が漏れの周波数から 600kHz
+        離れる形にする（測った条件の幅 180kHz + 1MHz の内、狭くした後の幅 30kHz + 4kHz の外）。"""
+        self.connect(300 * MHZ + 400_000, 2100 * MHZ + 400_000)
+        self.call("set_mode", mode="sg", sg_hz=500 * MHZ)
+        self.call("set_step_sweep", start_hz=400 * MHZ, stop_hz=600 * MHZ, step_hz=100 * MHZ, combine="max", trace=2)
+        r = self.call("step_sweep_start")
+        self.wait_task(r["task_id"])
+
+        def flagged():
+            pl = self.call("peak_list", trace=2, floor_margin_db=10.0)
+            return {round(p["freq_hz"] / 100_000): p["leak"]["freq_hz"] for p in pl["peaks"] if p["leak"]}
+
+        before = flagged()
+        self.assertEqual(before.get(18794), 1880 * MHZ, before)
+        self.assertEqual(before.get(14794), 1480 * MHZ, before)
+        self.call("set_mode", mode="sa")
+        self.call("set_sweep", center_hz=1880 * MHZ, span_hz=2 * MHZ, rbw_hz=30_000)
+        sw = self.call("get_state")["sweep"]
+        self.assertLess(dm.leak_tolerance_hz(sw["rbw_hz"], sw["step_hz"]), 600_000)
+        self.assertEqual(flagged(), before)
+
     def test_leaks_follow_sg(self):
         self.call("set_mode", mode="sg", sg_hz=400 * MHZ)
         f = [x["freq_hz"] for x in self.call("get_state")["internal_leaks"]["leaks"]]
