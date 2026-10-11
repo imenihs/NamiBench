@@ -44,6 +44,7 @@ class SegmentLevels:
         self._conv: Optional[LevelConverter] = None
         self._rtl_gain: Optional[float] = None
         self._rtl_offset: Optional[float] = None
+        self._gain_corr: Optional[np.ndarray] = None
         self.no_calibration = cal is None
         if Mode(self.adopted.mode) == Mode.NF:
             self.can_convert = False
@@ -66,6 +67,9 @@ class SegmentLevels:
             extra = seg.raw_extra or {}
             gain = extra.get("gain_db")
             self._rtl_gain = None if gain is None else float(gain)
+            # PlutoSDR の利得の補正（設計Q §7.6）。測ったときに当てた点ごとの値を足す（無ければ 0）
+            corr = extra.get("gain_corr_db")
+            self._gain_corr = None if corr is None else np.asarray(corr, dtype=float)
             offsets = None
             if isinstance(cal, dict):
                 try:
@@ -89,7 +93,12 @@ class SegmentLevels:
         if self._conv is not None and self._offset is not None:
             return (self._conv.ad_to_db(raw) + self._offset).astype(np.float32)
         lv, _unit = rtl_levels.to_level(raw, self._rtl_gain, self._rtl_offset)
-        return np.asarray(lv, dtype=np.float32)
+        return np.asarray(self._with_gain_corr(lv), dtype=np.float32)
+
+    def _with_gain_corr(self, level: np.ndarray) -> np.ndarray:
+        if self._gain_corr is None or self._gain_corr.size != np.shape(level)[-1]:
+            return level
+        return level + self._gain_corr
 
     def frame(self, raw: RawSweep, sweep_no: int, display: Optional[tuple[int, int]] = None) -> Frame:
         """掃引1回分のフレーム（測ったときの instrument._build_frame と同じ形）。display は表示の範囲（Hz）。"""
@@ -106,6 +115,7 @@ class SegmentLevels:
         else:
             ex = raw.extra or {}
             level, unit = rtl_levels.to_level(raw.raw, self._rtl_gain, self._rtl_offset)
+            level = self._with_gain_corr(level)
             no_value = np.zeros(n, dtype=bool)
             nv = (ex.get("flags") or {}).get("no_value")
             if nv is not None:

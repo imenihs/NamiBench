@@ -368,3 +368,42 @@ class TestInstrumentWork(InstCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRecordKeepsCorrection(InstCase):
+    def test_playback_levels_include_the_correction(self):
+        """記録に当てた補正を残し、再生の換算でも同じ値になる（設計Q §7.6。表は記録に入らない）。"""
+        import types
+
+        from pygigast.core.devices.rtlsdr import levels as rtl_levels
+        from pygigast.core.record_frames import SegmentLevels
+        from pygigast.core.storage.h5file import H5Record
+
+        self.connect()
+        self.call("plutosdr_set", gain_db=40.0)
+        self.inst._pluto_gain_cal = types.SimpleNamespace(
+            values_at=lambda f, g: np.full(np.shape(f), 3.0), freqs_hz=[100 * MHZ], created_at="2026-10-12T00:00:00")
+        self.call("record_start")
+        self.call("run", mode="continuous")
+        self.wait_for(lambda k, p: k == "state" and p["recording"].get("sweeps", 0) >= 2)
+        self.call("stop")
+        path = self.root / "rec.h5"
+        tid = self.call("record_finish", path=str(path))["task_id"]
+        n = self.wait_for(lambda k, p: k == "notice" and p["code"].startswith("task_")
+                          and p["detail"].get("task_id") == tid)
+        self.assertEqual(n["code"], "task_done", n)
+        with H5Record(path) as h:
+            s = h.segments[0]
+            self.assertEqual(len(s.raw_extra["gain_corr_db"]), s.points)
+            lv = SegmentLevels(s, h.header)
+            raw = h.read(0).raw
+            got = lv.db_rows(raw)
+            plain, _unit = rtl_levels.to_level(raw, s.raw_extra["gain_db"], None)
+            ok = np.isfinite(plain)
+            np.testing.assert_allclose((got - plain)[ok], 3.0, atol=1e-3)
+            r = h.raw_sweep(0, 0)
+            fr = lv.frame(r, 1)
+            want, _unit = rtl_levels.to_level(r.raw, s.raw_extra["gain_db"], None)
+            got1 = 10 * np.log10(np.asarray(fr.values, dtype=float)) + 30  # to_linear の逆
+            ok = np.isfinite(want)
+            np.testing.assert_allclose(got1[ok] - want[ok], 3.0, atol=1e-3)

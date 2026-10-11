@@ -476,6 +476,10 @@ class RtlSdrMixin:
         gain_corr = self._pluto_gain_offset(a.axis.freqs(), gain)
         if gain_corr is not None:
             level = level + gain_corr
+            # 当てた補正を記録にも残す（再生で同じ値に戻す: 設計Q §7.6。表は記録に入らないので点ごとの値で持つ）
+            raw.extra["gain_corr_db"] = [round(float(x), 3) for x in np.asarray(gain_corr, dtype=float)]
+        else:
+            raw.extra.pop("gain_corr_db", None)
         no_value = np.zeros(n, dtype=bool)
         nv = (ex.get("flags") or {}).get("no_value")
         if nv is not None:
