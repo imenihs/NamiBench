@@ -2,7 +2,8 @@
 
 - 受信（右のタブ「トレース・掃引」）: 受信の利得（dB の打てるドロップダウン。REF の欄と同じ部品で、いまの範囲の 1dB
   刻みのどの値も打てる。一覧は自動と 10dB 刻み）・「利得を合わせる」・単位。
-  設定の利得がいまの範囲で使えないときは、使う値を利得の欄の下に注意の色で出す（U-25）
+  設定の利得がいまの範囲で使えないときは、使う値を利得の欄の下に注意の色で出す（U-25）。受信の利得の補正の表が
+  無いときは、利得の欄の下に「利得の補正なし」の印（理由はツールチップ: 設計Q §7.6）
 - 送信（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル。0.25dB 刻み）と、出力中の表示
 - どちらも PlutoSDR に繋いでいるときだけ出す（設計J §4.5）。使えない操作は消さずに無効にして理由を出す（U-08）
 - 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）。欄に付くボタンは欄の列の下の行
@@ -37,6 +38,10 @@ class PlutoRxPanel(QGroupBox):
         self.gain_used.setObjectName("warn")
         self.gain_used.hide()
         form.addRow("", self.gain_used)
+        self.gain_cal = QLabel(L["gain_cal_none"])
+        self.gain_cal.setObjectName("warn")
+        self.gain_cal.hide()
+        form.addRow("", self.gain_cal)
         self.fit_btn = QPushButton(L["fit_gain"])
         self.fit_btn.clicked.connect(lambda: win.call("plutosdr_fit_gain"))
         form.addRow("", sizes.buttons_row(self.fit_btn))
@@ -51,10 +56,13 @@ class PlutoRxPanel(QGroupBox):
         self.setVisible(v["shown"])
         self._last = v
         self._show_gain(v)
-        set_enabled(self.gain, v["reason"], L["gain_tip"])
+        set_enabled(self.gain, v["gain_reason"], L["gain_tip"])
         set_enabled(self.fit_btn, v["fit_reason"], L["fit_gain_tip"])
         self.gain_used.setText(v["gain_used_text"])
         self.gain_used.setVisible(bool(v["gain_used_text"]))
+        self.gain_cal.setText(v["gain_cal_mark"])
+        self.gain_cal.setToolTip(v["gain_cal_tip"])
+        self.gain_cal.setVisible(bool(v["gain_cal_mark"]))
         self.unit_text.setText(v["unit_text"])
         self.unit_text.setVisible(bool(v["unit_text"]))
 

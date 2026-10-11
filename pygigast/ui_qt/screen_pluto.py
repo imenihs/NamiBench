@@ -3,7 +3,9 @@
 
 - 受信の欄（右のタブ「トレース・掃引」）: 受信の利得（打てるドロップダウン。いまの範囲の 1dB 刻みの値を打てて、一覧は
   自動と、範囲の中の 10dB 刻み（2026-10-11 ユーザー指摘「1dB 刻みの全部を並べた一覧は使いにくい」））・「利得を合わせる」・単位。
-  設定の利得がいまの範囲で使えないとき（利得の範囲は LO の帯で変わる）は、使う値を利得の欄のそばに出す（U-25）
+  設定の利得がいまの範囲で使えないとき（利得の範囲は LO の帯で変わる）は、使う値を利得の欄のそばに出す（U-25）。
+  受信の利得の補正の表（設計Q §7.6）が無いときは、利得の欄のそばに「利得の補正なし」の印（理由はツールチップ）。
+  TG で基準を選んでいる間・利得の補正を測っている間は、利得の欄と「利得を合わせる」を理由付きで使えなくする（U-08）
 - 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル）
 - 欄は PlutoSDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）
 - 設定の画面の PlutoSDR のページ: 見つけた libiio.dll の場所（無い・32 ビット版なら注意の色で理由）と URI
@@ -42,6 +44,8 @@ def pluto_view(st: dict) -> dict:
     used_text = ""
     if connected and not agc and used is not None and setting is not None and float(used) != float(setting):
         used_text = texts.tpl("pluto_gain_used", db=_db(used))
+    gain_reason = reason or (PLUTO_LABELS["gain_locked_reference"] if pl.get("gain_lock") else None) \
+        or (PLUTO_LABELS["calibrating"] if pl.get("calibrating") else None)
     rng = pl.get("tx_atten_range") or {"min": -89.75, "max": 0.0, "step": 0.25}
     tx_on = pl.get("tx_on")
     bits = pl.get("dll_bits")
@@ -60,8 +64,13 @@ def pluto_view(st: dict) -> dict:
         "gain_base": float(base),
         "gain_setting": None if setting is None else float(setting),  # 同じ値を送り直さないための比べる元
         "gain_used_text": used_text,
+        # 利得の欄を使えない理由（つないでいない・TG で基準を使っている・利得の補正を測っている）
+        "gain_reason": gain_reason,
+        # 受信の利得の補正の表が無いときの印（設計Q §7.6）と、その理由（ツールチップ）
+        "gain_cal_mark": PLUTO_LABELS["gain_cal_none"] if connected and not pl.get("gain_correction") else "",
+        "gain_cal_tip": PLUTO_LABELS["gain_cal_none_tip"] if connected and not pl.get("gain_correction") else "",
         "unit_text": texts.tpl("rtl_unit", unit=pl.get("level_unit") or "") if connected and pl.get("level_unit") else "",
-        "fit_reason": reason or (PLUTO_LABELS["fit_needs_manual"] if agc else None)
+        "fit_reason": gain_reason or (PLUTO_LABELS["fit_needs_manual"] if agc else None)
         or (PLUTO_LABELS["fit_running"] if pl.get("fitting") else None) or texts.live_lock_reason(st),
         "tx_atten_db": float(pl.get("tx_atten_db") if pl.get("tx_atten_db") is not None else -40.0),
         "tx_atten_min": float(rng["min"]),

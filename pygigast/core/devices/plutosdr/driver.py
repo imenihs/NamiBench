@@ -259,6 +259,7 @@ class PlutoSdrDevice(Device):
         self._tx_state: Optional[tuple] = None  # このアプリが出している送信（None は出していない）
         self._tx_buf = None
         self._tx_forbidden = False
+        self._idle_wanted = False  # 口を握られていた間に on_idle が来た（終わった処理が送信を止める）
         self.fixed_center_hz: Optional[int] = None
         # rtl_tcp の出口へ IQ を見せる口: (complex64 の IQ（振り切れ ±1.0）, LO の Hz, 標本化の Hz)。機器スレッドから呼ぶ
         self.iq_sink: Optional[Callable[[np.ndarray, int, int], None]] = None
@@ -711,16 +712,29 @@ class PlutoSdrDevice(Device):
                 self._lock.release()
 
     def on_idle(self) -> None:
-        """掃引を渡されていない間（機器スレッド）: このアプリが出した送信を止める（設計L: 出しているのは掃引の間）。"""
-        with self._lock:
-            if self._ctx is None:
-                return
-            try:
-                self._apply_pending()
-                self._tx_off()
-            except IioError as e:
-                if not self._is_value_error(e):
-                    self._drop()
+        """掃引を渡されていない間（機器スレッド）: このアプリが出した送信を止める（設計L: 出しているのは掃引の間）。
+
+        口がほかの長い処理（利得を合わせる・利得の補正を測る）に握られているときは待たない: 機器スレッドは条件の
+        錠を持ったままここを呼ぶので、待つと制御スレッドが条件を渡せず止まる。その処理が終わるときに送信を止める
+        （_idle_wanted を見る。利得の補正を測る処理は終わりに必ず止める）。"""
+        if not self._lock.acquire(blocking=False):
+            self._idle_wanted = True
+            return
+        try:
+            self._idle_locked()
+        finally:
+            self._lock.release()
+
+    def _idle_locked(self) -> None:
+        self._idle_wanted = False
+        if self._ctx is None:
+            return
+        try:
+            self._apply_pending()
+            self._tx_off()
+        except IioError as e:
+            if not self._is_value_error(e):
+                self._drop()
 
     # ---- 利得を合わせる（設計Q §6.5 と同じ: 振り切れない、いちばん大きい利得）----
     def fit_gain(self, sweep: AdoptedSweep, cancel: Optional[threading.Event] = None,
@@ -739,6 +753,9 @@ class PlutoSdrDevice(Device):
                     raise DeviceError(str(e)) from e
                 self._drop()
                 raise DeviceDisconnected(str(e)) from e
+            finally:
+                if self._idle_wanted:
+                    self._idle_locked()  # 合わせている間に掃引が止まった: 出していた送信を止める
 
     def _fit_gain_locked(self, sweep: AdoptedSweep, cancel, progress) -> dict:
         """段は 1dB 刻みで多い（約 75 段）ので、上から1段ずつではなく二分探しで探す。振り切れは利得に対して単調
@@ -814,6 +831,68 @@ class PlutoSdrDevice(Device):
             progress(total, total)
         return {"gain_db": float(chosen), "overload": overload, "overload_ratio": ratios.get(int(chosen), 0.0),
                 "steps_tried": tried, "positions": len(centers)}
+
+    # ---- 受信の利得の補正を測る（設計Q §7.6）----
+    def gain_calibration(self, freqs_hz, ext_atten_db: float, cancel: Optional[threading.Event] = None,
+                         progress: Optional[Callable[[int, int], None]] = None,
+                         on_freq: Optional[Callable[[object], None]] = None) -> list:
+        """TX → 外付けの減衰器 → RX のつなぎ方で、周波数ごとに利得を帯の範囲いっぱいに 1dB 刻みで変えて自分の送信の
+        トーンを読む（手順は gain_cal.py）。周波数を1つ測るたびに on_freq(gain_cal.FreqResult)。戻り値は全部の結果。
+
+        終わり・やめた・失敗のどれでも、送信を止め（減衰を最小 → LO を止める → 波形を消す）、利用者の送信の減衰と
+        受信の利得（手動の値か自動）へ戻す。測っている間に入れた利得・送信の減衰は次の測定の始めに入る。"""
+        from . import gain_cal
+
+        freqs = [int(f) for f in freqs_hz]
+        with self._lock:
+            if self._ctx is None:
+                raise DeviceDisconnected("開いていない")
+            self._check_tx_allowed()
+            saved_atten = self._tx_atten
+            bands = [gain_limits(self._profile, [gain_cal.rx_lo_for(f, int(self._profile["freq"]["max_hz"]))])
+                     for f in freqs]
+            total = sum(hi - lo + 1 for lo, hi in bands)
+            done = 0
+
+            def tick() -> None:
+                nonlocal done
+                done += 1
+                if progress is not None:
+                    progress(min(done, total), total)
+
+            run = gain_cal._Run(self, cancel, tick)
+            out = []
+            first = gain_cal.first_atten_for(ext_atten_db)
+            try:
+                if progress is not None:
+                    progress(0, total)
+                for f in freqs:
+                    res = run.measure(f, first)
+                    out.append(res)
+                    if on_freq is not None:
+                        on_freq(res)
+                return out
+            except IioError as e:
+                if self._is_value_error(e):
+                    raise DeviceError(str(e)) from e
+                self._drop()
+                raise DeviceDisconnected(str(e)) from e
+            finally:
+                self._idle_wanted = False
+                self._tx_atten = saved_atten
+                if self._ctx is not None:
+                    try:
+                        if self._tx_state is None:
+                            self._tx_state = ("sg",)  # 途中で失敗しても、書いたかもしれない送信を必ず止める
+                        self._tx_off()
+                    except IioError:
+                        pass
+                    try:
+                        # 測る前の利得へ戻す（手動ならその値、自動なら自動。いまの LO の帯に収める）
+                        self._gain_applied, self._auto_applied = None, False
+                        self._apply_gain([self._tuned_hz] if self._tuned_hz else [])
+                    except IioError:
+                        pass
 
     def close(self) -> None:
         with self._lock:

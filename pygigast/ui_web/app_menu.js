@@ -52,7 +52,7 @@
           marker_clear: () => this.markerClear(),
           marker_copy: () => this.copyMarkerTable(),
           cal_freq: () => this.openCal("freq"), cal_rbw: () => this.openCal("rbw"), cal_nf: () => this.openCal("nf"),
-          cal_legacy: () => this.openCal("legacy"),
+          cal_pluto_gain: () => this.openCal("pluto_gain"), cal_legacy: () => this.openCal("legacy"),
           settings: () => this.openSettings("connection"),
           web_connect: () => this.showConnect(),
           presets: () => this.openPresets(), preset_save: () => this.presetSaveNew(),

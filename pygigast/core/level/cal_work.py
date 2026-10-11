@@ -9,6 +9,8 @@
 - RBW（K §4.3）: 180kHz を基準に、30・15kHz のパワー平均のピークの差を補正にする
 - NF の増幅度（K §4.4）: 6dB のアッテネータの有無の HOT−COLD の差が 6.0dB になる値（旧アプリと同じ意味の amp_raw）
 - 旧ファイル（K §4.5・設計D §5.6）: 取り込む値を、校正作業で測った値と比べて大きく違う所に印を付ける
+- PlutoSDR の利得の補正（設計Q §7.6）: 周波数ごとの利得の補正の列（level/pluto_gain.py）。GigaSt の校正データとは
+  別の表（PlutoSDR の個体ごと）なので、前の値・測った列・保存するものを別に持つ
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ from typing import Optional
 
 import numpy as np
 
+from . import pluto_gain as pg
 from .calibration import FREQ_STEP_HZ, POINTS_PER_BAND, Calibration, CalibrationSource, FreqBand, NfCalibration
 from .legacy_cal import HF_BANDS
 
@@ -27,7 +30,8 @@ KIND_FREQ = "freq"  # 周波数特性と全体のレベル
 KIND_RBW = "rbw"
 KIND_NF = "nf"  # NF の増幅度
 KIND_LEGACY = "legacy"  # 旧校正ファイルの取り込み（K §4.5）
-KINDS = (KIND_FREQ, KIND_RBW, KIND_NF, KIND_LEGACY)
+KIND_PLUTO_GAIN = "pluto_gain"  # PlutoSDR の利得の補正（設計Q §7.6）
+KINDS = (KIND_FREQ, KIND_RBW, KIND_NF, KIND_PLUTO_GAIN, KIND_LEGACY)
 
 # 校正作業で作った校正データの取得方法（設計D §4 の「校正作業」）
 SOURCE_KIND = "calibration_work"
@@ -264,7 +268,11 @@ ITEMS_OF_KIND = {
     KIND_RBW: ("rbw:30000", "rbw:15000"),
     KIND_NF: ("nf_amp",),
     KIND_LEGACY: ("level", "rbw:30000", "rbw:15000", "nf_enr", "nf_amp"),
+    KIND_PLUTO_GAIN: (),  # 利得の補正の表は GigaSt の校正データの項目を持たない（pluto の欄で別に並べる）
 }
+
+# PlutoSDR の利得の補正の確かめる表の項目（表の中の、絶対値がいちばん大きい補正）
+PLUTO_ITEM = "pluto_gain_max"
 
 
 # ---------------------------------------------------------------- 作業中の値
@@ -296,7 +304,13 @@ class CalSession:
         self.cable_loss_db = CABLE_LOSS_DEFAULT_DB
         self.rbw_extra = False
         self.nf_freq_hz = NF_FREQ_DEFAULT_HZ
+        self.ext_atten_db = pg.EXT_ATTEN_DEFAULT_DB
         self.saved: Optional[dict] = None
+        # PlutoSDR の利得の補正: つないでいる PlutoSDR（model, serial）・その前の表・測る周波数
+        self.pluto_model: Optional[str] = None
+        self.pluto_serial: Optional[str] = None
+        self.pluto_base: Optional[pg.GainCorrection] = None
+        self.pluto_grid: list[int] = pg.grid_freqs()
         self.rebase(model, serial, base, base_file, measured)
 
     # ---- 前の値と、作業の値を空にする
@@ -318,6 +332,22 @@ class CalSession:
         self.rbw_result: Optional[list[dict]] = None
         self.nf_y: dict[str, Optional[float]] = {s: None for s in NF_STATES}
         self.legacy: Optional[dict] = None
+        self.pluto_rows: dict[int, pg.GainRow] = {}  # 周波数 → 測った列
+        self.pluto_meta: dict[int, dict] = {}  # 周波数 → 測ったときの記録（受信の LO・使わなかった利得）
+
+    def set_pluto(self, model: Optional[str], serial: Optional[str], base: Optional[pg.GainCorrection],
+                  grid: Optional[list[int]] = None) -> None:
+        """つないでいる PlutoSDR とその前の表（利得の補正: 設計Q §7.6）。別の機器に変わったら測った列を捨てる。"""
+        if serial != self.pluto_serial:
+            self.pluto_rows, self.pluto_meta = {}, {}
+        self.pluto_model, self.pluto_serial, self.pluto_base = model, serial, base
+        if grid is not None:
+            self.pluto_grid = [int(f) for f in grid]
+
+    def add_pluto_row(self, row: pg.GainRow, meta: dict) -> None:
+        self.pluto_rows[int(row.freq_hz)] = row
+        self.pluto_meta[int(row.freq_hz)] = dict(meta)
+        self.message = None
 
     def set_kind(self, kind: str) -> None:
         if kind not in KINDS:
@@ -336,9 +366,13 @@ class CalSession:
             return 1 if self.rbw_result else 0
         if self.kind == KIND_NF:
             return 1 if any(v is not None for v in self.nf_y.values()) else 0
+        if self.kind == KIND_PLUTO_GAIN:
+            return len(self.pluto_rows)
         return 1 if self.legacy else 0
 
     def savable(self) -> bool:
+        if self.kind == KIND_PLUTO_GAIN:
+            return self.pluto_serial is not None and bool(self.pluto_rows)
         if self.serial is None or self.model is None:
             return False
         if self.kind == KIND_FREQ:
@@ -442,9 +476,28 @@ class CalSession:
             return None
         return {"file": self.base_file, "created_at": self.base.created_at, "source": self.base.source.kind}
 
+    def pluto_candidate(self, created_at: str) -> Optional[pg.GainCorrection]:
+        """保存すると足す PlutoSDR の利得の補正の表。測っていない周波数は前の表の列のまま（K §2: やり直した所だけ
+        差し替える）。測った列が無ければ None。"""
+        if self.kind != KIND_PLUTO_GAIN or not self.savable():
+            return None
+        base = self.pluto_base
+        rows = [self.pluto_rows[f] for f in sorted(self.pluto_rows)]
+        work = {
+            "kind": KIND_PLUTO_GAIN,
+            "previous": None if base is None else {"created_at": base.created_at},
+            "ext_atten_db": self.ext_atten_db,
+            "measured": [{"freq_hz": r.freq_hz, "ref_gain_db": r.ref_gain_db,
+                          "before_db": _r(pg.extreme_at(base, r.freq_hz)), "after_db": _r(r.extreme()),
+                          **self.pluto_meta.get(r.freq_hz, {})} for r in rows],
+            "not_measured_hz": [f for f in self.pluto_grid if f not in self.pluto_rows],
+        }
+        return pg.GainCorrection(model=str(self.pluto_model), serial=str(self.pluto_serial), created_at=created_at,
+                                 source={"kind": pg.SOURCE_KIND}, rows=pg.merged_rows(base, rows), work=work)
+
     def candidate(self, created_at: str) -> Optional[Calibration]:
         """保存すると足す校正データ（保存していなければ何も変わらない: K §4.1 の 4）。作れなければ None。"""
-        if not self.savable():
+        if not self.savable() or self.kind == KIND_PLUTO_GAIN:
             return None
         base = self.base
         common = {"model": self.model, "serial": self.serial, "created_at": created_at}
@@ -481,8 +534,13 @@ class CalSession:
                       "span_hz": SPAN_HZ, "averages": AVERAGES}
         return build(base, source=src, nf_amp=amp, work=work, **common)
 
-    def after_save(self, cal: Calibration, file_name: str, measured: Optional[dict[str, float]] = None) -> None:
+    def after_save(self, cal, file_name: str, measured: Optional[dict[str, float]] = None) -> None:
         """保存した。保存したものが次の作業の「前の値」になる。"""
+        if isinstance(cal, pg.GainCorrection):
+            self.pluto_base = cal
+            self.saved = {"file": file_name, "created_at": cal.created_at, "kind": self.kind}
+            self.clear()
+            return
         self.base = cal
         self.base_file = file_name
         if measured is not None:
@@ -523,15 +581,22 @@ class CalSession:
         if self.base is not None:
             base = {"created_at": self.base.created_at, "file": self.base_file,
                     "source": {"kind": self.base.source.kind, "file_name": self.base.source.file_name}}
+        pluto = self.kind == KIND_PLUTO_GAIN
+        if pluto:
+            pb = self.pluto_base
+            base = None if pb is None else {"created_at": pb.created_at, "file": None,
+                                            "source": {"kind": str(pb.source.get("kind")), "file_name": None}}
+            items = self._pluto_items()
         nf_diff = self.nf_diff()
         return {
             "kind": self.kind,
-            "model": self.model,
-            "serial": self.serial,
+            "model": self.pluto_model if pluto else self.model,
+            "serial": self.pluto_serial if pluto else self.serial,
             "device_reason": device_reason,
             "base": base,
             "inputs": {"sg_level_dbm": self.sg_level_dbm, "cable_loss_db": self.cable_loss_db,
-                       "rbw_extra": self.rbw_extra, "nf_freq_hz": self.nf_freq_hz},
+                       "rbw_extra": self.rbw_extra, "nf_freq_hz": self.nf_freq_hz,
+                       "ext_atten_db": self.ext_atten_db},
             "current": self.current,
             "points": points,
             "items": items,
@@ -546,11 +611,52 @@ class CalSession:
             "message": self.message,
             "legacy": None if not self.legacy else {"file_name": self.legacy["file_name"],
                                                     "sha256": self.legacy["sha256"]},
+            "pluto": self._pluto_snapshot() if pluto else None,
             "unsaved": self.unsaved(),
             "savable": self.savable(),
             "saved": self.saved,
             "task_id": task_id,
         }
+
+    def _pluto_after(self) -> Optional[pg.GainCorrection]:
+        return self.pluto_candidate("") if self.pluto_rows else None
+
+    def _pluto_items(self) -> list[dict]:
+        """確かめる表の項目: 表の中の、絶対値がいちばん大きい補正（前・新）。"""
+        def worst(cal: Optional[pg.GainCorrection]) -> Optional[float]:
+            if cal is None or not cal.rows:
+                return None
+            return max((r.extreme() for r in cal.rows), key=abs)
+
+        before = worst(self.pluto_base)
+        after_cal = self._pluto_after()
+        after = worst(after_cal) if after_cal is not None else before
+        big = before is not None and after is not None and abs(after - before) > pg.BIG_DIFF_DB + 1e-9
+        return [{"item": PLUTO_ITEM, "before": before, "after": after, "big": big}]
+
+    def _pluto_snapshot(self) -> dict:
+        """PlutoSDR の利得の補正の作業: 測る周波数ごとの行（前・新は、その周波数の絶対値がいちばん大きい補正）。"""
+        base = self.pluto_base
+        rows = []
+        for i, f in enumerate(self.pluto_grid):
+            before = pg.extreme_at(base, f)
+            r = self.pluto_rows.get(f)
+            meta = self.pluto_meta.get(f, {})
+            after = r.extreme() if r is not None else before
+            rows.append({
+                "index": i, "freq_hz": f, "status": POINT_MEASURED if r is not None else POINT_NONE,
+                "before_db": before, "after_db": after,
+                "big": r is not None and base is not None and abs(after - before) > pg.BIG_DIFF_DB + 1e-9,
+                "gain_lo_db": None if r is None else min(r.gains_db),
+                "gain_hi_db": None if r is None else max(r.gains_db),
+                "ref_gain_db": None if r is None else r.ref_gain_db,
+                "min_db": None if r is None else min(r.corr_db),
+                "max_db": None if r is None else max(r.corr_db),
+                "tx_atten_db": [] if r is None else list(r.tx_atten_db),
+                "dropped": len(meta.get("dropped_db") or []),
+            })
+        return {"rows": rows, "measured": len(self.pluto_rows),
+                "total": len(self.pluto_grid), "has_base": base is not None}
 
     def _legacy_check(self, item: str, value: Optional[float]) -> dict:
         """旧ファイルの値と、校正作業で測った値の比べ（設計D §5.6）。測った値が無ければ比べない。"""

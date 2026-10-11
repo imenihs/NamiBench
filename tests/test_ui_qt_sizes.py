@@ -23,6 +23,7 @@ from pygigast.ui_qt import device_menu, sizes, texts
 from pygigast.ui_qt.files import UnfinishedDialog
 from tests.device_helpers import FakeGigaBackend
 from tests.qt_layout_check import problems
+from tests.test_ui_qt_pluto_gain import PlutoGainUiBase
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 from tests.test_ui_qt_rtlsdr import RtlUiBase
 from tests.test_ui_qt_support import UiBase, app
@@ -531,6 +532,39 @@ class LayoutPlutoTest(PlutoUiBase):
 
 
 class LayoutPlutoWideTest(LayoutPlutoTest):
+    size = (1920, 1080)
+
+
+class LayoutPlutoGainTest(PlutoGainUiBase):
+    """校正の画面の PlutoSDR の利得の補正の手順（準備・測った後の測る・確かめる）と、印の出た受信の欄を数える。"""
+
+    size = (1280, 720)
+
+    def test_pages(self):
+        from pygigast.ui_qt.cal_dialog import CHECK, MEASURE
+
+        self.connect_pluto()
+        found = []
+        self.win.show_part("tab-trace")
+        self.pump(0.2)
+        self.assertTrue(self.win.pluto_panel.gain_cal.isVisible())
+        found += problems(self.win, "主画面 PlutoSDR 利得の補正なし")
+        d = self.open_cal()
+        self.pump(0.2)
+        found += problems(d, "PlutoSDR の利得の補正 準備")
+        self.measure(d)
+        d.show_page(MEASURE)
+        self.pump(0.2)
+        found += problems(d, "PlutoSDR の利得の補正 測る")
+        d.show_page(CHECK)
+        self.pump(0.2)
+        found += problems(d, "PlutoSDR の利得の補正 確かめる")
+        d.ask_close = lambda: "discard"
+        d.close()
+        self.assertEqual(sorted(set(found)), [])
+
+
+class LayoutPlutoGainWideTest(LayoutPlutoGainTest):
     size = (1920, 1080)
 
 

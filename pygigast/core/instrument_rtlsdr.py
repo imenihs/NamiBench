@@ -120,30 +120,39 @@ class RtlSdrCalibrationStore:
     """<root>/<シリアル番号>/rtlsdr/<日時>.json に足していき、同じフォルダの current.json が使うものを指す。
 
     やり直すたびに新しいファイルを足し、古いものを消さない・上書きしない（履歴。設計D §5.2 と同じ扱い）。
+    SDR の個体の校正（PlutoSDR の利得の補正: 設計Q §7.6）も同じ置き方なので、SUBDIR・CURRENT_FORMAT・
+    _from_dict を変えた子のクラスで使う。保存するものは created_at・serial・to_dict() を持つこと。
     """
+
+    SUBDIR = CAL_SUBDIR
+    CURRENT_FORMAT = _CURRENT_FORMAT
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
 
+    @staticmethod
+    def _from_dict(d: dict):
+        return RtlSdrCalibration.from_dict(d)
+
     def _dir(self, serial: str) -> Path:
         if not _SERIAL_RE.fullmatch(serial or ""):
             raise ValueError(f"フォルダ名に使えないシリアル番号: {serial!r}")
-        return self.root / serial / CAL_SUBDIR
+        return self.root / serial / self.SUBDIR
 
-    def load_current(self, serial: str) -> Optional[RtlSdrCalibration]:
+    def load_current(self, serial: str):
         d = self._dir(serial)
         cur = d / _CURRENT_FILE
         if not cur.is_file():
             return None
         with open(cur, encoding="utf-8") as f:
             ptr = json.load(f)
-        name = ptr.get("file") if isinstance(ptr, dict) and ptr.get("format") == _CURRENT_FORMAT else None
+        name = ptr.get("file") if isinstance(ptr, dict) and ptr.get("format") == self.CURRENT_FORMAT else None
         if not isinstance(name, str) or Path(name).name != name:
             raise ValueError(f"{_CURRENT_FILE} が不正")
         with open(d / name, encoding="utf-8") as f:
-            return RtlSdrCalibration.from_dict(json.load(f))
+            return self._from_dict(json.load(f))
 
-    def save(self, cal: RtlSdrCalibration) -> Path:
+    def save(self, cal) -> Path:
         d = self._dir(cal.serial)
         d.mkdir(parents=True, exist_ok=True)
         stem = datetime.datetime.fromisoformat(cal.created_at).strftime("%Y%m%dT%H%M%S%z")
@@ -160,7 +169,7 @@ class RtlSdrCalibrationStore:
                 n += 1
         tmp = d / (_CURRENT_FILE + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"format": _CURRENT_FORMAT, "version": 1, "file": path.name}, f)
+            json.dump({"format": self.CURRENT_FORMAT, "version": 1, "file": path.name}, f)
         os.replace(tmp, d / _CURRENT_FILE)
         return path
 
@@ -463,6 +472,10 @@ class RtlSdrMixin:
         if self._rtlsdr_cal is not None and gain is not None:
             offset = rtl_levels.offset_for_gain(self._rtlsdr_cal.level_offset_db, int(round(gain * 10)))
         level, unit = rtl_levels.to_level(raw.raw, gain, offset)
+        # PlutoSDR の受信の利得の補正（設計Q §7.6: 周波数と利得ごと。単位は変わらない）。表が無ければ None
+        gain_corr = self._pluto_gain_offset(a.axis.freqs(), gain)
+        if gain_corr is not None:
+            level = level + gain_corr
         no_value = np.zeros(n, dtype=bool)
         nv = (ex.get("flags") or {}).get("no_value")
         if nv is not None:
@@ -477,6 +490,7 @@ class RtlSdrMixin:
         # どの窓で測ったか。トレースはこの写しを持つので、マーカーの読み値の注意（Hann の格子の間の
         # 読み落ち: 設計Q §6.4）をトレースごとに決められる
         prof["fft_window"] = ex.get("window")
+        prof["gain_correction"] = gain_corr is not None
         return Frame(
             axis=a.axis,
             values=rtl_levels.to_linear(level),

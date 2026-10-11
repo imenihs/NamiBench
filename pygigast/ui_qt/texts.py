@@ -833,7 +833,10 @@ def calibration_status(st: dict) -> str:
         return tpl("status_cal_rtl_none", ppm=f"{int(ppm or 0):+d}", unit=unit)
     pl = st.get("plutosdr") or {}
     if pl.get("connected"):
-        # PlutoSDR の個体の校正はまだ無い（設計Q §7.1）
+        # PlutoSDR の個体の校正（dBm 化）はまだ無い（設計Q §7.1）。受信の利得の補正（設計Q §7.6）はあれば日時を出す
+        gc = pl.get("gain_correction")
+        if gc:
+            return tpl("status_cal_pluto_gain", at=gc.get("created_at") or "", unit=pl.get("level_unit") or "")
         return tpl("status_cal_pluto", unit=pl.get("level_unit") or "")
     cal = st.get("calibration")
     return tpl("status_cal", at=cal["created_at"]) if cal else TEMPLATES["status_cal_none"]

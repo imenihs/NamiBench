@@ -9,14 +9,21 @@ import math
 from typing import Optional
 
 from ..core.level import cal_work as cw
+from ..core.level import pluto_gain as pg
 from ..core.units import MINUS, format_freq, minus_sign
 from . import texts
 from .texts_cal import CAL_MENU_OF_KIND, CAL_TEXTS, CAL_WIRING
 
 C = CAL_TEXTS
 
-# 確かめるグラフの横軸（周波数特性の表の範囲）
+# 確かめるグラフの横軸（周波数特性の表の範囲）。PlutoSDR の利得の補正は測る周波数の上端（6000MHz）
 GRAPH_MAX_MHZ = 12000
+PLUTO_GRAPH_MAX_MHZ = 6000
+
+
+def _suffix(kind: str) -> str:
+    """閉じる・切り替えるときに聞く文の種類（測った点・周波数・読み込んだ値・測った値）。"""
+    return {cw.KIND_FREQ: "points", cw.KIND_LEGACY: "legacy", cw.KIND_PLUTO_GAIN: "freqs"}.get(kind, "value")
 
 
 def w(key: str, **kw) -> str:
@@ -60,6 +67,8 @@ def freq_field_text(hz: int) -> str:
 def _item_name(item: str) -> str:
     if item == "level":
         return C["item_level"]
+    if item == cw.PLUTO_ITEM:
+        return C["item_pluto_gain_max"]
     if item.startswith("rbw:"):
         return w("item_rbw", rbw=format_freq(int(item[4:])))
     return C["item_nf_amp"] if item == "nf_amp" else C["item_nf_enr"]
@@ -155,6 +164,7 @@ def view(st: dict) -> Optional[dict]:
         "cable_loss_db": float(inputs.get("cable_loss_db", cw.CABLE_LOSS_DEFAULT_DB)),
         "rbw_extra": bool(inputs.get("rbw_extra")),
         "nf_freq_hz": int(inputs.get("nf_freq_hz", cw.NF_FREQ_DEFAULT_HZ)),
+        "ext_atten_db": float(inputs.get("ext_atten_db", 40.0)),
     }
     out.update(_measure_view(wk, kind, measuring, device_reason))
     out.update(_check_view(wk, kind))
@@ -163,10 +173,10 @@ def view(st: dict) -> Optional[dict]:
     out["close_savable"] = out["savable"] and not wk.get("pending")
     n = out["unsaved"]
     if n:
-        suffix = "points" if kind == cw.KIND_FREQ else "legacy" if kind == cw.KIND_LEGACY else "value"
+        suffix = _suffix(kind)
         out["close_question"] = w("lost_" + suffix, n=n)
         out["switch_question"] = w("switch_" + suffix, n=n)
-        out["close_save_label"] = C["do_close_save_points"] if kind == cw.KIND_FREQ else C["do_close_save"]
+        out["close_save_label"] = C["do_close_save_" + suffix] if suffix in ("points", "freqs") else C["do_close_save"]
     else:
         out["close_question"] = out["switch_question"] = out["close_save_label"] = None
     return out
@@ -213,12 +223,30 @@ def _measure_view(wk: dict, kind: str, measuring: bool, device_reason: Optional[
         out["nf_result"] = "" if nf.get("diff_db") is None else (
             w("nf_diff", db=db_text(nf["diff_db"])) + ("  " + C["item_nf_amp"] + " " + amp_text(nf["amp_raw"])
                                                        if nf.get("amp_raw") is not None else ""))
+    elif kind == cw.KIND_PLUTO_GAIN:
+        out["measure_reason"] = device_reason or busy
+        out["pluto_headers"] = [C["col_freq"], C["col_gain_range"], C["col_tx_atten"], C["col_corr"], C["col_state"]]
+        rows = []
+        for r in (wk.get("pluto") or {}).get("rows") or []:
+            done = r["status"] == cw.POINT_MEASURED
+            cells = [mhz_text(r["freq_hz"]), "", "", "", ""]
+            if done:
+                cells[1] = w("range", lo=_int_text(r["gain_lo_db"]), hi=_int_text(r["gain_hi_db"]))
+                cells[2] = " / ".join(db_text(a, signed=False) for a in r["tx_atten_db"])
+                cells[3] = w("range", lo=db_text(r["min_db"]), hi=db_text(r["max_db"]))
+                cells[4] = C["st_measured"]
+            rows.append({"index": r["index"], "cells": cells, "measured": done})
+        out["pluto_rows"] = rows
     else:
         lg = wk.get("legacy")
         out["measure_reason"] = device_reason or busy
         out["legacy_file"] = lg["file_name"] if lg else C["file_none"]
         out["file_title"] = C["file_title"]
     return out
+
+
+def _int_text(v) -> str:
+    return minus_sign(str(int(v)))
 
 
 def _check_view(wk: dict, kind: str) -> dict:
@@ -238,7 +266,9 @@ def _check_view(wk: dict, kind: str) -> dict:
                      "warn": warn})
     points = []
     pend = wk.get("pending") or {}
-    for p in wk.get("points") or []:
+    pluto = kind == cw.KIND_PLUTO_GAIN
+    raw_points = ((wk.get("pluto") or {}).get("rows") or []) if pluto else (wk.get("points") or [])
+    for p in raw_points:
         state = {cw.POINT_MEASURED: C["st_measured"], cw.POINT_SKIPPED: C["st_skipped"]}.get(p["status"], "")
         if pend and pend.get("index") == p["index"]:
             state = C["st_pending"]
@@ -250,16 +280,17 @@ def _check_view(wk: dict, kind: str) -> dict:
                        "state": state, "big": bool(p.get("big")), "current": p["index"] == wk.get("current"),
                        "measured": db_text(p.get("measured")) if legacy else "", "warn": warn,
                        "status": p["status"]})
+    limit = pg.BIG_DIFF_DB if pluto else cw.CONFIRM_DIFF_DB
     out: dict = {"items": rows, "points": points, "legacy": legacy,
-                 "big_tip": w("big_tip", limit=f"{cw.CONFIRM_DIFF_DB:g}"),
+                 "big_tip": w("big_tip", limit=f"{limit:g}"),
                  "headers": {"freq": C["col_freq"], "before": C["col_before"], "after": C["col_after"],
                              "diff": C["col_diff"], "state": C["col_state"], "item": C["col_item"],
                              "measured": C["col_measured"]}}
-    if kind in (cw.KIND_FREQ, cw.KIND_LEGACY) and points:
-        raw = wk.get("points") or []
+    if kind in (cw.KIND_FREQ, cw.KIND_LEGACY, cw.KIND_PLUTO_GAIN) and points:
+        raw = raw_points
         out["graph"] = {
             "x_label": C["graph_x"], "y_label": C["graph_y"], "before_label": C["graph_before"],
-            "after_label": C["graph_after"], "x_max": GRAPH_MAX_MHZ,
+            "after_label": C["graph_after"], "x_max": PLUTO_GRAPH_MAX_MHZ if pluto else GRAPH_MAX_MHZ,
             "freqs_mhz": [p["freq_hz"] / 1e6 for p in raw],
             "before": [p["before_db"] for p in raw],
             "after": [p["after_db"] for p in raw],
@@ -289,9 +320,7 @@ def main_close_line(st: dict) -> Optional[str]:
     n = int(wk.get("unsaved") or 0)
     if not n:
         return None
-    kind = wk.get("kind")
-    suffix = "points" if kind == cw.KIND_FREQ else "legacy" if kind == cw.KIND_LEGACY else "value"
-    return w("lost_main_" + suffix, n=n)
+    return w("lost_main_" + _suffix(wk.get("kind")), n=n)
 
 
 def _save_reason(wk: dict, kind: str) -> str:
@@ -303,4 +332,6 @@ def _save_reason(wk: dict, kind: str) -> str:
         return C["need_rbw"]
     if kind == cw.KIND_NF:
         return C["need_nf"]
+    if kind == cw.KIND_PLUTO_GAIN:
+        return C["need_pluto"]
     return C["need_file"]

@@ -408,9 +408,11 @@
           <div class="form" :class="{disabled: !!plutoView.reason}">
             <label>{{ T('PLUTO_LABELS', 'gain') }}</label>
             <db-field data-field="pluto_gain" :value="plutoGainValue" unit="dB" :choices="plutoView.gain_choices" :lo="plutoView.gain_lo" :hi="plutoView.gain_hi"
-                      :decimals="0" :special="plutoView.auto_text" :show-special="!!plutoView.agc" :disabled="!!plutoView.reason"
-                      :title="T('PLUTO_LABELS', 'gain_tip')" @commit="setPlutoGain($event)" @special="setPlutoGain('agc')"></db-field>
+                      :decimals="0" :special="plutoView.auto_text" :show-special="!!plutoView.agc" :disabled="!!plutoView.gain_reason"
+                      :title="T('PLUTO_LABELS', 'gain_tip') + (plutoView.gain_reason ? ' — ' + plutoView.gain_reason : '')" @commit="setPlutoGain($event)" @special="setPlutoGain('agc')"></db-field>
             <template v-if="plutoView.gain_used_text"><label></label><div class="warn">{{ plutoView.gain_used_text }}</div></template>
+            <!-- 受信の利得の補正の表が無いときの印（設計Q §7.6。理由はツールチップ: Qt の pluto_panel と同じ） -->
+            <template v-if="plutoView.gain_cal_mark"><label></label><div class="warn" data-mark="pluto_gain_cal" :title="plutoView.gain_cal_tip">{{ plutoView.gain_cal_mark }}</div></template>
             <label></label>
             <button data-act="pluto_fit" :disabled="!!plutoView.fit_reason || readOnly" :title="T('PLUTO_LABELS', 'fit_gain_tip') + (plutoView.fit_reason ? ' — ' + plutoView.fit_reason : '')" @click="cmd('plutosdr_fit_gain', {}, {field: 'pluto'})">{{ T('PLUTO_LABELS', 'fit_gain') }}</button>
           </div>

@@ -1191,6 +1191,44 @@ class WebLayoutPlutoTest(unittest.TestCase):
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
+    def test_gain_calibration_pages(self):
+        """校正の画面の PlutoSDR の利得の補正（設計Q §7.6）: 準備・測った後の測る・確かめると、受信の欄の「利得の補正なし」
+        の印（Qt の LayoutPlutoGainTest と同じ手順）。"""
+        app, page = self.app, self.page
+        app.api._inst._pluto_gain_grid = [100_000_000, 2_400_000_000, 5_000_000_000]
+        found: list[str] = []
+        try:
+            for w, h in SIZES:
+                open_app(page, app, w, h)
+                page.ev("gsApp.tab = 'trace'; 1")
+                page.settle()
+                self.assertTrue(page.ev("!!document.querySelector('[data-mark=pluto_gain_cal]')"))
+                found += page.problems(".app", f"{w}×{h} 主画面 PlutoSDR 利得の補正なし")
+                page.ev("gsApp.openCal('pluto_gain'); 1")
+                page.wait("!!document.querySelector('.calwin')", "校正の画面")
+                page.ev("gsApp.calWin.page = 0; 1")
+                page.settle()
+                found += page.problems(".modal.calwin", f"{w}×{h} PlutoSDR の利得の補正 準備")
+                if not app.call("get_state")["calibration_work"]["unsaved"]:
+                    app.call("cal_measure")
+                    end = time.monotonic() + 90
+                    while app.call("get_state")["tasks"]:
+                        self.assertLess(time.monotonic(), end, "測り終わらない")
+                        time.sleep(0.1)
+                page.ev("gsApp.calWin.page = 1; 1")
+                page.wait("gsApp.calView && gsApp.calView.unsaved > 0 && !gsApp.calView.measuring", "測った")
+                page.settle()
+                found += page.problems(".modal.calwin", f"{w}×{h} PlutoSDR の利得の補正 測る")
+                page.ev("gsApp.calWin.page = 2; 1")
+                page.settle()
+                found += page.problems(".modal.calwin", f"{w}×{h} PlutoSDR の利得の補正 確かめる")
+                page.ev("gsApp.calWin.page = 0; 1")
+        finally:
+            app.call("cal_close")
+            page.wait("!gsApp.calWin", "校正の画面を閉じる")
+        self.assertEqual(page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,8 @@
 // 状態の ui.cal で送る。ここは映して、押されたら命令を送るだけ（文を組み立てない）。
 // - 窓の題は開いたメニューの項目の名前（U-24）。何を校正するかを準備で変えると題も変わる
 // - 測った値があるのに閉じる・切り替えるときは、何が失われるかを言って聞く。測った点だけ保存することも選べる（U-18）
-// - 測るのは数秒〜数十秒。進み具合とやめるボタンを出し、終わり方をその手順のそばに出す（U-19・U-25）
+// - 測るのは数秒〜数十秒（PlutoSDR の利得の補正は数分）。進み具合とやめるボタンを出し、終わり方をその手順のそばに出す
+//   （U-19・U-25）
 // 大きさと余白は style.css の段の決まり（J §4.11）: 窓の中は標準の段、数値の欄は値の幅（num-field）
 (function (root) {
   "use strict";
@@ -12,7 +13,6 @@
   const X = root.GSTexts;
   const U = root.GSUnits;
   const C = (k, kw) => X.fmtText(X.get("CAL_TEXTS", k), kw);
-  const KINDS = ["freq", "rbw", "nf", "legacy"];
   const PREPARE = 0;
   const MEASURE = 1;
   const CHECK = 2;
@@ -117,6 +117,33 @@
         <div class="row nowrap cal-progress" v-if="v.measuring"><progress :max="prog.total || 1" :value="prog.done"></progress><span>{{ prog.text }}</span>
           <button @click="a.calCancel()">{{ a.W('cancel') }}</button></div>
         <div class="warn" v-if="v.message">{{ v.message }}</div>
+      </div>
+
+      <div class="cal-freq" v-else-if="v.kind === 'pluto_gain'">
+        <div class="cal-points cal-pluto">
+          <table class="mtable">
+            <thead><tr><th v-for="(hd, i) in v.pluto_headers" :key="i" :class="i < v.pluto_headers.length - 1 ? 'r' : 'fill'">{{ hd }}</th></tr></thead>
+            <tbody>
+              <tr v-for="r in v.pluto_rows" :key="r.index">
+                <td v-for="(c, i) in r.cells" :key="i" :class="i < r.cells.length - 1 ? 'r' : 'fill'">{{ c }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="stack cal-side">
+          <div class="form">
+            <label>{{ C('ext_atten') }}</label>
+            <num-field :text="a.calDbText(v.inputs.ext_atten_db, 'dB')" :note="a.notes.cal_ext" :disabled="v.measuring"
+                       @clear-note="a.clearNote('cal_ext')" @commit="a.calDb('ext_atten_db', 'cal_ext', 'dB', $event)"
+                       @step="(e, d) => a.calSet({ext_atten_db: v.inputs.ext_atten_db + d * 10 ** e}, 'cal_ext')"></num-field>
+          </div>
+          <div class="row">
+            <button :disabled="!!v.measure_reason" :title="v.measure_reason || ''" @click="a.calMeasure()">{{ C('start') }}</button>
+          </div>
+          <div class="row nowrap cal-progress" v-if="v.measuring"><progress :max="prog.total || 1" :value="prog.done"></progress><span>{{ prog.text }}</span>
+            <button @click="a.calCancel()">{{ a.W('cancel') }}</button></div>
+          <div class="warn" v-if="v.message">{{ v.message }}</div>
+        </div>
       </div>
 
       <div class="stack" v-else>
