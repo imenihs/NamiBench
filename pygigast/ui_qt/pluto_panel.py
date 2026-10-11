@@ -1,6 +1,7 @@
 """PlutoSDR の欄（設計Q §7）。中身は screen_pluto.pluto_view（Web と同じ）。
 
-- 受信（右のタブ「トレース・掃引」）: 受信の利得（自動と、いまの範囲で使える 1dB 刻みの値）・「利得を合わせる」・単位。
+- 受信（右のタブ「トレース・掃引」）: 受信の利得（dB の打てるドロップダウン。REF の欄と同じ部品で、いまの範囲の 1dB
+  刻みのどの値も打てる。一覧は自動と 10dB 刻み）・「利得を合わせる」・単位。
   設定の利得がいまの範囲で使えないときは、使う値を利得の欄の下に注意の色で出す（U-25）
 - 送信（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル。0.25dB 刻み）と、出力中の表示
 - どちらも PlutoSDR に繋いでいるときだけ出す（設計J §4.5）。使えない操作は消さずに無効にして理由を出す（U-08）
@@ -10,10 +11,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QPushButton
+from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
 
 from . import sizes, widget_sync
-from .fields import DbField
+from .fields import DbChoiceField, DbField
 from .screen_pluto import pluto_view
 from .tab_traces import set_enabled
 from .texts_pluto import PLUTO_LABELS as L
@@ -27,10 +28,11 @@ class PlutoRxPanel(QGroupBox):
         super().__init__(L["group"])
         self.win = win
         form = sizes.form(self)
-        self.gain = QComboBox()
+        # 範囲・一覧は繋いだ機器と LO の帯で決まる（apply で入れる）。値は 1dB 刻み（整数）
+        self.gain = DbChoiceField(L["gain"], "dB", self._gain_typed, (), signed=False, decimals=0, big=False,
+                                  special=L["auto"], on_special=self._auto_chosen)
         self.gain.setToolTip(L["gain_tip"])
-        self.gain.activated.connect(self._gain_chosen)
-        form.addRow(L["gain"], self.gain)
+        form.addRow(self.gain.name, self.gain)
         self.gain_used = QLabel("")
         self.gain_used.setObjectName("warn")
         self.gain_used.hide()
@@ -41,13 +43,14 @@ class PlutoRxPanel(QGroupBox):
         self.unit_text = QLabel("")
         self.unit_text.setWordWrap(True)
         form.addRow(self.unit_text)
-        self._key: tuple = ()
+        self._last: dict = {}
         self.hide()
 
     def apply(self, st: dict) -> None:
         v = pluto_view(st)
         self.setVisible(v["shown"])
-        widget_sync.when_idle(self.gain, "gain", lambda: self._show_gain(v))
+        self._last = v
+        self._show_gain(v)
         set_enabled(self.gain, v["reason"], L["gain_tip"])
         set_enabled(self.fit_btn, v["fit_reason"], L["fit_gain_tip"])
         self.gain_used.setText(v["gain_used_text"])
@@ -56,24 +59,27 @@ class PlutoRxPanel(QGroupBox):
         self.unit_text.setVisible(bool(v["unit_text"]))
 
     def _show_gain(self, v: dict) -> None:
-        key = tuple(g["value"] for g in v["gains"])
-        if key != self._key:
-            self._key = key
-            self.gain.blockSignals(True)
-            self.gain.clear()
-            for g in v["gains"]:
-                self.gain.addItem(g["text"], g["value"])
-            self.gain.blockSignals(False)
-            widget_sync.fit_all(self)
-        idx = 0 if v["agc"] or v["gain_db"] is None else self.gain.findData(float(v["gain_db"]))
-        widget_sync.set_index(self.gain, max(0, idx))
-
-    def _gain_chosen(self, _i: int) -> None:
-        g = self.gain.currentData()
-        if g is None:
-            self.win.call("plutosdr_set", agc=True)
+        # 一覧と範囲は LO の帯で変わる（打っている間の文字は _Edit が守る）
+        self.gain.set_spec(v["gain_choices"], False, v["gain_lo"], v["gain_hi"], 0)
+        if v["agc"] or v["gain_db"] is None:
+            self.gain.show_special(v["gain_base"])
         else:
-            self.win.call("plutosdr_set", gain_db=float(g), agc=False)
+            self.gain.set_value(float(v["gain_db"]))
+
+    def _gain_typed(self, g: float) -> None:
+        # 同じ値を送り直さない（利得を送るとトレースの蓄積を捨てる。欄を離れたときに一覧の同じ文字の行が選ばれても
+        # 何もしない）
+        v = self._last
+        if not v.get("agc") and v.get("gain_setting") == float(g):
+            self.gain.set_value(float(g))
+            return
+        self.win.call("plutosdr_set", field=self.gain, gain_db=float(g), agc=False)
+
+    def _auto_chosen(self) -> None:
+        if self._last.get("agc"):
+            self.gain.show_special(self._last.get("gain_base", 0.0))
+            return
+        self.win.call("plutosdr_set", field=self.gain, agc=True)
 
 
 class _AttenField(DbField):

@@ -364,7 +364,7 @@ class WaterfallMixin:
         amp = self._amplitude
         ref = 0.0 if amp.get("ref_level") is None else float(amp["ref_level"])
         div = float(amp.get("db_per_div") or 10.0)
-        return ref - DIVISIONS * div, ref, wf.DENSITY_BIN_DB
+        return ref - DIVISIONS * div, ref, max(wf.DENSITY_BIN_DB, DIVISIONS * div / wf.DENSITY_MAX_BINS)
 
     def _density_key(self, row: wf.Row) -> tuple:
         lo, hi, bin_size = self._density_level_range()

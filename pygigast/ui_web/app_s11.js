@@ -11,8 +11,9 @@
 
   const X = root.GSTexts;
   const W = (k, kw) => X.w(k, kw);
+  // 状態が届く前の dB の縦軸（届いたらサーバーの ui.axis。並びは core/instrument_display.DB_PER_DIV_CHOICES と同じ）
   const DB_AXIS = { linear: false, unit: null, div_label: "dB/div", div_key: "db_per_div", ref_reason: null, decimals: 1,
-    div_choices: [1, 2, 5, 10].map((v) => ({ value: v, text: `${v} dB` })) };
+    div_choices: [1, 2, 5, 10, 20, 40].map((v) => ({ value: v, text: `${v} dB` })) };
 
   // 1目盛を書き分けられる小数の桁（Qt の formats.decimals_for・tick_decimals と同じ: 少なくとも1桁）
   function tickDecimals(div) {

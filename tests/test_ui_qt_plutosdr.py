@@ -1,6 +1,7 @@
 """Qt 画面の PlutoSDR の欄（設計Q §7）: libiio の偽物の PlutoSDR に繋いで確かめる。
 
-受信の利得（自動と、いまの範囲で使える値）・使う値の行・利得を合わせる・送信の減衰・設定の PlutoSDR のページ・機器の一覧。
+受信の利得（dB の打てるドロップダウン: 範囲の 1dB 刻みを打てて、一覧は自動と 10dB 刻み）・使う値の行・利得を合わせる・
+送信の減衰・設定の PlutoSDR のページ・機器の一覧。
 """
 import unittest
 
@@ -10,6 +11,7 @@ from pygigast.core.devices.plutosdr import driver as pd
 from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
 from pygigast.ui_qt import texts
+from pygigast.ui_qt.fields import DbChoiceField, range_note
 from pygigast.ui_qt.texts_pluto import PLUTO_LABELS
 from tests.test_ui_qt_support import UiBase
 
@@ -56,10 +58,12 @@ class TestPlutoPanels(PlutoUiBase):
         self.assertFalse(rx.isHidden())
         self.assertFalse(tx.isHidden())
         self.assertTrue(self.win.rtl_panel.isHidden())  # RTL-SDR の欄は出さない
-        # 自動 + −1〜73dB（1300MHz 未満の帯）
-        self.assertEqual(rx.gain.count(), 1 + 75)
-        self.assertEqual(rx.gain.itemText(0), PLUTO_LABELS["auto"])
-        self.assertEqual(rx.gain.currentData(), 30.0)
+        # REF の欄と同じ部品。一覧は自動 + 範囲（1300MHz 未満の帯は −1〜73dB）の中の 10dB 刻み
+        self.assertIsInstance(rx.gain, DbChoiceField)
+        self.assertEqual(rx.gain.choices(), [PLUTO_LABELS["auto"]] + [f"{g} dB" for g in range(0, 71, 10)])
+        self.assertEqual((rx.gain.lo, rx.gain.hi), (-1.0, 73.0))
+        self.assertEqual(rx.gain.edit.text(), "30 dB")
+        self.assertEqual(rx.gain.value(), 30.0)
         self.assertIn(UNCAL, rx.unit_text.text())
         self.cmd("disconnect")
         self.wait(lambda: rx.isHidden() and tx.isHidden(), what="欄が消える")
@@ -67,22 +71,69 @@ class TestPlutoPanels(PlutoUiBase):
     def test_gain_auto_and_used_value(self):
         self.connect_pluto()
         rx = self.win.pluto_panel
-        i = rx.gain.findData(73.0)
-        rx.gain.setCurrentIndex(i)
-        rx.gain.activated.emit(i)
-        self.wait(lambda: self.state()["plutosdr"]["gain_db"] == 73.0, what="利得")
+        # 一覧に無い値を打つ（1dB 刻み。小数は整数に丸める）
+        rx.gain.edit.committed.emit("73")
+        self.wait(lambda: self.state()["plutosdr"]["gain_db"] == 73.0, what="打った利得")
+        self.wait(lambda: rx.gain.edit.text() == "73 dB", what="欄の値")
         self.assertTrue(rx.gain_used.isHidden())
-        # 2.4GHz 帯は 71dB まで: 一覧が変わり、使う値の行が出る（U-25）
+        rx.gain.edit.committed.emit("42.4")
+        self.wait(lambda: self.state()["plutosdr"]["gain_db"] == 42.0, what="整数に丸める")
+        rx.gain.edit.committed.emit("80")  # 範囲の外は送らず、欄の下に範囲を出す
+        self.pump(0.3)
+        self.assertEqual(self.state()["plutosdr"]["gain_db"], 42.0)
+        self.assertEqual(rx.gain.edit.text(), "42 dB")
+        # 一覧から選ぶ
+        i = rx.gain.combo.findText("70 dB")
+        rx.gain.combo.setCurrentIndex(i)
+        rx.gain.combo.activated.emit(i)
+        self.wait(lambda: self.state()["plutosdr"]["gain_db"] == 70.0, what="一覧の利得")
+        self.wait(lambda: rx.gain.value() == 70.0, what="欄が映す")
+        # ホイールは 1dB
+        rx.gain.edit.stepped.emit(0, +1)
+        self.wait(lambda: self.state()["plutosdr"]["gain_db"] == 71.0, what="1dB 上げる")
+        rx.gain.edit.committed.emit("73")
+        self.wait(lambda: self.state()["plutosdr"]["gain_db"] == 73.0, what="利得")
+        # 2.4GHz 帯は −3〜71dB: 範囲が変わり、使う値の行が出る（U-25）
         self.cmd("set_sweep", start_hz=2_400 * MHZ, stop_hz=2_402 * MHZ)
-        self.wait(lambda: rx.gain.count() == 1 + 75 and rx.gain.itemData(1) == -3.0, what="帯の一覧")
+        self.wait(lambda: (rx.gain.lo, rx.gain.hi) == (-3.0, 71.0), what="帯の範囲")
         self.wait(lambda: not rx.gain_used.isHidden(), what="使う値の行")
         self.assertEqual(rx.gain_used.text(), texts.tpl("pluto_gain_used", db="71"))
-        self.assertEqual(rx.gain.currentData(), 71.0)
-        rx.gain.setCurrentIndex(0)
-        rx.gain.activated.emit(0)
+        self.assertEqual(rx.gain.edit.text(), "71 dB")
+        rx.gain.edit.committed.emit("72")
+        self.pump(0.3)
+        self.assertEqual(self.state()["plutosdr"]["gain_db"], 73.0)
+        # 自動は一覧の先頭の行か、その文字を打つ
+        rx.gain.combo.setCurrentIndex(0)
+        rx.gain.combo.activated.emit(0)
         self.wait(lambda: self.state()["plutosdr"]["agc"], what="自動")
+        self.wait(lambda: rx.gain.edit.text() == PLUTO_LABELS["auto"], what="欄が自動")
         self.wait(lambda: not rx.fit_btn.isEnabled(), what="利得を合わせるが無効")
         self.assertIn(PLUTO_LABELS["fit_needs_manual"], rx.fit_btn.toolTip())
+        self.assertEqual(rx.gain.value(), 71.0)
+        # 自動の間のホイールは使う値から 1dB 送って手動にする
+        rx.gain.edit.stepped.emit(0, -1)
+        self.wait(lambda: not self.state()["plutosdr"]["agc"] and self.state()["plutosdr"]["gain_db"] == 70.0,
+                  what="自動から手動へ")
+        self.wait(lambda: rx.gain.edit.text() == "70 dB", what="欄が手動の値")
+        rx.gain.edit.committed.emit(PLUTO_LABELS["auto"])
+        self.wait(lambda: self.state()["plutosdr"]["agc"], what="打って自動")
+
+    def test_gain_same_value_is_not_sent_again(self):
+        # 利得を送るとトレースの蓄積を捨てるので、同じ値（欄を離れたときに一覧の同じ文字の行が選ばれたときも）は送らない
+        self.connect_pluto()
+        rx = self.win.pluto_panel
+        sent = []
+        orig = self.win.call
+        self.win.call = lambda name, *a, **kw: (sent.append((name, kw.get("gain_db"), kw.get("agc"))), orig(name, *a, **kw))
+        try:
+            i = rx.gain.combo.findText("30 dB")
+            rx.gain.combo.activated.emit(i)
+            rx.gain.edit.committed.emit("30")
+            self.assertEqual(sent, [])
+            rx.gain.edit.committed.emit("31")
+            self.assertEqual(sent, [("plutosdr_set", 31.0, False)])
+        finally:
+            self.win.call = orig
 
     def test_fit_gain_button(self):
         self.connect_pluto()

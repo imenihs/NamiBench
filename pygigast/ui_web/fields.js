@@ -392,9 +392,16 @@
     const k = 10 ** decimals;
     return Math.floor(v * k + 0.5) / k;
   }
-  // 小数2桁以上の欄（|Γ|・SWR のしきい値: 設計R §3）はその桁で出す。ほかは 0.1 まで（Qt の DbChoiceField.set_value と同じ）
+  // 小数2桁以上の欄（|Γ|・SWR のしきい値: 設計R §3）はその桁、整数の欄（PlutoSDR の受信の利得: 設計Q §7）は整数で
+  // 出す。ほかは 0.1 まで（Qt の fields.db_value_text と同じ）
   function dbText(v, unit, decimals) {
-    const t = decimals && decimals > 1 ? GSUnits.minusSign(Number(v).toFixed(decimals)) : GSUnits.levelText(v);
+    let t;
+    if (decimals === 0) {
+      t = Number(v).toFixed(0);
+      t = GSUnits.minusSign(t === "-0" ? "0" : t);
+    } else {
+      t = decimals && decimals > 1 ? GSUnits.minusSign(Number(v).toFixed(decimals)) : GSUnits.levelText(v);
+    }
     return `${t}${unit ? " " + unit : ""}`;
   }
   // 一覧の行の文字（「+20 dBm」「−40 dBm」「3 dB」）。signed はレベル（REF・しきい値）で、正の数にも + を付ける
@@ -440,16 +447,24 @@
       label: { type: String, default: "" },
       disabled: { type: Boolean, default: false },
       title: String,
+      // 一覧の先頭の数でない行（PlutoSDR の受信の利得の「自動」: 設計Q §7。Qt の DbChoiceField の special と同じ）。
+      // 選ぶか同じ文字を打って確定すると special を出す。showSpecial の間は欄にその文字を出す（↑↓・ホイールは value から送る）
+      special: { type: String, default: null },
+      showSpecial: { type: Boolean, default: false },
     },
-    emits: ["commit"],
+    emits: ["commit", "special"],
     data() { return { note: null }; },
     computed: {
       spec() { return { unit: this.unit, lo: this.lo, hi: this.hi, decimals: this.decimals }; },
-      text() { return dbText(this.value, this.unit, this.decimals); },
-      items() { return this.choices.map((v) => ({ value: v, text: dbChoiceText(v, this.unit, this.signed) })); },
+      text() { return this.special && this.showSpecial ? this.special : dbText(this.value, this.unit, this.decimals); },
+      items() {
+        const out = this.choices.map((v) => ({ value: v, text: dbChoiceText(v, this.unit, this.signed) }));
+        return this.special ? [{ value: "special", text: this.special }, ...out] : out;
+      },
     },
     methods: {
       onCommit(t) {
+        if (this.special && String(t).trim() === this.special) { this.$emit("special"); return; }
         const r = parseDbIn(t, this.spec);
         if (r.note !== undefined) { this.note = { text: r.note }; return; }  // 欄は元の値に戻る（NumField の確定と同じ）
         this.$emit("commit", r.value);

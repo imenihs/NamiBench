@@ -17,7 +17,6 @@
   const IC_NOTE_MS = 10000;
   const call = GSApi.call;
 
-  const DB_PER_DIV_CHOICES = [1, 2, 5, 10];
   // 周波数軸の上のホイール1段で Span を何倍にするか（奥へ回すと拡大 = Span を狭く。Qt と同じ）
   const ZOOM_STEP = 0.8;
   // マウスの位置の読み値を取り直す最短の間隔（ミリ秒）。1秒に30回まで（Qt の mouse_reading.py と同じ）
@@ -659,10 +658,12 @@
       onLevelWheel(steps, ctrl) {
         if (this.axis.linear) { this.stepLinearDiv(steps); return; }  // |Γ|・SWR はいつも1目盛を変える（Qt と同じ）
         if (ctrl) {
-          let i = DB_PER_DIV_CHOICES.indexOf(this.amp.div);
-          if (i < 0) i = 3;
-          i = Math.min(Math.max(i + (steps > 0 ? 1 : -1), 0), DB_PER_DIV_CHOICES.length - 1);
-          this.setDiv(DB_PER_DIV_CHOICES[i]);
+          // 1目盛を1段（並びはサーバーが Qt と同じ screen_s11.axis_view で配る ui.axis.div_choices）
+          const values = this.axis.div_choices.map((c) => c.value);
+          let i = values.indexOf(this.amp.div);
+          if (i < 0) i = values.indexOf(10);
+          i = Math.min(Math.max(i + (steps > 0 ? 1 : -1), 0), values.length - 1);
+          this.setDiv(values[i]);
         } else {
           this.setAmp({ ref_level: Math.round((this.amp.ref + steps * this.amp.div) * 100) / 100 });
         }

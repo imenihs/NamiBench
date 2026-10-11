@@ -17,13 +17,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ..core.instrument_display import DB_PER_DIV_CHOICES
 from ..core.report_layout import DIVISIONS
 from ..core.trace import formats
 from . import texts
 from .texts import LABELS, REASON_TEXTS, TEMPLATES, tpl
-
-# dB の縦軸の 1目盛（設計J §4.1。core/instrument_display.DB_PER_DIV_CHOICES と同じ）
-DB_PER_DIV_CHOICES = (1, 2, 5, 10)
 
 
 def _r(key: str, **kw) -> str:

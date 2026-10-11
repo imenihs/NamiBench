@@ -192,6 +192,30 @@ class GraphOperationTest(_Base):
         bottom = self.vb.viewRange()[1][0]
         self.assertAlmostEqual(bottom, -60.0, delta=0.1)
 
+    def test_ctrl_wheel_reaches_20_and_40_db_per_div(self):
+        # 10 → 20 → 40 で止まる（2026-10-11 ユーザー決定で 20・40 を足した）。欄の一覧も同じ並び
+        combo = self.win.div_combo
+        self.assertEqual([combo.itemText(i) for i in range(combo.count())],
+                         ["1 dB", "2 dB", "5 dB", "10 dB", "20 dB", "40 dB"])
+        self.win._set_ref(0.0)
+        for want in (20.0, 40.0, 40.0):
+            self.wheel(self.axis_point("left"), clicks=1, ctrl=True)
+            self.assertEqual(self.win._db_div, want)
+        self.assertEqual(combo.currentData(), 40.0)
+        self.assertAlmostEqual(self.vb.viewRange()[1][0], -400.0, delta=0.5)
+        self.assertEqual(self.win.f_ref.value(), 0.0)  # REF は動かない（J §4.1）
+        ticks = self.win.plot.getPlotItem().getAxis("left")._tickLevels[0]
+        self.assertEqual([t[1] for t in ticks][:3], ["0.0", "−40.0", "−80.0"])
+        self.pump()
+        self.assertEqual(self.api.get_state().result(5)["amplitude"]["db_per_div"], 40)  # コアへ届く
+        # 欄から 20 を選ぶ
+        i = combo.findData(20.0)
+        combo.setCurrentIndex(i)
+        combo.activated.emit(i)
+        self.pump()
+        self.assertEqual(self.api.get_state().result(5)["amplitude"]["db_per_div"], 20)
+        self.assertAlmostEqual(self.vb.viewRange()[1][0], -200.0, delta=0.5)
+
     def test_level_axis_drag_moves_ref(self):
         self.win._set_ref(0.0)
         p0 = self.axis_point("left")

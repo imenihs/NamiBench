@@ -39,10 +39,11 @@
       },
       rtltcpView() { return this.ui.rtltcp || {}; },
       // PlutoSDR の受信・送信の欄（設計Q §7。中身は screen_pluto.pluto_view: Qt の pluto_panel.py と同じ）
-      plutoView() { return this.ui.pluto || { reason: "", gains: [] }; },
+      plutoView() { return this.ui.pluto || { reason: "", gain_choices: [], gain_lo: null, gain_hi: null, auto_text: "" }; },
+      // 利得の欄の値（自動のときは欄が「自動」を出し、↑↓・ホイールはこの値から送る）
       plutoGainValue() {
         const v = this.plutoView;
-        return v.agc || v.gain_db == null ? "agc" : String(v.gain_db);
+        return v.agc || v.gain_db == null ? Number(v.gain_base) || 0 : Number(v.gain_db);
       },
       plutoAttenText() { return (Number(this.plutoView.tx_atten_db) || 0).toFixed(2) + " dB"; },
     },
@@ -83,9 +84,15 @@
         if (r && r.texts) { this.rtlResult = r.texts.done; this.note(null, r.texts.done); }
       },
       // ---- PlutoSDR
+      // 同じ値は送り直さない（利得を送るとトレースの蓄積を捨てる。Qt の pluto_panel と同じ）
       setPlutoGain(value) {
-        if (value === "agc") this.cmd("plutosdr_set", { agc: true }, { field: "pluto" });
-        else this.cmd("plutosdr_set", { gain_db: Number(value), agc: false }, { field: "pluto" });
+        const v = this.plutoView;
+        if (value === "agc") {
+          if (!v.agc) this.cmd("plutosdr_set", { agc: true }, { field: "pluto" });
+          return;
+        }
+        if (!v.agc && v.gain_setting === Number(value)) return;
+        this.cmd("plutosdr_set", { gain_db: Number(value), agc: false }, { field: "pluto" });
       },
       setTxAtten(text) {
         let v;

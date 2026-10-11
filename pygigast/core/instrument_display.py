@@ -35,8 +35,9 @@ UNDO_LIMIT = 100
 # ノーマライズを当てるモード（設計E: TG の通過・S11 の反射）
 NORMALIZED_MODES = (Mode.TG, Mode.S11)
 
-# REF レベルの dB/div の選択肢（設計J §4.1）
-DB_PER_DIV_CHOICES = (1, 2, 5, 10)
+# REF レベルの dB/div の選択肢（設計J §4.1。20・40 は 2026-10-11 ユーザー決定「10dB/div じゃ足りない」）。
+# Qt・Web の欄の一覧もこの並び（screen_s11.axis_view が配る）
+DB_PER_DIV_CHOICES = (1, 2, 5, 10, 20, 40)
 
 UNIT_OF = {Quantity.POWER: "dBm", Quantity.RATIO: "dB", Quantity.NF: "dB"}
 
