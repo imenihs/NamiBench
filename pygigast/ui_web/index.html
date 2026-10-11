@@ -125,7 +125,7 @@
       </num-field>
       <div class="field">
         <div class="field-head" data-tier="S"><span class="field-name">{{ axis.div_label }}</span></div>
-        <select class="field-select" :value="amp.div" @change="setDiv($event.target.value)">
+        <select class="field-select" data-field="db_per_div" :value="amp.div" @change="setDiv($event.target.value)">
           <option v-for="c in divChoices" :key="c.value" :value="c.value">{{ c.text }}</option>
         </select>
       </div>
@@ -411,9 +411,9 @@
           <h3>{{ T('PLUTO_LABELS', 'group') }}</h3>
           <div class="form" :class="{disabled: !!plutoView.reason}">
             <label>{{ T('PLUTO_LABELS', 'gain') }}</label>
-            <select data-field="pluto_gain" :value="plutoGainValue" :disabled="!!plutoView.reason" :title="T('PLUTO_LABELS', 'gain_tip')" @change="setPlutoGain($event.target.value)">
-              <option v-for="g in plutoView.gains" :key="String(g.value)" :value="g.value == null ? 'agc' : String(g.value)">{{ g.text }}</option>
-            </select>
+            <db-field data-field="pluto_gain" :value="plutoGainValue" unit="dB" :choices="plutoView.gain_choices" :lo="plutoView.gain_lo" :hi="plutoView.gain_hi"
+                      :decimals="0" :special="plutoView.auto_text" :show-special="!!plutoView.agc" :disabled="!!plutoView.reason"
+                      :title="T('PLUTO_LABELS', 'gain_tip')" @commit="setPlutoGain($event)" @special="setPlutoGain('agc')"></db-field>
             <template v-if="plutoView.gain_used_text"><label></label><div class="warn">{{ plutoView.gain_used_text }}</div></template>
             <label></label>
             <button data-act="pluto_fit" :disabled="!!plutoView.fit_reason || readOnly" :title="T('PLUTO_LABELS', 'fit_gain_tip') + (plutoView.fit_reason ? ' — ' + plutoView.fit_reason : '')" @click="cmd('plutosdr_fit_gain', {}, {field: 'pluto'})">{{ T('PLUTO_LABELS', 'fit_gain') }}</button>

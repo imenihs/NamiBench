@@ -144,6 +144,15 @@ class WaterfallLiveTest(InstrumentCase):
         self.assertEqual(d2["image"].shape[0], 100)
         g = self.call("density_get")
         self.assertEqual(g["image"].shape[0], 100)
+        # 20・40dB/div（10 目盛が 100dB を超える）は升の数を 200 に保ち、升目を 1・2dB に広げる。範囲は縦軸と同じ
+        for div, bin_db in ((20, 1.0), (40, 2.0)):
+            self.clear_events()
+            self.call("set_amplitude", ref_level=0.0, db_per_div=div)
+            d3 = self.wait_for(lambda k, p: k == "density")
+            self.assertEqual(d3["image"].shape[0], 200)
+            self.assertEqual(d3["bin_db"], bin_db)
+            self.assertEqual((d3["level_lo"], d3["level_hi"]), (-10.0 * div, 0.0))
+            self.assertGreater(int((d3["image"] > 0).sum()), 0)
 
     def test_peak_list_has_leak_hook(self):
         self.connect(start_hz=50 * MHZ, stop_hz=200 * MHZ)

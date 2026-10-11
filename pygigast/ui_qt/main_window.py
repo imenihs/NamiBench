@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from ..api.local import LocalApi
+from ..core.instrument_display import DB_PER_DIV_CHOICES
 from ..core.report_layout import norm_out_of_range
 from ..core.units import drag_ref_level, format_freq, level_text
 from . import (device_menu, display_view, look, marker_rows, menu_table, menus, png_data, screen_model, screen_s11, sizes,
@@ -68,7 +69,6 @@ from .ref_quick import RefQuick
 from .run_buttons import RunButtons
 from .topbar import TopBar
 
-DB_PER_DIV_CHOICES = (1.0, 2.0, 5.0, 10.0)
 DIVISIONS = 10
 DEFAULT_REF = 0.0
 DEFAULT_DIV = 10.0
@@ -311,9 +311,9 @@ class MainWindow(QMainWindow):
         self.div_field = div_box
         self.div_combo = QComboBox()
         for v in DB_PER_DIV_CHOICES:
-            self.div_combo.addItem(f"{v:g} dB", v)
+            self.div_combo.addItem(f"{v:g} dB", float(v))
         self._div_key: tuple = ()
-        self.div_combo.setCurrentIndex(DB_PER_DIV_CHOICES.index(DEFAULT_DIV))
+        self.div_combo.setCurrentIndex(DB_PER_DIV_CHOICES.index(int(DEFAULT_DIV)))
         self.div_combo.activated.connect(lambda i: self._set_div(self.div_combo.itemData(i)))
         div_box.layout().replaceWidget(div_box.edit, self.div_combo)
         div_box.edit.hide()

@@ -466,6 +466,17 @@ def db_choice_text(v: float, unit: str, signed: bool = True) -> str:
     return minus_sign(s) + (f" {unit}" if unit else "")
 
 
+def db_value_text(v: float, decimals: Optional[int]) -> str:
+    """欄の値の文字（単位は付けない。Web の fields.js の dbText と同じ）。小数2桁以上の欄（|Γ|・SWR のしきい値:
+    設計R §3）はその桁、整数の欄（PlutoSDR の受信の利得: 設計Q §7）は整数、ほかは 0.1 まで（REF の欄と同じ）。"""
+    if decimals == 0:
+        s = f"{float(v):.0f}"
+        return minus_sign("0" if s == "-0" else s)
+    if (decimals or 1) <= 1:
+        return level_text(v)
+    return minus_sign(f"{float(v):.{decimals}f}")
+
+
 def round_to(v: float, decimals: Optional[int]) -> float:
     """小数 decimals 桁へ四捨五入する（ちょうど半分は大きい方へ。Web の fields.js の roundTo と同じ）。None は丸めない。"""
     if decimals is None:
@@ -504,17 +515,22 @@ class DbChoiceField(DbField):
     - 欄の上（と一覧の矢印の上）のホイールはカーソルの桁によらず1目盛で 1dB（J §3 の桁の増減の例外）。↑↓ はカーソルの桁
     - 打っている間は状態の値で書き直さない（_Edit の決まり）
     - lo・hi を渡すと、その外の値は欄の下に範囲を知らせて元の値に戻す。↑↓・ホイールは端で止める
-    - decimals を渡すと、打った値・送った値をその桁に丸める
+    - decimals を渡すと、打った値・送った値をその桁に丸める（0 なら整数で出す）
     - 負の数は「−」の字形で出し、打つときは「-」でも「−」でもよい
+    - special を渡すと、一覧の先頭に数でない行（PlutoSDR の受信の利得の「自動」: 設計Q §7）を置く。選ぶか同じ文字を
+      打って確定すると on_special を呼ぶ。show_special でその文字を欄に出す（↑↓・ホイールは渡した値から送る）
     """
 
     def __init__(self, name: str, unit: str, on_commit: Callable[[float], None], choices: tuple,
                  signed: bool = True, lo: Optional[float] = None, hi: Optional[float] = None,
-                 decimals: Optional[int] = None, big: bool = True) -> None:
+                 decimals: Optional[int] = None, big: bool = True, special: Optional[str] = None,
+                 on_special: Optional[Callable[[], None]] = None) -> None:
         super().__init__(name, unit, on_commit, big)
         self._choices = tuple(choices)
         self._signed = signed
         self.lo, self.hi, self.decimals = lo, hi, decimals
+        self._special, self._on_special = special, on_special
+        self.special_shown = False
         self.combo = _DbCombo(self.edit)
         self.combo.setEditable(True)
         self.combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
@@ -537,6 +553,8 @@ class DbChoiceField(DbField):
     def _fill_choices(self) -> None:
         self.combo.blockSignals(True)
         self.combo.clear()
+        if self._special:
+            self.combo.addItem(self._special, None)
         for v in self._choices:
             self.combo.addItem(db_choice_text(v, self._unit, self._signed), float(v))
         self.combo.setCurrentIndex(-1)
@@ -562,11 +580,18 @@ class DbChoiceField(DbField):
         if v is not None:
             self.edit._echo = True  # 選んだ値の戻りはフォーカスがあっても映す
             self._accept(float(v))
+        elif self._special and self.combo.itemText(i) == self._special and self._on_special:
+            self.edit._echo = True
+            self._on_special()
 
     def _accept(self, v: float) -> None:
         self._on_commit(v)
 
     def _commit_text(self, text: str) -> None:
+        if self._special and text.strip() == self._special:
+            if self._on_special:
+                self._on_special()
+            return
         try:
             v = parse_db(text.replace(self._unit, "") if self._unit else text)
         except ParseError:
@@ -593,9 +618,14 @@ class DbChoiceField(DbField):
 
     def set_value(self, v: float) -> None:
         self._value = v
-        # 小数2桁以上の欄（|Γ|・SWR のしきい値: 設計R §3）はその桁で出す。ほかは 0.1 まで（REF の欄と同じ）
-        text = level_text(v) if (self.decimals or 1) <= 1 else minus_sign(f"{float(v):.{self.decimals}f}")
-        self.edit.show_value(f"{text} {self._unit}".rstrip())
+        self.special_shown = False
+        self.edit.show_value(f"{db_value_text(v, self.decimals)} {self._unit}".rstrip())
+
+    def show_special(self, base: float) -> None:
+        """数でない行の文字（「自動」）を欄に出す。base は ↑↓・ホイールで送るときの元の値。"""
+        self._value = base
+        self.special_shown = True
+        self.edit.show_value(self._special or "")
 
     def set_unit(self, unit: str) -> None:
         if unit != self._unit:

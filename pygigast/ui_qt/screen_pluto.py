@@ -1,7 +1,8 @@
 """PlutoSDR の欄の中身（設計Q §7）。Qt（pluto_panel.py・tab_source.py・settings_dialog.py）と Web（state の ui.pluto）が
 同じ関数を使う。Qt を import しない。
 
-- 受信の欄（右のタブ「トレース・掃引」）: 受信の利得（自動と、いまの範囲で使える 1dB 刻みの値）・「利得を合わせる」・単位。
+- 受信の欄（右のタブ「トレース・掃引」）: 受信の利得（打てるドロップダウン。いまの範囲の 1dB 刻みの値を打てて、一覧は
+  自動と、範囲の中の 10dB 刻み（2026-10-11 ユーザー指摘「1dB 刻みの全部を並べた一覧は使いにくい」））・「利得を合わせる」・単位。
   設定の利得がいまの範囲で使えないとき（利得の範囲は LO の帯で変わる）は、使う値を利得の欄のそばに出す（U-25）
 - 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル）
 - 欄は PlutoSDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）
@@ -9,8 +10,13 @@
 """
 from __future__ import annotations
 
+import math
+
 from . import texts
 from .texts_pluto import PLUTO_LABELS
+
+# 受信の利得の一覧に並べる刻み（dB）。打てばいまの範囲の 1dB 刻みのどの値でも
+GAIN_CHOICE_STEP_DB = 10
 
 
 def _db(v: float) -> str:
@@ -22,13 +28,17 @@ def pluto_view(st: dict) -> dict:
     connected = bool(pl.get("connected"))
     reason = None if connected else PLUTO_LABELS["not_pluto"]
     lim = pl.get("gain_limits_db") or [-1, 73]
-    gains = [{"value": None, "text": PLUTO_LABELS["auto"]}]
-    gains += [{"value": float(g), "text": texts.tpl("rtl_gain_step", db=_db(g))} for g in range(int(lim[0]), int(lim[1]) + 1)]
+    lo, hi = float(lim[0]), float(lim[1])
+    step = GAIN_CHOICE_STEP_DB
+    choices = [float(g) for g in range(int(math.ceil(lo / step)) * step, int(hi) + 1, step)]
     agc = bool(pl.get("agc"))
     setting = pl.get("gain_db") if pl.get("gain_db") is not None else pl.get("gain_default_db")
     used = pl.get("gain_db_used")
     # 選んで見せる値: 設定がいまの範囲で使えればその値、使えなければ使う値（そのそばに「この範囲では … を使います」）
     shown_gain = None if agc else (used if used is not None else setting)
+    # 自動の間に ↑↓・ホイールで送るときの元の値（使う値・設定の順。どちらも無ければ範囲の中ほど。いまの範囲に収める）
+    base = next((float(x) for x in (shown_gain, used, setting) if x is not None), float(round((lo + hi) / 2)))
+    base = min(max(base, lo), hi)
     used_text = ""
     if connected and not agc and used is not None and setting is not None and float(used) != float(setting):
         used_text = texts.tpl("pluto_gain_used", db=_db(used))
@@ -39,9 +49,16 @@ def pluto_view(st: dict) -> dict:
         "shown": connected,
         "connected": connected,
         "reason": reason,
-        "gains": gains,
+        # 利得の欄: 一覧の数（小さい順。RTL-SDR の欄と同じ）・打てる範囲・欄に出す値。自動のときは auto_text を出し、
+        # ↑↓・ホイールは gain_base から送る
+        "gain_choices": choices,
+        "gain_lo": lo,
+        "gain_hi": hi,
+        "auto_text": PLUTO_LABELS["auto"],
         "agc": agc,
         "gain_db": shown_gain,
+        "gain_base": float(base),
+        "gain_setting": None if setting is None else float(setting),  # 同じ値を送り直さないための比べる元
         "gain_used_text": used_text,
         "unit_text": texts.tpl("rtl_unit", unit=pl.get("level_unit") or "") if connected and pl.get("level_unit") else "",
         "fit_reason": reason or (PLUTO_LABELS["fit_needs_manual"] if agc else None)
