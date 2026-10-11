@@ -383,8 +383,10 @@ class TestRecordKeepsCorrection(InstCase):
         # Stop が Step の整数倍に乗らない範囲（測る点は Stop の先まで1点多く、保存は Stop まで）
         self.call("set_sweep", start_hz=100_000_000, stop_hz=101_000_123)
         self.call("plutosdr_set", gain_db=40.0)
+        # 補正は周波数で変わる形（切り出しで点がずれれば値が合わなくなる）: 1MHz あたり 10dB の傾き
         self.inst._pluto_gain_cal = types.SimpleNamespace(
-            values_at=lambda f, g: np.full(np.shape(f), 3.0), freqs_hz=[100 * MHZ], created_at="2026-10-12T00:00:00")
+            values_at=lambda f, g: (np.asarray(f, dtype=float) - 100e6) / 1e5, freqs_hz=[100 * MHZ],
+            created_at="2026-10-12T00:00:00")
         self.call("record_start")
         self.call("run", mode="continuous")
         self.wait_for(lambda k, p: k == "state" and p["recording"].get("sweeps", 0) >= 2)
@@ -402,10 +404,24 @@ class TestRecordKeepsCorrection(InstCase):
             got = lv.db_rows(raw)
             plain, _unit = rtl_levels.to_level(raw, s.raw_extra["gain_db"], None)
             ok = np.isfinite(plain)
-            np.testing.assert_allclose((got - plain)[ok], 3.0, atol=1e-3)
+            want_corr = (s.start_hz + np.arange(s.points) * s.step_hz - 100e6) / 1e5
+            np.testing.assert_allclose((got - plain)[ok], np.broadcast_to(want_corr, got.shape)[ok], atol=1e-3)
             r = h.raw_sweep(0, 0)
             fr = lv.frame(r, 1)
             want, _unit = rtl_levels.to_level(r.raw, s.raw_extra["gain_db"], None)
             got1 = 10 * np.log10(np.asarray(fr.values, dtype=float)) + 30  # to_linear の逆
             ok = np.isfinite(want)
-            np.testing.assert_allclose(got1[ok] - want[ok], 3.0, atol=1e-3)
+            np.testing.assert_allclose(got1[ok] - want[ok], want_corr[ok], atol=1e-3)
+        # 周波数の範囲を途中から切り出しても、補正は同じ周波数の値で足す（設計H §3.1）
+        from pygigast.core.storage.h5file import extract_h5
+
+        cut = extract_h5(path, self.root / "cut.h5", f_range_hz=(100_300_000, 100_800_000))
+        with H5Record(cut) as h:
+            s = h.segments[0]
+            lv = SegmentLevels(s, h.header)
+            raw = h.read(0).raw
+            got = lv.db_rows(raw)
+            plain, _unit = rtl_levels.to_level(raw, s.raw_extra["gain_db"], None)
+            want_corr = (s.start_hz + np.arange(s.points) * s.step_hz - 100e6) / 1e5
+            ok = np.isfinite(plain)
+            np.testing.assert_allclose((got - plain)[ok], np.broadcast_to(want_corr, got.shape)[ok], atol=1e-3)

@@ -381,6 +381,21 @@ def split_raw(raw: RawSweep) -> tuple[np.ndarray, Optional[np.ndarray]]:
     return _raw_values(raw.raw, n, enc), None
 
 
+# raw_extra のうち点ごとの値を持つ項目（測った点の頭から並ぶ）。範囲を切り出すときは同じ点で切る
+POINT_EXTRA_KEYS = ("gain_corr_db",)
+
+
+def clip_raw_extra(extra: Optional[dict], lo: int, hi: int) -> Optional[dict]:
+    """区間の点 [lo, hi) を切り出したときの raw_extra（点ごとの項目だけ同じ点で切る）。"""
+    if not extra:
+        return extra
+    out = dict(extra)
+    for k in POINT_EXTRA_KEYS:
+        if isinstance(out.get(k), list):
+            out[k] = out[k][lo:hi]
+    return out
+
+
 def raw_extra_for(raw: RawSweep) -> Optional[dict]:
     """区間の属性 raw_extra に持つ RawSweep.extra の項目（RawEncoding.extra_keys）。要らない形は None。"""
     keys = encoding_info(raw.encoding).extra_keys
@@ -1007,7 +1022,7 @@ class _H5RangeSegment(SegmentSource):
             raw_layout=s.raw_layout,
             normalization=s.normalization,
             calibration=s.calibration,
-            raw_extra=s.raw_extra,
+            raw_extra=clip_raw_extra(s.raw_extra, pt[0], pt[1]),
             raw_segments=rs.clip(s.raw_segments, pt[0], pt[1]) if s.raw_segments is not None else None,
             nf=s.nf,
         )
