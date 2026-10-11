@@ -115,6 +115,7 @@ class TestDevice(unittest.TestCase):
 
     def test_sa_level_is_dbfs_minus_gain_and_tx_untouched(self):
         a = self.model.default()
+        n0 = len(self.lib.pluto.tx_writes())  # つないだときに送信を止めた分（2026-10-11 ユーザー決定）は数えない
         r = self.dev.measure(a)
         lv, unit = levels.to_level(r.raw, r.extra["gain_db"])
         f = a.axis.freqs()
@@ -122,7 +123,7 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(f[i], 84_700_000)
         self.assertAlmostEqual(float(lv[i]), -40.0, delta=1.2)
         self.assertEqual(unit, UNCAL)
-        self.assertEqual(self.lib.pluto.tx_writes(), [])  # 受信だけのときは送信に触らない
+        self.assertEqual(self.lib.pluto.tx_writes()[n0:], [])  # 受信だけのときは送信に触らない
         self.assertFalse(np.isnan(r.raw).any())
 
     def test_gain_clamped_to_band(self):
@@ -380,6 +381,13 @@ class TestTxSafety(unittest.TestCase):
         self.assertLess(i_lo, i_up)
         self.assertEqual(log[-1][:2], ("ad9361-phy/voltage0_out", "hardwaregain"))  # 利用者の減衰は最後
         self.assertEqual(float(log[-1][2]), user_atten)
+
+    def test_connect_turns_the_power_up_tx_off(self):
+        # つないだら送信を止める（2026-10-11 ユーザー決定）: 電源投入時の 2450MHz の LO（動作・減衰 −10dB）を止める
+        ph = self.lib.pluto
+        tx_writes = [e for e in ph.log if e[0] in ("ad9361-phy/altvoltage1_out", "ad9361-phy/voltage0_out")]
+        self.assertIn(("ad9361-phy/altvoltage1_out", "powerdown"), [e[:2] for e in tx_writes])
+        self.assertEqual(float([e for e in tx_writes if e[:2] == ("ad9361-phy/voltage0_out", "hardwaregain")][0][2]), -89.75)
 
     def test_sg_start_order_from_power_up(self):
         self.dev.set_tx_atten(-80)

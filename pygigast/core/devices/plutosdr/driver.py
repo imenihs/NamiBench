@@ -285,6 +285,12 @@ class PlutoSdrDevice(Device):
             serial = ctx.attr("hw_serial") or ""
             self.fw_version = ctx.attr("fw_version")
             self._read_ranges()
+            # つないだら送信を止める（2026-10-11 ユーザー決定「電源入れたときは、送信止めて」）: 電源投入時は送信の LO が
+            # 2450MHz で動作・減衰 −10dB のままで、受信に線が出る。出力をいちばん小さくし、LO を止め、波形を消す
+            self._txc.set_attr("hardwaregain", self._atten_min_text())
+            self._txlo.set_attr("powerdown", 1)
+            self._destroy_tx_buffer()
+            self._dds_off()
             fs = int(self._profile["fft"]["sample_rate_hz"])
             self._rx.set_attr("sampling_frequency", fs)
             self._rx.set_attr("rf_bandwidth", int(self._profile["fft"].get("rf_bandwidth_hz", fs)))
