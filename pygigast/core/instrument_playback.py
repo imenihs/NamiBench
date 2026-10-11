@@ -13,9 +13,15 @@
   保存時の Step より細かくはならない: H §3.1）。範囲は記録の区間の中に収め、収めたら知らせる（M-02）
 - 読むのは書き込みスレッド（設計A §4.2）。次の掃引を出す時刻は記録の時刻の差 ÷ 速さ（間が長いところは
   PLAYBACK_MAX_GAP_S で詰める）
+- ウォーターフォールの色の範囲の「自動」は、出している行（記録の全体、時間方向に選んだときはその範囲）の値で決め、
+  カーソルを動かしても変えない（P §9.2）。行の数は画面の行数によらず PLAYBACK_AUTO_ROWS 行で読む（Qt と Web の画面の
+  高さが違っても同じ範囲になる）
+- 密度の元は記録の中のカーソルまでの直近の掃引（重みが 1/256 になるまで = 半分になる回数の 8 倍）を記録から読み、
+  何秒分かは記録の時刻から出す（P §9.3）。カーソルが1つ進んだだけなら、その1掃引を足す
 """
 from __future__ import annotations
 
+import collections
 import math
 import threading
 import time
@@ -30,7 +36,7 @@ from .instrument_common import CommandError
 from .normalize import load_reference
 from .normalize.apply import apply_reference
 from .record_frames import SegmentLevels
-from .trace import ConditionChange
+from .trace import ConditionChange, formats
 from .types import Frame, Quantity, ValueKind
 
 # 再生の速さ（等倍・数倍: P §5）。値の並びは設計に無い
@@ -39,6 +45,8 @@ PLAYBACK_SPEEDS = (1, 2, 5, 10, 30)
 PLAYBACK_MAX_GAP_S = 2.0
 # 表示の範囲は、少なくとも保存時の Step の 10 点分（それより狭くは拡大しない: H §3.1 の「拡大の限界」）
 PLAYBACK_MIN_POINTS = 10
+# 色の範囲の自動を決めるときに読む行の数（概観の段の最大値の行。値は設計に無い）
+PLAYBACK_AUTO_ROWS = 512
 
 
 @dataclass
@@ -87,6 +95,9 @@ class _Session:
     problems: list = field(default_factory=list)
     shown: Optional[int] = None  # いまスペクトルに出している掃引の通し番号
     shown_raw: object = None  # その掃引の生の値（再生中の保存に入れる: 設計H §4）
+    auto_window: object = None  # 色の範囲の自動を決めた時間の範囲 (t_lo, t_hi)。決めていなければ None
+    dens: Optional[tuple] = None  # 密度の元に入れた (区間, 表示の範囲, 掃引の数, 最後の通し番号)
+    dens_req: int = 0  # 密度の元を読む求めの番号（後の求めが来たら前の結果は使わない）
 
 
 def _norm_offset(levels: SegmentLevels, ref, serial: str, connected_at: float, now: float) -> Optional[np.ndarray]:
@@ -339,6 +350,7 @@ class PlaybackMixin:
             return self._pb_normalize(s, seg, fr)
 
         self._process_frame(frame, normalize=normalize, live=False)
+        self._pb_density(s, seg, g)
 
     def _pb_normalize(self, s: _Session, seg: _PbSegment, frame: Frame) -> Frame:
         """記録した区間が基準との比なら、記録に書いた基準を当てる。当てられなければ電力のまま理由を出す。"""
@@ -540,12 +552,21 @@ class PlaybackMixin:
     # ------------------------------------------------------------------ ウォーターフォールの行（記録から）
 
     def _playback_rows(self, max_rows: int, t_lo: Optional[float], t_hi: Optional[float]) -> object:
+        """再生中のウォーターフォールの行（記録から）。出す行の時間の範囲が変わったら（記録を開いた・時間方向に選んだ・
+        単位や形式が変わって決め直す）、その範囲の行の全体で色の範囲の自動を決める（P §9.2）。"""
         s = self._playback
+        window = (t_lo, t_hi)
+        decide = s.auto_window != window or not self._wf_auto.fixed
 
         def job():
-            return self._record_rows(s.src, max_rows, t_lo, t_hi)
+            rows = self._record_rows(s.src, max_rows, t_lo, t_hi)
+            return rows, (self._record_rows(s.src, PLAYBACK_AUTO_ROWS, t_lo, t_hi) if decide else None)
 
-        def then(rows) -> dict:
+        def then(res) -> dict:
+            rows, auto_rows = res
+            if auto_rows is not None and self._playback is s:
+                self._pb_decide_auto(auto_rows)
+                s.auto_window = window
             out = self._wf_rows_result(list(rows), "file")
             out.update({"t_first": s.segs[0].t_first, "t_last": s.segs[-1].t_last})
             return out
@@ -565,31 +586,105 @@ class PlaybackMixin:
             s1 = len(ts) if t_hi is None else int(np.searchsorted(ts, t_hi, side="right"))
             if s1 <= s0:
                 continue
-            levels, offset, _ref, meta = self._segment_levels(src, pos)
-            ar = src.rows(pos, s0, s1, max_rows)
-            db = levels.db_rows(ar.values)
-            if offset is not None:
-                db = db + offset[None, :]
-            unit = "dB" if offset is not None else levels.unit
-            a = levels.adopted
-            cond = {"start_hz": int(a.start_hz), "stop_hz": int(a.stop_hz), "rbw_hz": int(a.rbw_hz),
-                    "mode": a.mode.value}
-            if offset is not None:
-                # 当てた基準（境目の条件は id で比べ、文は名前: P §3。ライブの行と同じ形）
-                cond["ref_id"] = str((meta or {}).get("id") or "")
-                cond["ref"] = str((meta or {}).get("name") or "")
-            quantity = "ratio" if offset is not None else "power"
-            prof = levels.profile
-            if levels.encoding != "gigast_ad_u16":
-                prof = {**prof, "level_unit": levels.unit}
-            for j in range(db.shape[0]):
-                r = wf.row_from_values(float(ar.t_first[j]), s.start_hz, s.step_hz, db[j], unit=unit, seg=-(pos + 1),
-                                       cond=cond, pos=(pos, int(ar.first_index[j])), sweeps=int(ar.sweeps[j]),
-                                       t_end=float(ar.t_last[j]))
-                r.extra = {"quantity": quantity, "profile": prof}
-                rows.append(r)
+            rows += self._segment_rows(src, pos, s0, s1, max_rows)
         rows.sort(key=lambda r: r.t)
         return wf.select_rows(rows, max_rows)
+
+    def _segment_rows(self, src, pos: int, s0: int, s1: int, max_rows: int,
+                      view: Optional[tuple[int, int]] = None) -> list:
+        """区間 pos の掃引 [s0, s1) の行（多くても max_rows 行くらい）。view を渡せば、その周波数の範囲の点だけの行
+        （密度の元: 画面の表示の範囲と同じ横軸）。書き込みスレッドで呼ぶ。"""
+        s = src.segments[pos]
+        levels, offset, _ref, meta = self._segment_levels(src, pos)
+        ar = src.rows(pos, s0, s1, max_rows)
+        db = levels.db_rows(ar.values)
+        if offset is not None:
+            db = db + offset[None, :]
+        f0 = int(s.start_hz)
+        if view is not None:
+            freqs = f0 + int(s.step_hz) * np.arange(db.shape[1], dtype=np.int64)
+            mask = (freqs >= int(view[0])) & (freqs <= int(view[1]))
+            if not mask.any():
+                return []
+            f0 = int(freqs[mask][0])
+            db = db[:, mask]
+        unit = "dB" if offset is not None else levels.unit
+        a = levels.adopted
+        cond = {"start_hz": int(a.start_hz), "stop_hz": int(a.stop_hz), "rbw_hz": int(a.rbw_hz),
+                "mode": a.mode.value}
+        if offset is not None:
+            # 当てた基準（境目の条件は id で比べ、文は名前: P §3。ライブの行と同じ形）
+            cond["ref_id"] = str((meta or {}).get("id") or "")
+            cond["ref"] = str((meta or {}).get("name") or "")
+        quantity = "ratio" if offset is not None else "power"
+        prof = levels.profile
+        if levels.encoding != "gigast_ad_u16":
+            prof = {**prof, "level_unit": levels.unit}
+        rows = []
+        for j in range(db.shape[0]):
+            r = wf.row_from_values(float(ar.t_first[j]), f0, s.step_hz, db[j], unit=unit, seg=-(pos + 1),
+                                   cond=cond, pos=(pos, int(ar.first_index[j])), sweeps=int(ar.sweeps[j]),
+                                   t_end=float(ar.t_last[j]))
+            r.extra = {"quantity": quantity, "profile": prof}
+            rows.append(r)
+        return rows
+
+    # ------------------------------------------------------------------ 色の範囲の自動・密度（P §9.2・§9.3）
+
+    def _pb_decide_auto(self, rows: list) -> None:
+        """出している行の全体から、表示の単位ごとに色の範囲の自動を決める（|Γ|・SWR の行は縦軸と同じ範囲なので使わない）。
+        いま出している範囲が変わったら画面へ送る。"""
+        groups: dict[str, list] = {}
+        for r in rows:
+            _shift, unit, fmt = self._wf_shown(r)
+            if fmt == formats.DB and unit:
+                groups.setdefault(unit, []).append(self._wf_values(r))
+        self._wf_auto.decide({u: np.concatenate(v) for u, v in groups.items()})
+        if self._wf_range_sent is None or self._wf_range() != self._wf_range_sent:
+            self._wf_emit_range()
+
+    def _pb_density(self, s: _Session, seg: _PbSegment, g: int) -> None:
+        """密度の元を、記録の中のカーソル（通し番号 g）までの直近の掃引にする（記録から読む: P §9.3）。表示の組み合わせが
+        密度でなければ作らない。前に入れた最後の掃引のすぐ次なら、その1掃引だけ読んで足す。"""
+        if self._view_opts.get("layout") != "density":
+            s.dens = None
+            return
+        n = wf.DENSITY_REPLAY_HALVES * int(self._view_opts["density_half"])
+        view = self._pb_view(s, seg)
+        i = g - seg.first
+        step = s.dens == (seg.pos, view, n, g - 1) and bool(self._density_src)
+        i0 = i if step else max(0, i - n + 1)
+        s.dens_req += 1
+        req = s.dens_req
+        fut = self._writer.submit(self._segment_rows, s.src, seg.pos, i0, i + 1, i + 1 - i0, view)
+
+        def done(f) -> None:
+            def finish() -> None:
+                if self._playback is not s or req != s.dens_req or f.exception() is not None:
+                    return  # 後の求めがある・再生を終えた・読めなかった（読めないことは掃引を出す方が知らせる）
+                rows = f.result()
+                if not rows:
+                    return
+                s.dens = (seg.pos, view, n, g)
+                if step:
+                    self._density_src.append(rows[-1])
+                    self._density_feed(rows[-1])
+                else:
+                    self._density_src = collections.deque(rows, maxlen=n)
+                    self._density_rebuild()
+
+            self._post_call(finish)
+
+        fut.add_done_callback(done)
+
+    def _pb_density_refresh(self) -> None:
+        """再生中に密度へ切り替えた・半分になる回数を変えた: カーソルまでの掃引を記録から読み直す。"""
+        s = self._playback
+        g = s.shown if s.shown is not None else s.cursor
+        seg, _i = self._pb_locate(g)
+        s.dens = None
+        self._density.key = None
+        self._pb_density(s, seg, g)
 
     # ------------------------------------------------------------------ 再生中の保存・書き出し・切り出し（P §5・H §3.1・§5）
 

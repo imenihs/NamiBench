@@ -193,7 +193,8 @@ class CalBrowserTest(unittest.TestCase):
         open_app(page, app, 1280, 720)
         app.call("cal_open", kind="rbw")
         page.wait("!!(gsApp.ui && gsApp.ui.cal)", "作業のある状態")
-        page.ev("gsApp.openCal('rbw'); 1")
+        # 開くの命令が本体に届いてから閉じる（届く前に閉じると、後から届いた開くで作業が開き直り、試験の形にならない）
+        page.ev("Promise.resolve(gsApp.openCal('rbw')).then(() => 1)")
         app.call("cal_close")
         page.wait("!gsApp.calWin", "窓の扱いが消える")
         app.call("cal_open", kind="rbw")

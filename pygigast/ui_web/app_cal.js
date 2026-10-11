@@ -181,7 +181,8 @@
         // 窓は作業ができてから出す（Qt と同じ）: コアは校正データを読んでから作業を作るので、それより前に届いた状態には
         // 作業が無い。それを「別の画面で閉じた」と取り違えないよう、作業を一度見るまでは閉じない（opened）
         if (!this.calWin) this.calWin = { page: PREPARE, asked: null, opened: false, pointsSig: null };
-        this.cmd("cal_open", { kind }).then((r) => {
+        // 戻り値は開くの命令が終わるまでの Promise（試験が、命令が届く前に別の画面で閉じる形を作らないために待つ）
+        return this.cmd("cal_open", { kind }).then((r) => {
           if (!r && this.calWin && !this.calWin.opened) this.calWin = null; // 開けなかった（知らせは cmd が出す）
         });
       },

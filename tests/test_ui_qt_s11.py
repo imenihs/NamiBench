@@ -177,6 +177,14 @@ class FormatAndAxisTest(S11UiBase):
         self.assertFalse([w for w in r2.note.parent().findChildren(type(r2.note)) if w.isVisible()
                           and "描きません" in w.text()])
         self.assertTrue(self.win.trace_tab.rows[1].visible.isEnabled())
+        # チェックを外しても、縦軸と単位が違う間はチェックを無効のまま（入れられると描かれず外せなくなる: 設計E §6.5.1）
+        self.cmd("set_trace", number=2, visible=False)
+        self.wait(lambda: not r2.visible.isChecked(), what="表示のチェックが外れる")
+        self.pump(0.3)
+        self.assertFalse(r2.visible.isEnabled())
+        self.assertIn("SWR", r2.visible.toolTip())
+        self.cmd("set_trace", number=2, visible=True)
+        self.wait(lambda: r2.visible.isChecked(), what="表示のチェックが入る")
         # 測定中のトレース1を隠すと縦軸は固定のトレース2の単位（dBm）になり、トレース2を描く
         self.cmd("set_trace", number=1, visible=False)
         self.wait(lambda: self.win.display_unit() == "dBm", what="縦軸が dBm")

@@ -40,6 +40,12 @@ class PeakViewTest(unittest.TestCase):
                          ("max", L["from_max"], L["max_tip_dip"], L["col_below_max_db"], None))
         self.assertEqual(peak_view.list_view(tg, "peak")["tip"], L["max_tip_peak"])
         self.assertEqual(set(peak_view.list_views(tg)), {"peak", "dip"})
+        # NF もノイズフロアが無いので最大から（−ピーク = NF の小さい所を並べられる。コアと同じ基準: 設計P §9.7）
+        nf = {"display_quantity": "nf"}
+        for pol in ("peak", "dip"):
+            v = peak_view.list_view(nf, pol)
+            self.assertEqual((v["base"], v["label"], v["diff_header"], v["reason"]),
+                             ("max", L["from_max"], L["col_below_max_db"], None), pol)
 
     def test_result_view(self):
         r = {"trace": 1, "unit": "dB", "base": "max", "base_level": -0.4, "polarity": "dip",

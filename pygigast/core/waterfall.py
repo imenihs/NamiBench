@@ -189,9 +189,22 @@ def _round_step(x: float) -> float:
     return round(x / AUTO_STEP_DB) * AUTO_STEP_DB
 
 
+def range_of(values: np.ndarray) -> Optional[tuple[float, float]]:
+    """値の全体で決める色の範囲（ノイズフロア（中央値）〜最大値。AUTO_STEP_DB で丸め、幅は AUTO_MIN_SPAN_DB 以上）。
+    値が1つも無ければ None。"""
+    st = finite_stats(values)
+    if st is None:
+        return None
+    lo, hi = _round_step(st[0]), _round_step(st[1])
+    return lo, max(hi, lo + AUTO_MIN_SPAN_DB)
+
+
 class AutoRange:
     """色の範囲の自動（P §9.2）。ノイズフロア（中央値）〜最大値を時定数 AUTO_TAU_S で追い、見せる範囲は
-    AUTO_COMMIT_S 秒より短い間隔では変えない（最初の1行はすぐ決める）。"""
+    AUTO_COMMIT_S 秒より短い間隔では変えない（最初の1行はすぐ決める）。
+
+    記録の再生中は追わず、ウォーターフォールに出している行の全体で単位ごとに決めた範囲（fixed）を使う（decide。
+    カーソルを動かしても変えない: P §9.2）。reset で両方捨てる（単位・形式が変わった・再生に入った／出た）。"""
 
     def __init__(self) -> None:
         self.reset()
@@ -202,6 +215,11 @@ class AutoRange:
         self._t: Optional[float] = None
         self._commit_t: Optional[float] = None
         self.range: Optional[tuple[float, float]] = None
+        self.fixed: dict[str, tuple[float, float]] = {}
+
+    def decide(self, values_by_unit: dict[str, np.ndarray]) -> None:
+        """出している行の値（表示の単位ごと）から範囲を決め直す（前に決めたものは捨てる）。"""
+        self.fixed = {u: r for u, r in ((u, range_of(v)) for u, v in values_by_unit.items()) if r is not None}
 
     def shift(self, delta_db: float) -> None:
         """追っている範囲を delta_db だけ動かす（行の値が同じだけ動いたとき: 基準の値を直した 設計E §6.7）。"""

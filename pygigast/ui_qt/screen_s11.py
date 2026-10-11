@@ -91,10 +91,16 @@ def axis_unit(st: dict) -> str:
 
 
 def trace_drawn_reason(t: dict, axis: str) -> Optional[str]:
-    """トレースを描かない理由（縦軸と単位が違う）。描くなら None。画面は「表示」のチェックのツールチップに出す（行に文を
-    書かない）。測定中のトレースは縦軸を決める側なので、ふつうは固定のトレースだけが当たる。"""
+    """トレースを描かない理由（縦軸と単位が違う）。描くなら None。画面は「表示」のチェックを無効にし、理由はツールチップ
+    に出す（行に文を書かない）。測定中のトレースは縦軸を決める側なので、ふつうは固定のトレースだけが当たる。
+
+    チェックが入っているかに関係なく、値を持ち縦軸と単位が違う間は理由を返す（設計E §6.5.1）。チェックの外れた
+    トレースだけ有効にすると、入れたとたんに描かれずチェックが無効になり、外せなくなる。ただしチェックの外れた測定中の
+    トレースは、入れればそれが縦軸を決める（axis_unit: 測定中のトレースが先）ので描ける。"""
     unit = t.get("unit")
-    if not unit or unit == axis or not t.get("has_values") or not t.get("visible"):
+    if not unit or unit == axis or not t.get("has_values"):
+        return None
+    if not t.get("visible") and t.get("action") != "fixed":
         return None
     return _r("trace_unit_differs", axis=axis, unit=unit)
 

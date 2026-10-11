@@ -443,6 +443,112 @@ class PlaybackTest(InstrumentCase):
                          (live["mode"], live["start_hz"], live["stop_hz"]))
         self.assertIsNone(st["undo"]["undo_blocked"])
 
+    def test_marker_delta_to_span_in_playback_keeps_span_lock(self):
+        """再生中の「デルタの2点を Start・Stop に」（設計C §5.13）: Span 固定が ON でも OFF でも表示の範囲を2点にし、
+        固定（ライブの掃引の条件）は変えず、「Span 固定を外しました」も出さない。"""
+        h5 = self.record(3)
+        for lock in (True, False):
+            self.call("set_sweep", span_lock=lock)
+            live = dict(self.call("get_state")["sweep"])
+            self.open(h5)
+            self.call("marker_add", kind="M", trace=1, freq_hz=80 * MHZ)
+            self.call("marker_add", kind="M", trace=1, freq_hz=150 * MHZ)
+            self.call("marker_set", id="M2", ref="M1")
+            marks = {m["id"]: m["freq_hz"] for m in self.call("get_state")["markers"]["markers"]}
+            lo, hi = sorted((marks["M1"], marks["M2"]))
+            r = self.call("marker_to", id="M2", target="span")
+            self.assertTrue(r.get("playback"), lock)
+            self.assertEqual((r["adopted"]["start_hz"], r["adopted"]["stop_hz"]), (lo, hi))
+            self.assertFalse([a for a in r["adjustments"] if a["field"] == "span_lock"])
+            st = self.call("get_state")
+            self.assertEqual((st["playback"]["view"]["start_hz"], st["playback"]["view"]["stop_hz"]), (lo, hi))
+            self.assertEqual(st["sweep"]["span_lock_hz"], live["span_lock_hz"], lock)
+            self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"]), (live["start_hz"], live["stop_hz"]))
+            self.call("marker_clear")
+            self.call("playback_close")
+
+    def test_auto_color_range_is_decided_from_rows_shown(self):
+        """再生中の色の範囲の「自動」（設計P §9.2）: ウォーターフォールに出している行の全体で決め、カーソルを動かしても
+        変えない。時間方向に選んだときはその範囲の行で決め直す。記録の前半（50〜200MHz）と後半（SG の 500MHz を含む
+        300〜2100MHz）で最大が違う形にする。"""
+        from pygigast.core import waterfall as wf
+
+        self.connect(start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        self.call("record_start")
+        for _ in range(3):
+            sweep_once(self)
+        self.call("set_sweep", start_hz=300 * MHZ, stop_hz=2100 * MHZ)
+        self.call("set_mode", mode="sg", sg_hz=500 * MHZ)
+        for _ in range(3):
+            sweep_once(self)
+        wait_state(self, lambda st: st["recording"].get("sweeps", 0) >= 6)
+        self.call("record_stop")
+        h5 = self.root / "rec.h5"
+        self.wait_task(self.call("record_finish", path=str(h5))["task_id"])
+        self.open(h5)
+        r = self.call("waterfall_rows", max_rows=100)
+        want = wf.range_of(np.concatenate([row["values"] for row in r["rows"]]))
+        first = wf.range_of(r["rows"][0]["values"])
+        self.assertNotEqual(want, first)  # カーソルの1掃引（始め）で決めた範囲とは違う
+        self.assertEqual((r["range"]["lo"], r["range"]["hi"]), want)
+        self.assertTrue(r["range"]["auto"])
+        for index in (5, 0, 3):
+            self.call("playback_seek", index=index)
+            st = wait_state(self, lambda st, i=index: st["playback"]["index"] == i)
+            self.assertEqual((st["waterfall"]["range"]["lo"], st["waterfall"]["range"]["hi"]), want, index)
+        # 時間方向に前半だけを選ぶと、その行で決め直す
+        t_hi = r["rows"][2]["t"]
+        r2 = self.call("waterfall_rows", max_rows=100, t_lo=r["rows"][0]["t"], t_hi=t_hi)
+        self.assertEqual(len(r2["rows"]), 3)
+        want2 = wf.range_of(np.concatenate([row["values"] for row in r2["rows"]]))
+        self.assertEqual((r2["range"]["lo"], r2["range"]["hi"]), want2)
+        st = self.call("get_state")
+        self.assertEqual((st["waterfall"]["range"]["lo"], st["waterfall"]["range"]["hi"]), want2)
+
+    def test_density_in_playback_is_read_from_the_recording(self):
+        """再生中の密度（設計P §9.3）: 元は記録の中のカーソルの時刻までの直近の掃引（重みが 1/256 になるまで = 半分に
+        なる回数の 8 倍）を記録から読む。カーソルを飛ばしても、通過した掃引ではなくカーソルまでの掃引になり、何秒分かは
+        記録の時刻から出す。"""
+        from pygigast.core import waterfall as wf
+        from pygigast.core.storage.record_source import RecordSource
+
+        half = 5
+        n = wf.DENSITY_REPLAY_HALVES * half
+        self.connect(start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        self.call("record_start")
+        self.call("run", mode="continuous")
+        wait_state(self, lambda st: st["recording"].get("sweeps", 0) >= n + 6, timeout=60)
+        self.call("stop")
+        self.call("record_stop")
+        h5 = self.root / "rec.h5"
+        self.wait_task(self.call("record_finish", path=str(h5))["task_id"])
+        src = RecordSource(h5)
+        times = np.concatenate([src.times(i) for i, sg in enumerate(src.segments) if sg.n_sweeps])
+        src.close()
+        self.open(h5)
+        self.call("set_view", layout="density", density_half=half)
+
+        def density_at(index, sweeps):
+            self.call("playback_seek", index=index)
+            end = time.monotonic() + 10
+            while True:
+                d = self.call("density_get")
+                if d.get("image") is not None and d.get("sweeps") == sweeps:
+                    return d
+                self.assertLess(time.monotonic(), end, (index, d.get("sweeps")))
+                time.sleep(0.05)
+
+        # 始め（index 0）から終わりへ飛ばす: カーソルまでの直近 n 掃引（通過した2掃引ではない）
+        last = len(times) - 1
+        d = density_at(last, n)
+        self.assertEqual(d["half"], half)
+        win = times[last - n + 1:last + 1]
+        self.assertAlmostEqual(d["interval_s"], wf.sweep_interval_s(list(win)))
+        self.assertAlmostEqual(d["seconds"], half * wf.sweep_interval_s(list(win)))
+        # 始めの方へ戻す: カーソルまでの掃引だけ（4 掃引）
+        d = density_at(3, 4)
+        self.assertAlmostEqual(d["interval_s"], wf.sweep_interval_s(list(times[:4])))
+
     def test_trace_only_undo_works_during_playback(self):
         # トレースの設定だけの変更は、再生中も元に戻せる（条件を変えないので断らない: 設計P §5）
         h5 = self.record(3)

@@ -889,10 +889,13 @@ def source_text(st: dict) -> str:
 
 def sg_state_text(st: dict) -> str:
     """SG 周波数の欄のそばの状態（Qt・Web 同じ）。出していないときは原因（未接続・モード・止めている）を言う
-    （設計J §4.12: 「出力していません」だけでは、打った値が出ない理由が分からない）。"""
-    text = source_text(st)
-    if text and (st.get("sweep") or {}).get("mode") == "sg":
-        return text
+    （設計J §4.12: 「出力していません」だけでは、打った値が出ない理由が分からない）。
+
+    出しているかは機器へ渡している信号源（状態の source: コアの _source_state）で決める。校正の掃引（RBW の校正は
+    SG で 500MHz: 設計K §4.3）で SG を出している間は、メインのモードが SA・TG のままでも「SG 出力中 {その周波数}」。"""
+    src = st.get("source") or {}
+    if src.get("output") == "sg" and src.get("freq_hz") is not None:
+        return tpl("source_sg", freq=format_freq(src["freq_hz"]))
     if (st.get("connection") or {}).get("state") != "connected":
         return ERRORS["not_connected"]
     if (st.get("sweep") or {}).get("mode") != "sg":
