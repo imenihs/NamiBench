@@ -100,20 +100,28 @@ class _Session:
     dens_req: int = 0  # 密度の元を読む求めの番号（後の求めが来たら前の結果は使わない）
 
 
-def _norm_offset(levels: SegmentLevels, ref, serial: str, connected_at: float, now: float) -> Optional[np.ndarray]:
+def _norm_offset(levels: SegmentLevels, ref, serial: str, connected_at: float, now: float,
+                 gain_table: Optional[str] = None) -> Optional[np.ndarray]:
     """基準との比で記録した区間に足す dB（点ごと。基準の無い点は NaN）。基準を当てられなければ None。
 
     比の dB = 電力の dBm − 30 − 基準の dB（normalize.apply の式）なので、1W の掃引に当てた結果から点ごとの足す量を
-    一度だけ求める（最大値でまとめた行にもそのまま足せる）。"""
+    一度だけ求める（最大値でまとめた行にもそのまま足せる）。gain_table は記録したときの受信の利得の補正の表
+    （設計Q §7.6。書いていない前の版は None）。"""
     a = levels.adopted
     n = a.axis.points
     frame = Frame(axis=a.axis, values=np.ones(n), quantity=Quantity.POWER, value_kind=ValueKind.REAL, time=now,
                   duration_s=math.nan, sweep_no=0, display_start_hz=a.start_hz, display_stop_hz=a.stop_hz, adopted=a)
-    res = apply_reference(frame, ref, serial=serial, connected_at=connected_at, now=now)
+    res = apply_reference(frame, ref, serial=serial, connected_at=connected_at, now=now, gain_table=gain_table)
     if not res.applied:
         return None
     with np.errstate(divide="ignore", invalid="ignore"):
         return (20.0 * np.log10(np.asarray(res.frame.values, dtype=np.float64)) - 30.0).astype(np.float32)
+
+
+def _recorded_gain_table(meta: dict) -> Optional[str]:
+    """記録に書いた受信の利得の補正の表の識別（設計Q §7.6）。書いていない前の版・表なしは None。"""
+    v = meta.get("gain_table")
+    return v if isinstance(v, str) and v else None
 
 
 def _recorded_value(meta: dict) -> float:
@@ -179,7 +187,7 @@ class PlaybackMixin:
                 # 記録したときの基準の値で当てる（いまのファイルの値ではない。書いていない前の版は 0 dB: 設計E §6.7）
                 ref.value_db = _recorded_value(meta)
                 offset = _norm_offset(levels, ref, src.header.device_serial, float(meta.get("connected_at") or 0.0),
-                                      float(s.t_first) if s.n_sweeps else 0.0)
+                                      float(s.t_first) if s.n_sweeps else 0.0, _recorded_gain_table(meta))
         hit = (levels, offset, ref, meta)
         self._rec_levels[key] = hit
         return hit
@@ -366,7 +374,8 @@ class PlaybackMixin:
                                 "power_cycled": False, "oldest_taken_at": None, "age_s": None}
             return frame
         res = apply_reference(frame, seg.norm_ref, serial=s.device_serial,
-                              connected_at=float(meta.get("connected_at") or 0.0), now=frame.time)
+                              connected_at=float(meta.get("connected_at") or 0.0), now=frame.time,
+                              gain_table=_recorded_gain_table(meta))
         self._norm_state = {
             "used": True, "applied": res.applied, "reason": res.reason, "detail": res.detail,
             "accuracy": res.accuracy, "out_of_range_hz": [[int(a), int(b)] for a, b in res.out_of_range_hz],

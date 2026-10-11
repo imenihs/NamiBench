@@ -37,6 +37,7 @@ from .devices.rtlsdr import driver as rtl_driver
 from .devices.rtlsdr import levels as rtl_levels
 from .devices.rtlsdr.dll import READ_BLOCK, dll_bits, find_dll
 from .instrument_common import CommandError
+from .normalize.reference import PROFILE_GAIN_TABLE
 from .storage import Cancelled
 from .rtltcp import TUNER_R820T
 from .trace import ConditionChange
@@ -495,6 +496,8 @@ class RtlSdrMixin:
         # 読み落ち: 設計Q §6.4）をトレースごとに決められる
         prof["fft_window"] = ex.get("window")
         prof["gain_correction"] = gain_corr is not None
+        # 当てた補正の表の識別（表の作成日時）。基準は取ったときの表を覚え、いまの表と違えば当てない（設計Q §7.6）
+        prof[PROFILE_GAIN_TABLE] = self._pluto_gain_cal.created_at if gain_corr is not None else None
         return Frame(
             axis=a.axis,
             values=rtl_levels.to_linear(level),

@@ -1,7 +1,7 @@
 """基準を当てる（設計E §6.3・§6.4）。
 
 測った電力のフレームを、基準で割った比のフレームにする。
-- 条件（イメージ除去・RBW）が合う区間だけを使う。同じ周波数を複数の区間が持つときは
+- 条件（イメージ除去・RBW・受信の利得の補正の表）が合う区間だけを使う。同じ周波数を複数の区間が持つときは
   Step が最も細かい区間（同じ Step なら新しい方）を使う
 - 基準点の間は dB で線形補間する。出力の帯の境目（機種のプロファイル）をまたいで補間しない。
   境目ちょうどの点は上の帯に属する
@@ -32,6 +32,9 @@ SERIAL_MISMATCH = "serial_mismatch"  # 別の機器で取った基準
 MODE_MISMATCH = "mode_mismatch"  # TG の基準を S11 に当てる など
 IMAGE_REJECT_MISMATCH = "image_reject_mismatch"  # イメージ除去（正確・スピード・なし）が違う（設計F §7.3）
 RBW_MISMATCH = "rbw_mismatch"  # RBW が違う
+# 受信の利得の補正の表（PlutoSDR。設計Q §7.6）が違う。表が変わると同じ信号のレベルが最大 約 5dB 動くので、
+# 違う表で取った基準との比は当てない（取り直してもらう）
+GAIN_CORRECTION_MISMATCH = "gain_correction_mismatch"
 OUT_OF_RANGE = "out_of_range"  # 条件は合うが、表示範囲のどの点にも基準が無い
 
 # 点ごとの印（Frame.flags のキー。bool の配列）
@@ -165,11 +168,14 @@ def apply_reference(
     serial: str,
     connected_at: float,
     now: float,
+    gain_table: Optional[str] = None,
 ) -> NormalizeResult:
     """測った電力のフレームに基準を当てる（設計E §6.3・§6.4）。
 
     serial・connected_at は、いまつながっている機器のシリアル番号と接続（＝電源投入）の時刻。
     基準の区間の接続の時刻と違えば、電源の入れ直し前の基準として印を付ける（当てることはやめない）。
+    gain_table はこのフレームに当たっている受信の利得の補正の表の識別（無ければ None。設計Q §7.6）。
+    区間の表と同じものだけを使う（GigaSt・RTL-SDR は両方 None）。
     """
     if reference is None:
         return _not_applied(frame, NO_REFERENCE_SELECTED, None)
@@ -193,6 +199,12 @@ def apply_reference(
     if not segs:
         have = sorted({s.rbw_hz for s in reference.segments if s.image_reject == used})
         return _not_applied(frame, RBW_MISMATCH, reference, reference_rbw_hz=have)
+    rbw_ok = segs
+    segs = [s for s in rbw_ok if s.gain_table == gain_table]
+    if not segs:
+        have_t = sorted({s.gain_table or "" for s in rbw_ok})
+        return _not_applied(frame, GAIN_CORRECTION_MISMATCH, reference, reference_gain_table=have_t,
+                            gain_table=gain_table)
 
     m = _merge_segments(segs)
     f = frame.axis.freqs()

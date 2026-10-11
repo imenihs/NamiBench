@@ -17,6 +17,7 @@ from .reference import (
     ReferenceSegment,
     _frame_conditions,
     average_power,
+    frames_gain_table,
 )
 
 
@@ -42,6 +43,7 @@ def s11_segment_from_frames(
     mode, image_reject, rbw_hz = cond
     if mode != Mode.S11:
         raise ReferenceBuildError(f"モードが s11 でない（{mode.value}）")
+    gain_table = frames_gain_table(list(open_frames) + list(short_frames))
     p_open = average_power(open_frames)
     p_short = average_power(short_frames)
     with np.errstate(invalid="ignore"):
@@ -55,6 +57,7 @@ def s11_segment_from_frames(
         taken_at=taken_at,
         kind=kind,
         averages=min(len(open_frames), len(short_frames)),
+        gain_table=gain_table,
     )
 
 
