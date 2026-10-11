@@ -96,9 +96,11 @@ class SegmentLevels:
         return np.asarray(self._with_gain_corr(lv), dtype=np.float32)
 
     def _with_gain_corr(self, level: np.ndarray) -> np.ndarray:
-        if self._gain_corr is None or self._gain_corr.size != np.shape(level)[-1]:
+        # 補正は測ったときの全点（Stop の先の1点を含むことがある）で持つ。保存は Stop までの点なので頭から合わせる
+        n = np.shape(level)[-1]
+        if self._gain_corr is None or self._gain_corr.size < n:
             return level
-        return level + self._gain_corr
+        return level + self._gain_corr[:n]
 
     def frame(self, raw: RawSweep, sweep_no: int, display: Optional[tuple[int, int]] = None) -> Frame:
         """掃引1回分のフレーム（測ったときの instrument._build_frame と同じ形）。display は表示の範囲（Hz）。"""

@@ -380,6 +380,8 @@ class TestRecordKeepsCorrection(InstCase):
         from pygigast.core.storage.h5file import H5Record
 
         self.connect()
+        # Stop が Step の整数倍に乗らない範囲（測る点は Stop の先まで1点多く、保存は Stop まで）
+        self.call("set_sweep", start_hz=100_000_000, stop_hz=101_000_123)
         self.call("plutosdr_set", gain_db=40.0)
         self.inst._pluto_gain_cal = types.SimpleNamespace(
             values_at=lambda f, g: np.full(np.shape(f), 3.0), freqs_hz=[100 * MHZ], created_at="2026-10-12T00:00:00")
@@ -394,7 +396,7 @@ class TestRecordKeepsCorrection(InstCase):
         self.assertEqual(n["code"], "task_done", n)
         with H5Record(path) as h:
             s = h.segments[0]
-            self.assertEqual(len(s.raw_extra["gain_corr_db"]), s.points)
+            self.assertGreaterEqual(len(s.raw_extra["gain_corr_db"]), s.points)
             lv = SegmentLevels(s, h.header)
             raw = h.read(0).raw
             got = lv.db_rows(raw)
