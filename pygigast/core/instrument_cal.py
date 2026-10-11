@@ -7,6 +7,7 @@ Instrument（instrument.py）に混ぜて使う。メソッドは制御スレッ
   同じ仕組み: 設計E §6.2）。メイン画面の条件は変えず、終わったら取る前の動作に戻す（K §4.1）
 - 測るのは長い処理（数秒〜数十秒）なので、命令はすぐ task_id を返し、進み具合と終わりを知らせる。やめられる（U-19）
 - 保存するまで校正データは何も変わらない。保存は新しいファイルを足し、これから使うものにする（K §4.1 の 4）
+- PlutoSDR の利得の補正（設計Q §7.6）も同じ画面の1種類。測る手順と表は instrument_pluto_cal.py（掃引の段を使わない）
 """
 from __future__ import annotations
 
@@ -20,7 +21,9 @@ from typing import Callable, Optional
 import numpy as np
 
 from .instrument_common import CommandError
+from .instrument_pluto_cal import _PlutoCalJob
 from .level import cal_work as cw
+from .level import pluto_gain as pg
 from .level.calibration import Calibration, CalibrationStore, load_file
 from .level.convert import LevelConverter
 from .level.legacy_cal import LegacyCalError, parse_legacy_cal
@@ -119,6 +122,8 @@ class CalMixin:
             return "not_connected"
         if getattr(self, "_playback", None) is not None:
             return "playback_active"  # 記録の再生中は機器の掃引を受けない（ライブに戻ってから: 設計P §9.4）
+        if self._cal_session is not None and self._cal_session.kind == cw.KIND_PLUTO_GAIN:
+            return self._pluto_cal_reason(self._cal_session)
         if (self._profile.get("raw") or {}).get("encoding") != _GIGAST_ENCODING:
             return "calibration_not_for_device"
         s = self._cal_session
@@ -167,6 +172,7 @@ class CalMixin:
         def then(r) -> dict:
             if self._cal_session is None:
                 self._cal_session = cw.CalSession(kind, model, serial, *r)
+                self._pluto_cal_sync(self._cal_session)
                 self._changed()
             return self._cal_result()
 
@@ -182,6 +188,7 @@ class CalMixin:
             if s.unsaved() and discard is not True:
                 raise CommandError("calibration_unsaved", "kind", {"count": s.unsaved(), "kind": s.kind})
             s.set_kind(kind)
+            self._pluto_cal_sync(s)  # PlutoSDR の利得の補正: いまつないでいる PlutoSDR と前の表
             self._changed()
         return self._cal_result()
 
@@ -198,6 +205,7 @@ class CalMixin:
         s = self._cal_session
         if s is None or s.unsaved() or self._cal_job is not None:
             return
+        self._pluto_cal_sync(s)  # PlutoSDR の利得の補正の前の表（つないでいる PlutoSDR のもの）
         serial = self._cal_serial()
         model = self._profile.get("model") if serial else None
         if serial is None and s.serial is not None:
@@ -219,8 +227,9 @@ class CalMixin:
     # ------------------------------------------------------------------ 入れる値・点を選ぶ・飛ばす・確かめる
 
     def _cmd_cal_set(self, sg_level_dbm=None, cable_loss_db=None, rbw_extra=None, nf_freq_hz=None,
-                     current=None) -> dict:
-        """SG のレベル・ケーブルの損失（K §4.2）・RBW のほかの周波数（K §4.3）・NF の周波数・いまの点を変える。"""
+                     current=None, ext_atten_db=None) -> dict:
+        """SG のレベル・ケーブルの損失（K §4.2）・RBW のほかの周波数（K §4.3）・NF の周波数・いまの点・
+        PlutoSDR の利得の補正で使う外付けの減衰器（設計Q §7.6）を変える。"""
         s = self._cal_need()
         self._cal_check_idle()
 
@@ -233,6 +242,8 @@ class CalMixin:
             s.sg_level_dbm = num("sg_level_dbm", sg_level_dbm, *cw.SG_LEVEL_RANGE_DBM)
         if cable_loss_db is not None:
             s.cable_loss_db = num("cable_loss_db", cable_loss_db, *cw.CABLE_LOSS_RANGE_DB)
+        if ext_atten_db is not None:
+            s.ext_atten_db = num("ext_atten_db", ext_atten_db, *pg.EXT_ATTEN_RANGE_DB)
         if rbw_extra is not None:
             if not isinstance(rbw_extra, bool):
                 raise CommandError("bad_value", "rbw_extra")
@@ -308,6 +319,8 @@ class CalMixin:
             if state not in cw.NF_STATES:
                 raise CommandError("bad_value", "state", {"choices": list(cw.NF_STATES)})
             return self._cal_measure_nf(s, state)
+        if s.kind == cw.KIND_PLUTO_GAIN:
+            return self._cal_measure_pluto_gain(s)
         raise CommandError("calibration_wrong_kind", "kind", {"kind": s.kind})
 
     def _cal_measure_point(self, s: cw.CalSession) -> dict:
@@ -391,6 +404,10 @@ class CalMixin:
         job = self._cal_job
         if job is None:
             return False
+        if isinstance(job, _PlutoCalJob):
+            # PlutoSDR の利得の補正は機器の口を別のスレッドで握って測る。掃引は渡さない（口を取り合わない）
+            self._worker.set_job(self._gen, None, 0)
+            return True
         st = job.step()
         count = max(0, st.count - job.n)
         wanted = self._conn == "connected" and count > 0
@@ -399,7 +416,9 @@ class CalMixin:
 
     def _cal_source(self) -> Optional[AdoptedSweep]:
         """校正の掃引中なら、いま機器に渡している条件（TG・SG を出しているかの表示: 設計L）。"""
-        return None if self._cal_job is None else self._cal_job.step().adopted
+        if self._cal_job is None or isinstance(self._cal_job, _PlutoCalJob):
+            return None
+        return self._cal_job.step().adopted
 
     @staticmethod
     def _cal_mask(a: AdoptedSweep) -> np.ndarray:
@@ -411,6 +430,8 @@ class CalMixin:
 
     def _cal_on_sweep(self, raw) -> None:
         job = self._cal_job
+        if isinstance(job, _PlutoCalJob):
+            return  # 掃引は渡していない（前の条件の掃引の結果）
         st = job.step()
         to_w = lambda ad: np.power(10.0, self._converter.ad_to_db(ad) / 10.0)  # noqa: E731
         try:
@@ -480,6 +501,8 @@ class CalMixin:
         job = self._cal_job
         if job is None:
             return
+        # 機器の口を別のスレッドで握って測る手順（PlutoSDR の利得の補正）にも止めることを知らせる（送信を止めて戻る）
+        job.task.cancel.set()
         self._cal_end_sweeps(job)
         self._cal_set_message(job, exc)
         self._end_task(job.task, exc)
@@ -525,6 +548,8 @@ class CalMixin:
         """新しい校正データのファイルを足し、これから使うものにする（古いものは消さない: 設計D §5.2）。"""
         s = self._cal_need()
         self._cal_check_idle()
+        if s.kind == cw.KIND_PLUTO_GAIN:
+            return self._cal_save_pluto(s)
         if s.kind == cw.KIND_FREQ and s.pending is not None:
             raise CommandError("calibration_confirm_pending")
         cand = s.candidate(_now_iso())

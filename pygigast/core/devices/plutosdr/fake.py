@@ -5,6 +5,11 @@ iio.py の IioLib と同じ口（scan・open → 文脈・機器・通路・バ�
 レベルの決まりは単純にしてある: 振り切れに対する dBFS = 入力の dBm ＋ 受信の利得。雑音は全帯域で −95 ＋ 利得 dBFS。
 送信は「送信の口と受信の口を減衰 loss_db で直結した」とみなす（SG・TG の試験用。dut があればその通過特性を掛ける）。
 数値は試験と画面の確認のためのもので、実機の値ではない。
+
+受信の利得の誤差（設計Q §7.6 の解く問題）: gain_error(受信の LO, 設定の利得) → dB を渡すと、受信の本当の利得を
+「設定の利得 + その値」にする（入力の信号・送信・前段の雑音の全部に効く）。measured_like_gain_error は実測
+（2026-10-11: ref/capture/2026-10-11/pluto_gain/）の段差の形をまねたもの。adc_noise_dbfs は利得に依らない
+振り切れに対する雑音（A/D の雑音のまね。低い利得でトーンが雑音に近づく形を作る）。
 """
 from __future__ import annotations
 
@@ -24,6 +29,16 @@ _EINVAL = -22
 _EIO = -5
 
 
+def measured_like_gain_error(lo_hz: float, gain_db: float) -> float:
+    """実測の段差の形（2026-10-11）: 100MHz で 53dB 以上が約 −4dB、3.5GHz で 55dB 以上が約 +2dB。4GHz 以上は
+    測っていないので、試験のために 45dB 以上を −1.5dB とした（実機の値ではない）。"""
+    if lo_hz < 1_300_000_000:
+        return -4.0 if gain_db >= 53 else 0.0
+    if lo_hz < 4_000_000_000:
+        return 2.0 if gain_db >= 55 else 0.0
+    return -1.5 if gain_db >= 45 else 0.0
+
+
 def _band(lo_hz: float) -> tuple[int, int]:
     for top, mn, mx in _GAIN_BANDS:
         if lo_hz < top:
@@ -35,8 +50,12 @@ class FakePluto:
     """機器1台の中身（属性と送受信）。試験はこれを触って状態を作り、書き込みの記録を見る。"""
 
     def __init__(self, signals=None, serial: str = FAKE_SERIAL, seed: int = 1, loss_db: float = 30.0,
-                 dut: Optional[Callable[[np.ndarray], np.ndarray]] = None) -> None:
+                 dut: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+                 gain_error: Optional[Callable[[float, float], float]] = None,
+                 adc_noise_dbfs: Optional[float] = None) -> None:
         self.serial = serial
+        self.gain_error = gain_error
+        self.adc_noise_dbfs = adc_noise_dbfs
         self.signals: list[tuple[int, float]] = list(signals or [])
         self.loss_db = float(loss_db)
         self.dut = dut  # 周波数の配列（Hz）→ 通過の振幅比（送信を受信へ通すとき掛ける）
@@ -117,6 +136,8 @@ class FakePluto:
         fs = self.fs
         lo = self.rx_lo
         g = self.rx_gain()
+        if self.gain_error is not None:
+            g = g + float(self.gain_error(lo, g))
         t = np.arange(n) / fs
         z = np.zeros(n, dtype=np.complex128)
         for f, dbm in self.signals:
@@ -126,6 +147,8 @@ class FakePluto:
                 z += a * np.exp(2j * np.pi * off * t + 1j * self.rng.uniform(0, 2 * np.pi))
         z += self._tx_into_rx(n, t, lo, g)
         nz = 10 ** ((-95.0 + g) / 20.0) / np.sqrt(2)
+        if self.adc_noise_dbfs is not None:
+            nz = float(np.hypot(nz, 10 ** (self.adc_noise_dbfs / 20.0) / np.sqrt(2)))
         z += nz * (self.rng.standard_normal(n) + 1j * self.rng.standard_normal(n))
         x = np.clip(np.round(z * 2048.0), -2048, 2047)
         out = np.empty(2 * n, dtype=np.int16)

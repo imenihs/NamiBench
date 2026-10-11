@@ -5,8 +5,8 @@
 cal_view.view（Web の app_cal.js と同じ）が作る。ここは映して、押されたら命令を送るだけ。
 - 窓の題は開いたメニューの項目の名前（U-24）。何を校正するかを準備で変えると題も変わる
 - 測った値があるのに閉じる・切り替えるときは、何が失われるかを言って聞く。測った点だけ保存することも選べる（U-18）
-- 測るのは数秒〜数十秒。進み具合とやめるボタンを出し、終わり方（測れなかった理由・やめたこと）をその手順のそばに出す
-  （U-19・U-25）
+- 測るのは数秒〜数十秒（PlutoSDR の利得の補正は数分）。進み具合とやめるボタンを出し、終わり方（測れなかった理由・
+  やめたこと）をその手順のそばに出す（U-19・U-25）
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 PREPARE, MEASURE, CHECK, SAVED = range(4)
+# 測るの手順の頁の並び（コアの校正の種類の並びと同じ）
+KINDS = ("freq", "rbw", "nf", "pluto_gain", "legacy")
 _RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 _LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 # 進み具合の帯は横に伸ばしすぎない（main の tasks.py と同じ）
@@ -202,7 +205,7 @@ class CalDialog(QDialog):
         kinds.setContentsMargins(0, 0, 0, 0)
         kinds.setSpacing(0)
         self.kind_radios: dict[str, QRadioButton] = {}
-        for i, code in enumerate(("freq", "rbw", "nf", "legacy")):
+        for i, code in enumerate(KINDS):
             r = QRadioButton(cal_view.kind_label(code))
             self.kind_group.addButton(r, i)
             self.kind_radios[code] = r
@@ -211,6 +214,8 @@ class CalDialog(QDialog):
         f.addRow(C["kind_group"], kinds)
         self.need = QLabel("")
         self.need.setWordWrap(True)
+        # 欄の列の幅いっぱいを使う（折り返す文の大きさの見込みは狭く、そのままでは 2 行目が行の高さで切れた）
+        self.need.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         f.addRow(C["need"], self.need)
         self.wiring_name = QLabel(C["wiring"])
         wiring = QVBoxLayout()
@@ -331,6 +336,27 @@ class CalDialog(QDialog):
         v.addWidget(self.nf_message)
         v.addStretch(1)
         self.measure_pages.addWidget(w)
+        # ---- PlutoSDR の利得の補正（設計Q §7.6）: 全自動。周波数ごとの結果の一覧と、減衰器の値・始める
+        w = QWidget()
+        h = sizes.hbox(w)
+        self.pluto_table = _table(5, readonly=True)
+        self.pluto_table.setMinimumWidth(330)
+        h.addWidget(self.pluto_table, 3)
+        right = sizes.vbox(inset=False)
+        f = sizes.form()
+        self.f_ext = DbField(C["ext_atten"], "dB", lambda v: self._set(ext_atten_db=v, field=self.f_ext), big=False)
+        f.addRow(self.f_ext.name, self.f_ext)
+        right.addLayout(f)
+        self.btn_pluto = QPushButton(C["start"])
+        self.btn_pluto.clicked.connect(lambda: self._measure())
+        right.addLayout(sizes.buttons_row(self.btn_pluto))
+        self.pluto_progress = self._progress_row()
+        right.addWidget(self.pluto_progress)
+        self.pluto_message = self._message_label()
+        right.addWidget(self.pluto_message)
+        right.addStretch(1)
+        h.addLayout(right, 2)
+        self.measure_pages.addWidget(w)
         # ---- 旧校正ファイル（K §4.5・設計D §5.6）
         w = QWidget()
         v = sizes.vbox(w, inset=False)
@@ -418,7 +444,8 @@ class CalDialog(QDialog):
 
     def _progress_box(self):
         kind = (self.v or {}).get("kind")
-        return {"freq": self.freq_progress, "rbw": self.rbw_progress, "nf": self.nf_progress}.get(kind)
+        return {"freq": self.freq_progress, "rbw": self.rbw_progress, "nf": self.nf_progress,
+                "pluto_gain": self.pluto_progress}.get(kind)
 
     def _render(self) -> None:
         v = self.v
@@ -449,8 +476,7 @@ class CalDialog(QDialog):
         self.wiring_name.setVisible(bool(v["wiring"]))
         self.wiring_box.setVisible(bool(v["wiring"]))
         # ---- 測る
-        kinds = ("freq", "rbw", "nf", "legacy")
-        self.measure_pages.setCurrentIndex(kinds.index(v["kind"]))
+        self.measure_pages.setCurrentIndex(KINDS.index(v["kind"]))
         self._render_measure(v)
         # ---- 確かめる・保存
         self._render_check(v)
@@ -517,10 +543,35 @@ class CalDialog(QDialog):
             self.nf_result.setText(v.get("nf_result") or "")
             self._render_progress(self.nf_progress, v)
             self._render_message(self.nf_message, v)
+        elif kind == "pluto_gain":
+            self.f_ext.set_value(v["inputs"]["ext_atten_db"])
+            self.f_ext.edit.setEnabled(not v["measuring"])
+            self._enable(self.btn_pluto, v.get("measure_reason"))
+            self._fill_pluto(v)
+            self._render_progress(self.pluto_progress, v)
+            self._render_message(self.pluto_message, v)
         else:
             self.legacy_file.setText(v.get("legacy_file") or "")
             self._enable(self.btn_file, v.get("measure_reason"))
             self._render_message(self.legacy_message, v)
+
+    def _fill_pluto(self, v: dict) -> None:
+        """周波数ごとの結果（測った周波数は利得の範囲・送信の減衰・補正の範囲）。変わったときだけ描き直す。"""
+        t = self.pluto_table
+        heads = v.get("pluto_headers") or []
+        rows = v.get("pluto_rows") or []
+        sig = (tuple(heads), tuple(tuple(r["cells"]) for r in rows))
+        if getattr(t, "_sig", None) == sig:
+            return
+        t._sig = sig
+        t.setColumnCount(len(heads))
+        t.setHorizontalHeaderLabels(heads)
+        right = tuple(range(len(heads) - 1))
+        for i in range(len(heads)):
+            t.horizontalHeaderItem(i).setTextAlignment(_RIGHT if i in right else _LEFT)
+        t.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            _set_row(t, r, row["cells"], right)
 
     def _fill_points(self, t: QTableWidget, points: list, headers: list, cells, right: tuple[int, ...],
                      select: bool = False, warn: bool = False) -> None:

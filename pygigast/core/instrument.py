@@ -41,6 +41,7 @@ from .instrument_playback import PlaybackMixin
 from .instrument_progress import ProgressReporter, SweepProgressMixin
 from .instrument_waterfall import WaterfallMixin
 from .instrument_plutosdr import PlutoSdrMixin
+from .instrument_pluto_cal import PlutoGainCalMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_step import RUN_STATE as STEP_RUN_STATE, StepSweepMixin
@@ -192,7 +193,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
-                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
+                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, PlutoGainCalMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
                  SweepProgressMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
@@ -266,6 +267,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._init_rtltcp()
         self._init_rtlsdr()
         self._init_plutosdr()
+        self._init_pluto_gain()
         self._init_listen()
         self._init_devices()
         self._init_step(saved if isinstance(saved, dict) else None)  # SG のステップ掃引（設計L §1.3）

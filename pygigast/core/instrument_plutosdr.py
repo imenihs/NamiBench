@@ -4,7 +4,8 @@
   （rtl_tcp の相手）の扱いは RTL-SDR と同じ部品（instrument_rtlsdr.py）を使う。生の値の形も同じ
 - ここに持つのは PlutoSDR に固有のもの: 設定（libiio の DLL のフォルダ・URI・受信の利得と自動・送信の減衰）、
   「利得を合わせる」の口、rtl_tcp の出口へ流す IQ（4.096MS/s を相手の求める整数分の1の速さに落とす）
-- 個体の校正（レベルの dBm 化）はまだ無い（設計Q §7.1: 後で入れる）。それまでレベルは「dB（未校正）」
+- 個体の校正（レベルの dBm 化）はまだ無い（設計Q §7.1: 後で入れる）。それまでレベルは「dB（未校正）」。
+  受信の利得の補正（利得を変えても値が変わらないようにする表: 設計Q §7.6）は instrument_pluto_cal.py
 - 送信（SG・TG）は機器の層が掃引の間だけ出す。止めた・SA に戻した・掃引を渡していない間は止める（on_idle）
 """
 from __future__ import annotations
@@ -18,6 +19,7 @@ from .devices.plutosdr import driver as pl_driver
 from .devices.plutosdr.iio import find_dll as find_iio_dll
 from .devices.rtlsdr.dll import dll_bits
 from .instrument_common import CommandError
+from .instrument_pluto_cal import _PlutoCalJob
 from .rtltcp import TUNER_UNKNOWN
 from .rtltcp.decimate import IqDecimator, factor_for
 from .trace import ConditionChange
@@ -187,6 +189,11 @@ class PlutoSdrMixin:
             "level_unit": self._rtlsdr_unit if dev is not None else None,
             "overload": self._rtlsdr_overload_last if dev is not None else False,
             "fitting": any(t.kind == "plutosdr_fit_gain" for t in getattr(self, "_tasks", {}).values()),
+            # 受信の利得の補正の表（設計Q §7.6。無ければ None: 画面は利得の欄のそばに「利得の補正なし」）
+            "gain_correction": self._pluto_gain_state(),
+            # 受信の利得を変えさせない理由のコード（TG・S11 で基準を選んでいる間: 設計Q §7.6）
+            "gain_lock": self._pluto_gain_lock() if dev is not None else None,
+            "calibrating": isinstance(getattr(self, "_cal_job", None), _PlutoCalJob),
             "tx_on": None if dev is None else dev.tx_on,
             "fw_version": None if dev is None else dev.fw_version,
             # 中心を動かせないとき（rtl_tcp の相手: RTL-SDR と同じ扱い）
@@ -204,7 +211,8 @@ class PlutoSdrMixin:
 
     def _plutosdr_prepare(self, dev: PlutoSdrInstrumentDevice) -> None:
         """機器スレッドを始める前: 利得・送信の減衰を入れ、rtl_tcp へ IQ を流す口をつなぐ。"""
-        self._rtlsdr_cal = None  # PlutoSDR の個体の校正はまだ無い（設計Q §7.1）
+        self._rtlsdr_cal = None  # PlutoSDR の個体の校正（dBm 化）はまだ無い（設計Q §7.1）
+        self._pluto_gain_load(dev.identity().serial)  # 受信の利得の補正の表（設計Q §7.6）
         try:
             self._pluto_gain_sent = self._plutosdr_gain_setting()
             dev.set_gain(self._pluto_gain_sent)
@@ -238,6 +246,8 @@ class PlutoSdrMixin:
             raise CommandError("bad_value", "agc")
         if agc is True and gain_db is not _UNSET and gain_db is not None:
             raise CommandError("bad_value", "agc", {"conflict": "gain_db"})
+        if gain_db is not _UNSET or agc is not _UNSET:
+            self._pluto_check_gain_lock()  # TG・S11 で基準を選んでいる間は利得を変えない（設計Q §7.6）
         if tx_atten_db is not _UNSET:
             rng = self._plutosdr_profile()["source"]["tx_atten_db"]
             lo, hi = float(rng["min"]), float(rng["max"])
@@ -287,6 +297,9 @@ class PlutoSdrMixin:
         dev = self._plutosdr_device()
         if self._pluto_cfg["agc"]:
             raise CommandError("rtlsdr_fit_needs_manual_gain")
+        self._pluto_check_gain_lock()
+        if isinstance(getattr(self, "_cal_job", None), _PlutoCalJob):
+            raise CommandError("calibration_in_progress")
 
         def done(res: dict) -> None:
             self._pluto_cfg["gain_db"] = float(res["gain_db"])
@@ -330,6 +343,11 @@ class PlutoSdrMixin:
             if 0 <= value <= hi - lo:
                 want = float(lo + value)
         if want is _UNSET:
+            return
+        if self._pluto_gain_lock() is not None:
+            # TG・S11 で基準を選んでいる間は、相手の命令でも利得を変えない（設計Q §7.6）
+            self._notice("rtltcp_gain_from_client", {"gain_db": self._pluto_cfg["gain_db"], "agc": self._pluto_cfg["agc"],
+                                                     "applied": False, "code": self._pluto_gain_lock()})
             return
         before = (self._pluto_cfg["gain_db"], self._pluto_cfg["agc"])
         if want is None:

@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 # 何を校正するか → 開くメニューの項目のコード（窓の題と選択肢の名前はその項目の名前）
-CAL_MENU_OF_KIND = {"freq": "cal_freq", "rbw": "cal_rbw", "nf": "cal_nf", "legacy": "cal_legacy"}
+CAL_MENU_OF_KIND = {"freq": "cal_freq", "rbw": "cal_rbw", "nf": "cal_nf", "pluto_gain": "cal_pluto_gain",
+                    "legacy": "cal_legacy"}
 
 CAL_TEXTS = {
     # ---- 手順（K §4.1）
@@ -33,9 +34,11 @@ CAL_TEXTS = {
     "need_rbw": "ケーブル 1 本",
     "need_nf": "ノイズ源・6dB のアッテネータ・80dB 程度のアンプ・イメージ除去の BPF",
     "need_legacy": "旧校正ファイル（gigast.txt / ba205.txt）",
+    "need_pluto_gain": "30〜40dB の減衰器・ケーブル 2 本",
     "wiring_freq": "外部の SG の出力を SP 入力へつなぐ",
     "wiring_rbw": "TG 出力と SP 入力を直結する",
     "wiring_nf": "ノイズ源からアンプと BPF を通して SP 入力へつなぐ",
+    "wiring_pluto_gain": "PlutoSDR の TX から減衰器を通して RX へつなぐ",
     # ---- 周波数特性（K §4.2）
     "sg_level": "SG のレベル",
     "cable_loss": "ケーブルの損失",
@@ -67,6 +70,13 @@ CAL_TEXTS = {
     "nf_without_att": "アッテネータを外してください",
     "nf_y": "HOT−COLD {db} dB",
     "nf_diff": "差 {db} dB",
+    # ---- PlutoSDR の利得の補正（設計Q §7.6）: 全自動
+    "ext_atten": "減衰器",
+    "col_gain_range": "利得 (dB)",
+    "col_tx_atten": "送信の減衰 (dB)",
+    "col_corr": "補正 (dB)",
+    "range": "{lo}〜{hi}",
+    "item_pluto_gain_max": "補正の最大 (dB)",
     # ---- 旧校正ファイル（K §4.5・設計D §5.6）
     "choose_file": "ファイルを選ぶ…",
     "file": "元のファイル",
@@ -92,14 +102,18 @@ CAL_TEXTS = {
     "lost_points": "測った {n} 点は保存されません。閉じますか？",
     "lost_value": "測った値は保存されません。閉じますか？",
     "lost_legacy": "読み込んだ値は保存されません。閉じますか？",
+    "lost_freqs": "測った {n} 周波数は保存されません。閉じますか？",
     "switch_points": "測った {n} 点は保存されません。切り替えますか？",
     "switch_value": "測った値は保存されません。切り替えますか？",
     "switch_legacy": "読み込んだ値は保存されません。切り替えますか？",
+    "switch_freqs": "測った {n} 周波数は保存されません。切り替えますか？",
     "lost_main_points": "・校正: 測った {n} 点は保存されません",
     "lost_main_value": "・校正: 測った値は保存されません",
     "lost_main_legacy": "・校正: 読み込んだ値は保存されません",
+    "lost_main_freqs": "・校正: 測った {n} 周波数は保存されません",
     "do_close_discard": "保存せずに閉じる",
     "do_close_save_points": "測った点だけ保存して閉じる",
+    "do_close_save_freqs": "測った周波数だけ保存して閉じる",
     "do_close_save": "保存して閉じる",
     "do_switch": "切り替える",
     # ---- 使えない理由
@@ -107,6 +121,7 @@ CAL_TEXTS = {
     "need_points": "測った点がありません",
     "need_rbw": "RBW をまだ測っていません",
     "need_nf": "アッテネータあり・なしの両方を測ってください",
+    "need_pluto": "利得の補正をまだ測っていません",
     "need_answer": "確かめ待ちの点に答えてください",
     "device_other": "測った値は別の機器（{serial}）のものです",
 }
@@ -126,6 +141,8 @@ CAL_ERRORS = {
     "cal_no_signal_direct": "信号が見つかりません。TG 出力と SP 入力の直結を確かめてください",
     "cal_nf_no_difference": "ノイズ源の ON・OFF で差が出ていません。ノイズ源とつなぎ方を確かめてください",
     "cal_nf_att_no_difference": "アッテネータの有無で差が出ていません。入れる・外すを確かめてください",
+    "cal_pluto_no_signal": "送信のトーンが見えません。TX・減衰器・RX のつなぎ方を確かめてください",
+    "cal_pluto_overload": "送信をいちばん弱くしても受信が振り切れます。減衰器と、外からの信号が入っていないかを確かめてください",
     "disconnected": "機器が切れました",
     "invalid_sweep": "機器が受け付けない条件のため送りませんでした",
 }
@@ -135,21 +152,25 @@ CAL_TASK_NAMES = {
     "cal_point": "校正の点を測っています",
     "cal_rbw": "RBW の校正を測っています",
     "cal_nf": "NF の増幅度を測っています",
+    "cal_pluto_gain": "PlutoSDR の利得の補正を測っています",
 }
 CAL_TASK_DONE = {
     "cal_point": "校正の点を測りました",
     "cal_rbw": "RBW の補正を計算しました",
     "cal_nf": "NF の増幅度の測定が終わりました",
+    "cal_pluto_gain": "PlutoSDR の利得の補正を測りました",
 }
 CAL_TASK_FAILED = {
     "cal_point": "校正の点を測れませんでした",
     "cal_rbw": "RBW の校正を測れませんでした",
     "cal_nf": "NF の増幅度を測れませんでした",
+    "cal_pluto_gain": "PlutoSDR の利得の補正を測れませんでした（測った周波数は保存できます）",
 }
 CAL_TASK_CANCELLED = {
     "cal_point": "測るのをやめました（この点は前の値のまま）",
     "cal_rbw": "RBW の校正をやめました（RBW の補正は前の値のまま）",
     "cal_nf": "測るのをやめました（増幅度は前の値のまま）",
+    "cal_pluto_gain": "測るのをやめました（測った周波数は保存できます）",
 }
 
 # つなぎ方の図の箱（左から右へ矢印でつなぐ）。旧校正ファイルは機器をつながない
@@ -157,4 +178,5 @@ CAL_WIRING = {
     "freq": ("外部の SG", "ケーブル", "SP 入力"),
     "rbw": ("TG 出力", "ケーブル", "SP 入力"),
     "nf": ("ノイズ源", "6dB のアッテネータ", "アンプ", "BPF", "SP 入力"),
+    "pluto_gain": ("TX", "減衰器", "RX"),
 }

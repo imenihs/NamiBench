@@ -52,6 +52,7 @@ def handlers(win: "MainWindow") -> dict[str, Callable[[], None]]:
         "cal_freq": lambda: win.open_calibration("freq"),
         "cal_rbw": lambda: win.open_calibration("rbw"),
         "cal_nf": lambda: win.open_calibration("nf"),
+        "cal_pluto_gain": lambda: win.open_calibration("pluto_gain"),
         "cal_legacy": lambda: win.open_calibration("legacy"),
         "view_colors": lambda: win._settings_dialog("display"),
         "playback_extract": lambda: win.display.extract(),

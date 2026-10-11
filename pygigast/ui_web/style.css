@@ -484,6 +484,10 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
 .cal-points { flex: 2 1 0; min-width: 330px; overflow: auto; border: 1px solid var(--axis); }
 .cal-points tbody tr { cursor: pointer; }
 .cal-side { flex: 3 1 0; min-width: 0; }
+/* PlutoSDR の利得の補正（設計Q §7.6）: 結果の一覧を広く（Qt の cal_dialog と同じ 3:2）。行は選ばない */
+.cal-points.cal-pluto { flex: 3 1 0; }
+.cal-points.cal-pluto tbody tr { cursor: default; }
+.cal-pluto + .cal-side { flex: 2 1 0; }
 .cal-instruction { font-weight: bold; }
 .cal-progress progress { flex: 0 0 180px; }
 .cal-fill { flex: 1 1 auto; min-height: 0; }
