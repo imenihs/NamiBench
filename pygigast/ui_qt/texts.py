@@ -595,6 +595,7 @@ NORM_REASONS = {
     "mode_mismatch": "別のモードの基準です",
     "image_reject_mismatch": "基準とイメージ除去が違います",
     "rbw_mismatch": "基準と RBW が違います",
+    "gain_correction_mismatch": "基準と PlutoSDR の利得の補正の表が違います（取り直してください）",
     "out_of_range": "表示範囲に基準がありません",
     **DISPLAY_NORM_REASONS,
 }

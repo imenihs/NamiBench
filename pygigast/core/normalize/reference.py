@@ -8,6 +8,9 @@
 - 基準の値（value_db。設計E §6.7）: 基準の経路が持つ既知の利得・損失（ATT 40dB を入れて取ったなら +40）。
   表示 = 基準との比 + 基準の値。基準ごとに1つ持ち、取った後でも直せる（測り直さない）。S11 の基準は全反射が 0dB と
   決まっているので持たない（いつも 0）
+- 補正の表（gain_table。設計Q §7.6 の PlutoSDR の受信の利得の補正）: 区間を取ったときに測ったフレームへ当たっていた
+  補正の表の識別（表の作成日時）。表が無い・その表を持たない機器（GigaSt・RTL-SDR）は None。表が変わると同じ信号の
+  レベルが最大 約 5dB 動くので、いまの表と違う区間は当てない（apply.py。RBW・イメージ除去の違いと同じ扱い）
 - 純粋な計算だけ。スレッド・入出力を持たない（保存は store.py）
 """
 from __future__ import annotations
@@ -23,6 +26,10 @@ from ..types import FreqAxis, Frame, Mode, Quantity
 # 区間の取り方（設計E §6.2）。精度の印は取り方ではなく Step の一致で決める（設計E §6.3）
 KIND_WIDE = "wide"  # 「広く取る」: TG の全範囲を 1MHz 刻みで
 KIND_FINE = "fine"  # 「いまの条件で細かく取る」: いまの Start・Stop・Step で
+
+# フレームの機器のプロファイル（Frame.profile）に、当たっている補正の表の識別を入れるキー（設計Q §7.6）。
+# 表を当てていないフレーム・キーの無いフレームは None
+PROFILE_GAIN_TABLE = "gain_correction_id"
 
 # 「広く取る」の Step（設計E §2・§6.2）
 WIDE_STEP_HZ = 1_000_000
@@ -53,6 +60,8 @@ class ReferenceSegment:
     image_reject（実際に使ったイメージ除去 "accurate"・"fast"・"off"）・rbw_hz は当てるときに測定と一致を求める
     条件（設計E §6.3・設計F §7.3）。
     connected_at は取ったときの接続（＝電源投入）の時刻。いまの接続と違えば「電源の入れ直し前」（設計E §4.1）。
+    gain_table は取ったときに当たっていた受信の利得の補正の表の識別（無ければ None。設計Q §7.6）。当てるときに
+    いまの表と一致を求める条件。
     """
 
     axis: FreqAxis
@@ -63,8 +72,11 @@ class ReferenceSegment:
     taken_at: float
     kind: str = KIND_FINE
     averages: int = 1
+    gain_table: Optional[str] = None
 
     def __post_init__(self) -> None:
+        if self.gain_table is not None and not isinstance(self.gain_table, str):
+            raise TypeError("gain_table は str か None で持つ")
         if not isinstance(self.rbw_hz, int) or isinstance(self.rbw_hz, bool):
             raise TypeError("rbw_hz は int（Hz）で持つ")
         p = np.asarray(self.power_w, dtype=np.float64)
@@ -77,7 +89,8 @@ class ReferenceSegment:
 
     def same_conditions(self, other: "ReferenceSegment") -> bool:
         """上書き合成の相手になる（当てるときの条件が同じ）か。"""
-        return self.image_reject == other.image_reject and self.rbw_hz == other.rbw_hz
+        return (self.image_reject == other.image_reject and self.rbw_hz == other.rbw_hz
+                and self.gain_table == other.gain_table)
 
 
 @dataclass
@@ -118,7 +131,7 @@ class Reference:
     def merge(self, segment: ReferenceSegment) -> None:
         """区間を上書き合成する（設計E §6.2）。
 
-        同じ条件（イメージ除去・RBW）の既存の区間から、新しい区間の範囲
+        同じ条件（イメージ除去・RBW・補正の表）の既存の区間から、新しい区間の範囲
         [start, last] に入る点を捨て、新しい区間を足す。範囲の外の点は残る。
         範囲の境目の隙間は当てるときに隣の区間の点どうしで補間する（apply.py）。
         """
@@ -154,6 +167,20 @@ def _frame_conditions(frame: Frame) -> tuple[Mode, str, int]:
         raise ReferenceBuildError("フレームに掃引条件が無い（モード・イメージ除去・RBW が分からない）")
     a = frame.adopted
     return a.mode, a.image_reject_used, a.rbw_hz
+
+
+def frame_gain_table(frame: Frame) -> Optional[str]:
+    """フレームに当たっている受信の利得の補正の表の識別（設計Q §7.6）。当たっていなければ None。"""
+    v = (frame.profile or {}).get(PROFILE_GAIN_TABLE)
+    return None if v is None else str(v)
+
+
+def frames_gain_table(frames: Sequence[Frame]) -> Optional[str]:
+    """フレームの並びの補正の表の識別。違う表のフレームが混ざれば作れない（平均すると値の意味が混ざる）。"""
+    tables = {frame_gain_table(fr) for fr in frames}
+    if len(tables) > 1:
+        raise ReferenceBuildError("フレームの受信の利得の補正の表がそろわない")
+    return next(iter(tables)) if tables else None
 
 
 def average_power(frames: Sequence[Frame]) -> np.ndarray:
@@ -212,6 +239,7 @@ def segment_from_frames(
         taken_at=taken_at,
         kind=kind,
         averages=len(frames),
+        gain_table=frames_gain_table(frames),
     )
 
 

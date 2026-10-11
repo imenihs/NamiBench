@@ -21,7 +21,7 @@ from .marker import analysis as an
 from .marker.markers import Y_KIND_NF, Y_KIND_POWER, Y_KIND_TG, Marker
 from .instrument_common import CommandError, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
-from .normalize import apply_reference
+from .normalize import apply_reference, frame_gain_table
 from .trace import ConditionChange, HoldKeep, TraceAction, TraceLine, TraceSet, formats, to_db
 from .types import AdoptedSweep, Frame, Mode, Quantity, RawSweep, ValueKind
 from .view_units import shift_values
@@ -210,6 +210,8 @@ class DisplayMixin:
         self._amp = dict(AMPLITUDE_DEFAULTS)
         self._ref = None  # 選んでいるノーマライズの基準（normalize.Reference）
         self._norm_state: dict = {"used": False}
+        # 最後に基準を当てたフレームの受信の利得の補正の表の識別（記録に書く: 設計Q §7.6）
+        self._norm_gain_table: Optional[str] = None
         self._norm_key: Optional[tuple] = None
         self._no_calibration = True
         self._last_raw: Optional[RawSweep] = None
@@ -425,7 +427,11 @@ class DisplayMixin:
             self._note_trace_refs(None)
             return frame
         serial = (self._identity or {}).get("serial") or ""
-        res = apply_reference(frame, self._ref, serial=serial, connected_at=self._connected_at or 0.0, now=time.time())
+        # このフレームに当たっている受信の利得の補正の表（PlutoSDR。設計Q §7.6）。違う表で取った基準の区間は当てない
+        gain_table = frame_gain_table(frame)
+        self._norm_gain_table = gain_table
+        res = apply_reference(frame, self._ref, serial=serial, connected_at=self._connected_at or 0.0, now=time.time(),
+                              gain_table=gain_table)
         self._note_trace_refs(res.reference_id if res.applied else None, res.value_db)  # 基準の値を直したとき動かす相手（設計E §6.7）
         self._norm_state = {
             "used": True,
@@ -454,7 +460,9 @@ class DisplayMixin:
                 "connected_at": self._connected_at, "accuracy": self._norm_state.get("accuracy"),
                 "power_cycled": self._norm_state.get("power_cycled"),
                 # 基準の値（設計E §6.7）。比の値はこの値を足したもの
-                "value_db": self._ref.applied_value_db}
+                "value_db": self._ref.applied_value_db,
+                # 測ったときの受信の利得の補正の表（設計Q §7.6）。再生ではこの表で取った基準の区間だけを当てる
+                "gain_table": self._norm_gain_table}
 
     def _trace_notes(self) -> tuple[str, ...]:
         """読み値に添える注意（設計G §3.3）。掃引条件の信用できない条件と、基準の精度・電源の入れ直し前。"""

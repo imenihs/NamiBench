@@ -30,6 +30,8 @@ FORMAT = "pygigast-reference"
 # 1 は読むときに true → "fast"、false → "off" に読み替える。
 # 3 で基準の値（value_db: 設計E §6.7）を足した。2 以前は 0dB として読む。値を知らない前の版のアプリが 3 を読むと
 # 基準の値の分だけ違う数を出すので、版を上げて読ませない
+# 区間の受信の利得の補正の表（gain_table: 設計Q §7.6）は 3 のまま足した（無い区間は None = 表なしとして読む）。
+# 前の版のアプリは読まずに当てる（足す前と同じ動き）だけで、値の意味は変わらないので版を上げない
 VERSION = 3
 READABLE_VERSIONS = (1, 2, 3)
 SUFFIX = ".h5"
@@ -84,6 +86,7 @@ def to_dict(ref: Reference) -> dict:
                 "taken_at": float(s.taken_at),
                 "kind": s.kind,
                 "averages": int(s.averages),
+                "gain_table": s.gain_table,
             }
             for s in ref.segments
         ],
@@ -111,6 +114,7 @@ def from_dict(d: dict) -> Reference:
                     taken_at=float(s["taken_at"]),
                     kind=str(s.get("kind", "fine")),
                     averages=int(s.get("averages", 1)),
+                    gain_table=_gain_table_of(s),
                 )
             )
         return Reference(
@@ -135,6 +139,16 @@ def _value_of(d: dict) -> float:
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         v = float(v)
     return check_value_db(v)
+
+
+def _gain_table_of(s: dict) -> Optional[str]:
+    """区間の受信の利得の補正の表の識別（設計Q §7.6）。足す前のファイルには無いので None（表なし）。"""
+    v = s.get("gain_table")
+    if v is None or v == "":
+        return None
+    if not isinstance(v, str):
+        raise TypeError("gain_table が文字列でない")
+    return v
 
 
 def _reject_of(s: dict) -> str:
@@ -194,6 +208,8 @@ def _write_h5(path: str, ref: Reference) -> None:
             sg.attrs["taken_at"] = float(seg.taken_at)
             sg.attrs["kind"] = seg.kind
             sg.attrs["averages"] = np.int64(seg.averages)
+            if seg.gain_table is not None:  # HDF5 の属性は None を持てないので、表なしは書かない
+                sg.attrs["gain_table"] = str(seg.gain_table)
 
 
 def _attr(v):
