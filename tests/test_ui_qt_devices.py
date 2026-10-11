@@ -8,6 +8,7 @@ import unittest
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QProgressBar, QPushButton
 
 from pygigast.api.local import LocalApi, _SimulatorBackend
 from pygigast.core.devices.base import load_profile
@@ -244,6 +245,29 @@ class TestRefQuick(UiBase):
         # 0dB が見えるよう REF レベルを動かし、知らせる
         self.wait(lambda: self.win.ref_level() == 10.0, what="REF が +10")
         self.assertEqual(self.win.display_unit(), "dB")
+
+    def test_taking_adds_nothing_to_top_bar(self):
+        """基準を取っている間も上段は「基準を取る」と基準の文だけ（ちらつく棒・二つ目の「やめる」・進み具合の文を
+        置かない。進み具合は掃引の進み具合の棒と処理の帯）。部品の位置と大きさは取る前と同じ。"""
+        q = self.win.ref_quick
+        self.connect_and_sweep(start=100_000_000, stop=200_000_000)
+        self.cmd("set_mode", mode="tg")
+        self.wait(lambda: q.isVisible(), what="TG で出る")
+        self.assertFalse(hasattr(q, "bar") or hasattr(q, "cancel"))
+        self.assertEqual([c.text() for c in q.findChildren(QPushButton)], [q.button.text()])
+        self.assertEqual(q.findChildren(QProgressBar), [])
+        rects = lambda: [(w.geometry().getRect()) for w in (q, q.button, q.status)] + [self.win.topbar.height()]
+        before = rects()
+        text = q.status.text()
+        st = dict(self.state())
+        st["tasks"] = [{"task_id": "t1", "kind": "reference_take", "done": 0, "total": 1, "elapsed_s": 0.0,
+                        "cancelling": False, "detail": {}}]
+        q.apply(st)
+        self.pump(0.2)
+        self.assertFalse(q.button.isEnabled())
+        self.assertEqual(q.status.text(), text)
+        self.assertEqual(q.findChildren(QProgressBar), [])
+        self.assertEqual(rects(), before)
 
 
 if __name__ == "__main__":

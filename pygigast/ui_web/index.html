@@ -151,11 +151,7 @@
       <!-- TG・S11 のとき「基準を取る」（S11 は次の1段: オープンを測る → ショートを測る）といまの基準（J §4.2: 基準を取るは1クリックで届く所に。設計E §6.5） -->
       <div class="refquick" v-if="refQuick.visible">
         <button :disabled="!!refQuick.reason" @click="takeQuick" :title="refQuick.button_tip">{{ refQuick.label }}</button>
-        <template v-if="refQuick.taking">
-          <progress></progress>
-          <button :disabled="refQuick.cancelling" @click="cmd('cancel_task', {task_id: refQuick.task_id}, {quiet: ['unknown_task']})">{{ T('REF_QUICK_LABELS', 'cancel') }}</button>
-        </template>
-        <span class="refquick-state dim" :title="[refQuick.taking ? refQuick.progress_text : refQuick.text, refQuick.tip].filter((t) => t).join('\n')">{{ refQuick.taking ? refQuick.progress_text : refQuick.text }}</span>
+        <span class="refquick-state dim" :title="[refQuick.text, refQuick.tip].filter((t) => t).join('\n')">{{ refQuick.text }}</span>
       </div>
       </fieldset>
     </div>

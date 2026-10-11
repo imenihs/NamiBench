@@ -305,6 +305,25 @@ class LayoutTest(UiBase):
         found += self.check(self.win, "主画面 基準の値 S11 tab-source")
         self.assertEqual(sorted(set(found)), [])
 
+    def test_reference_taking_keeps_top_bar(self):
+        """基準を取っている間も上段の高さと部品の位置は動かない（TG。数えた問題は 0）。"""
+        self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
+        self.api.call("set_sweep", start_hz=100_000_000, stop_hz=200_000_000).result(5)
+        self.api.call("set_mode", mode="tg").result(5)
+        self.wait(lambda: self.win.ref_quick.isVisible(), what="基準を取る")
+        self.pump(0.3)
+        rq = self.win.ref_quick
+        geo = lambda: [w.geometry().getRect() for w in (rq, rq.button, rq.status, self.win.topbar)]
+        before = geo()
+        found = self.check(self.win, "TG 上段 取る前")
+        st = dict(self.win.state)
+        st["tasks"] = [{"task_id": "t1", "kind": "reference_take", "done": 0, "total": 1, "elapsed_s": 0.0,
+                        "cancelling": False, "detail": {}}]
+        rq.apply(st)
+        found += self.check(self.win, "TG 上段 基準を取っている間")
+        self.assertEqual(geo(), before)
+        self.assertEqual(sorted(set(found)), [])
+
     def test_checker_finds_broken_layout(self):
         # 検査そのものが働くこと（本物の画面をわざと崩して見つかるか）
         self.win.show_part("tab-trace")

@@ -76,6 +76,22 @@ class WebDevicesTest(unittest.TestCase):
         self.assertIsNone(ui["ref_quick"]["reason"])
         self.assertEqual(ui["ref_quick"]["text"], "基準なし（dBm で表示）")
 
+    def test_top_bar_quick_has_no_progress_parts(self):
+        """上段の「基準を取る」の隣に、ちらつく棒・二つ目の「やめる」・進み具合の文を置かない（進み具合は掃引の
+        進み具合の棒と処理の帯）。画面の部品に棒と「やめる」が無く、表示の中身にも持たない。"""
+        import re
+        from pathlib import Path
+        html = (Path(__file__).resolve().parents[1] / "pygigast" / "ui_web" / "index.html").read_text(encoding="utf-8")
+        block = re.search(r'<div class="refquick".*?\n\s*</div>', html, re.S).group(0)
+        self.assertNotIn("<progress", block)
+        self.assertNotIn("cancel", block)
+        self.assertEqual(block.count("<button"), 1)
+        self.post("connect", {"backend": "simulator", "serial": "SIM00001"})
+        self.post("set_mode", {"mode": "tg"})
+        q = json.loads(self.get("/api/v1/state")[1])["ui"]["ref_quick"]
+        for key in ("taking", "task_id", "cancelling", "progress_text"):
+            self.assertNotIn(key, q)
+
 
 if __name__ == "__main__":
     unittest.main()

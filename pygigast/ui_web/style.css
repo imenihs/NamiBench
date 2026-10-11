@@ -389,7 +389,6 @@ fieldset.group > legend { padding: 0 4px; color: var(--text); }
 /* いまの基準の文: 小の段の字で2行まで（上段の高さに入る）。それより長い分は … にし、全文はツールチップ */
 .refquick-state { max-width: 150px; font-size: var(--font-s); line-height: 1.3; display: -webkit-box; -webkit-box-orient: vertical;
                   -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
-.refquick progress { width: 70px; }
 
 /* ---- 機器の一覧（J §4.7）。名前を変える窓（.modal-back）をこの上に重ねる ---- */
 .devwin-back { z-index: 45; }

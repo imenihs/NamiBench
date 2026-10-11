@@ -80,7 +80,6 @@ TEMPLATES.update({
 REF_QUICK_LABELS = {
     "button": "基準を取る",
     "tip": "TG の範囲を 1MHz 刻みで1回測り、0dB の基準にする",
-    "cancel": "やめる",
     "taking_reason": "基準を取っています",
 }
 
