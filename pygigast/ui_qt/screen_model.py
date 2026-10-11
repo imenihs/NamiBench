@@ -339,8 +339,8 @@ def _tg_quick_kind(st: dict) -> str:
 
 
 def ref_quick_view(st: dict) -> dict:
-    """TG・S11 のときだけ上段に出す。ボタンの名前・使えない理由・押したときに送る中身・取っている間の進み具合・
-    いまの基準の状態。TG は「基準を取る」、S11 は次の1段（オープンを測る → ショートを測る: 設計E §6.5）。"""
+    """TG・S11 のときだけ上段に出す。ボタンの名前・使えない理由・押したときに送る中身・いまの基準の状態。
+    取っている間の進み具合と「やめる」は掃引の進み具合の棒と処理の帯に任せ、ここには持たない。TG は「基準を取る」、S11 は次の1段（オープンを測る → ショートを測る: 設計E §6.5）。"""
     from .texts_devices import REF_QUICK_LABELS, hhmm
 
     sw = st.get("sweep") or {}
@@ -382,10 +382,7 @@ def ref_quick_view(st: dict) -> dict:
         # S11 でオープンを測ってある間は、次はショートであることを状態の文でも示す（1段ずつ: 設計E §6.5）
         text, tip = q["open_text"], ""
     return {"visible": visible, "reason": reason, "text": text, "tip": tip,
-            "label": label, "button_tip": button_tip + (f" — {reason}" if reason else ""), "take": take,
-            "taking": task is not None, "task_id": task.get("task_id") if task else None,
-            "cancelling": bool(task and task.get("cancelling")),
-            "progress_text": texts.task_label({**task, "task": task.get("kind")}) if task else ""}
+            "label": label, "button_tip": button_tip + (f" — {reason}" if reason else ""), "take": take}
 
 
 # ---------------------------------------------------------------- 上段の掃引の進み具合（設計J §4.13）

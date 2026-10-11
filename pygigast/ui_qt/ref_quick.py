@@ -6,7 +6,8 @@
   タブの「基準の値」の欄の値を使い（設計E §6.7）、0dB の代わりにその値を見せる
 - S11 では同じ場所のボタンが次の1段になる: 「オープンを測る」→「ショートを測る」（設計E §6.5）。ショートで基準が
   できたら、すぐ1回測って見せる
-- 取っている間は進み具合と「やめる」をその場に出す（U-19）
+- 取っている間の進み具合と「やめる」は、上の掃引の進み具合の棒と下の処理の帯（同じ文・同じ「やめる」）に任せ、
+  ここには出さない（ちらつくだけの棒と二重の「やめる」を置かない。上段の高さも幅も取っている間に動かさない）
 - 隣に、いま使っている基準（名前・取得の時刻・基準の値（0dB でなければ）・電源の入れ直し前の印）か「基準なし（dBm で表示）」
 - 細かい操作（名前・平均・いまの条件で細かく取る・一覧）は右の「信号源」タブに残す
 中身（出すか・理由・文）は screen_model.ref_quick_view（Web と同じ）。
@@ -17,7 +18,7 @@ import datetime
 from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from . import screen_model, screen_s11, sizes, texts
 from .texts_devices import REF_QUICK_LABELS as L
@@ -34,7 +35,6 @@ class RefQuick(QWidget):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__()
         self.win = win
-        self._task_id: Optional[str] = None
         self._take: Optional[dict] = None  # 押したときに送る中身（screen_model.ref_quick_view の take）
         lay = QHBoxLayout(self)
         lay.setContentsMargins(sizes.GAP, 0, 0, 0)
@@ -50,17 +50,8 @@ class RefQuick(QWidget):
         f = QFont(self.status.font())
         f.setPixelSize(sizes.FONT_S)
         self.status.setFont(f)
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 0)  # 1回の掃引の途中は進みが分からないので、動いていることだけを示す
-        self.bar.setMaximumWidth(80)
-        self.bar.setTextVisible(False)
-        self.cancel = QPushButton(L["cancel"])
-        sizes.set_tier(self.cancel, "L")
-        self.cancel.clicked.connect(self._cancel)
-        for w in (self.button, self.bar, self.cancel, self.status):
-            lay.addWidget(w)
-        self.bar.hide()
-        self.cancel.hide()
+        lay.addWidget(self.button)
+        lay.addWidget(self.status)
         self.hide()
 
     def apply(self, st: dict) -> None:
@@ -72,11 +63,7 @@ class RefQuick(QWidget):
         self.button.setEnabled(v["reason"] is None)
         self.button.setToolTip(v["button_tip"])
         self._take = v["take"]
-        self._task_id = v["task_id"]
-        self.bar.setVisible(v["taking"])
-        self.cancel.setVisible(v["taking"])
-        self.cancel.setEnabled(not v["cancelling"])
-        text = v["progress_text"] if v["taking"] else v["text"]
+        text = v["text"]
         self.status.setText(text)
         # 1行で読める幅を取る（上限まで。長い文は折り返し、全文はツールチップ）
         w = max((self.status.fontMetrics().horizontalAdvance(t) for t in text.splitlines()), default=0)
@@ -97,7 +84,3 @@ class RefQuick(QWidget):
             kw = {"kind": t.get("kind") or "wide", "name": texts.tpl("ref_direct_name", time=now), "show_zero": True,
                   "value_db": self.win.source_tab.take_value.value()}
         self.win.call("reference_take", **kw)
-
-    def _cancel(self) -> None:
-        if self._task_id:
-            self.win.call("cancel_task", task_id=self._task_id, quiet_codes=("unknown_task",))

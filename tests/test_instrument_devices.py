@@ -259,6 +259,21 @@ class TestDirectZeroDb(InstrumentCase):
         self.assertNotIn("ref_level", n["detail"]["result"])
         self.assertEqual(self.call("get_state")["amplitude"]["ref_level"], 20.0)
 
+    def test_quick_view_has_no_progress_while_taking(self):
+        """取っている間の進み具合は処理の帯に任せ、上段の表示の中身（Qt と Web が映す）には持たない。"""
+        self.connect()
+        self.call("set_mode", mode="tg")
+        st = dict(self.call("get_state"))
+        idle = screen_model.ref_quick_view(st)
+        st["tasks"] = [{"task_id": "t1", "kind": "reference_take", "done": 0, "total": 1, "elapsed_s": 0.0,
+                        "cancelling": False, "detail": {}}]
+        q = screen_model.ref_quick_view(st)
+        self.assertEqual(q["text"], idle["text"])
+        self.assertEqual(q["label"], idle["label"])
+        self.assertEqual(q["reason"], "基準を取っています")
+        for key in ("taking", "task_id", "cancelling", "progress_text"):
+            self.assertNotIn(key, q)
+
     def test_quick_view_reasons(self):
         st = self.call("get_state")
         self.assertFalse(screen_model.ref_quick_view(st)["visible"])
