@@ -291,7 +291,7 @@
           <div class="form" v-if="sw">
             <label>{{ W('points') }}</label>
             <div class="row">
-              <input class="w-int" type="number" min="2" max="12000" v-steady="sw.points" :disabled="!sw.points_setting || !!sweepReasons.points" :title="sweepReasons.points || ''" @change="setPoints($event.target.value)">
+              <input class="w-int" type="number" min="2" max="10000000" v-steady="sw.points" :disabled="!sw.points_setting || !!sweepReasons.points" :title="sweepReasons.points || ''" @change="setPoints($event.target.value)">
               <label class="inline" :class="{disabled: !!sweepReasons.points}" :title="sweepReasons.points || ''"><input type="checkbox" :checked="!sw.points_setting" :disabled="!!sweepReasons.points" @change="setPointsAuto($event.target.checked)">{{ F('points_auto') }}</label>
             </div>
             <template v-if="notes.points"><label></label><div class="fnote">{{ notes.points.text }}</div></template>

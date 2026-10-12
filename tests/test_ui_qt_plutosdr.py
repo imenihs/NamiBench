@@ -68,6 +68,14 @@ class TestPlutoPanels(PlutoUiBase):
         self.cmd("disconnect")
         self.wait(lambda: rx.isHidden() and tx.isHidden(), what="欄が消える")
 
+    def test_points_field_shows_more_than_12000(self):
+        """FFT の機器は点数が RBW と Span で決まり、12000 を超えることがある。欄は実際の点数を出す（切り詰めない）。"""
+        self.connect_pluto()
+        self.cmd("set_sweep", start_hz=100 * MHZ, stop_hz=200 * MHZ, rbw_hz=6000)
+        n = self.state()["sweep"]["points"]
+        self.assertGreater(n, 12000)
+        self.wait(lambda: self.win.trace_tab.points_spin.value() == n, what="点数の欄が実際の点数")
+
     def test_gain_auto_and_used_value(self):
         self.connect_pluto()
         rx = self.win.pluto_panel

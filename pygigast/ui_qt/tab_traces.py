@@ -308,7 +308,9 @@ class TraceTab(QWidget):
         self.points_auto = QCheckBox(texts.TEMPLATES["points_auto"])
         self.points_auto.setChecked(True)
         self.points_spin = QSpinBox()
-        self.points_spin.setRange(2, 12000)
+        # 上限は機器ごとに本体の掃引条件モデルが決めて知らせる（GigaSt は 12000）。欄は FFT の機器の実際の点数（RBW と
+        # Span で決まり 12000 を超える）も切り詰めずに出す
+        self.points_spin.setRange(2, 10_000_000)
         self.points_spin.setEnabled(False)
         self.points_spin.setKeyboardTracking(False)
         sizes.set_width(self.points_spin, "int")
