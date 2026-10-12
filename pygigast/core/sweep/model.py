@@ -21,8 +21,9 @@ from . import image_reject as ir
 
 # (step_hz, rbw_hz, mode) → (初バイトまでの秒, 1点あたりの秒)。機器の層が作る（設計B §7.2）
 TimingFn = Callable[[int, int, Mode], tuple[float, float]]  # (step_hz, rbw_hz, mode)
-# sweep_kind "fft" の見積もり: (測る点の軸, 実際の RBW) → 1回の測定の秒。位置の数を数えるのは機器の層（設計Q §6.4）
-FftTimingFn = Callable[[FreqAxis, int], float]
+# sweep_kind "fft" の見積もり: (測る点の軸, 実際の RBW, モード) → 1回の測定の秒。位置の数を数えるのは機器の層（設計Q §6.4）。
+# モードは PlutoSDR の TG 高調波の平均除去（TG だけ読む回数が増える: 設計Q §7.7）のため
+FftTimingFn = Callable[[FreqAxis, int, Mode], float]
 
 SWEEP_STEPPED = "stepped"
 SWEEP_FFT = "fft"
@@ -766,7 +767,7 @@ class SweepModel:
         axis = FreqAxis(start_hz=start, step_hz=step, points=points)
         if not (self._min <= axis.start_hz and axis.last_hz <= self._max):
             raise AssertionError(f"測る範囲が外れた: {axis.start_hz}〜{axis.last_hz}")
-        est = float(self._timing(axis, rbw))
+        est = float(self._timing(axis, rbw, mode))
         # 点数が上限に収まる RBW だけが選べる（設計C §5.14）
         usable = tuple(r for r in self._rbw_choices if self._fft_points(span, r)[1] <= self._points_max)
         return AdoptedSweep(

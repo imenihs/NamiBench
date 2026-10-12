@@ -93,20 +93,48 @@ def samples_per_position(p: FftParams, profile: dict) -> int:
     return p.averages * p.n + int(profile.get("timing", {}).get("discard_samples", 0))
 
 
-def timing_fn(profile: dict) -> Callable[[FreqAxis, int], float]:
-    """掃引条件モデル（sweep_kind "fft"）の見積もり: 位置の数 ×（LO を変えてから使える値まで ＋ 読み取り）。
+def tg_harmonic_spec(profile: dict) -> dict:
+    """TG 高調波の平均除去の決まり（設計Q §7.7）: 選べる回数・初期値・効かせる位置の上限・合わせ直しで動かす幅。"""
+    d = (profile.get("source") or {}).get("tg_harmonic_avg") or {}
+    return {"choices": [int(c) for c in d.get("choices", (1, 4, 8))], "default": int(d.get("default", 1)),
+            "below_hz": int(d.get("below_hz", 1_000_000_000)),
+            "relock_offset_hz": int(d.get("relock_offset_hz", 10_000_000))}
 
-    読み取りは標本の時間と USB の RNDIS の速さの遅い方（実測 約 6MS/s: 2026-10-10）。
+
+def tg_reads_at(profile: dict, center_hz: int, count: int) -> int:
+    """TG の位置 center_hz で読む回数。平均除去は受信の LO が below_hz より下の位置だけ（それ以上は1回）。"""
+    if count <= 1 or int(center_hz) >= tg_harmonic_spec(profile)["below_hz"]:
+        return 1
+    return int(count)
+
+
+def estimate_s(profile: dict, axis: FreqAxis, rbw_hz: int, mode=None, tg_count: int = 1) -> float:
+    """1回の掃引の見積もり秒: 位置の数 ×（LO を変えてから使える値まで ＋ 読み取り）。
+
+    読み取りは標本の時間と USB の RNDIS の速さの遅い方（実測 約 6MS/s: 2026-10-10）。TG で平均除去を使うと、
+    1000MHz より下の位置は回数分の（送信と受信の LO の合わせ直し ＋ 読み取り）になる（設計Q §7.7）。
     """
     t = profile["timing"]
     settle = float(t["retune_settle_s"])
+    relock = float(t.get("tg_relock_s", settle))
     link = float(t.get("link_samples_per_s") or profile["fft"]["sample_rate_hz"])
+    p, pl = make_plan(profile, axis, rbw_hz)
+    rate = min(float(p.fs), link)
+    read_s = samples_per_position(p, profile) / rate
+    tg = mode is not None and Mode(mode) == Mode.TG
+    total = 0.0
+    for c in pl.centers:
+        k = tg_reads_at(profile, c, tg_count) if tg else 1
+        total += settle + read_s if k == 1 else settle + k * (relock + read_s)
+    return total
 
-    def f(axis: FreqAxis, rbw_hz: int) -> float:
-        p, pl = make_plan(profile, axis, rbw_hz)
-        rate = min(float(p.fs), link)
-        read_s = samples_per_position(p, profile) / rate
-        return len(pl.centers) * (settle + read_s)
+
+def timing_fn(profile: dict, tg_count: Optional[Callable[[], int]] = None) -> Callable[..., float]:
+    """掃引条件モデル（sweep_kind "fft"）の見積もり（estimate_s）。tg_count はいまの TG 高調波の平均除去の回数を返す口
+    （無ければ 1 回: 平均除去なし）。"""
+
+    def f(axis: FreqAxis, rbw_hz: int, mode=None) -> float:
+        return estimate_s(profile, axis, rbw_hz, mode, int(tg_count()) if tg_count is not None else 1)
 
     return f
 
@@ -258,6 +286,7 @@ class PlutoSdrDevice(Device):
         self._gain_applied: Optional[int] = None
         self._auto_applied = False
         self._tx_atten = float(self._profile["source"]["tx_atten_db"]["default"])
+        self._tg_count = tg_harmonic_spec(self._profile)["default"]  # TG 高調波の平均除去の回数（1 はなし）
         self._tx_state: Optional[tuple] = None  # このアプリが出している送信（None は出していない）
         self._tx_buf = None
         self._tx_forbidden = False
@@ -378,6 +407,15 @@ class PlutoSdrDevice(Device):
         self._pending["tx_atten"] = float(atten_db)
         self._apply_pending_if_idle()
 
+    def set_tg_harmonic_avg(self, count: int) -> None:
+        """TG 高調波の平均除去の回数（1 はなし。設計Q §7.7）。測っている間は次の measure の始めに効かせる。"""
+        self._pending["tg_count"] = max(1, int(count))
+        self._apply_pending_if_idle()
+
+    @property
+    def tg_harmonic_avg(self) -> int:
+        return int(self._tg_count)
+
     def _apply_pending_if_idle(self) -> None:
         if self._lock.acquire(blocking=False):
             try:
@@ -393,6 +431,8 @@ class PlutoSdrDevice(Device):
             self._gain_setting = pend["gain"]
         if "tx_atten" in pend:
             self._tx_atten = pend["tx_atten"]
+        if "tg_count" in pend:
+            self._tg_count = pend["tg_count"]
         if self._ctx is None:
             return
         if "gain" in pend:
@@ -549,7 +589,9 @@ class PlutoSdrDevice(Device):
         t0 = time.monotonic()
         max_ratio = 0.0
         retunes = 0
+        repeated = 0
         sink = self.iq_sink
+        tg_count = self._tg_count if mode == Mode.TG else 1
         self.report_progress(0, len(pl.centers))
         for i, c in enumerate(pl.centers):
             if i > 0 and _cancelled(cancel):
@@ -560,19 +602,33 @@ class PlutoSdrDevice(Device):
                 # TG: 送信の LO を受信の LO に合わせる（多トーンは受信の使える幅に乗る）
                 self._txlo.set_attr("frequency", int(c))
                 self._tx_tuned_hz = c
-            a = self._read_position(c, p, want + discard)
-            if a.size < 2 * (want + discard):
-                raise SweepDiscarded("short_read", {"position": i, "got": int(a.size // 2), "want": want + discard})
-            a = a[2 * discard: 2 * (discard + want)]
-            r = overload_ratio_i16(a, int(full))
-            max_ratio = max(max_ratio, r)
-            iq = iq_from_i16(a, full)
-            if sink is not None:
-                try:
-                    sink(iq, c, p.fs)
-                except Exception as e:  # noqa: BLE001 — 取り出し側の失敗で測定を止めない
-                    self.iq_sink_error = repr(e)
-            asm.add(c, spectrum.averaged_power(iq, p.n, win, p.averages))
+            # TG 高調波の平均除去（設計Q §7.7）: 1000MHz より下の位置は、送信と受信の LO を合わせ直してから読む、を
+            # 回数分くり返して電力を平均する（送信の高調波が戻る位相が合わせ直しごとに無作為に変わるので、揺れは
+            # 回数の平方根で割った大きさに減る）。1000MHz 以上の位置は1回だけ読む
+            reads = tg_reads_at(self._profile, c, tg_count)
+            if reads > 1:
+                repeated += 1
+            power = None
+            for k in range(reads):
+                if k > 0 and _cancelled(cancel):
+                    raise SweepDiscarded("cancelled", {"positions_done": i})
+                if reads > 1:
+                    self._tg_relock(int(c))
+                a = self._read_position(c, p, want + discard)
+                if a.size < 2 * (want + discard):
+                    raise SweepDiscarded("short_read", {"position": i, "got": int(a.size // 2), "want": want + discard})
+                a = a[2 * discard: 2 * (discard + want)]
+                r = overload_ratio_i16(a, int(full))
+                max_ratio = max(max_ratio, r)
+                iq = iq_from_i16(a, full)
+                if sink is not None:
+                    try:
+                        sink(iq, c, p.fs)
+                    except Exception as e:  # noqa: BLE001 — 取り出し側の失敗で測定を止めない
+                        self.iq_sink_error = repr(e)
+                pw = spectrum.averaged_power(iq, p.n, win, p.averages)
+                power = pw if power is None else power + pw
+            asm.add(c, power / reads if reads > 1 else power)
             self.report_progress(i + 1, len(pl.centers))
         if _cancelled(cancel):
             raise SweepDiscarded("cancelled", {"positions_done": len(pl.centers)})
@@ -600,6 +656,10 @@ class PlutoSdrDevice(Device):
             "tx_atten_db": None if self._tx_state is None else float(self._atten_text()),
             "flags": {"no_value": asm.no_value},
         }
+        if mode == Mode.TG:
+            # TG 高調波の平均除去の回数（1 はなし）と、くり返して読んだ位置の数（設計Q §7.7。回数は記録にも残す）
+            extra["tg_harmonic_avg"] = int(tg_count)
+            extra["tg_harmonic_positions"] = repeated
         return RawSweep(adopted=sweep, raw=asm.values, encoding=ENCODING, started_at=started_at,
                         duration_s=duration, transient_head_points=0, extra=extra)
 
@@ -644,6 +704,21 @@ class PlutoSdrDevice(Device):
         self._txlo.set_attr("frequency", int(lo_hz))
         self._tx_tuned_hz = int(lo_hz)
         self._txc.set_attr("hardwaregain", self._atten_text())
+
+    def _tg_relock(self, c: int) -> None:
+        """TG 高調波の平均除去の1回分の合わせ直し（設計Q §7.7）: 送信と受信の LO を位置から離して戻す。
+
+        送信の LO は出している間に動かすので、SG の周波数を変えるときと同じ順（_tx_retune）: 動かす間は出力をいちばん
+        小さくし、戻してから利用者の減衰へ（出力を上げない・利用者の減衰は変えない）。"""
+        away = int(c) + tg_harmonic_spec(self._profile)["relock_offset_hz"]
+        self._txc.set_attr("hardwaregain", self._atten_min_text())
+        self._txlo.set_attr("frequency", away)
+        self._txlo.set_attr("frequency", int(c))
+        self._tx_tuned_hz = int(c)
+        self._txc.set_attr("hardwaregain", self._atten_text())
+        self._rxlo.set_attr("frequency", away)
+        self._rxlo.set_attr("frequency", int(c))
+        self._tuned_hz = int(c)
 
     def _check_tx_allowed(self) -> None:
         if self._tx_forbidden:

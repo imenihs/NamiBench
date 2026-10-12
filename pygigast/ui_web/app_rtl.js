@@ -46,6 +46,8 @@
         return v.agc || v.gain_db == null ? Number(v.gain_base) || 0 : Number(v.gain_db);
       },
       plutoAttenText() { return (Number(this.plutoView.tx_atten_db) || 0).toFixed(2) + " dB"; },
+      // TG 高調波の平均除去の選択（設計Q §7.7。中身は screen_pluto.tg_harmonic_view: Qt の PlutoTxPanel と同じ）
+      tgHarmView() { return this.plutoView.tg_harmonic || { items: [], value: 1, reason: X.get("PLUTO_LABELS", "not_pluto") }; },
     },
     methods: {
       onStateRtl(p) {
@@ -98,6 +100,12 @@
         let v;
         try { v = GSUnits.parseDb(String(text).replace("dB", "")); } catch (e) { this.note("plutotx", X.w("bad_value")); return; }
         this.cmd("plutosdr_set", { tx_atten_db: v }, { field: "plutotx" });
+      },
+      // 同じ回数は送り直さない（Qt の pluto_panel と同じ）
+      setTgHarmonic(code) {
+        const n = Number(code);
+        if (n === this.tgHarmView.value) return;
+        this.cmd("plutosdr_set", { tg_harmonic_avg: n }, { field: "plutotx" });
       },
       stepTxAtten(exp, dir) { this.cmd("plutosdr_set", { tx_atten_db: (Number(this.plutoView.tx_atten_db) || 0) + dir * Math.pow(10, exp) }, { field: "plutotx" }); },
       // ---- 聞く

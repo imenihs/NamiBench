@@ -1191,6 +1191,28 @@ class WebLayoutPlutoTest(unittest.TestCase):
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
+    def test_tg_harmonic_selector(self):
+        """TG 高調波の平均除去（設計Q §7.7）: TG で選べて、選択肢に見積もりの秒が付いた形（Qt の LayoutPlutoTest と同じ）。"""
+        app = self.app
+        app.call("set_sweep", start_hz=985_000_000, stop_hz=1_015_000_000)
+        app.call("set_mode", mode="tg")
+        app.call("plutosdr_set", tg_harmonic_avg=8)
+        found: list[str] = []
+        try:
+            for w, h in SIZES:
+                open_app(self.page, app, w, h)
+                self.page.ev("gsApp.tab = 'source'; 1")
+                self.page.wait("!document.querySelector('[data-field=tg_harmonic]').disabled", "TG で使える")
+                self.page.settle()
+                found += self.page.problems(".app", f"{w}×{h} PlutoSDR TG 高調波の平均除去")
+        finally:
+            # ほかの試験が見る形（SG・2.4GHz 帯）へ戻す
+            app.call("plutosdr_set", tg_harmonic_avg=1)
+            app.call("set_sweep", start_hz=2_400_000_000, stop_hz=2_402_000_000)
+            app.call("set_mode", mode="sg", sg_hz=2_401_000_000)
+        self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
     def test_gain_calibration_pages(self):
         """校正の画面の PlutoSDR の利得の補正（設計Q §7.6）: 準備・測った後の測る・確かめると、受信の欄の「利得の補正なし」
         の印（Qt の LayoutPlutoGainTest と同じ手順）。"""

@@ -681,6 +681,15 @@
             <label>{{ T('PLUTO_LABELS', 'tx_atten') }}</label>
             <num-field data-field="tx_atten" :text="plutoAttenText" :note="notes.plutotx" @clear-note="clearNote('plutotx')" :disabled="!!plutoView.reason"
                        :title="T('PLUTO_LABELS', 'tx_atten_tip')" @commit="setTxAtten($event)" @step="(e, d) => stepTxAtten(e, d)"></num-field>
+            <!-- TG 高調波の平均除去（設計Q §7.7）: 選択肢の文字（名前と、いまの条件での1回の掃引の見積もり）と使えない理由は
+                 サーバーが作る（ui.pluto.tg_harmonic: Qt と同じ screen_pluto.tg_harmonic_view）。幅は秒を 999.9 にした見本で
+                 決めた固定の幅（app.js の fitColumns の --col-tgharm） -->
+            <label>{{ T('PLUTO_LABELS', 'tg_harmonic') }}</label>
+            <select class="w-tgharm" data-field="tg_harmonic" :value="tgHarmView.value" :disabled="!!tgHarmView.reason"
+                    :title="T('PLUTO_LABELS', 'tg_harmonic_tip') + (tgHarmView.reason ? ' — ' + tgHarmView.reason : '')"
+                    @change="setTgHarmonic($event.target.value)">
+              <option v-for="it in tgHarmView.items" :key="it.code" :value="it.code">{{ it.text }}</option>
+            </select>
           </div>
           <div class="dim" v-if="plutoView.tx_state">{{ plutoView.tx_state }}</div>
         </section>

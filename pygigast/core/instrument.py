@@ -657,7 +657,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         if str(profile.get("model", "")).startswith("plutosdr"):
             from .devices.plutosdr.driver import timing_fn as plutosdr_timing_fn
 
-            return plutosdr_timing_fn(profile)
+            # TG 高調波の平均除去の回数（設定）で TG の見積もりが変わる（設計Q §7.7）
+            return plutosdr_timing_fn(profile, self._plutosdr_tg_count)
         if (profile.get("raw") or {}).get("encoding") == RTLSDR_ENCODING:
             from .devices.rtlsdr.driver import timing_fn as rtlsdr_timing_fn
 

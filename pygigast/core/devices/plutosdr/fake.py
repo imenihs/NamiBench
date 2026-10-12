@@ -10,6 +10,11 @@ iio.py の IioLib と同じ口（scan・open → 文脈・機器・通路・バ�
 「設定の利得 + その値」にする（入力の信号・送信・前段の雑音の全部に効く）。measured_like_gain_error は実測
 （2026-10-11: ref/capture/2026-10-11/pluto_gain/）の段差の形をまねたもの。adc_noise_dbfs は利得に依らない
 振り切れに対する雑音（A/D の雑音のまね。低い利得でトーンが雑音に近づく形を作る）。
+
+TG の高調波の戻り（設計Q §7.7 の解く問題）: relock_ripple に大きさ ε（本来の信号に対する振幅の比）を渡すと、受信と送信の
+LO が relock_below_hz より下の間、送信を受信へ通すときに格子ごとに 1 + ε·e^{jφ} を掛ける。φ は格子ごとの無作為の位相で、
+LO の周波数を書くたびに（合わせ直すたびに）引き直す。実機の「合わせ直すたびに使う幅の中の特性が無作為に変わり、電力の
+平均で 1/√回数 に減る」形をまねたもの（ε 0.07 で 1回の読みの揺れ 約 0.45dB）。reads は読んだときの受信の LO の並び。
 """
 from __future__ import annotations
 
@@ -52,8 +57,13 @@ class FakePluto:
     def __init__(self, signals=None, serial: str = FAKE_SERIAL, seed: int = 1, loss_db: float = 30.0,
                  dut: Optional[Callable[[np.ndarray], np.ndarray]] = None,
                  gain_error: Optional[Callable[[float, float], float]] = None,
-                 adc_noise_dbfs: Optional[float] = None) -> None:
+                 adc_noise_dbfs: Optional[float] = None, relock_ripple: Optional[float] = None,
+                 relock_below_hz: float = 1_000_000_000) -> None:
         self.serial = serial
+        self.relock_ripple = relock_ripple
+        self.relock_below_hz = float(relock_below_hz)
+        self._ripple_phase: Optional[np.ndarray] = None  # いまの LO の組での格子ごとの位相（合わせ直すと引き直す）
+        self.reads: list[float] = []
         self.gain_error = gain_error
         self.adc_noise_dbfs = adc_noise_dbfs
         self.signals: list[tuple[int, float]] = list(signals or [])
@@ -105,6 +115,8 @@ class FakePluto:
             v = f"{g:.6f} dB"
         self.log.append((f"{dev}/{ch}{'_out' if out else ''}", name, str(value)))
         self.attrs[(dev, ch, out, name)] = v
+        if dev == "ad9361-phy" and ch in ("altvoltage0", "altvoltage1") and out and name == "frequency":
+            self._ripple_phase = None  # LO を合わせ直した: 戻る高調波の位相が変わる
 
     def _num(self, dev, ch, out, name) -> float:
         return float(self.attrs[(dev, ch, out, name)].split()[0])
@@ -135,6 +147,7 @@ class FakePluto:
             raise IioError("buffer_refill", _EIO, "unplugged")
         fs = self.fs
         lo = self.rx_lo
+        self.reads.append(lo)
         g = self.rx_gain()
         if self.gain_error is not None:
             g = g + float(self.gain_error(lo, g))
@@ -160,6 +173,14 @@ class FakePluto:
         atten = self._num("ad9361-phy", "voltage0", True, "hardwaregain")
         return 10 ** ((atten - self.loss_db) / 20.0)
 
+    def _relock_response(self, m: int, rx_lo: float, tx_lo: float) -> Optional[np.ndarray]:
+        """戻る高調波を足した格子ごとの通り方（relock_ripple が無い・LO が relock_below_hz 以上なら None）。"""
+        if not self.relock_ripple or rx_lo >= self.relock_below_hz or tx_lo >= self.relock_below_hz:
+            return None
+        if self._ripple_phase is None or self._ripple_phase.size != m:
+            self._ripple_phase = self.rng.uniform(0, 2 * np.pi, m)
+        return 1.0 + float(self.relock_ripple) * np.exp(1j * self._ripple_phase)
+
     def _tx_into_rx(self, n: int, t: np.ndarray, rx_lo: float, gain: float) -> np.ndarray:
         if self.attrs[("ad9361-phy", "altvoltage1", True, "powerdown")] != "0":
             return np.zeros(n, dtype=np.complex128)
@@ -170,10 +191,14 @@ class FakePluto:
             x = self.tx_buffer
             m = x.size
             base = np.resize(x, n)
-            if self.dut is not None:
+            h = self._relock_response(m, rx_lo, tx_lo)
+            if self.dut is not None or h is not None:
                 spec = np.fft.fft(x)
-                freqs = tx_lo + np.fft.fftfreq(m, 1.0 / self.fs)
-                base = np.resize(np.fft.ifft(spec * self.dut(freqs)), n)
+                if self.dut is not None:
+                    spec = spec * self.dut(tx_lo + np.fft.fftfreq(m, 1.0 / self.fs))
+                if h is not None:
+                    spec = spec * h
+                base = np.resize(np.fft.ifft(spec), n)
             return k * base * np.exp(2j * np.pi * (tx_lo - rx_lo) * t)
         s = float(self.attrs[(d, "altvoltage0", True, "scale")])
         if s <= 0:

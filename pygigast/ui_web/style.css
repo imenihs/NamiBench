@@ -91,6 +91,8 @@ input[type=color] { width: var(--btn-min-w); padding: 2px; cursor: pointer; }
 .w-grow { flex: 1 1 auto; min-width: 0; width: auto; }
 /* イメージ除去の選択: 出しうる一番長い選択肢の幅（秒の桁が変わっても動かさない。app.js の fitColumns が --col-reject に置く） */
 .w-reject { width: var(--col-reject, auto); }
+/* PlutoSDR の TG 高調波の平均除去の選択: 同じ決め方（秒を 999.9 にした見本。app.js の fitColumns が --col-tgharm に置く） */
+.w-tgharm { width: var(--col-tgharm, auto); }
 /* 「振幅の詳細」の単位と S11 の表示（同じ列の欄は同じ幅: S-02。app.js の fitColumns が --col-unitcol に置く。Qt と同じ見本:
    texts.UNIT_COLUMN_SAMPLES） */
 .w-unit-col { width: var(--col-unitcol, auto); }

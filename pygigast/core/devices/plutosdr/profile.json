@@ -60,6 +60,8 @@
     "retune_settle_s": 0.030,
     "discard_samples": 0,
     "link_samples_per_s": 6000000,
+    "tg_relock_s": 0.030,
+    "tg_relock_note": "TG harmonic averaging: per read, time to move the TX LO and the RX LO 10 MHz away and back (4 near LO writes + 2 attenuation writes + a new RX buffer). Provisional (the same as retune_settle_s) until timed on the device",
     "note": "per LO position: retune_settle_s (LO write 1.7-24 ms + new RX buffer; per-position time measured through this driver 26-41 ms incl. a 4-8 ms read, 2026-10-10) + averages x fft_n / min(sample_rate_hz, link_samples_per_s). The first samples of a new buffer were already at the new frequency (no discard). realtime (one fixed position) skips the LO write but still makes a new buffer"
   },
   "gain": {
@@ -88,6 +90,14 @@
     "dds_phase_i_mdeg": 90000,
     "tg_multitone_peak": 0.5,
     "tx_full_scale": 32767,
+    "tg_harmonic_avg": {
+      "choices": [1, 4, 8],
+      "default": 1,
+      "below_hz": 1000000000,
+      "relock_offset_hz": 10000000,
+      "basis": "measured_on_one_unit",
+      "note": "TG below 1000 MHz: the TX harmonics come back through the RX LO harmonics onto the same bins and their phase against the wanted tone changes at every LO lock (+-1.5 dB). Each position below below_hz is read count times, re-locking the TX and the RX LO (relock_offset_hz away and back) before each read, and the FFT power is averaged (spread falls as 1/sqrt(count): 0.45 -> 0.24 (4) -> 0.17 dB (8) at 150 MHz, 2026-10-13). 1 = off"
+    },
     "basis": "provisional_until_measured",
     "note": "SG: TX LO = SG frequency - dds_offset_hz and one DDS tone at +dds_offset_hz (the LO leakage stays 1 MHz away from the tone). TG: TX LO follows each RX LO position and a cyclic multitone buffer puts one tone on every FFT bin of the usable width (Schroeder phases, peak tg_multitone_peak of full scale). sg / tg_range_hz / tx_lo_hz are replaced on connect by the ranges the device reports. Nothing here has been checked on the device yet (TX not enabled)"
   },

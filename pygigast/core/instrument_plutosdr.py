@@ -2,7 +2,8 @@
 
 - 受信のスペクトル・継ぎ合わせ・レベル（dBFS − 利得 を「dB（未校正）」）・振り切れの知らせ・中心を動かせないとき
   （rtl_tcp の相手）の扱いは RTL-SDR と同じ部品（instrument_rtlsdr.py）を使う。生の値の形も同じ
-- ここに持つのは PlutoSDR に固有のもの: 設定（libiio の DLL のフォルダ・URI・受信の利得と自動・送信の減衰）、
+- ここに持つのは PlutoSDR に固有のもの: 設定（libiio の DLL のフォルダ・URI・受信の利得と自動・送信の減衰・
+  TG 高調波の平均除去の回数（設計Q §7.7））、
   「利得を合わせる」の口、rtl_tcp の出口へ流す IQ（4.096MS/s を相手の求める整数分の1の速さに落とす）
 - 個体の校正（レベルの dBm 化）はまだ無い（設計Q §7.1: 後で入れる）。それまでレベルは「dB（未校正）」。
   受信の利得の補正（利得を変えても値が変わらないようにする表: 設計Q §7.6）は instrument_pluto_cal.py
@@ -10,6 +11,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Callable, Optional
 
 import numpy as np
@@ -108,12 +110,17 @@ class PlutoSdrMixin:
         uri = cfg.get("uri")
         gain = cfg.get("gain_db")
         atten = cfg.get("tx_atten_db")
+        tg = cfg.get("tg_harmonic_avg")
+        tg_spec = pl_driver.tg_harmonic_spec(pl_driver.default_profile())
         self._pluto_cfg = {
             "dll_folder": folder if isinstance(folder, str) and folder else None,
             "uri": uri if isinstance(uri, str) and uri else DEFAULT_URI,
             "gain_db": float(gain) if _is_number(gain) else None,
             "agc": bool(cfg.get("agc", False)),
             "tx_atten_db": float(atten) if _is_number(atten) else None,
+            # TG 高調波の平均除去の回数（1 はなし。選べる回数でなければ初期値: 設計Q §7.7）
+            "tg_harmonic_avg": tg if isinstance(tg, int) and not isinstance(tg, bool) and tg in tg_spec["choices"]
+            else tg_spec["default"],
         }
         self._pluto_decim: Optional[IqDecimator] = None
         self._pluto_gain_sent: Optional[float] = None
@@ -160,6 +167,33 @@ class PlutoSdrMixin:
             a = float(self._plutosdr_profile()["source"]["tx_atten_db"]["default"])
         return a
 
+    def _plutosdr_tg_count(self) -> int:
+        """TG 高調波の平均除去の回数（設定。1 はなし: 設計Q §7.7）。PlutoSDR の見積もり（timing_fn）も読む。"""
+        return int(self._pluto_cfg["tg_harmonic_avg"])
+
+    def _plutosdr_tg_estimates(self) -> Optional[dict]:
+        """選択肢ごとの1回の掃引の見積もり秒（{"1": s, "4": s, "8": s}）。PlutoSDR につないで TG のときだけ（ほかは
+        選べないので名前だけ出す。イメージ除去を持たない機器と同じ: 設計F §7.4）。"""
+        a = self._adopted
+        if not self._is_plutosdr() or Mode(a.mode) != Mode.TG:
+            return None
+        prof = self._profile
+        out = {}
+        for c in pl_driver.tg_harmonic_spec(prof)["choices"]:
+            try:
+                out[str(c)] = float(pl_driver.estimate_s(prof, a.axis, a.rbw_hz, Mode.TG, c))
+            except (ValueError, KeyError):
+                return None
+        return out
+
+    def _plutosdr_tg_used(self) -> Optional[int]:
+        """いま画面に出している掃引（ライブの最後の1回か、再生で出している1回）で使った TG 高調波の平均除去の回数。
+        PlutoSDR の TG の掃引でなければ None（PNG の条件の行に出す: 設計Q §7.7）。"""
+        pb = getattr(self, "_playback", None)
+        raw = getattr(pb, "shown_raw", None) if pb is not None else getattr(self, "_last_raw", None)
+        v = (getattr(raw, "extra", None) or {}).get("tg_harmonic_avg")
+        return int(v) if _is_number(v) else None
+
     def _plutosdr_state(self) -> dict:
         dev = self._device if self._is_plutosdr() else None
         prof = self._plutosdr_profile()
@@ -181,6 +215,12 @@ class PlutoSdrMixin:
             "agc": self._pluto_cfg["agc"],
             "tx_atten_db": self._plutosdr_atten_setting(),
             "tx_atten_range": {"min": float(rng["min"]), "max": float(rng["max"]), "step": float(rng["step"])},
+            # TG 高調波の平均除去（設計Q §7.7）: 回数（1 はなし）・選べる回数・選択肢ごとの見積もり秒（TG でなければ None）・
+            # いま出している掃引で使った回数（PlutoSDR の TG の掃引でなければ None）
+            "tg_harmonic_avg": self._plutosdr_tg_count(),
+            "tg_harmonic_choices": list(pl_driver.tg_harmonic_spec(prof)["choices"]),
+            "tg_harmonic_estimates": self._plutosdr_tg_estimates(),
+            "tg_harmonic_used": self._plutosdr_tg_used(),
             "connected": dev is not None,
             "gain_limits_db": limits,
             # いまの条件で使う利得（設定が範囲の外なら範囲に収めた値: 機器の帯で範囲が変わる）
@@ -217,6 +257,7 @@ class PlutoSdrMixin:
             self._pluto_gain_sent = self._plutosdr_gain_setting()
             dev.set_gain(self._pluto_gain_sent)
             dev.set_tx_atten(self._plutosdr_atten_setting())
+            dev.set_tg_harmonic_avg(self._plutosdr_tg_count())
         except Exception as e:  # noqa: BLE001 — 入れられなくても測れるので知らせて続ける
             self._notice("plutosdr_setting_failed", {"message": str(e)})
         dev.fixed_center_fn = self._rtlsdr_fixed_center
@@ -231,8 +272,9 @@ class PlutoSdrMixin:
     # ------------------------------------------------------------------ 命令
 
     def _cmd_plutosdr_set(self, dll_folder=_UNSET, uri=_UNSET, gain_db=_UNSET, agc=_UNSET,
-                          tx_atten_db=_UNSET) -> dict:
-        """libiio の DLL のフォルダ・URI・受信の利得（手動の dB か自動）・送信の減衰を変え、設定に残す（設計Q §7）。"""
+                          tx_atten_db=_UNSET, tg_harmonic_avg=_UNSET) -> dict:
+        """libiio の DLL のフォルダ・URI・受信の利得（手動の dB か自動）・送信の減衰・TG 高調波の平均除去の回数を変え、
+        設定に残す（設計Q §7・§7.7）。"""
         if dll_folder is not _UNSET and dll_folder is not None and not isinstance(dll_folder, str):
             raise CommandError("bad_value", "dll_folder")
         if uri is not _UNSET:
@@ -253,6 +295,10 @@ class PlutoSdrMixin:
             lo, hi = float(rng["min"]), float(rng["max"])
             if not _is_number(tx_atten_db) or not lo <= tx_atten_db <= hi:
                 raise CommandError("bad_value", "tx_atten_db", {"min": lo, "max": hi})
+        if tg_harmonic_avg is not _UNSET:
+            choices = pl_driver.tg_harmonic_spec(self._plutosdr_profile())["choices"]
+            if isinstance(tg_harmonic_avg, bool) or not isinstance(tg_harmonic_avg, int) or tg_harmonic_avg not in choices:
+                raise CommandError("bad_value", "tg_harmonic_avg", {"choices": list(choices)})
         if dll_folder is not _UNSET:
             self._pluto_cfg["dll_folder"] = dll_folder or None
             self._plutosdr_find_dll()
@@ -278,9 +324,27 @@ class PlutoSdrMixin:
                 if changed and self._adopted.mode in (Mode.SG, Mode.TG):
                     # 出力のレベルが変わると受ける値の意味が変わる（設計F §5.3 と同じ扱い）
                     self._rtlsdr_changed_meaning("tx_atten")
+        if tg_harmonic_avg is not _UNSET:
+            # 回数を変えても値の意味（基準との比）は変わらず、揺れ方が変わるだけなので蓄積は捨てない（基準も当てる:
+            # 設計Q §7.7）。測っている途中の1回は前の回数のまま、次の掃引から効く
+            self._pluto_cfg["tg_harmonic_avg"] = int(tg_harmonic_avg)
+            if self._is_plutosdr():
+                self._device.set_tg_harmonic_avg(int(tg_harmonic_avg))
+                self._plutosdr_reestimate()
         self._plutosdr_save_settings()
         self._changed()
         return {"plutosdr": self._plutosdr_state()}
+
+    def _plutosdr_reestimate(self) -> None:
+        """TG 高調波の平均除去の回数を変えた: いまの条件の1回の見積もり（掃引時間の見積もりの欄・進み具合）を出し直す。
+        機器へ送る条件は変わらないので、掃引はやり直さない。"""
+        a = self._adopted
+        try:
+            est = float(self._timing_fn(a.axis, a.rbw_hz, a.mode))
+        except (ValueError, KeyError, TypeError):
+            return
+        self._adopted = dataclasses.replace(a, estimated_sweep_s=est)
+        self._last_estimate = est
 
     def _plutosdr_apply_gain(self) -> None:
         if not self._is_plutosdr():

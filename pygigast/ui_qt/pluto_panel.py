@@ -4,7 +4,9 @@
   刻みのどの値も打てる。一覧は自動と 10dB 刻み）・「利得を合わせる」・単位。
   設定の利得がいまの範囲で使えないときは、使う値を利得の欄の下に注意の色で出す（U-25）。受信の利得の補正の表が
   無いときは、利得の欄の下に「利得の補正なし」の印（理由はツールチップ: 設計Q §7.6）
-- 送信（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル。0.25dB 刻み）と、出力中の表示
+- 送信（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル。0.25dB 刻み）・TG 高調波の平均除去（設計Q §7.7。
+  選択肢の文字にいまの条件での1回の掃引の見積もり。幅は秒を 999.9 にした見本で決めた固定の幅: イメージ除去の欄と同じ）
+  と、出力中の表示
 - どちらも PlutoSDR に繋いでいるときだけ出す（設計J §4.5）。使えない操作は消さずに無効にして理由を出す（U-08）
 - 大きさと余白は sizes.py の決まり（J §4.11）。名前は欄の左（S-05）。欄に付くボタンは欄の列の下の行
 """
@@ -12,12 +14,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
+from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QPushButton
 
 from . import sizes, widget_sync
 from .fields import DbChoiceField, DbField
-from .screen_pluto import pluto_view
-from .tab_traces import set_enabled
+from .screen_pluto import pluto_view, tg_harmonic_width_samples
+from .tab_traces import SameWidth, set_enabled
 from .texts_pluto import PLUTO_LABELS as L
 
 if TYPE_CHECKING:
@@ -106,6 +108,11 @@ class PlutoTxPanel(QGroupBox):
         self.atten = _AttenField(L["tx_atten"], "dB", self._commit, big=False)
         self.atten.setToolTip(L["tx_atten_tip"])
         form.addRow(self.atten.name, self.atten)
+        self.tg_harmonic = QComboBox()
+        self.tg_harmonic.activated.connect(self._tg_harmonic_chosen)
+        self._tg_width = SameWidth([self.tg_harmonic], tg_harmonic_width_samples())
+        self._tg_value = None
+        form.addRow(L["tg_harmonic"], self.tg_harmonic)
         self.state = QLabel("")
         self.state.setObjectName("dim")
         form.addRow(self.state)
@@ -115,10 +122,22 @@ class PlutoTxPanel(QGroupBox):
     def _commit(self, v: float) -> None:
         self.win.call("plutosdr_set", field=self.atten, tx_atten_db=float(v))
 
+    def _tg_harmonic_chosen(self, i: int) -> None:
+        # 利用者が選んだときだけ届く（activated。状態を映すときは知らせを止めている: widget_sync）
+        code = self.tg_harmonic.itemData(i)
+        if code is None or int(code) == self._tg_value:
+            return
+        self.win.call("plutosdr_set", tg_harmonic_avg=int(code))
+
     def apply(self, st: dict) -> None:
         v = pluto_view(st)
         self.setVisible(v["shown"])
         self.atten.set_value(v["tx_atten_db"])
         set_enabled(self.atten, v["reason"], L["tx_atten_tip"])
+        tg = v["tg_harmonic"]
+        self._tg_value = tg["value"]
+        widget_sync.set_items(self.tg_harmonic, [(it["text"], it["code"]) for it in tg["items"]])
+        widget_sync.set_data(self.tg_harmonic, tg["value"])
+        set_enabled(self.tg_harmonic, tg["reason"], L["tg_harmonic_tip"])
         self.state.setText(v["tx_state"])
         self.state.setVisible(bool(v["tx_state"]))
