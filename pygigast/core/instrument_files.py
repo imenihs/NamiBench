@@ -112,6 +112,10 @@ class _RefJob:
     show_zero: bool = False
     # 基準の値（設計E §6.7）。None は指定なし（新しい基準は 0dB、上書き合成ではその基準の値のまま）
     value_db: Optional[float] = None
+    # 掃引の前に受信の利得を合わせている（PlutoSDR の S11 のオープン: 設計Q §7.8）。その間は掃引を渡さない
+    fitting: bool = False
+    # 合わせた利得（{"gain_db", "previous_gain_db", "was_auto"}）。オープンを測り終えた知らせにも入れる
+    fitted: Optional[dict] = None
 
 
 def _json_float(x) -> Optional[float]:
@@ -599,14 +603,20 @@ class FilesMixin:
             if standard == "short" and (self._s11_open is None or self._s11_open["kind"] != kind):
                 raise self._error("s11_open_missing", "standard")
         adopted = self._ref_adopted(kind, self._adopted)
+        fit = self._pluto_s11_open_needs_fit(mode, standard)
+        if fit:
+            self._pluto_s11_check_fit()  # ほかの「利得を合わせる」が動いていないこと
         task = self._new_task("reference_take", total=averages,
                               detail={"kind": kind, "mode": mode.value, "standard": standard})
         self._ref_job = _RefJob(task, adopted, averages, kind, name, standard, self._run, show_zero=show_zero,
-                                value_db=value_db)
+                                value_db=value_db, fitting=fit)
         self._device_standard(standard if mode == Mode.S11 else None)
         self._run = "reference"
         self._push_job()
         self._task_progress(task, 0, averages, 0.0)
+        if fit:
+            # PlutoSDR の S11 のオープンは、まず送信しながら受信の利得を合わせてから測る（設計Q §7.8 の決定②）
+            self._pluto_s11_start_fit(self._ref_job)
         self._changed()
         return {"task_id": task.task_id}
 
@@ -666,7 +676,8 @@ class FilesMixin:
                 self._s11_open = {"kind": job.kind, "frames": job.frames, "taken_at": now,
                                   "connected_at": self._connected_at, "axis": a.axis,
                                   "image_reject": a.image_reject_used, "rbw_hz": a.rbw_hz}
-                self._end_task(job.task, None, {"standard": "open", "next": "short", "kind": job.kind})
+                self._end_task(job.task, None, {"standard": "open", "next": "short", "kind": job.kind,
+                                                **({"gain_fitted": job.fitted} if job.fitted else {})})
                 self._changed()
                 return
             if mode == Mode.S11:

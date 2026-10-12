@@ -546,6 +546,25 @@ class LayoutPlutoTest(PlutoUiBase):
         found += problems(self.win, "主画面 PlutoSDR TG 高調波の平均除去")
         self.assertEqual(sorted(set(found)), [])
 
+    def test_s11_after_open(self):
+        # PlutoSDR の S11（設計Q §7.8）: オープンを測った後（範囲の欄・受信の利得・送信の減衰が理由付きで使えない形）
+        found = []
+        self.connect_pluto(single=False)
+        self.cmd("set_sweep", start_hz=400_000_000, stop_hz=402_000_000)
+        self.cmd("plutosdr_set", tx_atten_db=-10.0)
+        self.cmd("set_mode", mode="s11")
+        self.cmd("reference_take", standard="open", kind="fine")
+        self.wait(lambda: self.state()["normalization"]["s11_open"] is not None, timeout=20, what="オープン")
+        self.pump(0.4)
+        self.assertFalse(self.win.source_tab.pluto_tx.atten.isEnabled())
+        self.assertFalse(self.win.pluto_panel.gain.isEnabled())
+        for key in ("tab-trace", "tab-source"):
+            self.win.show_part(key)
+            self.pump(0.2)
+            found += problems(self.win, f"主画面 PlutoSDR S11 オープンの後 {key}")
+        self.assertTrue(self.win.source_tab.s11_state.isVisible())
+        self.assertEqual(sorted(set(found)), [])
+
 
 class LayoutPlutoWideTest(LayoutPlutoTest):
     size = (1920, 1080)

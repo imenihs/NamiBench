@@ -305,7 +305,7 @@ class SourceTab(QWidget):
         set_enabled(self.take_value, rv["reason"], rv["tip"])
         v = screen_s11.s11_view(st)
         set_enabled(self.s11_range, v["range_reason"], L["s11_range_tip"])
-        set_enabled(self.s11_open, v["open_reason"], L["s11_open_tip"])
+        set_enabled(self.s11_open, v["open_reason"], v["open_tip"])
         set_enabled(self.s11_short, v["short_reason"], v["short_tip"])
         # 次に押すボタンを強調する（1段ずつ: U-03 の形で示す）
         for b, step in ((self.s11_open, "open"), (self.s11_short, "short")):
@@ -316,6 +316,9 @@ class SourceTab(QWidget):
                 b.style().polish(b)
         self.s11_state.setText(v["state_text"])
         self.s11_state.setVisible(bool(v["state_text"]))
+        if v["range_fixed"] and self.s11_range.currentData() != v["range_fixed"]:
+            # FFT の機器（PlutoSDR）は範囲をいまの条件に決めている（欄は理由付きで使えない）
+            widget_sync.set_data(self.s11_range, v["range_fixed"])
         if v["open_kind"] != self._open_kind:
             # オープンを測ったら、範囲の欄はその範囲を出す（ショートは同じ範囲で測る）
             self._open_kind = v["open_kind"]

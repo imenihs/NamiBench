@@ -679,8 +679,9 @@
           <h3>{{ T('PLUTO_LABELS', 'tx_group') }}</h3>
           <div class="form">
             <label>{{ T('PLUTO_LABELS', 'tx_atten') }}</label>
-            <num-field data-field="tx_atten" :text="plutoAttenText" :note="notes.plutotx" @clear-note="clearNote('plutotx')" :disabled="!!plutoView.reason"
-                       :title="T('PLUTO_LABELS', 'tx_atten_tip')" @commit="setTxAtten($event)" @step="(e, d) => stepTxAtten(e, d)"></num-field>
+            <num-field data-field="tx_atten" :text="plutoAttenText" :note="notes.plutotx" @clear-note="clearNote('plutotx')" :disabled="!!plutoView.tx_atten_reason"
+                       :title="T('PLUTO_LABELS', 'tx_atten_tip') + (plutoView.tx_atten_reason ? ' — ' + plutoView.tx_atten_reason : '')"
+                       @commit="setTxAtten($event)" @step="(e, d) => stepTxAtten(e, d)"></num-field>
             <!-- TG 高調波の平均除去（設計Q §7.7）: 選択肢の文字（名前と、いまの条件での1回の掃引の見積もり）と使えない理由は
                  サーバーが作る（ui.pluto.tg_harmonic: Qt と同じ screen_pluto.tg_harmonic_view）。幅は秒を 999.9 にした見本で
                  決めた固定の幅（app.js の fitColumns の --col-tgharm） -->
@@ -757,7 +758,7 @@
           </div>
           <div class="row">
             <button data-act="s11_open" :class="{next: s11.next === 'open' && !s11.open_reason}" :disabled="!!s11.open_reason"
-                    @click="takeS11('open')" :title="W('s11_open_tip') + (s11.open_reason ? ' — ' + s11.open_reason : '')">{{ W('s11_open') }}</button>
+                    @click="takeS11('open')" :title="(s11.open_tip || W('s11_open_tip')) + (s11.open_reason ? ' — ' + s11.open_reason : '')">{{ W('s11_open') }}</button>
             <button data-act="s11_short" :class="{next: s11.next === 'short' && !s11.short_reason}" :disabled="!!s11.short_reason"
                     @click="takeS11('short')" :title="(s11.short_tip || '') + (s11.short_reason ? ' — ' + s11.short_reason : '')">{{ W('s11_short') }}</button>
           </div>

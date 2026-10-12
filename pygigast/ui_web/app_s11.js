@@ -164,6 +164,9 @@
           this.refSerial = serial;
           if (serial) this.loadRefs(); else this.refs = [];
         }
+        const fixed = ((st.ui || {}).s11 || {}).range_fixed || null;
+        // FFT の機器（PlutoSDR）は範囲をいまの条件に決めている（欄は理由付きで使えない: Qt と同じ）
+        if (fixed && this.s11Range !== fixed) this.s11Range = fixed;
         const kind = ((st.ui || {}).s11 || {}).open_kind || null;
         if (kind !== this.s11OpenKind) {
           this.s11OpenKind = kind;

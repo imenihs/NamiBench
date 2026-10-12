@@ -15,19 +15,23 @@ PLUTO_LABELS = {
     "fit_running": "利得を合わせています",
     "tx_group": "送信（PlutoSDR）",
     "tx_atten": "送信の減衰",
-    "tx_atten_tip": "SG・TG の出力のレベル（0dB がいちばん大きい。0.25dB 刻み）。SG・TG の間に変えるとトレースの蓄積を捨てます",
+    "tx_atten_tip": "SG・TG・S11 の出力のレベル（0dB がいちばん大きい。0.25dB 刻み）。SG・TG・S11 の間に変えるとトレースの"
+                   "蓄積を捨てます",
     "not_pluto": "PlutoSDR に繋ぐと使えます",
     # TG 高調波の平均除去（設計Q §7.7。名前はユーザー指定）
     "tg_harmonic": "TG 高調波の平均除去",
     "tg_harmonic_tip": "1000MHz より下の位置で、送信と受信の局部発振器を合わせ直して読むのを回数分くり返し、電力を平均します"
                        "（送信の高調波で値が揺れるのを減らします。掃引の時間は延びます）。回数を変えてもトレースの蓄積と"
                        "基準はそのまま使います",
-    "tg_harmonic_not_tg": "TG のときだけ使います",
+    "tg_harmonic_not_tg": "TG・S11 のときだけ使います",
     # 受信の利得の補正（設計Q §7.6）
     "gain_cal_none": "利得の補正なし",
     "gain_cal_none_tip": "この PlutoSDR の受信の利得の補正がありません。利得を変えると、同じ信号の値が動きます"
                          "（校正の「PlutoSDR の利得の補正…」で測ります）",
     "gain_locked_reference": "TG で基準を使っている間は変えられません（基準と同じ利得で測ります）",
+    # S11 でオープンを測った時点から、基準を捨てるか S11 を出るまで（受信の利得と送信の減衰: 設計Q §7.8）
+    "s11_locked": "S11 でオープンを測ってから、基準を捨てるか S11 を出るまでは変えられません（オープン・ショートと同じ"
+                  "条件で測ります）",
     "calibrating": "利得の補正を測っています",
 }
 
@@ -43,10 +47,17 @@ PLUTO_ERRORS = {
     "plutosdr_not_connected": "PlutoSDR に繋がっていません",
     "reference_wide_fft": "この機器の基準はいまの条件で取ります（RBW が違う基準は当たらないため）",
     "plutosdr_gain_reference_in_use": "TG で基準を使っている間は受信の利得を変えられません（基準と同じ利得で測ります）",
+    "plutosdr_s11_conditions_locked": "S11 でオープンを測ってから、基準を捨てるか S11 を出るまでは受信の利得と送信の減衰を"
+                                      "変えられません（オープン・ショートと同じ条件で測ります）",
+    # 「オープンを測る」の前の利得合わせ（設計Q §7.8 の決定②）。合わせられなければオープンは測らない
+    "s11_open_fit_failed": "受信の利得を合わせられなかったので、オープンを測っていません",
+    "s11_open_overload": "いちばん小さい受信の利得でも振り切れるので、オープンを測っていません（送信の減衰で出力を"
+                         "下げてください）",
 }
 
 PLUTO_NOTICES = {
     "plutosdr_setting_failed": "PlutoSDR に利得・送信の減衰を入れられませんでした（測定は続けます）",
+    "s11_open_gain_fitted": "オープンを測る前に受信の利得を合わせました",
 }
 
 PLUTO_SETTINGS = {
@@ -60,6 +71,9 @@ PLUTO_SETTINGS = {
 TEMPLATES.update({
     "pluto_gain_used": "この範囲では {db} dB を使います",
     "pluto_tx_on": "出力中: {what}",
+    "s11_open_gain_fitted": "オープンを測る前に受信の利得を {gain} dB に合わせました（前は {before}）",
+    "ref_open_measured_fitted": "受信の利得を {gain} dB に合わせて（前は {before}）オープンを測りました。ショートを繋いで"
+                                "「ショートを測る」を押してください",
     "status_cal_pluto": "補正: PlutoSDR 未校正・単位 {unit}",
     "status_cal_pluto_gain": "補正: PlutoSDR 利得の補正 {at}・単位 {unit}",
 })

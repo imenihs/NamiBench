@@ -7,8 +7,11 @@
 - 校正の作業（校正の画面の「PlutoSDR の利得の補正」。全自動）: 機器の口（driver.gain_calibration）を別のスレッドで
   動かす。その間は機器スレッドに掃引を渡さない（掃引と口を取り合わない）。周波数を1つ測るたびに作業に列を足す。
   やめた・失敗した・切れたときも、それまでの列は残る（保存すれば、測っていない周波数は前の表のまま）
-- TG・S11 で基準を選んでいる間は、受信の利得を変えさせない（基準と違う利得で測ると比がずれる。表があっても補正の
+- TG で基準を選んでいる間は、受信の利得を変えさせない（基準と違う利得で測ると比がずれる。表があっても補正の
   誤差が比に乗る）。利得の欄・「利得を合わせる」・rtl_tcp の相手の利得の命令のどれも
+- S11 は、オープンを測り始めた時点から、基準を捨てるか S11 を出るまで、受信の利得と送信の減衰の両方を変えさせない
+  （設計Q §7.8 の決定①。オープン・ショート・被測定物の受けた電力が同じ物差しでないと |Γ| がその差だけずれる。送信の
+  減衰は基準にも測った値にも入っていない）。オープンを捨てる条件（S11 を出た・電源の入れ直し）で外れる
 """
 from __future__ import annotations
 
@@ -30,6 +33,8 @@ from .types import DeviceDisconnected, DeviceError, Mode, SweepDiscarded
 TASK_PLUTO_GAIN = "cal_pluto_gain"
 # 利得を変えさせない理由のコード（状態と命令の断りで同じ）
 GAIN_LOCK_REFERENCE = "plutosdr_gain_reference_in_use"
+# S11 でオープンを測った後（利得と送信の減衰の両方: 設計Q §7.8）
+S11_CONDITIONS_LOCK = "plutosdr_s11_conditions_locked"
 
 
 def _now_iso() -> str:
@@ -81,11 +86,28 @@ class PlutoGainCalMixin:
         return {"created_at": cal.created_at, "freqs": len(f), "range_hz": [f[0], f[-1]] if f else None}
 
     def _pluto_gain_lock(self) -> Optional[str]:
-        """受信の利得を変えさせない理由のコード（TG・S11 で基準を選んでいる間）。"""
+        """受信の利得を変えさせない理由のコード（TG で基準を選んでいる間・S11 の _pluto_s11_lock の間）。"""
         if not self._is_plutosdr():
             return None
-        if self._adopted.mode in (Mode.TG, Mode.S11) and getattr(self, "_ref", None) is not None:
+        if self._adopted.mode == Mode.S11:
+            return self._pluto_s11_lock()
+        if self._adopted.mode == Mode.TG and getattr(self, "_ref", None) is not None:
             return GAIN_LOCK_REFERENCE
+        return None
+
+    def _pluto_tx_atten_lock(self) -> Optional[str]:
+        """送信の減衰を変えさせない理由のコード（S11 の _pluto_s11_lock の間だけ。TG はいまのまま: 設計Q §7.8）。"""
+        if not self._is_plutosdr() or self._adopted.mode != Mode.S11:
+            return None
+        return self._pluto_s11_lock()
+
+    def _pluto_s11_lock(self) -> Optional[str]:
+        """S11 で、オープンを測っている（利得を合わせている間も）・測ったオープンがある・基準を選んでいる間（設計Q §7.8
+        の決定①）。オープンを捨てる（S11 を出た・電源の入れ直し: _s11_open_follow）・基準を捨てると外れる。"""
+        job = getattr(self, "_ref_job", None)
+        measuring = job is not None and job.adopted.mode == Mode.S11
+        if measuring or getattr(self, "_s11_open", None) is not None or getattr(self, "_ref", None) is not None:
+            return S11_CONDITIONS_LOCK
         return None
 
     def _pluto_check_gain_lock(self) -> None:

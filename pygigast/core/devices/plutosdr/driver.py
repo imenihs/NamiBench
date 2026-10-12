@@ -63,6 +63,10 @@ _EINVAL, _ERANGE = 22, 34
 _DEFAULT_GAIN = object()
 _RANGE_RE = re.compile(r"\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]")
 _SERIAL_RE = re.compile(r"serial=([0-9A-Za-z]+)")
+# 測れる測定。S11 は機器から見れば TG と同じ掃引（多トーン・方形の窓・TG 高調波の平均除去・見積もり: 設計Q §7.8。
+# GigaSt でも本体は S11 を信号源「tg」として扱う）。反射の比は本体が基準（オープン・ショート）から作る
+_MODES = (Mode.SA, Mode.SG, Mode.TG, Mode.S11)
+_TG_LIKE = (Mode.TG, Mode.S11)
 
 # 機器・通路の名前（AD9364 の IIO の名前）
 PHY = "ad9361-phy"
@@ -121,7 +125,7 @@ def estimate_s(profile: dict, axis: FreqAxis, rbw_hz: int, mode=None, tg_count: 
     p, pl = make_plan(profile, axis, rbw_hz)
     rate = min(float(p.fs), link)
     read_s = samples_per_position(p, profile) / rate
-    tg = mode is not None and Mode(mode) == Mode.TG
+    tg = mode is not None and Mode(mode) in _TG_LIKE
     total = 0.0
     for c in pl.centers:
         k = tg_reads_at(profile, c, tg_count) if tg else 1
@@ -416,6 +420,13 @@ class PlutoSdrDevice(Device):
     def tg_harmonic_avg(self) -> int:
         return int(self._tg_count)
 
+    def on_reference_standard(self, standard: Optional[str]) -> None:
+        """S11 の基準を取る間の標準器（設計E §6.5）。実機は何もしない（利用者が繋ぎ替える）。libiio の偽物
+        （fake.py）だけが set_standard を持ち、その標準器を繋いだことにする（試験で手順を通すため）。"""
+        hook = getattr(self._lib, "set_standard", None)
+        if hook is not None:
+            hook(standard)
+
     def _apply_pending_if_idle(self) -> None:
         if self._lock.acquire(blocking=False):
             try:
@@ -539,8 +550,8 @@ class PlutoSdrDevice(Device):
 
     def measure(self, sweep: AdoptedSweep, cancel: Optional[threading.Event] = None) -> RawSweep:
         mode = Mode(sweep.mode)
-        if mode not in (Mode.SA, Mode.SG, Mode.TG):
-            raise InvalidSweep(f"PlutoSDR はスペアナ・SG・TG だけ（{sweep.mode}）")
+        if mode not in _MODES:
+            raise InvalidSweep(f"PlutoSDR はスペアナ・SG・TG・S11 だけ（{sweep.mode}）")
         if _cancelled(cancel):
             raise SweepDiscarded("cancelled", {"sent": 0})
         with self._lock:
@@ -573,13 +584,13 @@ class PlutoSdrDevice(Device):
         self._gain_for_positions(pl.centers)
         if mode == Mode.SG:
             self._tx_tone(int(sweep.sg_hz))
-        elif mode == Mode.TG:
+        elif mode in _TG_LIKE:
             self._tx_multitone(p, int(pl.centers[0]))
         else:
             self._tx_off()
         # TG は方形の窓で読む: 多トーンは全部の格子にあり、Hann などでは隣の格子のトーンが漏れ込んで位相しだいで
         # 打ち消し合う（基準との比で消えない: 被測定物の位相で変わるため）。多トーンは N 標本で繰り返すので方形なら漏れない
-        win = spectrum.RECT if mode == Mode.TG else p.window
+        win = spectrum.RECT if mode in _TG_LIKE else p.window
         passband = spectrum.Passband.from_profile(self._profile)
         asm =spectrum.Assembler(axis.start_hz, p.grid, axis.points, p.half, p.delta, passband)
         full = float(self._profile["fft"].get("full_scale", 2048))
@@ -591,14 +602,14 @@ class PlutoSdrDevice(Device):
         retunes = 0
         repeated = 0
         sink = self.iq_sink
-        tg_count = self._tg_count if mode == Mode.TG else 1
+        tg_count = self._tg_count if mode in _TG_LIKE else 1
         self.report_progress(0, len(pl.centers))
         for i, c in enumerate(pl.centers):
             if i > 0 and _cancelled(cancel):
                 raise SweepDiscarded("cancelled", {"positions_done": i})
             if c != self._tuned_hz:
                 retunes += 1
-            if mode == Mode.TG and c != self._tx_tuned_hz:
+            if mode in _TG_LIKE and c != self._tx_tuned_hz:
                 # TG: 送信の LO を受信の LO に合わせる（多トーンは受信の使える幅に乗る）
                 self._txlo.set_attr("frequency", int(c))
                 self._tx_tuned_hz = c
@@ -656,7 +667,7 @@ class PlutoSdrDevice(Device):
             "tx_atten_db": None if self._tx_state is None else float(self._atten_text()),
             "flags": {"no_value": asm.no_value},
         }
-        if mode == Mode.TG:
+        if mode in _TG_LIKE:
             # TG 高調波の平均除去の回数（1 はなし）と、くり返して読んだ位置の数（設計Q §7.7。回数は記録にも残す）
             extra["tg_harmonic_avg"] = int(tg_count)
             extra["tg_harmonic_positions"] = repeated
@@ -817,15 +828,15 @@ class PlutoSdrDevice(Device):
     def fit_gain(self, sweep: AdoptedSweep, cancel: Optional[threading.Event] = None,
                  progress: Optional[Callable[[int, int], None]] = None) -> dict:
         mode = Mode(sweep.mode)
-        if mode not in (Mode.SA, Mode.SG, Mode.TG):
-            raise InvalidSweep(f"PlutoSDR はスペアナ・SG・TG だけ（{sweep.mode}）")
+        if mode not in _MODES:
+            raise InvalidSweep(f"PlutoSDR はスペアナ・SG・TG・S11 だけ（{sweep.mode}）")
         with self._lock:
             if self._ctx is None:
                 raise DeviceDisconnected("開いていない")
             # SG・TG は測るときと同じ送信を出して合わせる（2026-10-12 ユーザー決定）。押す前に送信が出ていなかった
             # （掃引を止めていた）なら、終わったら止める。出ていた（連続で測っている）なら出したまま次の掃引へ渡す
             was_on = self._tx_state is not None
-            sends = mode in (Mode.SG, Mode.TG)
+            sends = mode in (Mode.SG, *_TG_LIKE)
             try:
                 self._apply_pending()
                 return self._fit_gain_locked(sweep, mode, cancel, progress)
@@ -860,7 +871,7 @@ class PlutoSdrDevice(Device):
         centers = list(pl.centers)
         if mode == Mode.SG:
             self._tx_tone(int(sweep.sg_hz))
-        elif mode == Mode.TG:
+        elif mode in _TG_LIKE:
             self._tx_multitone(p, int(centers[0]))
         lo, hi = gain_limits(self._profile, centers)
         full = int(self._profile["fft"].get("full_scale", 2048))
@@ -888,7 +899,7 @@ class PlutoSdrDevice(Device):
             hit = False
             for j in range(len(centers)):
                 i = (hot + j) % len(centers)
-                if mode == Mode.TG and centers[i] != self._tx_tuned_hz:
+                if mode in _TG_LIKE and centers[i] != self._tx_tuned_hz:
                     self._txlo.set_attr("frequency", int(centers[i]))  # 測るときと同じく受信の LO に合わせる
                     self._tx_tuned_hz = centers[i]
                 a = self._read_position(centers[i], p, FIT_SAMPLES)
