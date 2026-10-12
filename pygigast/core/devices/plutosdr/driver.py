@@ -745,9 +745,13 @@ class PlutoSdrDevice(Device):
         with self._lock:
             if self._ctx is None:
                 raise DeviceDisconnected("開いていない")
+            # SG・TG は測るときと同じ送信を出して合わせる（2026-10-12 ユーザー決定）。押す前に送信が出ていなかった
+            # （掃引を止めていた）なら、終わったら止める。出ていた（連続で測っている）なら出したまま次の掃引へ渡す
+            was_on = self._tx_state is not None
+            sends = mode in (Mode.SG, Mode.TG)
             try:
                 self._apply_pending()
-                return self._fit_gain_locked(sweep, cancel, progress)
+                return self._fit_gain_locked(sweep, mode, cancel, progress)
             except IioError as e:
                 if self._is_value_error(e):
                     raise DeviceError(str(e)) from e
@@ -756,12 +760,31 @@ class PlutoSdrDevice(Device):
             finally:
                 if self._idle_wanted:
                     self._idle_locked()  # 合わせている間に掃引が止まった: 出していた送信を止める
+                elif sends and not was_on and self._ctx is not None:
+                    self._fit_tx_off()
 
-    def _fit_gain_locked(self, sweep: AdoptedSweep, cancel, progress) -> dict:
+    def _fit_tx_off(self) -> None:
+        """合わせるために出した送信を止める（途中で失敗して状態を残していなくても、書いたかもしれない送信を止める）。"""
+        try:
+            if self._tx_state is None:
+                self._tx_state = ("fit",)
+            self._tx_off()
+        except IioError as e:
+            if not self._is_value_error(e):
+                self._drop()
+
+    def _fit_gain_locked(self, sweep: AdoptedSweep, mode: Mode, cancel, progress) -> dict:
         """段は 1dB 刻みで多い（約 75 段）ので、上から1段ずつではなく二分探しで探す。振り切れは利得に対して単調
-        （利得を上げて振り切れが消えることは無い）とみなすので、選ぶ段は上から1段ずつ試すのと同じになる。"""
+        （利得を上げて振り切れが消えることは無い）とみなすので、選ぶ段は上から1段ずつ試すのと同じになる。
+
+        SG・TG は自分の送信を受けて振り切れを見る: 測るときと同じ決まった順で送信を始め（SG は SG の周波数の1本、
+        TG は多トーン）、TG は読む位置ごとに送信の LO を受信の LO へ合わせる。スペアナは送信に触らない。"""
         p, pl = make_plan(self._profile, sweep.axis, sweep.rbw_hz, self.fixed_center_hz)
         centers = list(pl.centers)
+        if mode == Mode.SG:
+            self._tx_tone(int(sweep.sg_hz))
+        elif mode == Mode.TG:
+            self._tx_multitone(p, int(centers[0]))
         lo, hi = gain_limits(self._profile, centers)
         full = int(self._profile["fft"].get("full_scale", 2048))
         before = (self._gain_setting, self._gain_applied, self._auto_applied)
@@ -788,6 +811,9 @@ class PlutoSdrDevice(Device):
             hit = False
             for j in range(len(centers)):
                 i = (hot + j) % len(centers)
+                if mode == Mode.TG and centers[i] != self._tx_tuned_hz:
+                    self._txlo.set_attr("frequency", int(centers[i]))  # 測るときと同じく受信の LO に合わせる
+                    self._tx_tuned_hz = centers[i]
                 a = self._read_position(centers[i], p, FIT_SAMPLES)
                 r = overload_ratio_i16(a, full)
                 worst = max(worst, r)
