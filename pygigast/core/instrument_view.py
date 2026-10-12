@@ -327,8 +327,10 @@ class ViewMixin:
         from .instrument_display import trace_settings
 
         a = self._adopted
+        # 外部 IQ の速さのために狭めている間は、利用者が求めた範囲を残す（RBW の好みと同じ: 設計C §5.1）
+        start, stop = a.range_request if a.range_request else (a.start_hz, a.stop_hz)
         return {
-            "sweep": {"mode": a.mode.value, "start_hz": a.start_hz, "stop_hz": a.stop_hz,
+            "sweep": {"mode": a.mode.value, "start_hz": start, "stop_hz": stop,
                       "rbw_preference_hz": a.rbw_preference_hz, "points_setting": a.points_setting,
                       "image_reject": a.image_reject, "sg_hz": a.sg_hz, "span_lock_hz": a.span_lock_hz},
             "traces": [trace_settings(t) for t in self._traces],

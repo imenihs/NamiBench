@@ -554,6 +554,22 @@ class TestRequestedValuesSurvive(ExtCase):
         self.assertIn(("start_hz", "span_sample_rate_restored"),
                       {(a["field"], a["reason"]) for n in notices for a in n["detail"]["adjustments"]})
 
+    def test_span_lock_during_stream_keeps_the_locked_span(self):
+        self.call("set_sweep", start_hz=100 * MHZ, stop_hz=5900 * MHZ)
+        c = self.streaming()
+        narrow = self.state()["sweep"]
+        self.call("set_sweep", span_lock=True)
+        c.send_json({"type": "stop"})
+        st = self.assert_stopped_everywhere()
+        self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"]), (narrow["start_hz"], narrow["stop_hz"]))
+        self.assertEqual(st["sweep"]["span_lock_hz"], narrow["stop_hz"] - narrow["start_hz"])
+
+    def test_preset_saved_during_stream_keeps_the_requested_range(self):
+        self.call("set_sweep", start_hz=100 * MHZ, stop_hz=5900 * MHZ)
+        self.streaming()
+        content = self.inst._preset_content()
+        self.assertEqual((content["sweep"]["start_hz"], content["sweep"]["stop_hz"]), (100 * MHZ, 5900 * MHZ))
+
     def test_undo_to_wide_span_during_stream(self):
         self.call("set_sweep", start_hz=100 * MHZ, stop_hz=5900 * MHZ)
         self.call("set_sweep", start_hz=1574 * MHZ, stop_hz=1577 * MHZ)

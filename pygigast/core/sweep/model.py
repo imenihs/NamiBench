@@ -270,7 +270,11 @@ class SweepModel:
             lock_hz = stop - start
 
         # 速さのために狭めた範囲の求め（range_request）は、範囲を触らない変更では引き継ぐ（RBW の好みと同じ: 設計C §5.1）
-        carry = current.range_request if not edited and (start, stop) == (current.start_hz, current.stop_hz) else None
+        # Span 固定を ON にしたときは、いま見えている（狭めた）範囲を固定したものとして求めを捨てる（固定 Span と範囲を食い違わせない:
+        # 設計C §5.12）
+        locked_now = lock_on and current.span_lock_hz is None
+        carry = (current.range_request if not edited and not locked_now
+                 and (start, stop) == (current.start_hz, current.stop_hz) else None)
         return self._finish(
             start=start, stop=stop, points_setting=points_setting,
             rbw_pref=rbw_pref, mode=mode, sg_hz=sg_hz, image_reject=image_reject,

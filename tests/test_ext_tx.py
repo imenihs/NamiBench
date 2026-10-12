@@ -456,6 +456,10 @@ class TestModelAtRate(unittest.TestCase):
         d = SweepModel(base, pd.timing_fn(base)).apply(
             SweepRequest(start_hz=100 * MHZ, stop_hz=6000 * MHZ, edited=("start_hz", "stop_hz")), model.default())
         self.assertIsNone(d.range_request)  # 元の速さでは狭めない
+        # Span 固定を ON にしたら、いま見えている（狭めた）範囲を固定したものとして求めを捨てる（設計C §5.12）
+        e = model.apply(SweepRequest(span_lock=True), a)
+        self.assertIsNone(e.range_request)
+        self.assertEqual(e.span_lock_hz, e.stop_hz - e.start_hz)
 
     def test_no_usable_rbw_rate_rejected(self):
         prof = pd.default_profile()
