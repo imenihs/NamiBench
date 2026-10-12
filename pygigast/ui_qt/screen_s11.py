@@ -172,20 +172,45 @@ def _common_reason(st: dict) -> Optional[str]:
     return texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
 
 
+def _is_fft(st: dict) -> bool:
+    return (st.get("connection") or {}).get("sweep_kind") == "fft"
+
+
+def _pluto_open_reason(st: dict) -> Optional[str]:
+    """PlutoSDR の「オープンを測る」は受信の利得を合わせてから測る（設計Q §7.8）ので、利得を合わせている・利得の補正を
+    測っている間は押せない。"""
+    from .texts_pluto import PLUTO_LABELS
+
+    pl = st.get("plutosdr") or {}
+    if not pl.get("connected"):
+        return None
+    if pl.get("fitting"):
+        return PLUTO_LABELS["fit_running"]
+    if pl.get("calibrating"):
+        return PLUTO_LABELS["calibrating"]
+    return None
+
+
 def s11_view(st: dict) -> dict:
     """信号源のタブの S11 の手順: ボタンの使えない理由・次に押すボタン・測ったオープンの文・ツールチップ。
 
     TG の「広く取る」「いまの条件で細かく取る」は S11 では使えない（基準はオープン・ショートの2段で取る）。
+    FFT の機器（PlutoSDR）は RBW が同じでないと基準が当たらないので、範囲はいまの条件だけ（range_fixed。欄は理由付きで
+    使えない: TG の「広く取る」と同じ）。PlutoSDR のオープンは受信の利得を合わせてから測る（設計Q §7.8。ツールチップで言う）。
     """
     from .texts_devices import hhmm
 
     o = (st.get("normalization") or {}).get("s11_open")
     common = _common_reason(st)
     open_kind = (o or {}).get("kind")
+    fft = _is_fft(st)
+    pluto = bool((st.get("plutosdr") or {}).get("connected"))
     return {
-        "open_reason": common,
+        "open_reason": common or _pluto_open_reason(st),
+        "open_tip": LABELS["s11_open_tip_pluto"] if pluto else LABELS["s11_open_tip"],
         "short_reason": common or (None if o else _r("s11_needs_open")),
-        "range_reason": common,
+        "range_reason": common or (texts.ERRORS["reference_wide_fft"] if fft else None),
+        "range_fixed": "fine" if fft else None,
         "next": "short" if o else "open",
         "state_text": tpl_label("s11_open_done", time=hhmm(o.get("taken_at")), range=_range_name(open_kind)) if o
         else "",
@@ -266,9 +291,11 @@ def s11_quick(st: dict) -> dict:
     o = (st.get("normalization") or {}).get("s11_open")
     step = "short" if o else "open"
     q = texts.S11_QUICK_LABELS
-    # 「広く」で取る（TG の「基準を取る」と同じ）。ショートはオープンと同じ範囲（コアが合わせる）
-    take = {"standard": step, "kind": None if o else "wide", "show_zero": step == "short"}
-    return {"label": q[step], "tip": q[step + "_tip"], "take": take,
+    # TG の「基準を取る」と同じ取り方: GigaSt は「広く」、FFT の機器（PlutoSDR）はいまの条件（RBW が違う基準は当たらない）。
+    # ショートはオープンと同じ範囲（コアが合わせる）
+    take = {"standard": step, "kind": None if o else ("fine" if _is_fft(st) else "wide"), "show_zero": step == "short"}
+    tip = q["open_tip_pluto"] if step == "open" and (st.get("plutosdr") or {}).get("connected") else q[step + "_tip"]
+    return {"label": q[step], "tip": tip, "take": take,
             "open_text": tpl("s11_open_quick", time=hhmm(o.get("taken_at"))) if o else ""}
 
 

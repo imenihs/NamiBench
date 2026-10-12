@@ -5,9 +5,11 @@
   自動と、範囲の中の 10dB 刻み（2026-10-11 ユーザー指摘「1dB 刻みの全部を並べた一覧は使いにくい」））・「利得を合わせる」・単位。
   設定の利得がいまの範囲で使えないとき（利得の範囲は LO の帯で変わる）は、使う値を利得の欄のそばに出す（U-25）。
   受信の利得の補正の表（設計Q §7.6）が無いときは、利得の欄のそばに「利得の補正なし」の印（理由はツールチップ）。
-  TG で基準を選んでいる間・利得の補正を測っている間は、利得の欄と「利得を合わせる」を理由付きで使えなくする（U-08）
-- 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル）と TG 高調波の平均除去（設計Q §7.7。選択肢の文字に、
-  いまの条件での1回の掃引の見積もりを出す: イメージ除去の選択と同じ形。TG のときだけ選べる）
+  TG で基準を選んでいる間・S11 でオープンを測ってから基準を捨てるか S11 を出るまで（設計Q §7.8）・利得の補正を測って
+  いる間は、利得の欄と「利得を合わせる」を理由付きで使えなくする（U-08）
+- 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG・S11 の出力のレベル。S11 は利得と同じ期間だけ使えない: 設計Q §7.8）と
+  TG 高調波の平均除去（設計Q §7.7。選択肢の文字に、いまの条件での1回の掃引の見積もりを出す: イメージ除去の選択と同じ形。
+  TG・S11 のときだけ選べる: S11 は機器から見れば TG と同じ掃引）
 - 欄は PlutoSDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）
 - 設定の画面の PlutoSDR のページ: 見つけた libiio.dll の場所（無い・32 ビット版なら注意の色で理由）と URI
 """
@@ -20,6 +22,15 @@ from .texts_pluto import PLUTO_LABELS, TG_HARMONIC_CHOICES
 
 # 受信の利得の一覧に並べる刻み（dB）。打てばいまの範囲の 1dB 刻みのどの値でも
 GAIN_CHOICE_STEP_DB = 10
+# 利得・送信の減衰を変えさせない理由のコード（コアの instrument_pluto_cal）→ 欄のツールチップに出す理由
+LOCK_REASONS = {
+    "plutosdr_gain_reference_in_use": "gain_locked_reference",
+    "plutosdr_s11_conditions_locked": "s11_locked",
+}
+
+
+def _lock_text(code):
+    return PLUTO_LABELS[LOCK_REASONS.get(code, "gain_locked_reference")] if code else None
 
 
 def _db(v: float) -> str:
@@ -37,7 +48,7 @@ def tg_harmonic_view(st: dict) -> dict:
     reason = None
     if not pl.get("connected"):
         reason = PLUTO_LABELS["not_pluto"]
-    elif (st.get("sweep") or {}).get("mode") != "tg":
+    elif (st.get("sweep") or {}).get("mode") not in ("tg", "s11"):
         reason = PLUTO_LABELS["tg_harmonic_not_tg"]
     return {"items": items, "value": int(pl.get("tg_harmonic_avg") or 1), "reason": reason}
 
@@ -66,7 +77,7 @@ def pluto_view(st: dict) -> dict:
     used_text = ""
     if connected and not agc and used is not None and setting is not None and float(used) != float(setting):
         used_text = texts.tpl("pluto_gain_used", db=_db(used))
-    gain_reason = reason or (PLUTO_LABELS["gain_locked_reference"] if pl.get("gain_lock") else None) \
+    gain_reason = reason or _lock_text(pl.get("gain_lock")) \
         or (PLUTO_LABELS["calibrating"] if pl.get("calibrating") else None)
     rng = pl.get("tx_atten_range") or {"min": -89.75, "max": 0.0, "step": 0.25}
     tx_on = pl.get("tx_on")
@@ -86,7 +97,7 @@ def pluto_view(st: dict) -> dict:
         "gain_base": float(base),
         "gain_setting": None if setting is None else float(setting),  # 同じ値を送り直さないための比べる元
         "gain_used_text": used_text,
-        # 利得の欄を使えない理由（つないでいない・TG で基準を使っている・利得の補正を測っている）
+        # 利得の欄を使えない理由（つないでいない・TG で基準を使っている・S11 でオープンを測った後・利得の補正を測っている）
         "gain_reason": gain_reason,
         # 受信の利得の補正の表が無いときの印（設計Q §7.6）と、その理由（ツールチップ）
         "gain_cal_mark": PLUTO_LABELS["gain_cal_none"] if connected and not pl.get("gain_correction") else "",
@@ -98,6 +109,8 @@ def pluto_view(st: dict) -> dict:
         "tx_atten_min": float(rng["min"]),
         "tx_atten_max": float(rng["max"]),
         "tx_atten_step": float(rng["step"]),
+        # 送信の減衰の欄を使えない理由（つないでいない・S11 でオープンを測った後: 設計Q §7.8）
+        "tx_atten_reason": reason or _lock_text(pl.get("tx_atten_lock")),
         "tx_state": texts.tpl("pluto_tx_on", what=tx_on.upper()) if tx_on else "",
         "tg_harmonic": tg_harmonic_view(st),
         # 設定の画面の libiio.dll の行（設計J §4.12 と同じ形）

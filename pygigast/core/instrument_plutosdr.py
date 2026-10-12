@@ -89,6 +89,9 @@ class PlutoSdrInstrumentDevice(Device):
     def on_idle(self) -> None:
         self.inner.on_idle()
 
+    def on_reference_standard(self, standard: Optional[str]) -> None:
+        self.inner.on_reference_standard(standard)
+
     def close(self) -> None:
         self.inner.iq_sink = None
         self.inner.close()
@@ -172,16 +175,17 @@ class PlutoSdrMixin:
         return int(self._pluto_cfg["tg_harmonic_avg"])
 
     def _plutosdr_tg_estimates(self) -> Optional[dict]:
-        """選択肢ごとの1回の掃引の見積もり秒（{"1": s, "4": s, "8": s}）。PlutoSDR につないで TG のときだけ（ほかは
-        選べないので名前だけ出す。イメージ除去を持たない機器と同じ: 設計F §7.4）。"""
+        """選択肢ごとの1回の掃引の見積もり秒（{"1": s, "4": s, "8": s}）。PlutoSDR につないで TG・S11 のときだけ（S11 は
+        機器から見れば TG と同じ掃引: 設計Q §7.8。ほかは選べないので名前だけ出す。イメージ除去を持たない機器と同じ:
+        設計F §7.4）。"""
         a = self._adopted
-        if not self._is_plutosdr() or Mode(a.mode) != Mode.TG:
+        if not self._is_plutosdr() or Mode(a.mode) not in (Mode.TG, Mode.S11):
             return None
         prof = self._profile
         out = {}
         for c in pl_driver.tg_harmonic_spec(prof)["choices"]:
             try:
-                out[str(c)] = float(pl_driver.estimate_s(prof, a.axis, a.rbw_hz, Mode.TG, c))
+                out[str(c)] = float(pl_driver.estimate_s(prof, a.axis, a.rbw_hz, a.mode, c))
             except (ValueError, KeyError):
                 return None
         return out
@@ -231,8 +235,11 @@ class PlutoSdrMixin:
             "fitting": any(t.kind == "plutosdr_fit_gain" for t in getattr(self, "_tasks", {}).values()),
             # 受信の利得の補正の表（設計Q §7.6。無ければ None: 画面は利得の欄のそばに「利得の補正なし」）
             "gain_correction": self._pluto_gain_state(),
-            # 受信の利得を変えさせない理由のコード（TG・S11 で基準を選んでいる間: 設計Q §7.6）
+            # 受信の利得を変えさせない理由のコード（TG・S11 で基準を選んでいる間: 設計Q §7.6。S11 はオープンを測った
+            # 時点から: 設計Q §7.8）
             "gain_lock": self._pluto_gain_lock() if dev is not None else None,
+            # 送信の減衰を変えさせない理由のコード（S11 でオープンを測った時点から、基準を捨てるか S11 を出るまで: 設計Q §7.8）
+            "tx_atten_lock": self._pluto_tx_atten_lock() if dev is not None else None,
             "calibrating": isinstance(getattr(self, "_cal_job", None), _PlutoCalJob),
             "tx_on": None if dev is None else dev.tx_on,
             "fw_version": None if dev is None else dev.fw_version,
@@ -295,6 +302,10 @@ class PlutoSdrMixin:
             lo, hi = float(rng["min"]), float(rng["max"])
             if not _is_number(tx_atten_db) or not lo <= tx_atten_db <= hi:
                 raise CommandError("bad_value", "tx_atten_db", {"min": lo, "max": hi})
+            step = float(self._plutosdr_profile()["source"]["tx_atten_db"]["step"] or 0.25)
+            why = self._pluto_tx_atten_lock()  # S11 のオープン・ショート・被測定物は同じ出力で測る（設計Q §7.8）
+            if why is not None and round(round(float(tx_atten_db) / step) * step, 2) != self._plutosdr_atten_setting():
+                raise CommandError(why, "tx_atten_db")
         if tg_harmonic_avg is not _UNSET:
             choices = pl_driver.tg_harmonic_spec(self._plutosdr_profile())["choices"]
             if isinstance(tg_harmonic_avg, bool) or not isinstance(tg_harmonic_avg, int) or tg_harmonic_avg not in choices:
@@ -321,7 +332,7 @@ class PlutoSdrMixin:
             self._pluto_cfg["tx_atten_db"] = v
             if self._is_plutosdr():
                 self._device.set_tx_atten(v)
-                if changed and self._adopted.mode in (Mode.SG, Mode.TG):
+                if changed and self._adopted.mode in (Mode.SG, Mode.TG, Mode.S11):
                     # 出力のレベルが変わると受ける値の意味が変わる（設計F §5.3 と同じ扱い）
                     self._rtlsdr_changed_meaning("tx_atten")
         if tg_harmonic_avg is not _UNSET:
@@ -365,16 +376,22 @@ class PlutoSdrMixin:
         if isinstance(getattr(self, "_cal_job", None), _PlutoCalJob):
             raise CommandError("calibration_in_progress")
 
-        def done(res: dict) -> None:
-            self._pluto_cfg["gain_db"] = float(res["gain_db"])
-            self._pluto_cfg["agc"] = False
-            self._plutosdr_save_settings()
-            dev.set_gain(float(res["gain_db"]))
-            self._pluto_gain_sent = float(res["gain_db"])
+        return self._sdr_start_fit_gain("plutosdr_fit_gain", dev, self._plutosdr_take_fit,
+                                        self._plutosdr_fit_steps(self._adopted))
 
-        lo, hi = dev.gain_limits_for(self._adopted)
-        total = max(1, int(np.ceil(np.log2(hi - lo + 2))) + 1)
-        return self._sdr_start_fit_gain("plutosdr_fit_gain", dev, done, total)
+    def _plutosdr_fit_steps(self, sweep) -> int:
+        """「利得を合わせる」の段の数（二分探しで試す回数の上限。進み具合の全体）。"""
+        lo, hi = self._device.gain_limits_for(sweep)
+        return max(1, int(np.ceil(np.log2(hi - lo + 2))) + 1)
+
+    def _plutosdr_take_fit(self, res: dict) -> None:
+        """合わせた利得を手動の値として設定に残し、機器へ入れる（自動だったら手動へ移す）。"""
+        dev = self._device
+        self._pluto_cfg["gain_db"] = float(res["gain_db"])
+        self._pluto_cfg["agc"] = False
+        self._plutosdr_save_settings()
+        dev.set_gain(float(res["gain_db"]))
+        self._pluto_gain_sent = float(res["gain_db"])
 
     # ------------------------------------------------------------------ rtl_tcp
 

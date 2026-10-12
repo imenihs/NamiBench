@@ -4,7 +4,7 @@
   "model": "plutosdr-ad9364",
   "display_name": "PlutoSDR",
   "value_kind": "real",
-  "measurements": ["sa", "tg", "sg"],
+  "measurements": ["sa", "tg", "s11", "sg"],
   "sweep_kind": "fft",
   "freq": {
     "unit_hz": 1,

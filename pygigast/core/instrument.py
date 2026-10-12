@@ -42,6 +42,7 @@ from .instrument_progress import ProgressReporter, SweepProgressMixin
 from .instrument_waterfall import WaterfallMixin
 from .instrument_plutosdr import PlutoSdrMixin
 from .instrument_pluto_cal import PlutoGainCalMixin
+from .instrument_pluto_s11 import PlutoS11Mixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_step import RUN_STATE as STEP_RUN_STATE, StepSweepMixin
@@ -193,7 +194,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
-                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, PlutoGainCalMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
+                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, PlutoGainCalMixin, PlutoS11Mixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
                  SweepProgressMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
@@ -562,7 +563,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         if job is not None:
             # 基準を取っている間は、いまの条件とは別の条件で決めた回数だけ測る（設計E §6.2）
             count = max(0, job.count - len(job.frames))
-            wanted = self._conn == "connected" and count > 0
+            # 掃引の前に利得を合わせている間（PlutoSDR の S11 のオープン: 設計Q §7.8）は渡さない
+            wanted = self._conn == "connected" and count > 0 and not job.fitting
             self._worker.set_job(self._gen, job.adopted if wanted else None, count)
             return
         wanted = self._run in ("continuous", "single") and self._conn == "connected"

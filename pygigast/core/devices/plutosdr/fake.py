@@ -15,6 +15,12 @@ TG の高調波の戻り（設計Q §7.7 の解く問題）: relock_ripple に�
 LO が relock_below_hz より下の間、送信を受信へ通すときに格子ごとに 1 + ε·e^{jφ} を掛ける。φ は格子ごとの無作為の位相で、
 LO の周波数を書くたびに（合わせ直すたびに）引き直す。実機の「合わせ直すたびに使う幅の中の特性が無作為に変わり、電力の
 平均で 1/√回数 に減る」形をまねたもの（ε 0.07 で 1回の読みの揺れ 約 0.45dB）。reads は読んだときの受信の LO の並び。
+
+S11 のブリッジ（設計Q §7.8 の試験用）: bridge=True にすると、送信の口から受信の口までを「方向性ブリッジ」とみなす。
+受信へ戻るのは、送信 × 損失 loss_db ×（被測定物の反射 Γ ＋ 方向性の漏れ）。漏れの大きさは directivity_db（反射に対する
+dB）、位相は周波数で回る（leak_delay_s）。Γ は繋いだ標準器で決まる: set_standard("open") +1・"short" −1・"load" 0、
+None（標準器を外した）は dut_gamma(周波数の配列) → 複素の反射（無ければオープンのまま: 何も繋いでいない口）。
+本体は S11 の基準を取る間 on_reference_standard で標準器を伝え、機器の口がここへ渡す（実機は何もしない）。
 """
 from __future__ import annotations
 
@@ -58,8 +64,16 @@ class FakePluto:
                  dut: Optional[Callable[[np.ndarray], np.ndarray]] = None,
                  gain_error: Optional[Callable[[float, float], float]] = None,
                  adc_noise_dbfs: Optional[float] = None, relock_ripple: Optional[float] = None,
-                 relock_below_hz: float = 1_000_000_000) -> None:
+                 relock_below_hz: float = 1_000_000_000, bridge: bool = False,
+                 dut_gamma: Optional[Callable[[np.ndarray], np.ndarray]] = None, directivity_db: float = 40.0,
+                 leak_delay_s: float = 1.3e-9) -> None:
         self.serial = serial
+        self.bridge = bool(bridge)
+        self.dut_gamma = dut_gamma  # 標準器を外したときに繋がっている被測定物の反射（周波数の配列 → 複素）
+        self.directivity_db = float(directivity_db)
+        self.leak_delay_s = float(leak_delay_s)
+        self.standard: Optional[str] = None  # いま繋いでいる標準器（open・short・load。None は被測定物）
+        self.standards: list[Optional[str]] = []  # 伝えられた標準器の並び（試験が見る）
         self.relock_ripple = relock_ripple
         self.relock_below_hz = float(relock_below_hz)
         self._ripple_phase: Optional[np.ndarray] = None  # いまの LO の組での格子ごとの位相（合わせ直すと引き直す）
@@ -134,6 +148,36 @@ class FakePluto:
         return [w for w in self.log if w[0].startswith("cf-ad9361-dds-core-lpc") or w[0] == "ad9361-phy/altvoltage1_out"
                 or w[0] == "ad9361-phy/voltage0_out"]
 
+    # ---- S11 のブリッジ ----
+    def set_standard(self, standard: Optional[str]) -> None:
+        self.standard = standard if standard in ("open", "short", "load") else None
+        self.standards.append(self.standard)
+
+    def gamma(self, freqs: np.ndarray) -> np.ndarray:
+        """いま繋いでいるものの反射（複素）。"""
+        f = np.asarray(freqs, dtype=np.float64)
+        one = np.ones(f.shape, dtype=np.complex128)
+        if self.standard == "open":
+            return one
+        if self.standard == "short":
+            return -one
+        if self.standard == "load":
+            return 0 * one
+        if self.dut_gamma is not None:
+            return one * np.asarray(self.dut_gamma(f), dtype=np.complex128)
+        return one
+
+    def _path(self, freqs: np.ndarray) -> Optional[np.ndarray]:
+        """送信から受信までの通り方（損失 loss_db を除く複素の比）。ブリッジなら反射＋漏れ、被測定物なら dut、
+        どちらも無ければ None（直結）。"""
+        f = np.asarray(freqs, dtype=np.float64)
+        if self.bridge:
+            leak = 10 ** (-self.directivity_db / 20.0) * np.exp(2j * np.pi * f * self.leak_delay_s)
+            return self.gamma(f) + leak
+        if self.dut is not None:
+            return np.asarray(self.dut(f))
+        return None
+
     # ---- 受信の標本 ----
     def rx_gain(self) -> float:
         mode = self.attrs[("ad9361-phy", "voltage0", False, "gain_control_mode")]
@@ -192,10 +236,11 @@ class FakePluto:
             m = x.size
             base = np.resize(x, n)
             h = self._relock_response(m, rx_lo, tx_lo)
-            if self.dut is not None or h is not None:
+            path = self._path(tx_lo + np.fft.fftfreq(m, 1.0 / self.fs))
+            if path is not None or h is not None:
                 spec = np.fft.fft(x)
-                if self.dut is not None:
-                    spec = spec * self.dut(tx_lo + np.fft.fftfreq(m, 1.0 / self.fs))
+                if path is not None:
+                    spec = spec * path
                 if h is not None:
                     spec = spec * h
                 base = np.resize(np.fft.ifft(spec), n)
@@ -208,8 +253,9 @@ class FakePluto:
         if abs(off) >= self.fs / 2:
             return np.zeros(n, dtype=np.complex128)
         a = k * s
-        if self.dut is not None:
-            a = a * float(np.abs(self.dut(np.array([tx_lo + f]))[0]))
+        path = self._path(np.array([tx_lo + f]))
+        if path is not None:
+            a = a * float(np.abs(path[0]))
         return a * np.exp(2j * np.pi * off * t)
 
 
@@ -326,6 +372,10 @@ class FakeIioLib:
             raise IioError("create_context_from_uri", 0, uri)
         self.opened.append(uri)
         return _Ctx(self.pluto, uri)
+
+    def set_standard(self, standard: Optional[str]) -> None:
+        """S11 の標準器を繋いだことにする（機器の口の on_reference_standard から。実機の libiio には無い口）。"""
+        self.pluto.set_standard(standard)
 
     def reachable(self, uri: str) -> bool:
         return not self.pluto.unplugged and uri in self.uris

@@ -1213,6 +1213,34 @@ class WebLayoutPlutoTest(unittest.TestCase):
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
+    def test_s11_after_open(self):
+        """PlutoSDR の S11（設計Q §7.8）: オープンを測った後（範囲の欄・受信の利得・送信の減衰が理由付きで使えない形。
+        Qt の LayoutPlutoTest と同じ場面）。"""
+        app = self.app
+        app.call("set_sweep", start_hz=400_000_000, stop_hz=402_000_000)
+        app.call("plutosdr_set", tx_atten_db=-10.0)
+        app.call("set_mode", mode="s11")
+        found: list[str] = []
+        try:
+            app.call("reference_take", standard="open", kind="fine")
+            end = time.monotonic() + 30
+            while app.call("get_state")["normalization"]["s11_open"] is None:
+                self.assertLess(time.monotonic(), end)
+                time.sleep(0.05)
+            for w, h in SIZES:
+                open_app(self.page, app, w, h)
+                self.assertTrue(self.page.ev("!!gsApp.plutoView.tx_atten_reason"))
+                for where, root in views(self.page, tabs_only=True):
+                    found += self.page.problems(root, f"{w}×{h} PlutoSDR S11 オープンの後 {where}")
+        finally:
+            # ほかの試験が見る形（SG・2.4GHz 帯）へ戻す（S11 を出るとオープンは捨てる）
+            app.call("set_mode", mode="sg", sg_hz=2_401_000_000)
+            app.call("plutosdr_set", gain_db=73.0)  # オープンの前に合わせた利得を、使う値の行が出る形へ戻す
+            app.call("set_sweep", start_hz=2_400_000_000, stop_hz=2_402_000_000)
+            app.call("set_mode", mode="sg", sg_hz=2_401_000_000)
+        self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
     def test_gain_calibration_pages(self):
         """校正の画面の PlutoSDR の利得の補正（設計Q §7.6）: 準備・測った後の測る・確かめると、受信の欄の「利得の補正なし」
         の印（Qt の LayoutPlutoGainTest と同じ手順）。"""

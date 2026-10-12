@@ -618,34 +618,42 @@ class RtlSdrMixin:
         previous = dev.gain_db
 
         def submit(progress, cancel):
-            fut: concurrent.futures.Future = concurrent.futures.Future()
-
-            def run() -> None:
-                t0 = time.monotonic()
-                try:
-                    fut.set_result(dev.fit_gain(sweep, cancel,
-                                                lambda d, t: progress(d, t, time.monotonic() - t0)))
-                except SweepDiscarded as e:
-                    # やめた（試す前の段に戻してある）は task_cancelled、それ以外は task_failed
-                    fut.set_exception(Cancelled() if e.reason == "cancelled" else e)
-                except BaseException as e:  # noqa: BLE001 — 終わりの知らせ（task_failed）にする
-                    fut.set_exception(e)
-
-            threading.Thread(target=run, name="pygigast-rtl-fit", daemon=True).start()
-            return fut
+            return self._sdr_fit_future(dev, sweep, cancel, progress)
 
         def then(res: dict) -> dict:
             on_done(res)
-            resets = self._traces.on_condition_change(ConditionChange.CALIBRATION)
-            self._diff_refresh()
-            self._rtlsdr_overload_key = None
-            # 前の段の掃引の「振り切れ」は古い。合わせた段で試した結果に置き換える（次の掃引で測り直す）
-            self._rtlsdr_overload_last = bool(res.get("overload"))
-            self._push_job()
-            return {**res, "previous_gain_db": previous,
-                    "traces_reset": sorted(resets), "codes": {str(k): v for k, v in resets.items()}}
+            return {**res, "previous_gain_db": previous, **self._sdr_fit_applied(res)}
 
         return self._start_task(kind, submit, then, total=total, detail={"gain_before_db": previous})
+
+    @staticmethod
+    def _sdr_fit_future(dev, sweep, cancel, progress) -> concurrent.futures.Future:
+        """機器の fit_gain を別のスレッドで動かす。progress(済んだ段, 全体, 経過秒)。やめた（試す前の段に戻してある）は
+        Cancelled、ほかの失敗はその例外で Future を終える。"""
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+
+        def run() -> None:
+            t0 = time.monotonic()
+            try:
+                fut.set_result(dev.fit_gain(sweep, cancel, lambda d, t: progress(d, t, time.monotonic() - t0)))
+            except SweepDiscarded as e:
+                fut.set_exception(Cancelled() if e.reason == "cancelled" else e)
+            except BaseException as e:  # noqa: BLE001 — 終わりの知らせ（task_failed）にする
+                fut.set_exception(e)
+
+        threading.Thread(target=run, name="pygigast-rtl-fit", daemon=True).start()
+        return fut
+
+    def _sdr_fit_applied(self, res: dict) -> dict:
+        """合わせた段を設定へ入れた後: トレースの蓄積を捨て、振り切れの表示を試した結果にし、次の掃引を渡す。
+        戻り値は終わりの知らせに足す、捨てたトレース。"""
+        resets = self._traces.on_condition_change(ConditionChange.CALIBRATION)
+        self._diff_refresh()
+        self._rtlsdr_overload_key = None
+        # 前の段の掃引の「振り切れ」は古い。合わせた段で試した結果に置き換える（次の掃引で測り直す）
+        self._rtlsdr_overload_last = bool(res.get("overload"))
+        self._push_job()
+        return {"traces_reset": sorted(resets), "codes": {str(k): v for k, v in resets.items()}}
 
     def _rtlsdr_set_ppm(self, ppm: int, source: dict) -> None:
         dev = self._rtlsdr_device()

@@ -133,7 +133,7 @@ class PlutoTxPanel(QGroupBox):
         v = pluto_view(st)
         self.setVisible(v["shown"])
         self.atten.set_value(v["tx_atten_db"])
-        set_enabled(self.atten, v["reason"], L["tx_atten_tip"])
+        set_enabled(self.atten, v["tx_atten_reason"], L["tx_atten_tip"])  # S11 のオープンの後も（設計Q §7.8）
         tg = v["tg_harmonic"]
         self._tg_value = tg["value"]
         widget_sync.set_items(self.tg_harmonic, [(it["text"], it["code"]) for it in tg["items"]])

@@ -358,6 +358,12 @@ def notice_text(n: dict) -> str:
         r = S11_OPEN_DISCARD_REASONS.get(d.get("reason"), d.get("reason") or "")
         if r:
             text += tpl("paren", text=r)
+    elif code == "s11_open_gain_fitted" and d.get("gain_db") is not None:
+        # 選んだ利得と前の利得（自動だったら自動）を言う（設計Q §7.8: 黙って設定を変えない）
+        text = tpl("s11_open_gain_fitted", gain=f"{float(d['gain_db']):g}",
+                   before=fit_before_text(d.get("previous_gain_db"), d.get("was_auto")))
+        if d.get("traces_reset"):
+            text += tpl("rtl_fit_reset", traces="・".join(str(x) for x in d["traces_reset"]))
     return text
 
 
@@ -738,6 +744,8 @@ def task_label(t: dict) -> str:
     std = (t.get("detail") or {}).get("standard") if kind == "reference_take" else None
     if std in S11_TASK_NAMES:
         text = S11_TASK_NAMES[std]  # S11 のオープン・ショート（設計E §6.5）
+        if std == "open" and (t.get("detail") or {}).get("phase") == "fit_gain":
+            text = S11_TASK_NAMES["open_fit"]  # PlutoSDR はオープンの前に利得を合わせる（設計Q §7.8）
     if t.get("total"):
         text += tpl("task_progress", done=t.get("done", 0), total=t["total"])
     text += tpl("task_elapsed", s=int(t.get("elapsed_s") or 0))
@@ -1021,6 +1029,11 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
         elif kind == "reference_take":
             text = TEMPLATES["ref_open_measured"] if res.get("next") == "short" else tpl("ref_taken",
                                                                                          name=res.get("name", ""))
+            fit = res.get("gain_fitted")
+            if fit and res.get("next") == "short":
+                # PlutoSDR はオープンの前に受信の利得を合わせた（設計Q §7.8: 選んだ利得を言う）
+                text = tpl("ref_open_measured_fitted", gain=f"{float(fit['gain_db']):g}",
+                           before=fit_before_text(fit.get("previous_gain_db"), fit.get("was_auto")))
             if res.get("ref_level") is not None:
                 # 0dB が見えるよう REF レベルを動かした（上段の「基準を取る」: 黙って変えない J §4）
                 text += tpl("ref_zero_shown", ref=f"{res['ref_level']:+g}".replace("-", "−"))
@@ -1035,6 +1048,13 @@ def task_end_text(code: str, d: dict) -> tuple[str, Optional[str]]:
     if kind in ("record_finish", "finish_unfinished"):
         text += TEMPLATES["work_file_kept"]
     return text, None
+
+
+def fit_before_text(before, was_auto) -> str:
+    """PlutoSDR のオープンの前に合わせる前の利得の文（自動だったら利得の欄の「自動」）。"""
+    from .texts_pluto import PLUTO_LABELS
+
+    return PLUTO_LABELS["auto"] if was_auto or before is None else f"{float(before):g} dB"
 
 
 def fit_gain_text(res: dict) -> str:
