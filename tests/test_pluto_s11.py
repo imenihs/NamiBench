@@ -400,6 +400,19 @@ class TestLocks(Case):
         self.assertIsNone(pl["tx_atten_lock"])
         self.call("plutosdr_set", tx_atten_db=-20.0)  # TG の送信の減衰は今までどおり変えられる
 
+    def test_tg_reference_does_not_lock_s11(self):
+        """TG の基準を選んだまま S11 にしても、S11 の基準は無いので固定しない。オープンの前に利得を合わせる。"""
+        self.s11(mode="tg")
+        self.call("reference_take", kind="fine")
+        self.assertEqual(self.task_end()["code"], "task_done")
+        self.assertIsNotNone(self.call("get_state")["normalization"]["selected"])
+        self.call("set_mode", mode="s11")
+        self.assert_free()
+        self.clear()
+        self.take("open")
+        self.assertEqual(len(self.notices("s11_open_gain_fitted")), 1)
+        self.assert_locked()
+
     def test_gigast_s11_has_no_lock_and_no_fit(self):
         self.call("connect", backend="simulator", serial="SIM00001")
         self.call("set_mode", mode="s11")

@@ -91,7 +91,7 @@ class PlutoGainCalMixin:
             return None
         if self._adopted.mode == Mode.S11:
             return self._pluto_s11_lock()
-        if self._adopted.mode == Mode.TG and getattr(self, "_ref", None) is not None:
+        if self._adopted.mode == Mode.TG and self._pluto_ref_of(Mode.TG):
             return GAIN_LOCK_REFERENCE
         return None
 
@@ -106,9 +106,15 @@ class PlutoGainCalMixin:
         の決定①）。オープンを捨てる（S11 を出た・電源の入れ直し: _s11_open_follow）・基準を捨てると外れる。"""
         job = getattr(self, "_ref_job", None)
         measuring = job is not None and job.adopted.mode == Mode.S11
-        if measuring or getattr(self, "_s11_open", None) is not None or getattr(self, "_ref", None) is not None:
+        if measuring or getattr(self, "_s11_open", None) is not None or self._pluto_ref_of(Mode.S11):
             return S11_CONDITIONS_LOCK
         return None
+
+    def _pluto_ref_of(self, mode: Mode) -> bool:
+        """選んでいる基準がそのモードのものか（モードを替えても基準は選んだまま残る。ほかのモードの基準は当たらないので
+        固定の理由にしない）。"""
+        ref = getattr(self, "_ref", None)
+        return ref is not None and getattr(ref, "mode", None) == mode
 
     def _pluto_check_gain_lock(self) -> None:
         why = self._pluto_gain_lock()
