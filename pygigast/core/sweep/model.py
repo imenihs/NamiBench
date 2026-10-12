@@ -269,11 +269,13 @@ class SweepModel:
             # その1回だけの命令（反対の結果のボタン）は固定 Span を変えない（設計C §5.11 の 3）
             lock_hz = stop - start
 
+        # 速さのために狭めた範囲の求め（range_request）は、範囲を触らない変更では引き継ぐ（RBW の好みと同じ: 設計C §5.1）
+        carry = current.range_request if not edited and (start, stop) == (current.start_hz, current.stop_hz) else None
         return self._finish(
             start=start, stop=stop, points_setting=points_setting,
             rbw_pref=rbw_pref, mode=mode, sg_hz=sg_hz, image_reject=image_reject,
             prev_rbw=current.rbw_hz, rbw_requested=request.rbw_preference_hz is not None, adj=adj,
-            span_lock_hz=lock_hz, alternative=alternative,
+            span_lock_hz=lock_hz, alternative=alternative, range_request=carry,
         )
 
     # ------------------------------------------------------------------ 点数・信号源
@@ -691,11 +693,13 @@ class SweepModel:
 
     def _finish(self, *, start, stop, points_setting, rbw_pref, mode, sg_hz, image_reject,
                 prev_rbw, rbw_requested, adj: _Adj, span_lock_hz: Optional[int] = None,
-                alternative: Optional[Alternative] = None) -> AdoptedSweep:
+                alternative: Optional[Alternative] = None,
+                range_request: Optional[tuple[int, int]] = None) -> AdoptedSweep:
         if self._kind == SWEEP_FFT:
             return self._finish_fft(
                 start=start, stop=stop, rbw_pref=rbw_pref, mode=mode, sg_hz=sg_hz, prev_rbw=prev_rbw,
                 rbw_requested=rbw_requested, adj=adj, span_lock_hz=span_lock_hz, alternative=alternative,
+                range_request=range_request,
             )
         span = stop - start
         step, points = self._step_points(span, points_setting, adj)
@@ -766,8 +770,12 @@ class SweepModel:
         return above[0] if above else max(r for r in same if r < pref)
 
     def _finish_fft(self, *, start, stop, rbw_pref, mode, sg_hz, prev_rbw, rbw_requested, adj: _Adj,
-                    span_lock_hz: Optional[int], alternative: Optional[Alternative]) -> AdoptedSweep:
-        start, stop = self._fft_rate_span(start, stop, adj)
+                    span_lock_hz: Optional[int], alternative: Optional[Alternative],
+                    range_request: Optional[tuple[int, int]]) -> AdoptedSweep:
+        narrowed = self._fft_rate_span(start, stop, adj)
+        if narrowed != (start, stop):
+            range_request = (start, stop)  # 求めた範囲を残し、速さが戻ったら採り直す（設計C §5.1・設計S §1 §3.2）
+        start, stop = narrowed
         span = stop - start
         # 点数が上限を超えるときは、同じ窓の RBW を1段ずつ広げて収める。好みは消さない（設計C §5.4 と同じ扱い）。
         # いまの標本化の速さで使えない RBW（外部 IQ の送信の間: 設計S §1 §3.2）は段に入れない
@@ -810,7 +818,7 @@ class SweepModel:
             span_lock_hz=span_lock_hz, alternative=alternative,
             rbw_usable_hz=usable, rbw_limit=None if len(usable) == len(rate_ok) else "points_max",
             rbw_rate_unusable_hz=tuple(sorted(self._rate_unusable)),
-            sample_rate_hz=self._fs,
+            sample_rate_hz=self._fs, range_request=range_request,
         )
 
     def _fft_rate_span(self, start: int, stop: int, adj: _Adj) -> tuple[int, int]:

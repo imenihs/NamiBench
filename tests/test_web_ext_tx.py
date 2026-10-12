@@ -13,7 +13,7 @@ from pygigast.core.devices.base import load_profile
 from pygigast.core.devices.plutosdr import driver as pd
 from pygigast.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import screen_exttx, screen_pluto
+from pygigast.ui_qt import screen_exttx, screen_pluto, texts
 from tests import test_web_server as wst
 from tests.exttx_helpers import RawClient, free_port
 from tests.test_web_server import UI_WEB, _Server
@@ -76,6 +76,26 @@ class WebExtTxTest(unittest.TestCase):
         self.assertNotEqual(self.post("set_mode", {"mode": "tg"})[0], 200)
         self.assertEqual(self.post("ext_tx_stop", {})[0], 200)
         self.assertEqual(self.client.wait_type("stopped")["reason"], "user")
+
+    def test_undo_during_stream_notes_rbw(self):
+        """元に戻すで積んだ RBW が外部 IQ の速さで使えないとき、Qt と同じ知らせ（RBW の欄）を返す（設計S §1 §3.2）。"""
+        port = free_port()
+        self.assertEqual(self.post("connect", {"backend": "plutosdr", "port": FAKE_URI})[0], 200)
+        self.post("set_sweep", {"start_hz": 1574 * MHZ, "stop_hz": 1577 * MHZ, "rbw_hz": 24000})
+        self.post("set_sweep", {"rbw_hz": 1500})
+        self.post("run", {"mode": "continuous"})
+        self.assertEqual(self.post("ext_tx_set", {"enabled": True, "port": port})[0], 200)
+        self.client = RawClient(port)
+        self.client.wait_type("welcome")
+        self.assertEqual(self.client.start()["type"], "ready")
+        self.client.feed()
+        self.client.wait_type("on")
+        code, r = self.post("undo", {})
+        self.assertEqual(code, 200)
+        notes = {a["field"]: a["text"] for a in r["texts"]["adjustments"]}
+        self.assertIn(texts.REASONS["rbw_sample_rate"], notes["rbw_hz"])
+        sw = self.state()["sweep"]
+        self.assertEqual((sw["rbw_hz"], sw["rbw_preference_hz"]), (12000, 24000))
 
     def test_page_has_same_parts_as_qt(self):
         html = (UI_WEB / "index.html").read_text(encoding="utf-8")

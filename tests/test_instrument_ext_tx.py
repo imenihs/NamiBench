@@ -475,6 +475,101 @@ class TestRtlTcp(ExtCase):
             s.close()
 
 
+
+class TestRequestedValuesSurvive(ExtCase):
+    """残しておいた条件を戻す道（元に戻す・やり直す）も掃引条件モデルを通り、いまの速さで使える条件になる。速さのために
+    変えた範囲・RBW は、求めた値を残して送信が終わったら戻る（設計C §5.1・設計S §1 §3.2）。"""
+
+    def sweeps_at(self, fs: int, rbw: int) -> None:
+        """いまの条件（速さ fs・RBW rbw）で掃引が続いている（invalid_sweep で止まっていない）。"""
+        end = time.monotonic() + 10
+        while True:
+            raw = self.inst._last_raw
+            if raw is not None and raw.extra.get("sample_rate_hz") == fs and raw.adopted.rbw_hz == rbw:
+                break
+            self.assertLess(time.monotonic(), end, f"{fs}Hz・RBW {rbw}Hz の掃引が来ない")
+            time.sleep(0.05)
+        st = self.state()
+        self.assertEqual(st["run"]["state"], "continuous")
+        self.assertFalse([p for k, p in self.events if k == "notice" and p["code"] == "invalid_sweep"])
+
+    def test_undo_during_stream_uses_rate(self):
+        self.call("set_sweep", rbw_hz=24000)
+        self.call("set_sweep", rbw_hz=1500)
+        self.streaming()
+        with self.cv:
+            self.events.clear()
+        r = self.call("undo")
+        sw = self.state()["sweep"]
+        self.assertEqual(sw["sample_rate_hz"], FS)
+        self.assertEqual(sw["rbw_preference_hz"], 24000)  # 求めた値は残る
+        self.assertEqual(sw["rbw_hz"], 12000)  # 2.6MS/s で使える近い RBW（同じ窓の下の段）
+        self.assertIn(sw["rbw_hz"], sw["rbw_usable_hz"])
+        self.assertNotIn(sw["rbw_hz"], sw["rbw_rate_unusable_hz"])
+        self.assertIn(("rbw_hz", "rbw_sample_rate"), {(a["field"], a["reason"]) for a in r["adjustments"]})
+        self.sweeps_at(FS, 12000)
+        # やり直す: 1500Hz に戻る（使える値は知らせない）
+        r = self.call("redo")
+        self.assertEqual(r["adjustments"], [])
+        self.assertEqual(self.state()["sweep"]["rbw_hz"], 1500)
+        self.call("undo")
+        self.call("ext_tx_stop")
+        st = self.assert_stopped_everywhere()
+        self.assertEqual(st["sweep"]["rbw_hz"], 24000)  # 送信が終わったら求めた RBW に戻る
+
+    def test_undo_after_stream_has_no_stale_rate(self):
+        c = self.streaming()
+        self.call("set_sweep", rbw_hz=3000)  # 2.6MS/s の条件を積む
+        c.send_json({"type": "stop"})
+        self.assert_stopped_everywhere()
+        with self.cv:
+            self.events.clear()
+        r = self.call("undo")
+        sw = self.state()["sweep"]
+        self.assertEqual(sw["sample_rate_hz"], BASE)
+        self.assertEqual(sw["rbw_rate_unusable_hz"], [])
+        self.assertEqual((sw["rbw_hz"], sw["rbw_preference_hz"]), (1500, 1500))
+        self.assertEqual(r["adjustments"], [])
+        self.sweeps_at(BASE, 1500)
+        self.call("redo")
+        self.assertEqual(self.state()["sweep"]["sample_rate_hz"], BASE)
+
+    def test_narrowed_span_comes_back(self):
+        self.call("set_sweep", start_hz=100 * MHZ, stop_hz=5900 * MHZ)
+        with self.cv:
+            self.events.clear()
+        c = self.streaming()
+        sw = self.state()["sweep"]
+        self.assertLess(sw["span_hz"], 5800 * MHZ)
+        self.assertEqual(sw["center_hz"], 3000 * MHZ)  # Center を守って狭める
+        notices = [p for k, p in self.events if k == "notice" and p["code"] == "ext_tx_rate_adjusted"]
+        self.assertIn("span_sample_rate", {a["reason"] for n in notices for a in n["detail"]["adjustments"]})
+        self.call("set_sweep", rbw_hz=3000)  # 範囲を触らない変更では、求めた範囲は残る
+        with self.cv:
+            self.events.clear()
+        c.send_json({"type": "stop"})
+        st = self.assert_stopped_everywhere()
+        self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"]), (100 * MHZ, 5900 * MHZ))
+        notices = [p for k, p in self.events if k == "notice" and p["code"] == "ext_tx_rate_adjusted"]
+        self.assertIn(("start_hz", "span_sample_rate_restored"),
+                      {(a["field"], a["reason"]) for n in notices for a in n["detail"]["adjustments"]})
+
+    def test_undo_to_wide_span_during_stream(self):
+        self.call("set_sweep", start_hz=100 * MHZ, stop_hz=5900 * MHZ)
+        self.call("set_sweep", start_hz=1574 * MHZ, stop_hz=1577 * MHZ)
+        c = self.streaming()
+        r = self.call("undo")
+        sw = self.state()["sweep"]
+        self.assertLess(sw["span_hz"], 5800 * MHZ)  # いまの速さで測れる幅
+        self.assertIn(("start_hz", "span_sample_rate"), {(a["field"], a["reason"]) for a in r["adjustments"]})
+        c.send_json({"type": "stop"})
+        st = self.assert_stopped_everywhere()
+        self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"]), (100 * MHZ, 5900 * MHZ))
+        self.call("undo")  # その前の条件へ
+        sw = self.state()["sweep"]
+        self.assertEqual((sw["start_hz"], sw["stop_hz"], sw["sample_rate_hz"]), (1574 * MHZ, 1577 * MHZ, BASE))
+
+
 if __name__ == "__main__":
     unittest.main()
 

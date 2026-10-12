@@ -6,6 +6,7 @@ import unittest
 from PySide6.QtCore import Qt
 
 from pygigast.core.units import format_freq
+from pygigast.ui_qt import texts
 from pygigast.ui_qt.texts_exttx import EXT_TX_LABELS
 from tests.exttx_helpers import LO, RawClient, free_port
 from tests.test_ui_qt_plutosdr import PlutoUiBase
@@ -25,9 +26,11 @@ class ExtUiBase(PlutoUiBase):
             self.client.close()
         super().tearDown()
 
-    def start_streaming(self):
+    def start_streaming(self, rbws=(48000,)):
         self.connect_pluto(single=False)
-        self.cmd("set_sweep", start_hz=1574 * MHZ, stop_hz=1577 * MHZ, rbw_hz=48000)
+        self.cmd("set_sweep", start_hz=1574 * MHZ, stop_hz=1577 * MHZ, rbw_hz=rbws[0])
+        for hz in rbws[1:]:
+            self.cmd("set_sweep", rbw_hz=hz)
         self.cmd("run", mode="continuous")
         self.cmd("ext_tx_set", enabled=True, port=self.port)
         self.client = RawClient(self.port)
@@ -93,6 +96,16 @@ class TestExtTxQt(ExtUiBase):
         self.pump(0.2)
         self.win.source_tab.pluto_tx.ext_stop.click()
         self.assertEqual(self.client.wait_type("stopped")["reason"], "user")
+
+    def test_undo_during_stream_notes_rbw(self):
+        """元に戻すで積んだ RBW（送信の前の 24kHz）が 2.6MS/s で使えないとき、使える RBW にして RBW の欄のそばで知らせる
+        （設計S §1 §3.2・設計C §5.14）。"""
+        self.start_streaming(rbws=(24000, 1500))
+        self.win._undo_redo("undo")
+        self.wait(lambda: self.state()["sweep"]["rbw_preference_hz"] == 24000, what="元に戻す")
+        self.pump(0.3)
+        self.assertEqual(self.win.rbw_combo.currentData(), 12000)
+        self.assertIn(texts.REASONS["rbw_sample_rate"], self.win.rbw_field.note.text())
 
     def test_settings_page(self):
         self.win._settings_dialog()

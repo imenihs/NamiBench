@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import threading
 import time
@@ -24,7 +25,7 @@ from .exttx import DEFAULT_PORT, FULL_SCALE, PROTOCOL, ExtIqServer
 from .instrument_common import CommandError
 from .sweep.model import SweepModel
 from .trace import ConditionChange
-from .types import DeviceDisconnected, DeviceError, Mode, SweepRequest
+from .types import Adjustment, DeviceDisconnected, DeviceError, Mode, SweepRequest
 
 _UNSET = object()
 _TX_MODES = (Mode.SG, Mode.TG, Mode.S11)
@@ -423,14 +424,24 @@ class ExtTxMixin:
         self._profile = prof
         self._timing_fn = self._timing_for(prof)
         self._model = SweepModel(prof, self._timing_fn)
-        # 範囲・RBW の好み・Span 固定は今のまま採り直す（使えない RBW は近い RBW にして欄のそばで知らせ、好みは残す:
-        # 設計C §5.14・§5.1。終わったら好みに戻る）
-        req = SweepRequest(start_hz=old.start_hz, stop_hz=old.stop_hz, edited=("start_hz", "stop_hz"),
+        # 求めた範囲・RBW の好み・Span 固定は今のまま採り直す（使えない RBW は近い RBW に、測れない幅は Center を守って
+        # 狭め、知らせる。求めた値は残す: 設計C §5.14・§5.1）。速さのために狭めた範囲は、狭める前の求め（range_request）を
+        # 採り直す（元の速さに戻ったら求めた範囲に戻る。RBW の好みと同じ）
+        start, stop = old.range_request or (old.start_hz, old.stop_hz)
+        req = SweepRequest(start_hz=start, stop_hz=stop, edited=("start_hz", "stop_hz"),
                            rbw_preference_hz=old.rbw_preference_hz, one_shot=True)
         try:
             new = self._model.apply(req, old)
         except (ValueError, TypeError):
-            new, _ = self._reapply_conditions(old)
+            new, _ = self._reapply_conditions(dataclasses.replace(old, start_hz=start, stop_hz=stop))
+        if old.range_request is not None and new.range_request is None and (new.start_hz, new.stop_hz) != (
+                old.start_hz, old.stop_hz):
+            # 狭めていた範囲が求めた範囲に戻ったことを一度だけ知らせる（欄の値が黙って変わらないように: RBW の
+            # rbw_restored と同じ扱い。設計C §5.14）
+            back = tuple(Adjustment(field=f, requested=a, adopted=b, reason="span_sample_rate_restored")
+                         for f, a, b in (("start_hz", old.start_hz, new.start_hz),
+                                         ("stop_hz", old.stop_hz, new.stop_hz)) if a != b)
+            new = dataclasses.replace(new, adjustments=new.adjustments + back)
         self._adopted = new
         self._last_estimate = new.estimated_sweep_s
         # 速さを変えると値の意味（帯域の形）が変わるので、蓄積を1回捨てて知らせる（受信の利得と同じ扱い: M-03）
