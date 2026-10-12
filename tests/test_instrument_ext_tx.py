@@ -477,3 +477,19 @@ class TestRtlTcp(ExtCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSettingsSurviveRestart(unittest.TestCase):
+    def test_ext_tx_settings_are_read_back_after_restart(self):
+        """受け付け・ポート・外部の送信の減衰は、設定を読み直しても残る（設計S §1。起動のたびに入れ直さない）。"""
+        import tempfile
+        from pathlib import Path
+
+        from pygigast.core.settings import Settings
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.json"
+            s = Settings(path)
+            s.set("ext_tx", {"enabled": True, "port": 1240, "atten_db": -20.0})
+            s.save()
+            self.assertEqual(Settings(path).get("ext_tx"), {"enabled": True, "port": 1240, "atten_db": -20.0})

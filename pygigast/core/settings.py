@@ -28,6 +28,8 @@ DEFAULTS: dict[str, Any] = {
     # TG 高調波の平均除去の回数（1 はなし: 設計Q §7.7）
     "plutosdr": {"dll_folder": None, "uri": "ip:192.168.2.1", "gain_db": None, "agc": False, "tx_atten_db": None,
                  "tg_harmonic_avg": 1},
+    # 外部 IQ 送信の口（設計S §1）: 受け付けるか・ポート・外部の送信の減衰（dB。None は最小の出力）
+    "ext_tx": {"enabled": False, "port": 1235, "atten_db": None},
     # 利用者が機器に付けた名前（設計J §4.7）。キーは "種類:シリアル番号"
     "device_names": {},
 }
