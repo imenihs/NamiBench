@@ -647,7 +647,7 @@ class WebLayoutTest(unittest.TestCase):
             seen.append(where)
             found += self.page.problems(root, f"{w}×{h} {where}")
         # 数えた画面が揃っていること（開けずに数えなければ何も守らない）。設計P の3つ（ウォーターフォール・密度・再生）を含む
-        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 9 + 6 + CAL_VIEWS, seen)  # 設定は 9 ページ（PlutoSDR を足した）
+        self.assertEqual(len(seen), len(TABS) + 3 + 2 + 10 + 6 + CAL_VIEWS, seen)  # 設定は 10 ページ（外部 IQ 送信を足した）
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
@@ -1239,6 +1239,41 @@ class WebLayoutPlutoTest(unittest.TestCase):
             app.call("set_sweep", start_hz=2_400_000_000, stop_hz=2_402_000_000)
             app.call("set_mode", mode="sg", sg_hz=2_401_000_000)
         self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
+    def test_ext_iq_streaming(self):
+        """外部 IQ の送信の間（設計S §1 §7。Qt の LayoutPlutoTest と同じ場面）: 状態バーの「外部 IQ 出力中」と［送信を止める］・
+        信号源のタブの外部の行・SG/TG/S11 と使えない RBW が理由付きで無効な形。最後に状態バーの［送信を止める］で止まる。"""
+        from tests.exttx_helpers import RawClient, free_port
+
+        app, page = self.app, self.page
+        app.call("set_mode", mode="sa")
+        app.call("set_sweep", start_hz=1_574_000_000, stop_hz=1_577_000_000, rbw_hz=48000)
+        app.call("run", mode="continuous")
+        port = free_port()
+        app.call("ext_tx_set", enabled=True, port=port)
+        c = RawClient(port)
+        found: list[str] = []
+        try:
+            c.wait_type("welcome")
+            self.assertEqual(c.start(name="GPS emulator")["type"], "ready")
+            c.feed()
+            c.wait_type("on")
+            for w, h in SIZES:
+                open_app(page, app, w, h)
+                page.wait("!!document.querySelector('[data-part=ext_tx]')", "外部の行")
+                self.assertTrue(page.ev("!!document.querySelector('[data-act=ext_stop_status]')"))
+                for where, root in views(page, tabs_only=True):
+                    found += page.problems(root, f"{w}×{h} 外部 IQ 出力中 {where}")
+            page.ev("document.querySelector('[data-act=ext_stop_status]').click(); 1")
+            self.assertEqual(c.wait_type("stopped")["reason"], "user")
+        finally:
+            c.close()
+            app.call("ext_tx_set", enabled=False)
+            app.call("run", mode="single")
+            app.call("set_sweep", start_hz=2_400_000_000, stop_hz=2_402_000_000, rbw_hz=1500)
+            app.call("set_mode", mode="sg", sg_hz=2_401_000_000)
+        self.assertEqual(page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
     def test_gain_calibration_pages(self):

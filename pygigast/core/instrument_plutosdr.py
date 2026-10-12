@@ -126,6 +126,8 @@ class PlutoSdrMixin:
             else tg_spec["default"],
         }
         self._pluto_decim: Optional[IqDecimator] = None
+        # 外部 IQ の送信で読む速さが変わり、rtl_tcp の相手の求める速さに整数で落とせない間は送らない（設計S §1 の P3）
+        self._pluto_rtl_paused = False
         self._pluto_gain_sent: Optional[float] = None
         self._plutosdr_find_dll()
         self._plutosdr_push_backend()
@@ -241,6 +243,7 @@ class PlutoSdrMixin:
             # 送信の減衰を変えさせない理由のコード（S11 でオープンを測った時点から、基準を捨てるか S11 を出るまで: 設計Q §7.8）
             "tx_atten_lock": self._pluto_tx_atten_lock() if dev is not None else None,
             "calibrating": isinstance(getattr(self, "_cal_job", None), _PlutoCalJob),
+            # 出している送信（"sg"・"tg"・外部 IQ の "ext"）
             "tx_on": None if dev is None else dev.tx_on,
             "fw_version": None if dev is None else dev.fw_version,
             # 中心を動かせないとき（rtl_tcp の相手: RTL-SDR と同じ扱い）
@@ -272,6 +275,7 @@ class PlutoSdrMixin:
         fs = int(dev.profile()["fft"]["sample_rate_hz"])
         want = self._rtl_requested.get("set_sample_rate", RTLTCP_DEFAULT_RATE)
         self._pluto_decim = IqDecimator(fs, want if factor_for(fs, int(want or 0)) else RTLTCP_DEFAULT_RATE)
+        self._pluto_rtl_paused = False
         self._rtlsdr_unit = None
         self._rtlsdr_overload_key = None
         self._rtlsdr_overload_last = False
@@ -400,10 +404,36 @@ class PlutoSdrMixin:
         lo, hi = self._device.gain_limits_for(self._adopted)
         return TUNER_UNKNOWN, int(hi - lo + 1)
 
+    def _plutosdr_rebuild_decim(self, fs: int) -> None:
+        """読む速さが変わった（外部 IQ の送信の始めと終わり: 設計S §1 の P3）: rtl_tcp の出口の間引き器を新しい速さで
+        作り直す。相手の求める速さに整数で落とせなければ「サンプリング速度を合わせられない」を知らせ、その間は送らない
+        （違う速さを黙って送らない）。元の速さ（接続したときの速さ）では今までと同じ（使える速さで送る）。"""
+        if not self._is_plutosdr():
+            return
+        want = int(self._rtl_requested.get("set_sample_rate", RTLTCP_DEFAULT_RATE) or 0)
+        base = self._ext_base_profile is None
+        if factor_for(fs, want):
+            self._pluto_decim = IqDecimator(fs, want)
+            self._pluto_rtl_paused = False
+        elif base:
+            self._pluto_decim = IqDecimator(fs, RTLTCP_DEFAULT_RATE)
+            self._pluto_rtl_paused = False
+        else:
+            self._pluto_decim = IqDecimator(fs, fs)
+            self._pluto_rtl_paused = True
+            s = self._rtl_server
+            if s is not None and s.running and s.client_count > 0:
+                self._notice("rtltcp_sample_rate_unsupported", {"requested": want, "used": None, "read_rate": fs,
+                                                                "paused": True})
+
     def _plutosdr_tcp_command(self, name: str, value) -> None:
         """相手のサンプリング速度・利得の命令（できるものは従う: 設計Q §6.7）。"""
         if name == "set_sample_rate":
             d = self._pluto_decim
+            if self._pluto_rtl_paused:
+                # 外部 IQ の送信で読む速さが変わって送っていない: 新しい求めに整数で落とせれば送り直す（P3）
+                self._plutosdr_rebuild_decim(int(self._profile["fft"]["sample_rate_hz"]))
+                return  # 落とせなければ作り直しが知らせた
             if d is not None and isinstance(value, int) and d.set_out_rate(value):
                 return
             fs = int(self._profile["fft"]["sample_rate_hz"])
@@ -450,8 +480,10 @@ class PlutoSdrMixin:
                 return  # 中心を動かす測定（継ぎ合わせ）の IQ は外へ出さない
             s = self._rtl_server
             d = self._pluto_decim
-            if s is None or not s.running or s.client_count == 0 or d is None:
+            if s is None or not s.running or s.client_count == 0 or d is None or self._pluto_rtl_paused:
                 return
+            if d.fs_in != fs:
+                return  # 速さを切り替えている途中の読み（間引き器は新しい速さで作り直す: P3）
             self.push_device_iq(d.process(iq), d.fs_out)
 
         return sink

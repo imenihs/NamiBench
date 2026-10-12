@@ -303,6 +303,7 @@ LISTEN_STOP_REASONS = {
     "marker_removed": "聞いていたマーカーを消したため",
     "device_lost": "機器が切れたため",
     "device_changed": "機器が変わったため",
+    "ext_tx": "外部 IQ の送信で読む速さが変わるため",
 }
 LISTEN_LABELS = {
     "group": "聞く",

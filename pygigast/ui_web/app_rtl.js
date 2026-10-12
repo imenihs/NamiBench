@@ -38,6 +38,8 @@
         return t;
       },
       rtltcpView() { return this.ui.rtltcp || {}; },
+      // 外部 IQ 送信の口（設計S §1。中身は screen_exttx.py: Qt の pluto_panel・settings_dialog・statusbar と同じ）
+      extView() { return this.ui.ext_tx || { tx: { shown: false }, settings: { enabled: false, port: 1235, text: "", error_text: "" } }; },
       // PlutoSDR の受信・送信の欄（設計Q §7。中身は screen_pluto.pluto_view: Qt の pluto_panel.py と同じ）
       plutoView() { return this.ui.pluto || { reason: "", gain_choices: [], gain_lo: null, gain_hi: null, auto_text: "" }; },
       // 利得の欄の値（自動のときは欄が「自動」を出し、↑↓・ホイールはこの値から送る）
@@ -99,7 +101,12 @@
       setTxAtten(text) {
         let v;
         try { v = GSUnits.parseDb(String(text).replace("dB", "")); } catch (e) { this.note("plutotx", X.w("bad_value")); return; }
-        this.cmd("plutosdr_set", { tx_atten_db: v }, { field: "plutotx" });
+        this.sendTxAtten(v);
+      },
+      // 外部 IQ の送信の間は外部の送信の減衰（SG・TG と別の値: 設計S §1 の O1。Qt の PlutoTxPanel と同じ）
+      sendTxAtten(v) {
+        if (this.plutoView.tx_atten_ext) this.cmd("ext_tx_atten", { atten_db: v }, { field: "plutotx" });
+        else this.cmd("plutosdr_set", { tx_atten_db: v }, { field: "plutotx" });
       },
       // 同じ回数は送り直さない（Qt の pluto_panel と同じ）
       setTgHarmonic(code) {
@@ -107,7 +114,7 @@
         if (n === this.tgHarmView.value) return;
         this.cmd("plutosdr_set", { tg_harmonic_avg: n }, { field: "plutotx" });
       },
-      stepTxAtten(exp, dir) { this.cmd("plutosdr_set", { tx_atten_db: (Number(this.plutoView.tx_atten_db) || 0) + dir * Math.pow(10, exp) }, { field: "plutotx" }); },
+      stepTxAtten(exp, dir) { this.sendTxAtten((Number(this.plutoView.tx_atten_db) || 0) + dir * Math.pow(10, exp)); },
       // ---- 聞く
       listenStart() {
         const why = this.listenStartReason;
@@ -139,6 +146,13 @@
       },
       // ---- アプリ設定の rtl_tcp のページ（O §1.3。変えたらすぐ効く。窓の形は app_windows.js）
       setRtltcp(args) { this.cmd("rtltcp_set", args, { field: "rtltcp" }); },
+      // ---- アプリ設定の「外部のアプリから送信」（設計S §1 §7。Qt の settings_dialog と同じ欄）
+      setExtTx(args) { this.cmd("ext_tx_set", args, { field: "ext_tx" }); },
+      setExtTxPort(text) {
+        const v = Number(String(text).trim());
+        if (!Number.isInteger(v)) { this.note("ext_tx", X.get("ERRORS", "not_integer")); return; }
+        this.setExtTx({ port: v });
+      },
       setRtltcpPort(text) {
         const v = Number(String(text).trim());
         if (!Number.isInteger(v)) { this.note("rtltcp", X.get("ERRORS", "not_integer")); return; }

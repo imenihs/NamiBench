@@ -2,7 +2,7 @@
 
 項目（ページ）: 接続（覚えた機器・COM 番号で繋ぐ）／配色（J §4.4）／通知（比の表示に変わったら窓で知らせるか:
 J §4.10）／キー操作（J §4.6）／保存（既定の保存先・PNG の大きさと配色: 設計I）／ブラウザから使う（設計A §4.3.2）／
-rtl_tcp の送出（設計Q §4.3・§6.7）／RTL-SDR の DLL（設計Q §6.2）。
+rtl_tcp の送出（設計Q §4.3・§6.7）／外部 IQ 送信の口（設計S §1）／RTL-SDR の DLL（設計Q §6.2）。
 変えたらすぐ効く（「適用」を置かない。そのことは画面に書かない: U-24）。戻したいときは各項目の「初期値に戻す」。
 大きさと余白は sizes.py の決まり（J §4.11）、文は名前だけ（J §4.12・U-24）。
 状態はコアが正本で、開いている間は state を映し続ける。保存の項目とキーの割り当てと Web の口は、この画面の
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 DEFAULT_PORT = 1234
+EXT_DEFAULT_PORT = 1235  # 外部 IQ 送信の口（設計S §1 §2.1。rtl_tcp の 1234 と重ならない値）
 WEB_DEFAULT_PORT = 8080
 PNG_SIZES = ((1600, 1000), (1920, 1080), (1280, 800), (2560, 1600))
 PNG_SIZE_DEFAULT = "1600×1000"
@@ -100,6 +101,7 @@ class SettingsDialog(QDialog):
         self._add_page("save", P["save"], self._build_save())
         self._add_page("web", P["web"], self._build_web())
         self._add_page("rtltcp", P["rtltcp"], self._build_rtltcp())
+        self._add_page("ext_tx", P["ext_tx"], self._build_ext_tx())
         self._add_page("rtlsdr", P["rtlsdr"], self._build_rtlsdr())
         self._add_page("plutosdr", P["plutosdr"], self._build_plutosdr())
 
@@ -366,6 +368,47 @@ class SettingsDialog(QDialog):
         v.addStretch(1)
         return page
 
+    # ---------------------------------------------------------------- 外部のアプリから送信（設計S §1 §7）
+
+    def _build_ext_tx(self) -> QWidget:
+        """受け付けるか・ポート・いまの様子（失敗の理由）。待つのはこの PC（127.0.0.1）だけ。"""
+        X = texts.EXT_TX_LABELS
+        page, v = _page()
+        self.ext_enable = QCheckBox(X["enable"])
+        self.ext_enable.toggled.connect(lambda on: self.win.call("ext_tx_set", enabled=bool(on)))
+        v.addWidget(self.ext_enable)
+        form = sizes.form()
+        self.ext_port = QSpinBox()
+        self.ext_port.setRange(1, 65535)
+        self.ext_port.setKeyboardTracking(False)
+        sizes.set_width(self.ext_port, "int")
+        self.ext_port.valueChanged.connect(lambda val: self.win.call("ext_tx_set", port=int(val)))
+        form.addRow(X["port"], self.ext_port)
+        v.addLayout(form)
+        state = sizes.vbox(inset=False)
+        self.ext_state = QLabel("")
+        self.ext_state.setWordWrap(True)
+        state.addWidget(self.ext_state)
+        self.ext_error = QLabel("")
+        self.ext_error.setWordWrap(True)
+        self.ext_error.setObjectName("warn")
+        state.addWidget(self.ext_error)
+        v.addLayout(state)
+        reset = _reset_button(lambda: self.win.call("ext_tx_set", enabled=False, port=EXT_DEFAULT_PORT))
+        v.addLayout(sizes.buttons_row(reset))
+        v.addStretch(1)
+        return page
+
+    def _apply_ext_tx(self, st: dict) -> None:
+        from .screen_exttx import settings_view
+
+        x = settings_view(st)
+        widget_sync.set_checked(self.ext_enable, x["enabled"])
+        widget_sync.set_value(self.ext_port, int(x["port"] or EXT_DEFAULT_PORT))
+        self.ext_state.setText(x["text"])
+        self.ext_error.setText(x["error_text"])
+        self.ext_error.setVisible(bool(x["error_text"]))
+
     # ---------------------------------------------------------------- RTL-SDR の DLL
 
     def _build_rtlsdr(self) -> QWidget:
@@ -448,6 +491,7 @@ class SettingsDialog(QDialog):
         self.rt_state.setText(r["text"] + (f"\n{r['dropped_text']}" if r["dropped_text"] else ""))
         self.rt_error.setText(r["error_text"])
         self.rt_error.setVisible(bool(r["error_text"]))
+        self._apply_ext_tx(st)
         rtl = screen_model.rtl_view(st)
         self.dll_state.setText(rtl["dll_line"])
         _restyle(self.dll_state, "warn" if rtl["dll_warn"] else "")

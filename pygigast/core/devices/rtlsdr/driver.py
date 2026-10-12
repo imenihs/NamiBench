@@ -87,16 +87,47 @@ class FftParams:
         return -(-self.sample_bytes // READ_BLOCK) * READ_BLOCK
 
 
+def grid_rate_hz(fft: dict) -> int:
+    """RBW の選択肢の FFT の長さ（fft_n）を決めた標本化の速さ。格子 = この速さ ÷ fft_n（速さを変えても格子と RBW は
+    変えない: 設計S §1 §3.2）。無ければいまの速さ（RTL-SDR・速さを変えていない PlutoSDR）。"""
+    return int(fft.get("grid_rate_hz") or fft["sample_rate_hz"])
+
+
+def fft_n_at_rate(fft: dict, base_n: int) -> Optional[int]:
+    """いまの速さで、選択肢の格子（grid_rate ÷ base_n）を保つ FFT の長さ。速さが格子で割り切れなければ None
+    （その RBW は使えない）。"""
+    grid = grid_rate_hz(fft) // int(base_n)
+    fs = int(fft["sample_rate_hz"])
+    if grid <= 0 or fs % grid:
+        return None
+    return fs // grid
+
+
+def fft_at_rate(base_fft: dict, fs: int) -> dict:
+    """標本化の速さを fs にした fft の写し（外部 IQ の送信の間: 設計S §1 §3.2）。格子は元の速さのまま、アナログの帯域は
+    速さと同じ。通過帯域の表は元の速さ・帯域で測ったものなので、別の速さでは当てない（生の値は「割り戻しなし」）。"""
+    out = copy.deepcopy(base_fft)
+    out["grid_rate_hz"] = grid_rate_hz(base_fft)
+    out["sample_rate_hz"] = int(fs)
+    out["rf_bandwidth_hz"] = int(fs)
+    if int(fs) != grid_rate_hz(base_fft):
+        out.pop("passband", None)
+    return out
+
+
 def fft_params(profile: dict, rbw_hz: int) -> FftParams:
     fft = profile["fft"]
     fs = int(fft["sample_rate_hz"])
     for c in profile["rbw"]["choices"]:
         if int(c["rbw_hz"]) == int(rbw_hz):
-            n = int(c["fft_n"])
+            base_n = int(c["fft_n"])
             win = str(c["window"])
             break
     else:
         raise InvalidSweep(f"RBW {rbw_hz}Hz は選択肢に無い")
+    n = fft_n_at_rate(fft, base_n)
+    if n is None:
+        raise InvalidSweep(f"RBW {rbw_hz}Hz は標本化の速さ {fs}Hz で使えない")
     grid = fs // n
     dc = fft["dc_exclusion"]
     return FftParams(

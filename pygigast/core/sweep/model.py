@@ -163,16 +163,31 @@ class SweepModel:
 
     def _init_fft(self, profile: dict) -> None:
         """sweep_kind "fft" の制約（設計Q §6.3・§6.4）。RBW の選択肢は (窓, FFT の点数 N) の表。"""
-        self._fs = int(profile["fft"]["sample_rate_hz"])
+        fft = profile["fft"]
+        self._fs = int(fft["sample_rate_hz"])
+        # 選択肢の FFT の長さを決めた速さ（外部 IQ の送信で速さを変えても格子と RBW は変えない: 設計S §1 §3.2）
+        grid_rate = int(fft.get("grid_rate_hz") or self._fs)
         r = profile["rbw"]
         self._fft_table: dict[int, tuple[str, int]] = {}
+        self._fft_grid: dict[int, int] = {}
+        # いまの速さが格子で割り切れない RBW（FFT の長さ = 速さ ÷ 格子 が整数にならない: 選べなくする）
+        self._rate_unusable: set[int] = set()
         for c in r["choices"]:
             n = int(c["fft_n"])
-            if self._fs % n:
+            if grid_rate % n:
                 # 格子 fs/N を Hz の整数にする（周波数軸は整数の格子: 設計Q §6.4・設計A §2.1）
                 raise ValueError(f"fs/N が整数でない: N={n}")
-            self._fft_table[int(c["rbw_hz"])] = (str(c["window"]), n)
+            grid = grid_rate // n
+            rbw = int(c["rbw_hz"])
+            self._fft_grid[rbw] = grid
+            if self._fs % grid:
+                self._rate_unusable.add(rbw)
+                self._fft_table[rbw] = (str(c["window"]), n)
+            else:
+                self._fft_table[rbw] = (str(c["window"]), self._fs // grid)
         self._rbw_choices = tuple(sorted(self._fft_table))
+        if len(self._rate_unusable) == len(self._rbw_choices):
+            raise ValueError(f"標本化の速さ {self._fs}Hz で使える RBW が無い")
         self._rbw_default = int(r["default_hz"])
         if self._rbw_default not in self._fft_table:
             raise ValueError("rbw.default_hz が選択肢に無い")
@@ -736,15 +751,30 @@ class SweepModel:
     # ------------------------------------------------------------------ sweep_kind "fft"（設計Q §6.4）
 
     def _fft_points(self, span: int, rbw: int) -> tuple[int, int]:
-        step = self._fs // self._fft_table[rbw][1]
+        step = self._fft_grid[rbw]
         return step, _ceil_div(span, step) + 1
+
+    def _fft_rate_choice(self, pref: int) -> int:
+        """いまの標本化の速さで使える RBW のうち、好みにいちばん近いもの（同じ窓を先に。上の段 → 下の段の順。
+        外部 IQ の送信の間に、選んでいた RBW が使えなくなったとき: 設計S §1 §3.2・設計C §5.14）。"""
+        if pref not in self._rate_unusable:
+            return pref
+        usable = [r for r in self._rbw_choices if r not in self._rate_unusable]
+        window = self._fft_table[pref][0]
+        same = [r for r in usable if self._fft_table[r][0] == window] or usable
+        above = [r for r in same if r > pref]
+        return above[0] if above else max(r for r in same if r < pref)
 
     def _finish_fft(self, *, start, stop, rbw_pref, mode, sg_hz, prev_rbw, rbw_requested, adj: _Adj,
                     span_lock_hz: Optional[int], alternative: Optional[Alternative]) -> AdoptedSweep:
+        start, stop = self._fft_rate_span(start, stop, adj)
         span = stop - start
-        # 点数が上限を超えるときは、同じ窓の RBW を1段ずつ広げて収める。好みは消さない（設計C §5.4 と同じ扱い）
-        window = self._fft_table[rbw_pref][0]
-        ladder = [r for r in self._rbw_choices if self._fft_table[r][0] == window and r >= rbw_pref]
+        # 点数が上限を超えるときは、同じ窓の RBW を1段ずつ広げて収める。好みは消さない（設計C §5.4 と同じ扱い）。
+        # いまの標本化の速さで使えない RBW（外部 IQ の送信の間: 設計S §1 §3.2）は段に入れない
+        base = self._fft_rate_choice(rbw_pref)
+        window = self._fft_table[base][0]
+        ladder = [r for r in self._rbw_choices if self._fft_table[r][0] == window and r >= base
+                  and r not in self._rate_unusable]
         rbw = ladder[0]
         step, points = self._fft_points(span, rbw)
         for r in ladder[1:]:
@@ -755,7 +785,7 @@ class SweepModel:
         if points > self._points_max:
             raise AssertionError(f"いちばん広い RBW でも点数が上限を超える: {points}")
         if rbw != rbw_pref and (rbw_requested or prev_rbw != rbw):
-            adj.add("rbw_hz", rbw_pref, rbw, "rbw_points_max")
+            adj.add("rbw_hz", rbw_pref, rbw, "rbw_sample_rate" if rbw == base != rbw_pref else "rbw_points_max")
         elif rbw == rbw_pref and prev_rbw is not None and prev_rbw != rbw and not rbw_requested:
             adj.add("rbw_hz", prev_rbw, rbw, "rbw_restored")
 
@@ -768,13 +798,31 @@ class SweepModel:
         if not (self._min <= axis.start_hz and axis.last_hz <= self._max):
             raise AssertionError(f"測る範囲が外れた: {axis.start_hz}〜{axis.last_hz}")
         est = float(self._timing(axis, rbw, mode))
-        # 点数が上限に収まる RBW だけが選べる（設計C §5.14）
-        usable = tuple(r for r in self._rbw_choices if self._fft_points(span, r)[1] <= self._points_max)
+        # 点数が上限に収まる RBW だけが選べる（設計C §5.14）。いまの標本化の速さで使えない RBW も選べない（理由は別に
+        # 持つ: 設計S §1 §3.2）。rbw_limit は速さでは使えるのに点数で使えないものがあるときだけ
+        rate_ok = tuple(r for r in self._rbw_choices if r not in self._rate_unusable)
+        usable = tuple(r for r in rate_ok if self._fft_points(span, r)[1] <= self._points_max)
         return AdoptedSweep(
             start_hz=start, stop_hz=stop, axis=axis, rbw_hz=rbw, rbw_preference_hz=rbw_pref,
             mode=mode, sg_hz=sg_hz, image_reject=ir.OFF, preroll_points=0,
             transient_head_points=0, estimated_sweep_s=est, adjustments=adj.items(),
             points_setting=None, tail_gap=tail_gap, warnings=(),
             span_lock_hz=span_lock_hz, alternative=alternative,
-            rbw_usable_hz=usable, rbw_limit=None if len(usable) == len(self._rbw_choices) else "points_max",
+            rbw_usable_hz=usable, rbw_limit=None if len(usable) == len(rate_ok) else "points_max",
+            rbw_rate_unusable_hz=tuple(sorted(self._rate_unusable)),
+            sample_rate_hz=self._fs,
         )
+
+    def _fft_rate_span(self, start: int, stop: int, adj: _Adj) -> tuple[int, int]:
+        """いまの標本化の速さで使える RBW のうち、いちばん粗い格子でも点数が上限を超える Span は、Center を守って測れる
+        幅へ狭める（外部 IQ の送信で粗い格子の RBW が使えないとき: 設計S §1 §3.2。速さを変えていなければ起きない）。"""
+        grid = max(self._fft_grid[r] for r in self._rbw_choices if r not in self._rate_unusable)
+        widest = grid * (self._points_max - 1)
+        if stop - start <= widest:
+            return start, stop
+        center = start + (stop - start) // 2
+        lo = min(max(center - widest // 2, self._min), self._max - widest)
+        new_start, new_stop = max(lo, self._min), max(lo, self._min) + widest
+        adj.replace(START, start, new_start, "span_sample_rate")
+        adj.replace(STOP, stop, new_stop, "span_sample_rate")
+        return new_start, new_stop

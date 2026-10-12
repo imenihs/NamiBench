@@ -315,6 +315,7 @@ class CalMixin:
         s = self._cal_need()
         self._cal_check_idle()
         self._check_not_taking_reference()
+        self._exttx_check_idle()  # 外部 IQ の送信の間は測らない（送信を使う: 設計S §1 §6.2）
         why = self._cal_device_reason()
         if why is not None:
             raise CommandError(why)

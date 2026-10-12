@@ -21,10 +21,17 @@ S11 のブリッジ（設計Q §7.8 の試験用）: bridge=True にすると、
 dB）、位相は周波数で回る（leak_delay_s）。Γ は繋いだ標準器で決まる: set_standard("open") +1・"short" −1・"load" 0、
 None（標準器を外した）は dut_gamma(周波数の配列) → 複素の反射（無ければオープンのまま: 何も繋いでいない口）。
 本体は S11 の基準を取る間 on_reference_standard で標準器を伝え、機器の口がここへ渡す（実機は何もしない）。
+
+外部 IQ の送信（設計S §1 §9 の試験用）: 非循環の送信バッファの push は DAC の速さで押し返す（機器の中のバッファ
+kernel_buffers 個。いっぱいなら一番古いバッファが流れ終わるまで待つ）。押した標本は pushed に全部残す。
+push_fail を立てると push は push_hang_s 待ってから失敗する（抜けた・時間切れ）。fail_reads は受信の読みだけを失敗させる
+（属性の書き込みは通る）。sampling_frequency は rate_reject の値を断り（EINVAL）、rate_readback で読み戻す値を変えられる。
 """
 from __future__ import annotations
 
+import collections
 import threading
+import time
 from typing import Callable, Optional
 
 import numpy as np
@@ -85,6 +92,16 @@ class FakePluto:
         self.dut = dut  # 周波数の配列（Hz）→ 通過の振幅比（送信を受信へ通すとき掛ける）
         self.rng = np.random.default_rng(seed)
         self.unplugged = False
+        self.fail_reads = False
+        # 外部 IQ の送信（非循環の push）の偽物の決まり
+        self.kernel_buffers = 4
+        self.push_fail = False
+        self.push_hang_s = 0.0
+        self.pushed: list[np.ndarray] = []  # 非循環で押した int16 の I・Q の交互（押した順）
+        self.push_times: list[float] = []
+        self._dac_ends: collections.deque = collections.deque()
+        self.rate_reject: set[int] = set()
+        self.rate_readback: dict[int, int] = {}
         self.log: list[tuple[str, str, str]] = []  # (通路, 属性, 値) の書き込み
         self.lock = threading.Lock()
         self.attrs: dict[tuple[str, str, bool, str], str] = {}
@@ -95,6 +112,8 @@ class FakePluto:
         self._set_raw(p[0], "voltage0", False, "hardwaregain", "54.000000 dB")
         self._set_raw(p[0], "voltage0", True, "hardwaregain", "-10.000000 dB")
         self._set_raw(p[0], "voltage0", True, "hardwaregain_available", "[-89.750000 0.250000 0.000000]")
+        self._set_raw(p[0], "voltage0", True, "rf_bandwidth", "18000000")
+        self._set_raw(p[0], "voltage0", True, "sampling_frequency", "4000000")
         self._set_raw(p[0], "altvoltage0", True, "frequency", "84699998")
         self._set_raw(p[0], "altvoltage0", True, "frequency_available", "[70000000 1 6000000000]")
         self._set_raw(p[0], "altvoltage1", True, "frequency", "2450000000")
@@ -127,6 +146,13 @@ class FakePluto:
             if not mn <= g <= mx:
                 raise IioError("channel_attr_write", _EINVAL, "Invalid argument")
             v = f"{g:.6f} dB"
+        if dev == "ad9361-phy" and ch == "voltage0" and name == "sampling_frequency":
+            fs = int(float(v))
+            if fs in self.rate_reject:
+                raise IioError("channel_attr_write", _EINVAL, "Invalid argument")
+            v = str(self.rate_readback.get(fs, fs))
+            # 受信と送信は1つの速さを共有する（AD9364）
+            self.attrs[(dev, ch, not out, name)] = v
         self.log.append((f"{dev}/{ch}{'_out' if out else ''}", name, str(value)))
         self.attrs[(dev, ch, out, name)] = v
         if dev == "ad9361-phy" and ch in ("altvoltage0", "altvoltage1") and out and name == "frequency":
@@ -147,6 +173,38 @@ class FakePluto:
         """送信に関わる書き込み（送信の LO・送信の減衰・DDS・送信のバッファ）。"""
         return [w for w in self.log if w[0].startswith("cf-ad9361-dds-core-lpc") or w[0] == "ad9361-phy/altvoltage1_out"
                 or w[0] == "ad9361-phy/voltage0_out"]
+
+    # ---- 外部 IQ の送信（非循環の push）----
+    def dac_push(self, samples: int, iq: np.ndarray) -> None:
+        """非循環の push: DAC の速さで押し返す。いっぱいなら一番古いバッファが流れ終わるまで待つ。"""
+        if self.push_fail or self.unplugged:
+            if self.push_hang_s > 0:
+                time.sleep(self.push_hang_s)
+            raise IioError("buffer_push", -110, "timed out")
+        now = time.monotonic()
+        q = self._dac_ends
+        while q and q[0] <= now:
+            q.popleft()
+        if len(q) >= self.kernel_buffers:
+            time.sleep(max(0.0, q[0] - now))
+            q.popleft()
+            now = time.monotonic()
+        start = max(now, q[-1] if q else now)
+        q.append(start + samples / max(self.fs, 1.0))
+        self.pushed.append(np.array(iq, dtype=np.int16, copy=True))
+        self.push_times.append(time.monotonic())
+
+    def pushed_samples(self) -> np.ndarray:
+        """押した標本（int16 の I・Q の交互）をつないだもの。"""
+        return np.concatenate(self.pushed) if self.pushed else np.zeros(0, dtype=np.int16)
+
+    @property
+    def tx_lo_powered(self) -> bool:
+        return self.attrs[("ad9361-phy", "altvoltage1", True, "powerdown")] == "0"
+
+    @property
+    def tx_atten(self) -> float:
+        return self._num("ad9361-phy", "voltage0", True, "hardwaregain")
 
     # ---- S11 のブリッジ ----
     def set_standard(self, standard: Optional[str]) -> None:
@@ -187,7 +245,7 @@ class FakePluto:
 
     def samples(self, n: int) -> np.ndarray:
         """受信の n 標本（int16 の I・Q の交互）。"""
-        if self.unplugged:
+        if self.unplugged or self.fail_reads:
             raise IioError("buffer_refill", _EIO, "unplugged")
         fs = self.fs
         lo = self.rx_lo
@@ -335,8 +393,10 @@ class _Buf:
         return self.dev.ctx.dev.samples(self.samples)
 
     def push(self, iq: np.ndarray) -> None:
-        a = np.asarray(iq, dtype=np.int16).astype(np.float64)
         pl = self.dev.ctx.dev
+        if not self.cyclic:
+            pl.dac_push(self.samples, iq)
+        a = np.asarray(iq, dtype=np.int16).astype(np.float64)
         pl.tx_buffer = (a[0::2] + 1j * a[1::2]) / 32767.0
         pl.log.append(("cf-ad9361-dds-core-lpc/buffer_out", "push", str(self.samples)))
 

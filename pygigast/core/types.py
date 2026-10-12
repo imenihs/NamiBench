@@ -167,6 +167,10 @@ class AdoptedSweep:
     # いまの条件で選べる RBW と、選べないものがあるときの理由のコード（設計C §5.14。画面は使えない RBW を無効にする）
     rbw_usable_hz: tuple[int, ...] = ()
     rbw_limit: Optional[str] = None
+    # いまの標本化の速さでは使えない RBW（FFT の長さ = 速さ ÷ 格子 が整数にならない: 外部 IQ の送信の間。設計S §1 §3.2）と、
+    # その速さ（Hz。FFT の機器だけ。GigaSt は 0）
+    rbw_rate_unusable_hz: tuple[int, ...] = ()
+    sample_rate_hz: int = 0
     # 機器の層が送る区間の並び（いまの選択で。設計F §7.2）。preroll_points・transient_head_points は先頭の区間の値
     segments: tuple[SweepSegment, ...] = ()
     # いまの掃引条件で3つを選んだときの1画面の見積もり秒 ((選択, 秒), …)（設計F §7.3。画面が選択肢に出す）

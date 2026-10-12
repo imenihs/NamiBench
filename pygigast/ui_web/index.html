@@ -680,7 +680,7 @@
           <div class="form">
             <label>{{ T('PLUTO_LABELS', 'tx_atten') }}</label>
             <num-field data-field="tx_atten" :text="plutoAttenText" :note="notes.plutotx" @clear-note="clearNote('plutotx')" :disabled="!!plutoView.tx_atten_reason"
-                       :title="T('PLUTO_LABELS', 'tx_atten_tip') + (plutoView.tx_atten_reason ? ' — ' + plutoView.tx_atten_reason : '')"
+                       :title="(plutoView.tx_atten_ext ? T('EXT_TX_LABELS', 'atten_tip') : T('PLUTO_LABELS', 'tx_atten_tip')) + (plutoView.tx_atten_reason ? ' — ' + plutoView.tx_atten_reason : '')"
                        @commit="setTxAtten($event)" @step="(e, d) => stepTxAtten(e, d)"></num-field>
             <!-- TG 高調波の平均除去（設計Q §7.7）: 選択肢の文字（名前と、いまの条件での1回の掃引の見積もり）と使えない理由は
                  サーバーが作る（ui.pluto.tg_harmonic: Qt と同じ screen_pluto.tg_harmonic_view）。幅は秒を 999.9 にした見本で
@@ -691,8 +691,15 @@
                     @change="setTgHarmonic($event.target.value)">
               <option v-for="it in tgHarmView.items" :key="it.code" :value="it.code">{{ it.text }}</option>
             </select>
+            <div class="span dim" v-if="plutoView.tx_state">{{ plutoView.tx_state }}</div>
+            <!-- 外部 IQ の送信の間だけ（設計S §1 §7。Qt の PlutoTxPanel と同じ欄の列の行: 中身は screen_exttx.tx_view） -->
+            <template v-if="extView.tx.shown">
+              <label>{{ T('EXT_TX_LABELS', 'rate') }}</label><div data-field="ext_rate">{{ extView.tx.rate_text }}</div>
+              <label>{{ T('EXT_TX_LABELS', 'lo') }}</label><div data-field="ext_lo">{{ extView.tx.lo_text }}</div>
+              <label>{{ T('EXT_TX_LABELS', 'power') }}</label><div data-field="ext_power" :title="T('EXT_TX_LABELS', 'power_tip')">{{ extView.tx.power_text }}</div>
+              <label></label><div class="row" data-part="ext_tx"><button data-act="ext_stop" @click="cmd('ext_tx_stop')">{{ T('EXT_TX_LABELS', 'stop') }}</button></div>
+            </template>
           </div>
-          <div class="dim" v-if="plutoView.tx_state">{{ plutoView.tx_state }}</div>
         </section>
 
         <!-- SG のステップ掃引（設計L §1.3。SG の欄のすぐ下。Qt の step_panel と同じ並び・語: 中身は ui.step）。
@@ -800,10 +807,12 @@
   <!-- 状態バー（項目と文は Qt と同じ texts.status_items。常に出す: J §2・M-04）。小の段 -->
   <footer class="statusbar" data-tier="S">
     <template v-for="s in statusItems" :key="s.key">
-      <span :class="s.cls" :title="s.text">{{ s.text }}</span>
+      <span :class="s.cls" :title="s.tip || s.text">{{ s.text }}</span>
       <!-- 聞いている・rtl_tcp を出しているときは、状態バーからすぐ止められる（設計Q §4.3・§6.8） -->
       <button v-if="s.key === 'listen'" @click="listenStop">{{ T('LISTEN_LABELS', 'stop') }}</button>
       <button v-if="s.key === 'rtltcp'" @click="setRtltcp({enabled: false})">{{ T('SETTINGS_LABELS', 'rtltcp_stop') }}</button>
+      <!-- 外部 IQ 送信の口に相手がつながっている間（設計S §1 §7） -->
+      <button v-if="s.key === 'exttx' && s.stop" data-act="ext_stop_status" @click="cmd('ext_tx_stop')">{{ T('EXT_TX_LABELS', 'stop') }}</button>
     </template>
     <span class="status-note" :title="status">{{ status }}</span>
   </footer>

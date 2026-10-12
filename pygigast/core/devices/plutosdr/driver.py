@@ -12,6 +12,8 @@ IQ はこの層の外に出さない（設計Q §3。例外の rtl_tcp の出口
   範囲の外の値は機器が受け付けない。1回の測定の中で利得を混ぜないよう、全部の位置で使える値に収めて使う
 - 標本は 12 ビットを int16 に入れたもの（−2048〜2047）。端に当たったら振り切れ
 - 送信（SG・TG）はこのアプリが出したときだけ止める（出していない送信の設定には触らない）
+- 外部 IQ の送信（設計S §1）は ext_tx.py の押すスレッドが持つ。その間、スペアナの掃引と on_idle は送信に触らない。
+  押すスレッドが生きている間はコンテキストを閉じない（閉じる側は押すスレッドへ渡す: _release_ctx）
 """
 from __future__ import annotations
 
@@ -294,6 +296,13 @@ class PlutoSdrDevice(Device):
         self._tx_state: Optional[tuple] = None  # このアプリが出している送信（None は出していない）
         self._tx_buf = None
         self._tx_forbidden = False
+        # 外部 IQ の送信（設計S §1）: 押すスレッド・送信の属性の書き込みの錠（掃引の錠とは別）・コンテキストを押すスレッドへ
+        # 渡すときの錠（待つ処理の間は持たない）・速さを変える前の fft・接続したときの送信のアナログの帯域
+        self._ext = None
+        self._tx_lock = threading.Lock()
+        self._ctx_lock = threading.Lock()
+        self._ext_base_fft: Optional[dict] = None
+        self._tx_rf_bw: Optional[int] = None
         self._idle_wanted = False  # 口を握られていた間に on_idle が来た（終わった処理が送信を止める）
         self.fixed_center_hz: Optional[int] = None
         # rtl_tcp の出口へ IQ を見せる口: (complex64 の IQ（振り切れ ±1.0）, LO の Hz, 標本化の Hz)。機器スレッドから呼ぶ
@@ -311,6 +320,9 @@ class PlutoSdrDevice(Device):
     def open(self, uri: str, gain_db: object = _DEFAULT_GAIN, tx_atten_db: Optional[float] = None) -> DeviceIdentity:
         """URI（"ip:192.168.2.1"・"usb:1.2.5" など）で開く。gain_db は手動の利得（dB）か None（自動）。"""
         self.close()
+        if self._ext_base_fft is not None:
+            # 外部 IQ の送信で速さを変えたまま閉じた: 元の速さを書く（設計S §1 の P2）
+            self._profile["fft"], self._ext_base_fft = self._ext_base_fft, None
         lib = self._get_lib()
         try:
             ctx = lib.open(uri, 3000)
@@ -321,6 +333,10 @@ class PlutoSdrDevice(Device):
             serial = ctx.attr("hw_serial") or ""
             self.fw_version = ctx.attr("fw_version")
             self._read_ranges()
+            try:
+                self._tx_rf_bw = int(round(float(self._txc.attr("rf_bandwidth").split()[0])))
+            except (IioError, ValueError, IndexError):
+                self._tx_rf_bw = None  # 読めなければ外部 IQ の送信の間も送信の帯域には触らない
             # つないだら送信を止める（2026-10-11 ユーザー決定「電源入れたときは、送信止めて」）: 電源投入時は送信の LO が
             # 2450MHz で動作・減衰 −10dB のままで、受信に線が出る。出力をいちばん小さくし、LO を止め、波形を消す
             self._txc.set_attr("hardwaregain", self._atten_min_text())
@@ -448,12 +464,20 @@ class PlutoSdrDevice(Device):
             return
         if "gain" in pend:
             self._apply_gain([self._tuned_hz] if self._tuned_hz else [])
-        if "tx_atten" in pend and self._tx_state is not None:
+        if "tx_atten" in pend and self._app_tx():
             self._txc.set_attr("hardwaregain", self._atten_text())
 
+    def _app_tx(self) -> bool:
+        """このアプリ（SG・TG・合わせる・補正）が送信を出しているか（外部 IQ の送信は含めない）。"""
+        ts = self._tx_state
+        return ts is not None and ts[0] != "ext"
+
     def _atten_text(self) -> str:
+        return self._atten_value_text(self._tx_atten)
+
+    def _atten_value_text(self, value: float) -> str:
         a = self._profile["source"]["tx_atten_db"]
-        v = min(max(self._tx_atten, float(a["min"])), float(a["max"]))
+        v = min(max(float(value), float(a["min"])), float(a["max"]))
         step = float(a.get("step") or 0.25)
         v = round(round(v / step) * step, 2)
         return f"{v:.2f}"
@@ -509,8 +533,9 @@ class PlutoSdrDevice(Device):
 
     @property
     def tx_on(self) -> Optional[str]:
-        """このアプリが出している送信（"sg"・"tg"）か None。"""
-        return None if self._tx_state is None else self._tx_state[0]
+        """出している送信（"sg"・"tg"・外部 IQ の "ext"）か None。"""
+        ts = self._tx_state
+        return None if ts is None else ts[0]
 
     def gain_limits_for(self, sweep: AdoptedSweep) -> tuple[int, int]:
         """その掃引条件の全部の位置で使える受信の利得の範囲。"""
@@ -534,15 +559,30 @@ class PlutoSdrDevice(Device):
         return self._ctx is not None
 
     def _drop(self) -> None:
+        """コンテキストを使えなくする。外部 IQ の押すスレッドが生きていれば止める印を付けてコンテキストを渡し、待たない
+        （設計S §1 の P1: 機器スレッドが条件の錠を持ったまま来る道がある）。"""
         ctx, self._ctx = self._ctx, None
         self._tuned_hz = None
         self._tx_buf = None
-        self._tx_state = None
-        if ctx is not None:
-            try:
-                ctx.close()
-            except Exception:  # noqa: BLE001
-                pass
+        if self._app_tx():
+            self._tx_state = None
+        ext = self._ext
+        if ext is not None:
+            ext.request_stop("device_lost")
+        self._release_ctx(ctx)
+
+    def _release_ctx(self, ctx) -> None:
+        if ctx is None:
+            return
+        with self._ctx_lock:
+            ext = self._ext
+            if ext is not None and ext.alive:
+                ext.close_ctx = ctx  # 押すスレッドが止める順の後に閉じる
+                return
+        try:
+            ctx.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     @staticmethod
     def _is_value_error(e: IioError) -> bool:
@@ -663,8 +703,8 @@ class PlutoSdrDevice(Device):
             "fixed_center": fixed is not None,
             "overload": max_ratio > OVERLOAD_RATIO,
             "overload_ratio_max": max_ratio,
-            "tx": None if self._tx_state is None else self._tx_state[0],
-            "tx_atten_db": None if self._tx_state is None else float(self._atten_text()),
+            # 外部 IQ の送信を出しながら測ったかも残す（保存したデータで分かる: 設計S §1 §6.1・M-08）
+            **self._tx_extra(),
             "flags": {"no_value": asm.no_value},
         }
         if mode in _TG_LIKE:
@@ -689,8 +729,8 @@ class PlutoSdrDevice(Device):
 
     def _tx_off(self) -> None:
         """このアプリが出した送信を止める（出していなければ何もしない）。減衰を最大にしてから LO を止め、波形を消す。"""
-        if self._tx_state is None:
-            return
+        if not self._app_tx():
+            return  # 出していない・外部 IQ の送信（押すスレッドが持つ: 設計S §1 §6.1）
         self._tx_state = None
         self._tx_tuned_hz = None
         self._txc.set_attr("hardwaregain", self._atten_min_text())
@@ -734,6 +774,9 @@ class PlutoSdrDevice(Device):
     def _check_tx_allowed(self) -> None:
         if self._tx_forbidden:
             raise DeviceDisconnected("閉じている途中（送信は出さない）")
+        if self._ext is not None:
+            # 外部 IQ の送信の間は SG・TG を出さない（本体が断る: 設計S §1 §6.2。ここは二重の防御）
+            raise InvalidSweep("外部 IQ の送信の間は SG・TG を出さない")
 
     def _tx_tone(self, sg_hz: int) -> None:
         """SG: 送信の LO を SG の周波数 − DDS のずらし に合わせ、DDS で1本のトーンを出す。"""
@@ -787,9 +830,20 @@ class PlutoSdrDevice(Device):
         出させない。機器スレッドの測定が口を握ったままでも、待つのは wait_s まで（その後は握らずに書く。終わる直前の
         1回だけなので、測定の書き込みと重なっても止める方を優先する）。"""
         self._tx_forbidden = True
+        ext = self._ext
+        if ext is not None:
+            # 外部 IQ の送信: 押すスレッドに止めさせる。wait_s で終わらなければ減衰を最小と LO を止めるだけを書く
+            # （コンテキストは閉じない: 押すスレッドが終わってから閉じる。設計S §1 §5・P1）
+            ext.request_stop("app_exit")
+            if not ext.join(wait_s):
+                for ch, name, value in ((ext._txc, "hardwaregain", self._atten_min_text()), (ext._txlo, "powerdown", 1)):
+                    try:
+                        ch.set_attr(name, value)
+                    except Exception:  # noqa: BLE001
+                        pass
         got = self._lock.acquire(timeout=wait_s)
         try:
-            if self._ctx is None or self._tx_state is None:
+            if self._ctx is None or not self._app_tx():
                 return
             try:
                 self._tx_off()
@@ -1010,7 +1064,12 @@ class PlutoSdrDevice(Device):
                     except IioError:
                         pass
 
-    def close(self) -> None:
+    def close(self, ext_wait_s: float = 3.0) -> None:
+        """閉じる（アプリを閉じる・切断）。錠を持たずに待ってよい道なので、外部 IQ の押すスレッドの終わりを ext_wait_s まで
+        待つ。過ぎても閉じない（押すスレッドがコンテキストを閉じる: 設計S §1 の P1）。"""
+        ext = self._ext
+        if ext is not None:
+            ext.request_stop("device_lost")
         with self._lock:
             if self._ctx is not None:
                 try:
@@ -1018,6 +1077,69 @@ class PlutoSdrDevice(Device):
                 except Exception:  # noqa: BLE001 — 閉じるのは続ける
                     pass
             self._drop()
+        if ext is not None:
+            ext.join(ext_wait_s)
+
+    # ---- 外部 IQ の送信（設計S §1。中身は ext_tx.py）----
+    @property
+    def ext_stream(self):
+        return self._ext
+
+    def _tx_extra(self) -> dict:
+        ts = self._tx_state  # 押すスレッドが消すことがあるので1回だけ読む
+        return {"tx": None if ts is None else ts[0], "tx_atten_db": None if ts is None else self._tx_atten_now(),
+                "tx_lo_hz": ts[1] if ts is not None and ts[0] == "ext" else None}
+
+    def _tx_atten_now(self) -> float:
+        """いま出している送信の減衰（外部 IQ の送信はその値: 設計S §1 の O1）。"""
+        ext = self._ext
+        return float(self._atten_value_text(ext.atten_db if ext is not None else self._tx_atten))
+
+    def ext_tx_prepare(self, fs: int) -> int:
+        """標本化の速さを fs にして読み戻す（掃引の錠を待つので制御スレッドから呼ばない）。"""
+        from . import ext_tx
+
+        return ext_tx.prepare_rate(self, fs)
+
+    def ext_tx_restore(self) -> None:
+        from . import ext_tx
+
+        ext_tx.restore_rate(self)
+
+    def ext_tx_start(self, lo_hz: int, atten_db: float, send, on_event):
+        """押すスレッドを始める（ext_tx_prepare の後）。送信の持ち主を外部にする。"""
+        from . import ext_tx
+
+        if self._ctx is None:
+            raise DeviceDisconnected("開いていない")
+        self._check_tx_allowed()
+        spec = ext_tx.ExtTxSpec.from_profile(self._profile)
+        stream = ext_tx.ExtTxStream(self, lo_hz, atten_db, spec, send, on_event,
+                                    int(self._profile["source"].get("tx_full_scale", 32767)))
+        with self._ctx_lock:
+            self._ext = stream
+            self._tx_state = ("ext", int(lo_hz))
+        stream.start()
+        return stream
+
+    def ext_tx_stop(self, reason: str, detail=None) -> None:
+        ext = self._ext
+        if ext is not None:
+            ext.request_stop(reason, detail)
+
+    def _ext_finished(self, stream) -> None:
+        """押すスレッドが止める順を通った（押すスレッドから呼ぶ）。持ち主を外し、渡されたコンテキストを閉じる。"""
+        with self._ctx_lock:
+            if self._ext is stream:
+                self._ext = None
+                if self._tx_state is not None and self._tx_state[0] == "ext":
+                    self._tx_state = None
+            ctx, stream.close_ctx = stream.close_ctx, None
+        if ctx is not None:
+            try:
+                ctx.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def iq_from_i16(a: np.ndarray, full_scale: float) -> np.ndarray:

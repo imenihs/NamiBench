@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 
 from . import texts
+from .screen_exttx import tx_view
 from .texts_pluto import PLUTO_LABELS, TG_HARMONIC_CHOICES
 
 # 受信の利得の一覧に並べる刻み（dB）。打てばいまの範囲の 1dB 刻みのどの値でも
@@ -81,6 +82,8 @@ def pluto_view(st: dict) -> dict:
         or (PLUTO_LABELS["calibrating"] if pl.get("calibrating") else None)
     rng = pl.get("tx_atten_range") or {"min": -89.75, "max": 0.0, "step": 0.25}
     tx_on = pl.get("tx_on")
+    # 外部 IQ の送信の間（設計S §1 §7・O1）: 減衰の欄は外部の送信の値を出し、変えると外部の送信の減衰を変える
+    ext = tx_view(st)
     bits = pl.get("dll_bits")
     return {
         "shown": connected,
@@ -105,13 +108,17 @@ def pluto_view(st: dict) -> dict:
         "unit_text": texts.tpl("rtl_unit", unit=pl.get("level_unit") or "") if connected and pl.get("level_unit") else "",
         "fit_reason": gain_reason or (PLUTO_LABELS["fit_needs_manual"] if agc else None)
         or (PLUTO_LABELS["fit_running"] if pl.get("fitting") else None) or texts.live_lock_reason(st),
-        "tx_atten_db": float(pl.get("tx_atten_db") if pl.get("tx_atten_db") is not None else -40.0),
+        "tx_atten_db": ext["atten_db"] if ext["shown"] else
+        float(pl.get("tx_atten_db") if pl.get("tx_atten_db") is not None else -40.0),
+        "tx_atten_ext": ext["shown"],
+        "ext": ext,
         "tx_atten_min": float(rng["min"]),
         "tx_atten_max": float(rng["max"]),
         "tx_atten_step": float(rng["step"]),
         # 送信の減衰の欄を使えない理由（つないでいない・S11 でオープンを測った後: 設計Q §7.8）
-        "tx_atten_reason": reason or _lock_text(pl.get("tx_atten_lock")),
-        "tx_state": texts.tpl("pluto_tx_on", what=tx_on.upper()) if tx_on else "",
+        "tx_atten_reason": reason or (None if ext["shown"] else _lock_text(pl.get("tx_atten_lock"))),
+        "tx_state": ext["state_text"] if ext["shown"] else
+        (texts.tpl("pluto_tx_on", what=tx_on.upper()) if tx_on and tx_on != "ext" else ""),
         "tg_harmonic": tg_harmonic_view(st),
         # 設定の画面の libiio.dll の行（設計J §4.12 と同じ形）
         "dll_line": pl.get("dll_path") or texts.SETTINGS_LABELS["rtlsdr_missing"],
