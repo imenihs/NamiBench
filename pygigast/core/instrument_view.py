@@ -369,22 +369,33 @@ class ViewMixin:
 
     def _preset_adopted(self, sw: dict):
         """プリセットの掃引条件を、いまの機器の掃引条件モデルに通す。RBW が無い機器なら RBW だけ既定にする。"""
+        return self._saved_sweep_adopted(
+            start_hz=int(sw["start_hz"]), stop_hz=int(sw["stop_hz"]), rbw_preference_hz=sw.get("rbw_preference_hz"),
+            points_setting=sw.get("points_setting"), mode=sw.get("mode", "sa"), sg_hz=sw.get("sg_hz"),
+            # 前の版のプリセットの image_cancel は読み替える。どちらも無ければいまの選択のまま（設計F §7.3）
+            image_reject=ir.read_choice(sw), span_lock_hz=sw.get("span_lock_hz"),
+        )
+
+    def _saved_sweep_adopted(self, *, start_hz: int, stop_hz: int, rbw_preference_hz, points_setting, mode, sg_hz,
+                             image_reject, span_lock_hz):
+        """残しておいた掃引の条件（利用者が求めた値: プリセット・元に戻す）を、いまの機器の条件（機種のプロファイル・
+        標本化の速さ）で掃引条件モデルに通す。残したときと速さが違っても、いまの速さで使える条件になり、使えない値は
+        近い値にして adjustments で知らせる。求めた値（RBW の好み・範囲）は残る（設計C §5.1・§5.14・設計S §1 §3.2）。
+        RBW が無い機器なら RBW だけ既定にする。"""
         base = self._adopted
         req = SweepRequest(
-            start_hz=int(sw["start_hz"]), stop_hz=int(sw["stop_hz"]), edited=("start_hz", "stop_hz"),
-            rbw_preference_hz=sw.get("rbw_preference_hz"), points=sw.get("points_setting") or 0,
-            mode=Mode(sw.get("mode", "sa")), sg_hz=sw.get("sg_hz"),
-            # 前の版のプリセットの image_cancel は読み替える。どちらも無ければいまの選択のまま（設計F §7.3）
-            image_reject=ir.read_choice(sw),
-            span_lock=bool(sw.get("span_lock_hz")), one_shot=True,
+            start_hz=int(start_hz), stop_hz=int(stop_hz), edited=("start_hz", "stop_hz"),
+            rbw_preference_hz=rbw_preference_hz, points=points_setting or 0,
+            mode=Mode(mode), sg_hz=sg_hz, image_reject=image_reject,
+            span_lock=bool(span_lock_hz), one_shot=True,
         )
-        req = zero_span_request(req)  # ゼロスパンで残したプリセットはゼロスパンで戻す（設計N §1）
+        req = zero_span_request(req)  # ゼロスパンで残した条件はゼロスパンで戻す（設計N §1）
         try:
             new = self._model.apply(req, base)
         except ValueError:
             new = self._model.apply(dataclasses.replace(req, rbw_preference_hz=None), base)
-        if sw.get("span_lock_hz"):
-            new = dataclasses.replace(new, span_lock_hz=int(sw["span_lock_hz"]))
+        if span_lock_hz:
+            new = dataclasses.replace(new, span_lock_hz=int(span_lock_hz))
         elif new.span_lock_hz is not None:
             new = self._model.apply(SweepRequest(span_lock=False), new)
         return new

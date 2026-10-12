@@ -446,6 +446,16 @@ class TestModelAtRate(unittest.TestCase):
                         model.default())
         self.assertLessEqual(a.axis.points, 200000)
         self.assertIn("span_sample_rate", [x.reason for x in a.adjustments])
+        # 求めた範囲を残す（設計C §5.1）。範囲を触らない変更では引き継ぎ、範囲を触ったら置き換わる
+        self.assertEqual(a.range_request, (100 * MHZ, 6000 * MHZ))
+        b = model.apply(SweepRequest(rbw_preference_hz=3000), a)
+        self.assertEqual(b.range_request, (100 * MHZ, 6000 * MHZ))
+        c = model.apply(SweepRequest(start_hz=1574 * MHZ, stop_hz=1577 * MHZ, edited=("start_hz", "stop_hz")), b)
+        self.assertIsNone(c.range_request)
+        base = pd.default_profile()
+        d = SweepModel(base, pd.timing_fn(base)).apply(
+            SweepRequest(start_hz=100 * MHZ, stop_hz=6000 * MHZ, edited=("start_hz", "stop_hz")), model.default())
+        self.assertIsNone(d.range_request)  # 元の速さでは狭めない
 
     def test_no_usable_rbw_rate_rejected(self):
         prof = pd.default_profile()

@@ -19,7 +19,7 @@ from .level.convert import dbm_to_watt
 from .marker import Kind, MarkerTable, Sign, ThresholdSetting, TraceView
 from .marker import analysis as an
 from .marker.markers import Y_KIND_NF, Y_KIND_POWER, Y_KIND_TG, Marker
-from .instrument_common import CommandError, adopted_to_dict
+from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict
 from .instrument_diff import DIFF_TRACE_ID
 from .normalize import apply_reference, frame_gain_table
 from .trace import ConditionChange, HoldKeep, TraceAction, TraceLine, TraceSet, formats, to_db
@@ -79,6 +79,24 @@ def unit_for(quantity: Optional[Quantity], profile: Optional[dict]) -> Optional[
         if u:
             return str(u)
     return UNIT_OF[quantity]
+
+
+def _requested_conditions(a: AdoptedSweep) -> tuple:
+    """利用者が求めた掃引の条件（元に戻すで比べる値）。範囲は速さで狭める前の求め（設計C §5.1・設計S §1 §3.2）。"""
+    return (a.range_request or (a.start_hz, a.stop_hz), a.rbw_preference_hz, a.mode, a.sg_hz, a.image_reject,
+            a.points_setting, a.span_lock_hz)
+
+
+# 調整の欄の名前 → 採用値の属性（同じ名前でないものだけ）
+_ADJ_ATTR = {"points": "points_setting", "span_lock": "span_lock_hz"}
+
+
+def _same_adopted_value(a: AdoptedSweep, b: AdoptedSweep, field: str) -> bool:
+    """調整の欄 field の採用値が a と b で同じか（採用値に無い欄は「違う」= 知らせる側に倒す）。"""
+    name = _ADJ_ATTR.get(field, field)
+    if not hasattr(a, name):
+        return False
+    return getattr(a, name) == getattr(b, name)
 
 
 def _condition_kind(old: AdoptedSweep, new: AdoptedSweep) -> Optional[ConditionChange]:
@@ -757,7 +775,8 @@ class DisplayMixin:
         if "adopted" in s:
             a = s["adopted"]
             out += [a.start_hz, a.stop_hz, a.axis, a.rbw_hz, a.rbw_preference_hz, a.mode, a.sg_hz, a.image_reject,
-                    a.points_setting, a.span_lock_hz, tuple(tuple(sorted(d.items())) for d in s["traces"])]
+                    a.points_setting, a.span_lock_hz, a.range_request,
+                    tuple(tuple(sorted(d.items())) for d in s["traces"])]
         for k in ("view", "amplitude"):
             if k in s:
                 out.append(tuple(sorted(s[k].items())))
@@ -774,7 +793,8 @@ class DisplayMixin:
         del self._undo[:-UNDO_LIMIT]
         self._redo.clear()
 
-    def _restore_snapshot(self, s: dict) -> None:
+    def _restore_snapshot(self, s: dict, adopted: Optional[AdoptedSweep] = None) -> None:
+        """積んだ状態に戻す。adopted は掃引の条件を戻すときの、いまの機器の条件で採り直した条件（_undo_adopted）。"""
         if "view" in s:
             # 縦軸も一緒に戻すときは、縦軸は持っている値にする（ずらさない）
             self._set_view_opts(s["view"], shift_levels="amplitude" not in s)
@@ -788,35 +808,49 @@ class DisplayMixin:
         if "adopted" in s:
             # 掃引の条件が今と同じ（トレースの設定だけの変更）なら、トレースの設定だけを戻す（再生中も戻せる）。
             # 条件が違うときだけ、条件を変えてよいかを確かめて置き換える（再生中は断る: 設計P §5）
-            changes = self._undo_changes_conditions(s)
-            if changes:
-                self._check_live_conditions()
-            adopted = dataclasses.replace(s["adopted"], adjustments=(), alternative=None)
             for d in s["traces"]:
                 apply_trace_settings(self._traces[int(d["number"])], d)
-            if changes:
+            if adopted is not None:
                 self._set_adopted(adopted)  # トレースだけのときは呼ぶ側（_undo_result）がトレースを出し直す
 
     def _undo_redo(self, src: list, dst: list) -> dict:
         top = src[-1]
+        adopted = None
         if self._undo_changes_conditions(top):
             # 条件を戻す変更は、条件を変えてよいときだけ（再生中は断る: 設計P §5）。取り出す前に確かめる（失敗で履歴を失わない）
             self._check_live_conditions()
-            self._rtlsdr_check_condition(top["adopted"])
+            adopted = self._undo_adopted(top["adopted"])
+            self._rtlsdr_check_condition(adopted)
         cur = self._undo_snapshot(top.get("keys", ("sweep",)))
-        self._restore_snapshot(src.pop())
+        self._restore_snapshot(src.pop(), adopted)
         dst.append(cur)
-        return self._undo_result()
+        return self._undo_result(adopted)
+
+    def _undo_adopted(self, saved: AdoptedSweep) -> AdoptedSweep:
+        """積んだ条件を、いまの機器の条件（標本化の速さ・機種のプロファイル）で掃引条件モデルに通し直す。
+
+        積んだ採用値をそのまま戻すと、積んだときと速さが違う（外部 IQ の送信の間と後: 設計S §1 §3.2）とき、いまの速さで
+        使えない RBW・範囲や、古い速さの値（sample_rate_hz など）が戻り、掃引が止まる。戻すのは利用者が求めた値（RBW の
+        好み・速さで狭める前の範囲など: 設計C §5.1）で、採用値はいまのモデルが決める。知らせるのは、積んだときの値に
+        戻せなかった欄だけ（同じ値に戻る欄の制約は積んだときも同じだったので、言い直さない）。"""
+        start, stop = saved.range_request or (saved.start_hz, saved.stop_hz)
+        new = self._saved_sweep_adopted(
+            start_hz=start, stop_hz=stop, rbw_preference_hz=saved.rbw_preference_hz,
+            points_setting=saved.points_setting, mode=saved.mode, sg_hz=saved.sg_hz,
+            image_reject=saved.image_reject, span_lock_hz=saved.span_lock_hz,
+        )
+        kept = tuple(x for x in new.adjustments if not _same_adopted_value(new, saved, x.field))
+        return dataclasses.replace(new, adjustments=kept, alternative=None)
 
     def _undo_changes_conditions(self, s: dict) -> bool:
-        """戻すとライブの掃引の条件が変わるか（積んだ条件と今の条件を、元に戻すが比べる欄で比べる）。トレースの設定だけの
-        変更でも「sweep」の積み方は条件を一緒に持つので、持っているかではなく違うかで決める。"""
+        """戻すとライブの掃引の条件が変わるか（積んだ条件と今の条件を、利用者が求めた値で比べる）。トレースの設定だけの
+        変更でも「sweep」の積み方は条件を一緒に持つので、持っているかではなく違うかで決める。
+
+        比べるのは求めた値だけ（実際の RBW・点の並びは、求めた値といまの速さから決まる。速さが変わっただけで違って
+        見える値で、条件を戻すことにしない: 設計S §1 §3.2）。"""
         if "adopted" not in s:
             return False
-        a, b = s["adopted"], self._adopted
-        fields = ("start_hz", "stop_hz", "axis", "rbw_hz", "rbw_preference_hz", "mode", "sg_hz", "image_reject",
-                  "points_setting", "span_lock_hz")
-        return any(getattr(a, f) != getattr(b, f) for f in fields)
+        return _requested_conditions(s["adopted"]) != _requested_conditions(self._adopted)
 
     def _undo_blocked(self, stack: list) -> Optional[str]:
         if stack and getattr(self, "_playback", None) is not None and self._undo_changes_conditions(stack[-1]):
@@ -833,10 +867,12 @@ class DisplayMixin:
             raise self._error("nothing_to_redo")
         return self._undo_redo(self._redo, self._undo)
 
-    def _undo_result(self) -> dict:
+    def _undo_result(self, adopted: Optional[AdoptedSweep] = None) -> dict:
+        """戻した結果。条件を採り直して積んだときの値に戻せなかった欄は adjustments で返す（画面は欄のそばに出す: M-02）。"""
         self._emit_visible_traces()
         self._changed()
-        return {"adopted": adopted_to_dict(self._adopted), "adjustments": [],
+        adj = [] if adopted is None else adjustments_to_list(adopted)
+        return {"adopted": adopted_to_dict(self._adopted), "adjustments": adj,
                 "traces": [self._trace_state(t) for t in self._traces]}
 
     # ------------------------------------------------------------------ トレースの命令（設計F）

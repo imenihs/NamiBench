@@ -171,6 +171,10 @@ class AdoptedSweep:
     # その速さ（Hz。FFT の機器だけ。GigaSt は 0）
     rbw_rate_unusable_hz: tuple[int, ...] = ()
     sample_rate_hz: int = 0
+    # 利用者が求めた範囲 (Start, Stop)。いまの標本化の速さで測れる幅へ狭めたときだけ持つ（狭めていなければ None）。
+    # 求めた値は残し、制約が外れたら（外部 IQ の送信が終わって元の速さに戻ったら）この範囲を採り直す（設計C §5.1・
+    # 設計S §1 §3.2）。範囲を触らない変更（RBW だけ等）は引き継ぎ、範囲を触ったら新しい求めで置き換わる
+    range_request: Optional[tuple[int, int]] = None
     # 機器の層が送る区間の並び（いまの選択で。設計F §7.2）。preroll_points・transient_head_points は先頭の区間の値
     segments: tuple[SweepSegment, ...] = ()
     # いまの掃引条件で3つを選んだときの1画面の見積もり秒 ((選択, 秒), …)（設計F §7.3。画面が選択肢に出す）
