@@ -189,6 +189,16 @@ class S11BrowserTest(unittest.TestCase):
         from tests.test_web_layout import open_app
 
         a, p = self.app, self.page
+        # SA で測ったトレース3（dBm）を固定して隠しておく（S11 の縦軸と単位が違う固定のトレース: 設計E §6.5.1）
+        a.call("set_trace", number=3, visible=True, action="update")
+        n0 = a.call("get_state")["run"]["sweep_count"]
+        a.call("run", mode="single")
+        end = time.monotonic() + 20
+        while not (a.call("get_state")["run"]["state"] == "stopped" and a.call("get_state")["run"]["sweep_count"] > n0):
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.05)
+        a.call("set_trace", number=3, action="fixed")
+        a.call("set_trace", number=3, visible=False)
         a.call("set_sweep", start_hz=100 * MHZ, stop_hz=200 * MHZ)
         a.call("set_mode", mode="s11")
         open_app(p, a, 1280, 720)
@@ -229,12 +239,20 @@ class S11BrowserTest(unittest.TestCase):
         p.wait("(gsApp.st.traces[1].unit === 'SWR') && !document.querySelectorAll('.tvis input')[1].disabled",
                "トレース2も SWR")
         self.assertFalse(p.ev("!!document.querySelector('.tunit, .tfmt')"))
+        # チェックを外した固定のトレース3（dBm）も、縦軸と単位が違う間は「表示」のチェックを無効にし、理由はツールチップ
+        # だけ（入れると描かれず外せなくなる: 設計E §6.5.1。Qt と同じ ui.trace_drawn）
+        vis3 = "document.querySelectorAll('.tvis')[2]"
+        p.wait(f"{vis3}.querySelector('input').disabled && !{vis3}.querySelector('input').checked", "トレース3のチェックが無効")
+        tip = p.ev(f"{vis3}.title")
+        self.assertIn("SWR", tip)
+        self.assertIn("dBm", tip)
         # PNG も SWR の縦軸で描ける（画面と同じ部品: png.js）
         size = p.ev("gsApp.pngBlob('').then((b) => b.size)")
         self.assertGreater(size, 1000)
         self.assertEqual(p.errors, [])
         a.call("set_view", s11_format="db")
         a.call("set_trace", number=2, visible=False, action="average", count=16)
+        a.call("set_trace", number=3, action="update")
 
 
 if __name__ == "__main__":

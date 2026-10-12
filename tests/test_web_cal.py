@@ -241,6 +241,27 @@ class CalBrowserTest(unittest.TestCase):
         app.call("cal_close")
         self.assertEqual(page.errors, [])
 
+    def test_sg_state_while_rbw_calibration_outputs_sg(self):
+        """校正の掃引（RBW の校正は SG で 500MHz: 設計K §4.3）で SG を出している間は、メインのモードが SA のままでも
+        SG の欄の状態は「SG 出力中 500MHz」（機器へ渡している信号源で決める: 設計J §4.12。Qt と同じ文）。"""
+        page, app = self.page, self.app
+        open_app(page, app, 1280, 720)
+        page.ev("gsApp.tab = 'source'; 1")
+        app.call("cal_open", kind="rbw")
+        app.call("cal_measure")
+        want = qt_texts.tpl("source_sg", freq=qt_texts.format_freq(500_000_000))
+        page.wait("document.querySelector('[data-field=sg_state]').textContent.trim() === %s" % json.dumps(want),
+                  "SG の欄の状態が SG 出力中", timeout=30)
+        self.assertNotEqual(app.call("get_state")["sweep"]["mode"], "sg")
+        end = time.monotonic() + 60
+        while app.call("get_state")["tasks"]:
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.1)
+        page.wait("document.querySelector('[data-field=sg_state]').textContent.trim() !== %s" % json.dumps(want),
+                  "測り終えたら出していない理由")
+        app.call("cal_close")
+        self.assertEqual(page.errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

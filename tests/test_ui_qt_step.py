@@ -163,6 +163,35 @@ class StepUiTest(UiBase):
         self.cmd("set_mode", mode="sa")
         self.wait(lambda: not self.win.mark_bands.leaks, what="SA では印なし")
 
+    def test_result_leaks_keep_measured_conditions(self):
+        """ステップ掃引の結果のトレースの「内部の漏れ」は、それを測った条件（範囲・RBW・点の間隔・送った b3）で判定する
+        （設計L §1.5）。あとで SA にして Center・Span・RBW を変えても、一覧の印を保つ。格子を 400kHz ずらし、山が漏れの
+        周波数から 600kHz 離れる形にする（測った条件の幅の内、狭くした後の条件の幅の外: tests/test_internal_leaks と同じ）。"""
+        self.cmd("set_sweep", start_hz=300 * MHZ + 400_000, stop_hz=2100 * MHZ + 400_000)
+        self.cmd("set_mode", mode="sg", sg_hz=500 * MHZ)
+        self.cmd("set_step_sweep", start_hz=400 * MHZ, stop_hz=600 * MHZ, step_hz=100 * MHZ, per_step=1,
+                 combine="max", trace=2)
+        self.cmd("step_sweep_start")
+        self.wait_idle()
+        tab = self.win.marker_tab
+        self.win.show_part("tab-marker")
+
+        def leak_rows():
+            tab.pk_table.setRowCount(0)
+            tab.pk_note.setText("")
+            tab.pk_trace.setCurrentIndex(tab.pk_trace.findData(2))
+            tab._find_peaks()
+            self.wait(lambda: tab.pk_note.text(), what="ピークの一覧")
+            return {tab.pk_table.item(i, 0).text(): tab.pk_table.item(i, 4).text()
+                    for i in range(tab.pk_table.rowCount()) if tab.pk_table.item(i, 4).text()}
+
+        before = leak_rows()
+        self.assertEqual(before.get("1879.4"), L["peak_leak"], before)
+        self.cmd("set_mode", mode="sa")
+        self.cmd("set_sweep", center_hz=1880 * MHZ, span_hz=2 * MHZ, rbw_hz=30_000)
+        self.pump(0.3)
+        self.assertEqual(leak_rows(), before)
+
 
 class StepLayoutTest(UiBase):
     """ステップ掃引の欄（している間も）・漏れの印のあるピークの一覧・表示のタブを、決めた解像度で数える。"""

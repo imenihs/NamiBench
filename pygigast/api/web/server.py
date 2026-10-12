@@ -183,9 +183,15 @@ def encode_waterfall(payload: dict) -> bytes:
 
 
 def encode_density(payload: dict) -> bytes:
-    """イベント `density` をバイナリにする。値は [縦, 横] の uint8（0 は来ていない）を行の順につないだもの。"""
+    """イベント `density` をバイナリにする。値は [縦, 横] の uint8（0 は来ていない）を行の順につないだもの。
+
+    何秒分の密度かの文（seconds_text）は、この絵と一緒に届いた秒から作る（Qt の density_view と同じ関数）。状態の秒から
+    作ると、再生中に密度の元を記録から読み終えた後（状態は出ない）に前の秒のまま残る（設計P §9.3）。"""
+    from ...ui_qt.display_view import density_seconds_text
+
     img = np.asarray(payload.get("image") if payload.get("image") is not None else np.zeros((0, 0)), dtype=np.uint8)
     header = {k: v for k, v in payload.items() if k != "image"}
+    header["seconds_text"] = density_seconds_text(payload.get("seconds")) if img.size else ""
     header["kind"] = "density"
     header["value_type"] = "uint8"
     header["value_count"] = int(img.size)

@@ -445,6 +445,7 @@ def list_base(view: TraceView) -> tuple[str, Optional[float]]:
 
     電力（SA）はノイズフロア（中央値）。基準との比（TG・S11）はノイズフロアが無く、中央値は画面のうち通過域と
     阻止域の占める割合で動くので、表示範囲の最大（「ピーク」と同じ点: 印の付いた点・局発の漏れの帯を除く）。
+    NF のトレースにもノイズフロアは無いので同じく最大（谷 = NF の小さい所を並べられる）。
     """
     if view.quantity == Quantity.POWER:
         return BASE_NOISE_FLOOR, noise_floor(view)

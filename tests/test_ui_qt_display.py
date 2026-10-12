@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
 from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QPushButton
 
@@ -265,3 +266,87 @@ class PlaybackUiTest(UiBase):
         self.wait(lambda: not self.state()["playback"]["active"], what="ライブに戻る")
         self.wait(lambda: not bar.isVisible(), what="帯を隠す")
         self.wait(lambda: self.win.btn_cont.isEnabled(), what="連続が使える")
+
+
+class PlaybackFollowTest(UiBase):
+    """再生中の「デルタの2点を Start・Stop に」（設計C §5.13）・色の範囲の「自動」（P §9.2）・密度の元（P §9.3）を Qt の
+    画面で確かめる。記録は前半（50〜200MHz の SA 3 掃引）と後半（300〜2100MHz で SG 500MHz を出した 3 掃引）で最大が違う
+    形にし、1つの掃引で決めた色の範囲と記録の全体で決めた範囲が別になるようにする。"""
+
+    def single(self):
+        n0 = self.state()["run"]["sweep_count"]
+        self.cmd("run", mode="single")
+        self.wait(lambda: self.state()["run"]["state"] == "stopped" and self.state()["run"]["sweep_count"] > n0,
+                  what="単発")
+
+    def test_delta_span_colour_range_and_density_in_playback(self):
+        from pygigast.core import waterfall as wf
+        from pygigast.ui_qt.display_view import density_seconds_text
+
+        self.cmd("connect", backend="simulator", serial="SIM00001")
+        self.cmd("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        self.cmd("record_start")
+        for _ in range(3):
+            self.single()
+        self.cmd("set_sweep", start_hz=300 * MHZ, stop_hz=2100 * MHZ)
+        self.cmd("set_mode", mode="sg", sg_hz=500 * MHZ)
+        for _ in range(3):
+            self.single()
+        self.wait(lambda: self.state()["recording"].get("sweeps", 0) >= 6, what="記録")
+        self.cmd("record_stop")
+        h5 = self.root / "rec.h5"
+        self.save_path = str(h5)
+        self.win.files.record_finish()
+        self.wait(lambda: h5.exists(), what="記録をまとめる")
+        self.cmd("set_mode", mode="sa")
+        self.cmd("set_sweep", span_lock=True)  # ライブの Span 固定（再生では変えない）
+        live = dict(self.state()["sweep"])
+        self.assertIsNotNone(live["span_lock_hz"])
+        self.open_paths = [str(h5)]
+        self.win.files.open_files()
+        self.wait(lambda: self.state()["playback"]["active"], what="再生")
+        view = self.win.display.waterfall
+        # 色の範囲の「自動」は出している行の全体で決める（P §9.2）。カーソルを動かしても変えない
+        rows = self.cmd("waterfall_rows", max_rows=100)["rows"]
+        want = wf.range_of(np.concatenate([np.asarray(r["values"], dtype=float) for r in rows]))
+        self.assertNotEqual(want, wf.range_of(np.asarray(rows[0]["values"], dtype=float)))
+        self.wait(lambda: (view.lo, view.hi) == want, what="記録の全体の色の範囲")
+        bar = self.win.display.bar
+        for index in (5, 0, 3):
+            bar.slider.setValue(index)
+            self.wait(lambda i=index: self.state()["playback"]["index"] == i, what="つまみでカーソル")
+            self.pump(0.3)
+            self.assertEqual((view.lo, view.hi), want, index)
+        # 密度の元は記録の中のカーソルまでの直近の掃引（P §9.3）: 始め（0）から 2 へ飛ばすと、通過した2掃引でなく
+        # カーソルまでの3掃引。何秒分かは記録の時刻から
+        bar.slider.setValue(0)
+        self.wait(lambda: self.state()["playback"]["index"] == 0, what="始め")
+        self.win.display_tab.view_density.click()
+        dv = self.win.display.density
+        self.wait(lambda: (dv._last or {}).get("sweeps") == 1, what="カーソルまでの1掃引")
+        bar.slider.setValue(2)
+        self.wait(lambda: (dv._last or {}).get("sweeps") == 3, what="カーソルまでの3掃引")
+        interval = wf.sweep_interval_s([r["t"] for r in rows[:3]])
+        self.assertAlmostEqual(dv._last["interval_s"], interval)
+        self.assertEqual(dv.seconds.text(), density_seconds_text(dv._last["half"] * interval))
+        # 「デルタの2点を Start・Stop に」（設計C §5.13）: Span 固定が ON でも表示の範囲を2点にし、固定は変えず
+        # 「Span 固定を外しました」も出さない
+        self.cmd("marker_add", kind="M", trace=1, freq_hz=80 * MHZ)
+        self.cmd("marker_add", kind="M", trace=1, freq_hz=150 * MHZ)
+        self.cmd("marker_set", id="M2", ref="M1")
+        marks = {m["id"]: m["freq_hz"] for m in self.state()["markers"]["markers"]}
+        lo, hi = sorted((marks["M1"], marks["M2"]))
+        self.win.select_marker("M2")
+        self.menu_action("marker_span").trigger()
+        self.wait(lambda: (self.state()["playback"]["view"]["start_hz"], self.state()["playback"]["view"]["stop_hz"])
+                  == (lo, hi), what="表示の範囲が2点")
+        self.wait(lambda: (self.win.f_start.hz(), self.win.f_stop.hz()) == (lo, hi), what="上段の欄")
+        self.pump(0.3)
+        self.assertEqual(self.state()["sweep"]["span_lock_hz"], live["span_lock_hz"])
+        self.assertTrue(self.win.span_lock.isChecked())
+        self.assertNotEqual(self.win.f_span.note.text(), texts.LABELS["span_lock_released"])
+        self.win.display.bar.live.click()
+        self.wait(lambda: not self.state()["playback"]["active"], what="ライブに戻る")
+        st = self.state()
+        self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"], st["sweep"]["span_lock_hz"]),
+                         (live["start_hz"], live["stop_hz"], live["span_lock_hz"]))

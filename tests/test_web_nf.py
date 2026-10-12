@@ -168,6 +168,37 @@ class NfBrowserTest(unittest.TestCase):
         app.call("set_mode", mode="sa")
         app.call("nf_clear_enr_table")
 
+    def test_peak_list_counts_from_the_maximum(self):
+        """NF の画面のピークの一覧（設計P §9.7。Qt と同じ）: 基準は表示範囲の最大。欄の名前「最大から」・差の列
+        「最大からの差 (dB)」・見つけた数の行「n 個・最大 … dB」。−ピーク（NF の小さい所）も探せる。"""
+        page, app = self.page, self.app
+        app.call("set_sweep", start_hz=400 * MHZ, stop_hz=600 * MHZ)
+        app.call("set_mode", mode="nf")
+        app.call("nf_set_enr", enr_db=15.0)
+        app.api._inst._device.config.nf_hot_db = 11.3
+        self.wait_sweep()
+        open_app(page, app, *SIZES[0])
+        page.ev("gsApp.nfGuide = null; gsApp.tab = 'marker'; gsApp.peakMargin = 0.5; 1")
+        page.wait("gsApp.st && gsApp.st.display_quantity === 'nf'", "NF の掃引")
+        L = qt_texts.LABELS
+        for pol in ("peak", "dip"):
+            page.ev(f"gsApp.setPolarity('{pol}'); gsApp.peakList = null; 1")
+            page.settle()
+            label = page.ev("document.querySelector('[data-field=peak_margin]').textContent.trim()")
+            self.assertEqual(label, L["from_max"], pol)
+            self.assertFalse(page.ev("document.querySelector('[data-field=peak_find]').disabled"), pol)
+            page.ev("document.querySelector('[data-field=peak_find]').click(); 1")
+            page.wait("!!(gsApp.peakList && gsApp.peakList.polarity === %s)" % json.dumps(pol), "ピークの一覧")
+            page.settle()
+            found = page.ev("gsApp.peakText().found")
+            self.assertTrue(found.split("・")[1].startswith("最大 ") and found.endswith(" dB"), found)
+            self.assertEqual(page.ev("document.querySelector('.mtable.peaks thead th:nth-child(3)').textContent.trim()"),
+                             L["col_below_max_db"])
+            self.assertGreater(page.ev("document.querySelectorAll('.mtable.peaks tbody tr').length"), 0, pol)
+        page.ev("gsApp.setPolarity('peak'); 1")
+        self.assertEqual(page.errors, [])
+        app.call("set_mode", mode="sa")
+
 
 if __name__ == "__main__":
     unittest.main()

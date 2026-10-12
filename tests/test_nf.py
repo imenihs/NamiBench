@@ -297,6 +297,35 @@ class InstrumentNfTest(InstrumentCase):
         amp = self.call("get_state")["amplitude"]
         self.assertEqual((amp["ref_level"], amp["db_per_div"]), (-40.0, 10))
 
+    def test_peak_list_counts_from_the_maximum(self):
+        """NF の画面のピークの一覧（設計P §9.7）: NF のトレースにもノイズフロアは無いので、基準は表示範囲の最大。
+        −ピーク（NF の小さい所）も並べられる（電力のスペクトルのように断らない）。"""
+        self.nf_mode()
+        self.call("nf_set_enr", enr_db=15.0)
+        self.single()
+        v, p = self.trace_db()
+        self.assertEqual(p["quantity"], "nf")
+        top = float(np.nanmax(v))
+        for pol in ("peak", "dip"):
+            r = self.call("peak_list", trace=1, floor_margin_db=0.5, polarity=pol)
+            self.assertEqual((r["base"], r["polarity"], r["unit"]), ("max", pol, "dB"), pol)
+            self.assertAlmostEqual(r["base_level"], top, places=6)
+            for row in r["peaks"]:
+                # 差は最大からの差（山は最大 − N dB 以上、谷は最大 − N dB より下）
+                self.assertAlmostEqual(row["diff_db"], row["level"] - top, places=6)
+                if pol == "peak":
+                    self.assertGreaterEqual(row["diff_db"], -0.5 - 1e-9)
+                else:
+                    self.assertLess(row["diff_db"], -0.5)
+        # 画面の欄（Qt・Web 共通の peak_view）も最大からで、谷を探せる
+        from pygigast.ui_qt import peak_view
+
+        st = self.call("get_state")
+        self.assertEqual(st["display_quantity"], "nf")
+        for pol in ("peak", "dip"):
+            lv = peak_view.list_view(st, pol)
+            self.assertEqual((lv["base"], lv["reason"]), ("max", None), pol)
+
     def test_ref_auto_works_on_nf(self):
         """NF の値（0〜20 dB 付近）が電力の縦軸の REF では見えなくても、REF の自動に使う最大が NF の dB で出る。"""
         self.nf_mode()

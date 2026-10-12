@@ -143,6 +143,36 @@ class NfQtTest(UiBase):
         self.assertEqual((c["ref_level"], c["db_per_div"], c["unit"], data["mode"]), (ref, 10.0, "dB", texts.MODE_NAMES["nf"]))
         self.assertEqual(png_export.render_png(data)[:4], b"\x89PNG")
 
+    def test_peak_list_counts_from_the_maximum(self):
+        """NF の画面のピークの一覧（設計P §9.7）: 基準は表示範囲の最大（NF にノイズフロアは無い）。欄の名前「最大から」・
+        差の列「最大からの差 (dB)」・見つけた数の行「n 個・最大 … dB」。−ピーク（NF の小さい所）も探せる。"""
+        self.enter_nf()
+        self.win.nf_guide.close()
+        self.cmd("nf_set_enr", enr_db=15.0)
+        n0 = self.state()["run"]["sweep_count"]
+        self.cmd("run", mode="single")
+        self.wait(lambda: self.state()["run"]["state"] == "stopped" and self.state()["run"]["sweep_count"] > n0,
+                  timeout=20, what="単発")
+        self.wait(lambda: self.win.state.get("display_quantity") == "nf", what="NF の掃引を画面へ")
+        self.win.show_part("tab-marker")
+        tab = self.win.marker_tab
+        L = texts.LABELS
+        for pol in ("peak", "dip"):
+            self.win.marker_panel.set_polarity(pol)
+            tab.apply_peaks()
+            self.assertEqual(tab.pk_margin_label.text(), L["from_max"], pol)
+            self.assertTrue(tab.pk_find.isEnabled(), pol)  # 谷も断らない（電力のスペクトルだけが谷を探さない）
+            tab.pk_table.setRowCount(0)
+            tab.pk_note.setText("")
+            tab.pk_margin.set_value(0.5)
+            tab.pk_find.click()
+            self.wait(lambda: tab.pk_note.text(), what="ピークの一覧")
+            self.assertTrue(tab.pk_note.text().split("・")[1].startswith("最大 "), tab.pk_note.text())
+            self.assertTrue(tab.pk_note.text().endswith(" dB"), tab.pk_note.text())
+            self.assertEqual(tab.pk_table.horizontalHeaderItem(2).text(), L["col_below_max_db"])
+            self.assertGreater(tab.pk_table.rowCount(), 0, pol)
+        self.win.marker_panel.set_polarity("peak")
+
     def test_small_difference_points_are_dimmed(self):
         n = 5
         pts = {"nf_small_difference": np.array([False, True, False, False, True])}
