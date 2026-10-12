@@ -173,8 +173,8 @@ class TestDevice(unittest.TestCase):
     def test_fit_gain_largest_without_overload(self):
         a = self.model.default()
         res = self.dev.fit_gain(a)
-        # −40dBm は 40dB で振り切れの手前（dBFS = 入力 + 利得）
-        self.assertIn(res["gain_db"], (38.0, 39.0, 40.0))
+        # −40dBm は 40dB で振り切れの手前（dBFS = 入力 + 利得）。そこから余裕の 3dB 下げる
+        self.assertIn(res["gain_db"], (35.0, 36.0, 37.0))
         self.assertFalse(res["overload"])
         self.assertLessEqual(res["steps_tried"], 9)
 

@@ -54,6 +54,8 @@ UNREACHABLE_CACHE_S = 3.0
 SERIAL_CACHE_S = 5.0
 # 振り切れの判定（RTL-SDR と同じ割合: 設計Q §6.4）
 OVERLOAD_RATIO = spectrum.OVERLOAD_RATIO
+# 「利得を合わせる」の余裕（dB）。振り切れない一番高い利得からこれだけ下げる（2026-10-12 ユーザー決定: 3dB・全部のモード）
+FIT_MARGIN_DB = 3
 # 「利得を合わせる」で1つの位置を試す標本の数
 FIT_SAMPLES = 16384
 # 値が受け付けられなかった（機器は繋がっている）errno。ほかの失敗は繋がりが切れたとみなす
@@ -839,7 +841,9 @@ class PlutoSdrDevice(Device):
                         b = m
                     else:
                         a = m
-                chosen, overload = a, False
+                # 境目ちょうどの利得は、合わせた後の測定で揺れて振り切れることがある（実機 2026-10-12: 34dB で 5 回中 2 回）。
+                # 振り切れの境目が見つかったときだけ、そこから FIT_MARGIN_DB 下げる（全部のモード: ユーザー決定）
+                chosen, overload = max(lo, a - FIT_MARGIN_DB), False
         except BaseException:
             # やめた・失敗したときは試す前の利得へ戻す（黙って変えたままにしない）
             # 手動なら利得と手動の指定を、自動なら自動の指定を書き直させる

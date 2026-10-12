@@ -70,10 +70,12 @@ class TestFitTransmits(FitTxCase):
         self.assertFalse(res["overload"])
         self.assertTrue(self.reads and all(r[0] for r in self.reads))  # 合わせる間は送信が出ている
         self.assertTrue(self.tx_is_off())  # 止めていたので、終わったら止める
-        # 選んだ利得で SG を測ると振り切れない。1段上げると振り切れる
+        # 選んだ利得で SG を測ると振り切れない。余裕（FIT_MARGIN_DB）の分は振り切れず、その1段上で振り切れる
         self.dev.set_gain(res["gain_db"])
         self.assertFalse(self.dev.measure(self.sg).extra["overload"])
-        self.dev.set_gain(res["gain_db"] + 1)
+        self.dev.set_gain(res["gain_db"] + pd.FIT_MARGIN_DB)
+        self.assertFalse(self.dev.measure(self.sg).extra["overload"])
+        self.dev.set_gain(res["gain_db"] + pd.FIT_MARGIN_DB + 1)
         self.assertTrue(self.dev.measure(self.sg).extra["overload"])
 
     def test_tg_fit_follows_rx_lo_and_stops_tx(self):
@@ -86,7 +88,9 @@ class TestFitTransmits(FitTxCase):
         self.assertTrue(self.tx_is_off())
         self.dev.set_gain(res["gain_db"])
         self.assertFalse(self.dev.measure(self.tg).extra["overload"])
-        self.dev.set_gain(res["gain_db"] + 1)
+        self.dev.set_gain(res["gain_db"] + pd.FIT_MARGIN_DB)
+        self.assertFalse(self.dev.measure(self.tg).extra["overload"])
+        self.dev.set_gain(res["gain_db"] + pd.FIT_MARGIN_DB + 1)
         self.assertTrue(self.dev.measure(self.tg).extra["overload"])
 
     def test_sg_fit_start_order_is_the_safe_one(self):
