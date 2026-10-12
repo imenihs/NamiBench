@@ -37,6 +37,9 @@ def adopted_to_dict(a: AdoptedSweep) -> dict:
         "rbw_preference_hz": a.rbw_preference_hz,
         "rbw_usable_hz": list(a.rbw_usable_hz),
         "rbw_limit": a.rbw_limit,
+        # いまの標本化の速さで使えない RBW と速さ（外部 IQ の送信の間: 設計S §1 §3.2）
+        "rbw_rate_unusable_hz": list(a.rbw_rate_unusable_hz),
+        "sample_rate_hz": a.sample_rate_hz,
         "mode": a.mode.value,
         "sg_hz": a.sg_hz,
         # イメージ除去（設計F §7.3）: 選択・実際に使うもの（NF・ゼロスパンは "off"）・3つを選んだときの1画面の

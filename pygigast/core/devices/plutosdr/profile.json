@@ -101,6 +101,16 @@
     "basis": "provisional_until_measured",
     "note": "SG: TX LO = SG frequency - dds_offset_hz and one DDS tone at +dds_offset_hz (the LO leakage stays 1 MHz away from the tone). TG: TX LO follows each RX LO position and a cyclic multitone buffer puts one tone on every FFT bin of the usable width (Schroeder phases, peak tg_multitone_peak of full scale). sg / tg_range_hz / tx_lo_hz are replaced on connect by the ranges the device reports. Nothing here has been checked on the device yet (TX not enabled)"
   },
+  "ext_tx": {
+    "sample_rate_hz": [2083334, 4096000],
+    "block_samples": 65536,
+    "queue_blocks": 8,
+    "prefill_blocks": 4,
+    "starve_s": 1.0,
+    "first_data_s": 10.0,
+    "basis": "provisional_until_measured",
+    "note": "external IQ transmit port. Rates: below 2.083334 MS/s the AD9364 needs its FIR (not handled); above 4.096 MS/s the push has not been shown to keep up (raise after measuring). block 65536 samples kept up in txstream (2026-10-12). The app queue holds queue_blocks blocks (the credit), the device starts after prefill_blocks blocks, a missing block is filled with zeros, and no sample for starve_s seconds (first_data_s after ready) stops the transmit. All provisional"
+  },
   "raw": {
     "encoding": "rtlsdr_power_w",
     "level_reference": "dbfs",

@@ -20,6 +20,7 @@ SETTINGS_PAGES = {
     "save": "保存",
     "web": "ブラウザから使う",
     "rtltcp": "rtl_tcp",
+    "ext_tx": "外部 IQ 送信",
     "rtlsdr": "RTL-SDR",
     "plutosdr": "PlutoSDR",
 }

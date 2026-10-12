@@ -62,11 +62,19 @@ def rbw_groups(st: dict) -> list[dict]:
           "choices": [{"hz": 1500, "text": "1.5kHz", "reason": None | "選べない理由"}]}]
     いまの条件で使えない RBW は理由を持つ（画面は一覧に残して無効にする: 設計C §5.14・U-08）。
     """
+    from .screen_exttx import rbw_rate_reason
+
     rbw = profile_of(st).get("rbw") or {}
-    why = rbw_limit_text(st)
-    usable = set((st.get("sweep") or {}).get("rbw_usable_hz") or [])
+    sw = st.get("sweep") or {}
+    why = _rbw_points_text(st)
+    usable = set(sw.get("rbw_usable_hz") or [])
+    # いまの標本化の速さで使えない RBW（外部 IQ の送信の間: 設計S §1 §3.2）は、その理由を行に出す
+    rate_bad = set(sw.get("rbw_rate_unusable_hz") or [])
+    rate_why = rbw_rate_reason(st)
 
     def choice(hz: int) -> dict:
+        if hz in rate_bad and rate_why:
+            return {"hz": hz, "text": format_freq(hz), "reason": rate_why}
         return {"hz": hz, "text": format_freq(hz), "reason": why if why and usable and hz not in usable else None}
 
     if "choices" in rbw:
@@ -81,7 +89,15 @@ def rbw_groups(st: dict) -> list[dict]:
 
 
 def rbw_limit_text(st: dict) -> Optional[str]:
-    """いまの条件で選べない RBW があるときの理由（無ければ None）。"""
+    """いまの条件で選べない RBW があるときの理由（無ければ None）。外部 IQ の標本化の速さで使えないもの（設計S §1）と、
+    点数などの条件で使えないもの（設計C §5.14）の両方があれば2行。"""
+    from .screen_exttx import rbw_rate_reason
+
+    lines = [t for t in (rbw_rate_reason(st), _rbw_points_text(st)) if t]
+    return "\n".join(lines) if lines else None
+
+
+def _rbw_points_text(st: dict) -> Optional[str]:
     sw = st.get("sweep") or {}
     code = sw.get("rbw_limit")
     if not code:
@@ -163,11 +179,15 @@ def image_reject_width_samples() -> list[str]:
 
 def mode_reasons(st: dict) -> dict:
     """モードごとの使えない理由。まだ作っていないもの → 機器が測れないもの（Q §2.1）の順。"""
+    from .screen_exttx import mode_reason
+
     meas = profile_of(st).get("measurements") or []
     playing = texts.live_lock_reason(st)
+    ext = mode_reason(st)  # 外部のアプリが送信している間の SG・TG・S11（設計S §1 §6.2・U-08）
     out = {}
     for code, _label, _name, why in texts.MODES:
-        out[code] = why or (None if code in meas else texts.MODE_UNSUPPORTED) or playing
+        out[code] = why or (None if code in meas else texts.MODE_UNSUPPORTED) or playing \
+            or (ext if code in ("sg", "tg", "s11") else None)
     return out
 
 
@@ -679,6 +699,13 @@ def _pluto_view(st: dict) -> dict:
     return pluto_view(st)
 
 
+def _ext_view(st: dict) -> dict:
+    from . import screen_exttx
+
+    return {"tx": screen_exttx.tx_view(st), "settings": screen_exttx.settings_view(st),
+            "status": screen_exttx.status_item(st)}
+
+
 def ui_view(st: dict) -> dict:
     """Web の画面へ state と一緒に送るもの。Qt も同じ関数の部分を使う。"""
     return {
@@ -696,6 +723,7 @@ def ui_view(st: dict) -> dict:
         "pluto": _pluto_view(st),  # PlutoSDR の受信・送信の欄と設定の行（screen_pluto.py）
         "listen": listen_view(st),
         "rtltcp": rtltcp_view(st),
+        "ext_tx": _ext_view(st),  # 外部 IQ 送信の口（設計S §1 §7）
         "tasks": {t.get("task_id"): texts.task_label(t) for t in st.get("tasks") or []},
         "normalization": texts.normalization_text(st.get("normalization") or {}),
         "ref_quick": ref_quick_view(st),

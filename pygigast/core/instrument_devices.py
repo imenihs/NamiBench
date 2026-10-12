@@ -299,6 +299,7 @@ class DevicesMixin:
     def _cmd_disconnect(self) -> dict:
         if self._ref_job is not None:
             self._abort_ref_job(CommandError("disconnected"))
+        self._exttx_device_gone("user")  # 利用者が切った（外部 IQ の送信を止める: 設計S §1）
         self._drop_device()
         self._identity = None
         self._backend_name = None

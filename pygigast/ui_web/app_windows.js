@@ -173,6 +173,19 @@
       <button @click="a.setRtltcp({enabled: false, port: 1234, bind: 'local'})">{{ a.S('reset') }}</button>
     </template>
 
+    <template v-else-if="page === 'ext_tx'">
+      <label class="inline"><input type="checkbox" :checked="a.extView.settings.enabled" @change="a.setExtTx({enabled: $event.target.checked})">{{ a.T('EXT_TX_LABELS', 'enable') }}</label>
+      <div class="form">
+        <label>{{ a.T('EXT_TX_LABELS', 'port') }}</label><input class="w-int" v-steady="a.extView.settings.port" @change="a.setExtTxPort($event.target.value)">
+      </div>
+      <div class="stack">
+        <div>{{ a.extView.settings.text }}</div>
+        <div class="warn" v-if="a.extView.settings.error_text">{{ a.extView.settings.error_text }}</div>
+        <div class="fnote" v-if="a.notes.ext_tx">{{ a.notes.ext_tx.text }}</div>
+      </div>
+      <button @click="a.setExtTx({enabled: false, port: 1235})">{{ a.S('reset') }}</button>
+    </template>
+
     <template v-else-if="page === 'rtlsdr'">
       <div class="form">
         <label>{{ a.T('SETTINGS_LABELS', 'rtlsdr_dll') }}</label>

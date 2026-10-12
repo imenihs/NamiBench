@@ -566,6 +566,36 @@ class LayoutPlutoTest(PlutoUiBase):
         self.assertEqual(sorted(set(found)), [])
 
 
+    def test_ext_iq_streaming(self):
+        # 外部 IQ の送信の間（設計S §1 §7）: 状態バーの「外部 IQ 出力中」と［送信を止める］・信号源のタブの外部の行・
+        # SG/TG/S11 と使えない RBW が理由付きで無効な形
+        from tests.exttx_helpers import RawClient, free_port
+
+        found = []
+        self.connect_pluto(single=False)
+        self.cmd("set_sweep", start_hz=1574 * 1_000_000, stop_hz=1577 * 1_000_000, rbw_hz=48000)
+        self.cmd("run", mode="continuous")
+        port = free_port()
+        self.cmd("ext_tx_set", enabled=True, port=port)
+        c = RawClient(port)
+        try:
+            c.wait_type("welcome")
+            self.assertEqual(c.start(name="GPS emulator")["type"], "ready")
+            c.feed()
+            c.wait_type("on")
+            self.wait(lambda: (self.state()["ext_tx"]["session"] or {}).get("state") == "on", what="出力中")
+            self.pump(0.5)
+            self.assertTrue(self.win.status.exttx_stop.isVisible())
+            for key in ("tab-trace", "tab-source"):
+                self.win.show_part(key)
+                self.pump(0.3)
+                found += problems(self.win, f"主画面 外部 IQ 出力中 {key}")
+            self.assertTrue(self.win.source_tab.pluto_tx.ext_stop.isVisible())
+        finally:
+            c.close()
+        self.assertEqual(sorted(set(found)), [])
+
+
 class LayoutPlutoWideTest(LayoutPlutoTest):
     size = (1920, 1080)
 

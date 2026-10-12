@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QPushButton
 
 from . import sizes, widget_sync
 from .fields import DbChoiceField, DbField
+from .texts_exttx import EXT_TX_LABELS as XL
 from .screen_pluto import pluto_view, tg_harmonic_width_samples
 from .tab_traces import SameWidth, set_enabled
 from .texts_pluto import PLUTO_LABELS as L
@@ -116,10 +117,29 @@ class PlutoTxPanel(QGroupBox):
         self.state = QLabel("")
         self.state.setObjectName("dim")
         form.addRow(self.state)
+        # 外部 IQ の送信の間だけ出す行（設計S §1 §7）: 標本化の速さ・中心の周波数・IQ の強さ・［送信を止める］
+        self.ext_rate = QLabel("")
+        self.ext_lo = QLabel("")
+        self.ext_power = QLabel("")
+        self.ext_power.setToolTip(XL["power_tip"])
+        self.ext_stop = QPushButton(XL["stop"])
+        self.ext_stop.clicked.connect(lambda: win.call("ext_tx_stop"))
+        self._form = form
+        self._ext_rows = []
+        for name, w in ((XL["rate"], self.ext_rate), (XL["lo"], self.ext_lo), (XL["power"], self.ext_power)):
+            form.addRow(name, w)
+            self._ext_rows.append(form.rowCount() - 1)
+        form.addRow("", sizes.buttons_row(self.ext_stop))
+        self._ext_rows.append(form.rowCount() - 1)
+        self._ext = False
         self._step = 0.25
         self.hide()
 
     def _commit(self, v: float) -> None:
+        if self._ext:
+            # 外部の送信の間は外部の送信の減衰（SG・TG と別の値: O1）
+            self.win.call("ext_tx_atten", field=self.atten, atten_db=float(v))
+            return
         self.win.call("plutosdr_set", field=self.atten, tx_atten_db=float(v))
 
     def _tg_harmonic_chosen(self, i: int) -> None:
@@ -133,7 +153,14 @@ class PlutoTxPanel(QGroupBox):
         v = pluto_view(st)
         self.setVisible(v["shown"])
         self.atten.set_value(v["tx_atten_db"])
-        set_enabled(self.atten, v["tx_atten_reason"], L["tx_atten_tip"])  # S11 のオープンの後も（設計Q §7.8）
+        self._ext = bool(v["tx_atten_ext"])
+        set_enabled(self.atten, v["tx_atten_reason"], XL["atten_tip"] if self._ext else L["tx_atten_tip"])  # S11 のオープンの後も（設計Q §7.8）
+        ext = v["ext"]
+        self.ext_rate.setText(ext["rate_text"])
+        self.ext_lo.setText(ext["lo_text"])
+        self.ext_power.setText(ext["power_text"])
+        for row in self._ext_rows:
+            self._form.setRowVisible(row, ext["shown"])
         tg = v["tg_harmonic"]
         self._tg_value = tg["value"]
         widget_sync.set_items(self.tg_harmonic, [(it["text"], it["code"]) for it in tg["items"]])

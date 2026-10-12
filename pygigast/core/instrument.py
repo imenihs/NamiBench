@@ -33,6 +33,7 @@ from .instrument_common import CommandError, adjustments_to_list, adopted_to_dic
 from .instrument_devices import DevicesMixin
 from .instrument_diff import DiffMixin
 from .instrument_display import DisplayMixin
+from .instrument_ext_tx import ExtTxMixin
 from .instrument_files import DEFERRED, FilesMixin
 from .instrument_listen import ListenMixin
 from .instrument_bandplan import BandplanMixin
@@ -195,7 +196,7 @@ class _DeviceWorker(threading.Thread):
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
                  BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, PlutoGainCalMixin, PlutoS11Mixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
-                 SweepProgressMixin):
+                 SweepProgressMixin, ExtTxMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -269,6 +270,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._init_rtlsdr()
         self._init_plutosdr()
         self._init_pluto_gain()
+        self._init_exttx()  # 外部 IQ 送信の口（設計S §1）
         self._init_listen()
         self._init_devices()
         self._init_step(saved if isinstance(saved, dict) else None)  # SG のステップ掃引（設計L §1.3）
@@ -278,6 +280,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._thread.start()
         # rtl_tcp を出すと決めていれば起動時に始める（設計Q §4.3。既定は出さない）
         self._q.put(("call", self._start_rtltcp_if_enabled))
+        # 外部 IQ 送信の口も、待つと決めていれば起動時に始める（設計S §1。既定は待たない）
+        self._q.put(("call", self._start_exttx_if_enabled))
         if self._settings.load_problem:
             # 設定が読めなかったことを1回知らせる（設計O §1.1。黙って初期値にしない）
             self._q.put(("notice", "settings_reset", self._settings.load_problem))
@@ -499,6 +503,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             "rtltcp": self._rtltcp_state(),
             "rtlsdr": self._rtlsdr_state(),
             "plutosdr": self._plutosdr_state(),
+            "ext_tx": self._exttx_state(),  # 外部 IQ 送信の口（設計S §1）
             "listen": self._listen_state(),
             "step_sweep": self._step_state(),  # SG のステップ掃引の設定と動き（設計L §1.3）
             "nf": self._nf_state(),  # NF の ENR・増幅度（設計M）
@@ -555,6 +560,10 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         if self._worker is None:
             return
         busy = self._worker.busy_since
+        if self._exttx_holds_job():
+            # 外部 IQ の送信で標本化の速さを切り替えている間は渡さない（設計S §1 §3.3）
+            self._worker.set_job(self._gen, None)
+            return
         if self._cal_push_job():
             return  # 校正の間は、いまの条件とは別の条件で決めた回数だけ測る（設計K §4.1）
         if self._step_push_job():
@@ -736,6 +745,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         return new, adj
 
     def _drop_device(self) -> None:
+        self._exttx_device_gone()  # 外部 IQ の送信を止める印を付けて閉じる（待たない: 設計S §1 の P1）
         if self._cal_job is not None:
             self._cal_abort(CommandError("disconnected"))
         if self._step_job is not None:
@@ -823,6 +833,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             from .storage import Cancelled
 
             self._step_stop(Cancelled())
+        self._shutdown_exttx()  # 外部 IQ の送信を止めて閉じる（設計S §1 §5）
         self._shutdown_rtltcp()
         self._close_device_for_exit()
         self._shutdown_playback()
@@ -850,6 +861,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         """
         if self._playback is not None:
             raise self._error("playback_active")
+        self._exttx_check_mode(new.mode)  # 外部 IQ の送信の間は SG・TG・S11 にしない（設計S §1 §6.2）
         old = self._adopted
         # 機器へ送る中身が変わったときだけ掃引をやり直す（固定の切り替え・知らせだけの違いではやり直さない）
         changed = _sweep_key(new) != _sweep_key(old)

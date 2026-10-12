@@ -42,6 +42,8 @@ from .texts_refvalue import *  # noqa: F401,F403 — 基準の値の語（設計
 from .texts_refvalue import REF_VALUE_ERRORS, REF_VALUE_NOTICES, ref_value_text, value_range_text
 from .texts_pluto import *  # noqa: F401,F403 — PlutoSDR の語（設計Q §7）
 from .texts_pluto import PLUTO_ERRORS, PLUTO_NOTICES, PLUTO_SETTINGS
+from .texts_exttx import *  # noqa: F401,F403 — 外部 IQ 送信の口の語（設計S §1）
+from .texts_exttx import EXT_TX_ERRORS, EXT_TX_NOTICES, EXT_TX_REFUSE_CODES, EXT_TX_STOP_REASONS
 
 # 「振幅の詳細」の単位と「S11 の表示」は同じ列の欄で、同じ幅（S-02）。幅はこの中の一番長い文字で決める（Qt の
 # tab_display・Web の fitColumns が同じものを測る）
@@ -134,6 +136,9 @@ REASONS = {
     "image_reject_unsupported": "この機器はイメージ除去を持ちません",
     "device_default_range": "機器の範囲の外なので、その機器の既定の範囲",
     "device_changed": "機器が変わったため既定",
+    # 外部 IQ の送信で標本化の速さが変わった（設計S §1 §3.2）
+    "rbw_sample_rate": "外部 IQ の標本化の速さでは選んでいた RBW を使えません",
+    "span_sample_rate": "外部 IQ の標本化の速さで測れる幅",
 }
 
 # 値ではなく状態が変わった調整の文（「◯◯ に合わせました」の形にしない）。欄は調整の field で決まる
@@ -337,8 +342,14 @@ def notice_text(n: dict) -> str:
         g = TEMPLATES["gain_agc"] if d.get("agc") else (f"{d['gain_db']:g} dB" if d.get("gain_db") is not None else "")
         if g:
             text += tpl("paren", text=g)
+    elif code == "rtltcp_sample_rate_unsupported" and d.get("paused"):
+        text = TEMPLATES["rtltcp_rate_paused"]  # 外部 IQ の送信の間（設計S §1 の P3）
     elif code == "rtltcp_sample_rate_unsupported" and d.get("used"):
         text += tpl("paren", text=f"{d.get('requested')} → {d['used']}")
+    elif code in ("ext_tx_stopped", "ext_tx_refused", "ext_tx_listening", "ext_tx_closed", "ext_tx_port_error"):
+        from .screen_exttx import notice_detail
+
+        text += notice_detail(code, d)
     elif code == "rtlsdr_span_limited" and d.get("start_hz") is not None:
         cause = FIXED_CENTER_CAUSES.get(d.get("cause"), d.get("cause") or "")
         text = tpl("span_limited", cause=cause, start=format_freq(int(d["start_hz"])),
@@ -473,6 +484,7 @@ RESET_CAUSES = {
     "level": "レベルの補正",
     "level_calibration": "レベルの補正",
     "enr": "ENR",
+    "sample_rate": "標本化の速さ",
     **DISPLAY_RESET_CAUSES,
 }
 
@@ -803,6 +815,8 @@ ERRORS.update({k: v for k, v in NF_ERRORS.items() if k not in ERRORS})  # NF の
 ERRORS.update({k: v for k, v in REF_VALUE_ERRORS.items() if k not in ERRORS})  # 基準の値（設計E §6.7）
 ERRORS.update(PLUTO_ERRORS)  # PlutoSDR（設計Q §7）
 NOTICES.update(PLUTO_NOTICES)
+ERRORS.update(EXT_TX_ERRORS)  # 外部 IQ 送信の口（設計S §1）
+NOTICES.update(EXT_TX_NOTICES)
 SETTINGS_LABELS.update(PLUTO_SETTINGS)
 TASK_NAMES["plutosdr_fit_gain"] = TASK_NAMES["rtlsdr_fit_gain"]
 TASK_DONE["plutosdr_fit_gain"] = TASK_DONE["rtlsdr_fit_gain"]
@@ -944,6 +958,12 @@ def listen_status(lst: dict) -> str:
                mode=LISTEN_MODES.get(lst.get("mode"), lst.get("mode") or ""))
 
 
+def ext_status_item(st: dict) -> dict:
+    from .screen_exttx import status_item
+
+    return status_item(st)
+
+
 def status_items(st: dict) -> list[dict]:
     """状態バーの項目（key・text・cls）。Qt と Web が同じ並び・同じ文字で出す。空の text は出さない。"""
     conn = st.get("connection") or {}
@@ -984,6 +1004,7 @@ def status_items(st: dict) -> list[dict]:
         {"key": "src", "text": source_text(st), "cls": "warn"},
         {"key": "listen", "text": listen_status(st.get("listen") or {}), "cls": "warn"},
         {"key": "rtltcp", "text": rt_text, "cls": rt_cls},
+        ext_status_item(st),  # 外部 IQ 送信の口（設計S §1 §7）
         {"key": "rec", "text": recording_text(st.get("recording") or {}), "cls": "warn"},
         {"key": "tasks", "text": tpl("status_tasks", n=len(tasks)) if tasks else "", "cls": ""},
     ]
