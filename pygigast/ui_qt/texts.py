@@ -441,12 +441,17 @@ def seconds_text(s) -> str:
     return f"{float(s):.1f}"
 
 
-def image_reject_item(code: str, seconds=None) -> str:
-    """イメージ除去の選択肢の文字「正確（約 3.8 秒）」。見積もりが無い（選べない機器）ときは名前だけ。"""
-    name = IMAGE_REJECT_CHOICES.get(code, code)
+def choice_with_seconds(name: str, seconds=None) -> str:
+    """掃引の時間が変わる選択肢の文字「正確（約 3.8 秒）」（イメージ除去・PlutoSDR の TG 高調波の平均除去）。
+    見積もりが無い（選べない）ときは名前だけ。"""
     if seconds is None:
         return name
     return w("image_reject_item", name=name, s=seconds_text(seconds))
+
+
+def image_reject_item(code: str, seconds=None) -> str:
+    """イメージ除去の選択肢の文字「正確（約 3.8 秒）」。見積もりが無い（選べない機器）ときは名前だけ。"""
+    return choice_with_seconds(IMAGE_REJECT_CHOICES.get(code, code), seconds)
 
 # 蓄積を捨てた理由（設計F §5.3 の条件）
 RESET_CAUSES = {

@@ -118,14 +118,14 @@ def make_plan(profile: dict, axis: FreqAxis, rbw_hz: int,
     return p, pl
 
 
-def timing_fn(profile: dict) -> Callable[[FreqAxis, int], float]:
+def timing_fn(profile: dict) -> Callable[..., float]:
     """掃引条件モデル（sweep_kind "fft"）の見積もり: 位置の数 ×（中心を変えてから使える値まで ＋ 読み取り）。
 
     リアルタイム（中心を動かさない）は読み取りだけ。
     """
     settle = float(profile["timing"]["retune_settle_s"])
 
-    def f(axis: FreqAxis, rbw_hz: int) -> float:
+    def f(axis: FreqAxis, rbw_hz: int, mode=None) -> float:
         p, pl = make_plan(profile, axis, rbw_hz)
         read_s = p.read_bytes / (2.0 * p.fs)
         if pl.realtime:

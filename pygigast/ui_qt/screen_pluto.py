@@ -6,7 +6,8 @@
   設定の利得がいまの範囲で使えないとき（利得の範囲は LO の帯で変わる）は、使う値を利得の欄のそばに出す（U-25）。
   受信の利得の補正の表（設計Q §7.6）が無いときは、利得の欄のそばに「利得の補正なし」の印（理由はツールチップ）。
   TG で基準を選んでいる間・利得の補正を測っている間は、利得の欄と「利得を合わせる」を理由付きで使えなくする（U-08）
-- 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル）
+- 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル）と TG 高調波の平均除去（設計Q §7.7。選択肢の文字に、
+  いまの条件での1回の掃引の見積もりを出す: イメージ除去の選択と同じ形。TG のときだけ選べる）
 - 欄は PlutoSDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）
 - 設定の画面の PlutoSDR のページ: 見つけた libiio.dll の場所（無い・32 ビット版なら注意の色で理由）と URI
 """
@@ -15,7 +16,7 @@ from __future__ import annotations
 import math
 
 from . import texts
-from .texts_pluto import PLUTO_LABELS
+from .texts_pluto import PLUTO_LABELS, TG_HARMONIC_CHOICES
 
 # 受信の利得の一覧に並べる刻み（dB）。打てばいまの範囲の 1dB 刻みのどの値でも
 GAIN_CHOICE_STEP_DB = 10
@@ -23,6 +24,27 @@ GAIN_CHOICE_STEP_DB = 10
 
 def _db(v: float) -> str:
     return f"{float(v):g}".replace("-", "−")
+
+
+def tg_harmonic_view(st: dict) -> dict:
+    """TG 高調波の平均除去の選択（設計Q §7.7。Qt と Web が同じものを出す）: 選択肢（文字は名前と、いまの条件での1回の
+    掃引の見積もり。TG でないときは名前だけ）・いまの回数・選べないときの理由（PlutoSDR でない・TG でない）。"""
+    pl = st.get("plutosdr") or {}
+    est = pl.get("tg_harmonic_estimates") or {}
+    codes = pl.get("tg_harmonic_choices") or [int(c) for c in TG_HARMONIC_CHOICES]
+    items = [{"code": int(c), "text": texts.choice_with_seconds(TG_HARMONIC_CHOICES.get(str(c), f"{c}"), est.get(str(c)))}
+             for c in codes]
+    reason = None
+    if not pl.get("connected"):
+        reason = PLUTO_LABELS["not_pluto"]
+    elif (st.get("sweep") or {}).get("mode") != "tg":
+        reason = PLUTO_LABELS["tg_harmonic_not_tg"]
+    return {"items": items, "value": int(pl.get("tg_harmonic_avg") or 1), "reason": reason}
+
+
+def tg_harmonic_width_samples() -> list[str]:
+    """選択肢の一番長い文字の見本（秒を 999.9 にしたもの。秒の桁で欄を動かさない: イメージ除去の欄と同じ）。"""
+    return [texts.choice_with_seconds(name, 999.9) for name in TG_HARMONIC_CHOICES.values()]
 
 
 def pluto_view(st: dict) -> dict:
@@ -77,6 +99,7 @@ def pluto_view(st: dict) -> dict:
         "tx_atten_max": float(rng["max"]),
         "tx_atten_step": float(rng["step"]),
         "tx_state": texts.tpl("pluto_tx_on", what=tx_on.upper()) if tx_on else "",
+        "tg_harmonic": tg_harmonic_view(st),
         # 設定の画面の libiio.dll の行（設計J §4.12 と同じ形）
         "dll_line": pl.get("dll_path") or texts.SETTINGS_LABELS["rtlsdr_missing"],
         "dll_reason": texts.SETTINGS_LABELS["plutosdr_32bit"] if bits not in (None, 64) else "",

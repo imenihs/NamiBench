@@ -19,6 +19,7 @@ I §3.1 の「配置（帯の項目・順・文字の大きさ）はコアのデ
       "mode": "スペクトラムアナライザ",
       "conditions": {"start_hz", "stop_hz", "rbw_hz", "points", "step_hz",
                      "image_reject" ("accurate"・"fast"・"off"。実際に使ったもの。None なら出さない),
+                     "tg_harmonic_avg" (PlutoSDR の TG 高調波の平均除去の回数。1 はなし。None なら出さない),
                      "ref_level", "db_per_div", "unit",
                      "x_axis" (ゼロスパンだけ: {"kind": "time", "x0", "x1"（μs）, "factor", "unit", "length_s",
                                "point_time_s"}。横軸・トレース・マーカーの位置は μs: 設計N §1)},
@@ -47,6 +48,12 @@ META_KEY = "pygigast"
 
 # 条件の行のイメージ除去（設計F §7.3。画像にだけ焼き込む語: 画面の選択肢と同じ名前）
 IMAGE_REJECT_WORDS = {"accurate": "正確", "fast": "スピード", "off": "なし"}
+# 条件の行の TG 高調波の平均除去（設計Q §7.7。画面の選択肢と同じ名前: 1 回は「なし」）
+TG_HARMONIC_NAME = "TG 高調波の平均除去"
+
+
+def tg_harmonic_word(count: int) -> str:
+    return "なし" if int(count) <= 1 else f"{int(count)}回"
 META_FORMAT = 1
 DIVISIONS = 10
 MIN_SIZE = (320, 240)
@@ -283,6 +290,8 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
         cond.append(s)
     if c.get("image_reject") is not None:
         cond.append("イメージ除去 " + IMAGE_REJECT_WORDS.get(c["image_reject"], str(c["image_reject"])))
+    if c.get("tg_harmonic_avg") is not None:
+        cond.append(f"{TG_HARMONIC_NAME} {tg_harmonic_word(c['tg_harmonic_avg'])}")
     xa = c.get("x_axis") or {}
     if xa.get("kind") == "time":
         # ゼロスパンの表示する長さと、時間の推定に使った1点あたりの時間（設計N §1）
@@ -685,6 +694,8 @@ def build_data(state: dict, *, ref_level: float, db_per_div: float, unit: str, m
                        "points": sw.get("points"), "step_hz": sw.get("step_hz"),
                        # 実際に使ったもの（NF・ゼロスパンは選択によらず「なし」: 設計F §7.1）。RTL-SDR は持たない
                        "image_reject": None if conn.get("sweep_kind") == "fft" else sw.get("image_reject_used"),
+                       # PlutoSDR の TG で使った平均除去の回数（出している掃引の値。再生中は記録の値: 設計Q §7.7）
+                       "tg_harmonic_avg": (state.get("plutosdr") or {}).get("tg_harmonic_used"),
                        "ref_level": ref_level, "db_per_div": db_per_div, "unit": unit,
                        # 表示の設定（設計O）: 周波数オフセット・外部補正。帯と横軸に出す
                        "freq_offset_hz": int(view.get("freq_offset_hz") or 0),

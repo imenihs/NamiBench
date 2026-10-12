@@ -530,6 +530,22 @@ class LayoutPlutoTest(PlutoUiBase):
         self.assertTrue(self.win.source_tab.pluto_tx.isVisible())
         self.assertEqual(sorted(set(found)), [])
 
+    def test_tg_harmonic_selector(self):
+        # TG 高調波の平均除去（設計Q §7.7）: TG で選べて、選択肢に見積もりの秒が付いた形（8回を選んだ）
+        found = []
+        self.connect_pluto()
+        self.cmd("set_sweep", start_hz=985_000_000, stop_hz=1_015_000_000)
+        self.cmd("set_mode", mode="tg")
+        self.cmd("plutosdr_set", tg_harmonic_avg=8)
+        self.pump(0.4)
+        c = self.win.source_tab.pluto_tx.tg_harmonic
+        self.assertTrue(c.isEnabled())
+        self.assertIn("秒", c.currentText())
+        self.win.show_part("tab-source")
+        self.pump(0.2)
+        found += problems(self.win, "主画面 PlutoSDR TG 高調波の平均除去")
+        self.assertEqual(sorted(set(found)), [])
+
 
 class LayoutPlutoWideTest(LayoutPlutoTest):
     size = (1920, 1080)

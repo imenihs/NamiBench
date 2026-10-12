@@ -954,13 +954,15 @@
         const modeW = Math.ceil(Math.max(...X.list("MODES").map((m) => F.textWidth(m[1], lb)))) + 2 * F.rootPx("--btn-pad-x") + 2;
         // イメージ除去の欄: 出しうる一番長い選択肢（秒は 999.9 で測る。Qt の screen_model.image_reject_width_samples と同じ）
         const reject = Object.values(X.dict("IMAGE_REJECT_CHOICES")).map((name) => W("image_reject_item", { name, s: "999.9" }));
+        // PlutoSDR の TG 高調波の平均除去の欄も同じ決め方（Qt の screen_pluto.tg_harmonic_width_samples と同じ）
+        const tgharm = Object.values(X.dict("TG_HARMONIC_CHOICES")).map((name) => W("image_reject_item", { name, s: "999.9" }));
         // 線の列（クリアの真下: 設計F §9）: 一番長い線の名前と、同じ列のクリアのボタン（文字＋左右の余白と枠・最小幅）の広い方
         // （Qt の tab_traces の線の列と同じ）
         const clearW = Math.max(F.rootPx("--btn-min-w"),
           Math.ceil(F.textWidth(W("clear"), F.rootPx("--font-m"))) + 2 * F.rootPx("--btn-pad-x") + 2);
         const line = Math.max(F.selectWidth(Object.values(X.dict("TRACE_LINES"))), clearW);
         // 「振幅の詳細」の単位と S11 の表示（同じ列: Qt の tab_display と同じ見本）
-        F.fitColumns({ a: colA, b: colB, reject, line, unitcol: X.list("UNIT_COLUMN_SAMPLES") });
+        F.fitColumns({ a: colA, b: colB, reject, tgharm, line, unitcol: X.list("UNIT_COLUMN_SAMPLES") });
         document.documentElement.style.setProperty("--top-freq-w", freqW + "px");
         document.documentElement.style.setProperty("--mode-w", modeW + "px");
       },
