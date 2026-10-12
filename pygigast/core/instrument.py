@@ -522,6 +522,9 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             adopted, sweeping = job.adopted, True
         else:
             adopted, sweeping = self._adopted, self._run in ("continuous", "single", "stopping", STEP_RUN_STATE)
+            # PlutoSDR の「利得を合わせる」は SG・TG で送信を出しながら合わせる（設計Q（追加）・2026-10-12 決定①）
+            if not sweeping and adopted.mode in (Mode.SG, Mode.TG):
+                sweeping = any(t.kind == "plutosdr_fit_gain" for t in getattr(self, "_tasks", {}).values())
         output = self._SOURCE_OF_MODE.get(adopted.mode, "none")
         src = self._profile.get("source") or {}
         if self._conn != "connected" or not sweeping or not src.get(output):

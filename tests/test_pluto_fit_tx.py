@@ -189,6 +189,22 @@ class TestFitTxInstrument(PlutoCase):
             self.assertEqual(self.call("get_state")["plutosdr"]["gain_db"], g)
             self.assertIsNone(self.call("get_state")["plutosdr"]["tx_on"])
 
+    def test_output_shown_while_fitting_when_stopped(self):
+        """止めた SG で合わせている間も、出していることが状態に出る（設計L: 出ていることが画面で分かる）。"""
+        self.call("set_mode", mode="sg", sg_hz=85_500_000)
+        self.assertEqual(self.call("get_state")["source"]["output"], "none")
+        with self.cv:
+            self.events.clear()
+        self.call("plutosdr_fit_gain")
+        self.wait_for(lambda k, p: k == "state" and (p.get("source") or {}).get("output") == "sg"
+                      and (p.get("plutosdr") or {}).get("fitting"))
+        self.wait_for(lambda k, p: k == "notice" and p["code"] == "task_done"
+                      and p["detail"].get("task") == "plutosdr_fit_gain")
+        end = time.monotonic() + 5
+        while self.call("get_state")["source"]["output"] != "none":
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.02)
+
     def test_running_tg_fit_keeps_output_then_stop_turns_it_off(self):
         self.call("set_mode", mode="tg")
         self.call("run", mode="continuous")
