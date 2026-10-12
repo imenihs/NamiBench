@@ -130,6 +130,27 @@ class WebStepServerTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.wait_idle()
 
+    def test_result_leaks_keep_measured_conditions(self):
+        """結果のトレースの「内部の漏れ」は、それを測った条件で判定する（設計L §1.5。Qt の
+        test_ui_qt_step.test_result_leaks_keep_measured_conditions と同じ形）。Web の一覧の列（texts.peak_list の行）も、
+        あとで SA にして Center・Span・RBW を変えても同じ印を保つ。"""
+        self.call("set_sweep", start_hz=300 * MHZ + 400_000, stop_hz=2100 * MHZ + 400_000)
+        self.call("set_step_sweep", start_hz=400 * MHZ, stop_hz=600 * MHZ, step_hz=100 * MHZ, per_step=1,
+                  combine="max", trace=2)
+        self.call("step_sweep_start")
+        self.wait_idle()
+
+        def leak_rows():
+            code, r = self.post("peak_list", {"trace": 2, "floor_margin_db": 10.0})
+            self.assertEqual(code, 200, r)
+            return {row["freq"]: row["leak"] for row in r["texts"]["peak_list"]["rows"] if row["leak"]}
+
+        before = leak_rows()
+        self.assertEqual(before.get("1879.4"), texts.LABELS["peak_leak"], before)
+        self.call("set_mode", mode="sa")
+        self.call("set_sweep", center_hz=1880 * MHZ, span_hz=2 * MHZ, rbw_hz=30_000)
+        self.assertEqual(leak_rows(), before)
+
     def test_mouse_reading_names_the_leak(self):
         self.call("run", mode="single")
         time.sleep(0.5)

@@ -672,7 +672,7 @@
           <!-- SG の周波数を変えたら最大・最小保持も消すか（設計F §8。コアの設定で Qt と共有） -->
           <label class="inline" :title="W('sg_clear_holds_tip')"><input type="checkbox" data-field="sg_clears_holds" :checked="traceOpts.sg_clears_holds !== false" @change="setTraceOptions({sg_clears_holds: $event.target.checked})">{{ W('sg_clear_holds') }}</label>
           <!-- 出していないときは原因（未接続・モード・止めている）を言う（Qt と同じ文: ui.sg_state） -->
-          <div class="dim">{{ ui.sg_state }}</div>
+          <div class="dim" data-field="sg_state">{{ ui.sg_state }}</div>
         </section>
         <!-- 送信の減衰（PlutoSDR: SG・TG の出力のレベル。設計Q §7）。PlutoSDR に繋いでいるときだけ出す（Qt の PlutoTxPanel と同じ） -->
         <section class="sec" data-part="pluto_tx" v-if="plutoView.shown">

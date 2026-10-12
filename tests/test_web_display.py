@@ -305,3 +305,112 @@ class WebDisplayUiTest(unittest.TestCase):
         p.wait("gsApp.lowerVisible('waterfall')", "ゼロスパンを抜けたら出す")
         self.app.call("set_view", layout="spectrum")
         self.assertEqual(p.errors, [])
+
+
+@unittest.skipUnless(edge_available(), "Microsoft Edge が無い")
+class WebPlaybackFollowTest(unittest.TestCase):
+    """再生中の「デルタの2点を Start・Stop に」（設計C §5.13）・色の範囲の「自動」（P §9.2）・密度の元（P §9.3）を Web の
+    画面で確かめる（Qt の test_ui_qt_display.PlaybackFollowTest と同じ形の記録・同じ確かめ方）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = App()
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def single(self):
+        n0 = self.app.call("get_state")["run"]["sweep_count"]
+        self.app.call("run", mode="single")
+        end = time.monotonic() + 20
+        while True:
+            st = self.app.call("get_state")
+            if st["run"]["state"] == "stopped" and st["run"]["sweep_count"] > n0:
+                return
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.05)
+
+    def test_delta_span_colour_range_and_density_in_playback(self):
+        from pygigast.core import waterfall as wf
+
+        app, p = self.app, self.page
+        app.call("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)
+        app.call("record_start")
+        for _ in range(3):
+            self.single()
+        app.call("set_sweep", start_hz=300 * MHZ, stop_hz=2100 * MHZ)
+        app.call("set_mode", mode="sg", sg_hz=500 * MHZ)
+        for _ in range(3):
+            self.single()
+        end = time.monotonic() + 20
+        while app.call("get_state")["recording"].get("sweeps", 0) < 6:
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.05)
+        app.call("record_stop")
+        h5 = Path(app.tmp.name) / "follow_rec.h5"
+        app.call("record_finish", path=str(h5))
+        end = time.monotonic() + 20
+        while not h5.exists():
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.1)
+        app.call("set_mode", mode="sa")
+        app.call("set_sweep", span_lock=True)  # ライブの Span 固定（再生では変えない）
+        live = dict(app.call("get_state")["sweep"])
+        self.assertIsNotNone(live["span_lock_hz"])
+        open_app(p, app, 1280, 720)
+        app.call("open", paths=[str(h5)])
+        p.wait("gsApp.pbView.visible && gsApp.pbActive", "再生の帯")
+        # 色の範囲の「自動」は出している行の全体で決める（P §9.2）。カーソルを動かしても変えない
+        rows = app.call("waterfall_rows", max_rows=100)["rows"]
+        want = wf.range_of(np.concatenate([np.asarray(r["values"], dtype=float) for r in rows]))
+        self.assertNotEqual(want, wf.range_of(np.asarray(rows[0]["values"], dtype=float)))
+        p.wait(f"gsApp.$wf.lo === {want[0]} && gsApp.$wf.hi === {want[1]}", "記録の全体の色の範囲")
+        for index in (5, 0, 3):
+            p.ev(f"gsApp.pbSlide({index}); 1")
+            p.wait(f"gsApp.pbView.index === {index}", "つまみでカーソル")
+            time.sleep(0.3)
+            self.assertEqual(p.ev("[gsApp.$wf.lo, gsApp.$wf.hi]"), list(want), index)
+        # 密度の元は記録の中のカーソルまでの直近の掃引（P §9.3）: 始め（0）から 2 へ飛ばすと、通過した2掃引でなく
+        # カーソルまでの3掃引。何秒分かは記録の時刻から（Qt と同じ文）
+        p.ev("gsApp.pbSlide(0); 1")
+        p.wait("gsApp.pbView.index === 0", "始め")
+        p.ev("gsApp.tab = 'view'; 1")
+        p.ev("document.querySelector('input[name=layout][value=density]').click(); 1")
+        p.wait("gsApp.layoutCode === 'density' && !!(gsApp.$dens && gsApp.$dens.d && gsApp.$dens.d.sweeps === 1)",
+               "カーソルまでの1掃引")
+        p.ev("gsApp.pbSlide(2); 1")
+        p.wait("!!(gsApp.$dens.d && gsApp.$dens.d.sweeps === 3)", "カーソルまでの3掃引")
+        d = app.call("density_get")
+        interval = wf.sweep_interval_s([r["t"] for r in rows[:3]])
+        self.assertAlmostEqual(d["interval_s"], interval)
+        p.wait("gsApp.densitySeconds === %s" % json.dumps(display_view.density_seconds_text(d["half"] * interval)),
+               "何秒分か（記録の時刻から）")
+        # 「デルタの2点を Start・Stop に」（設計C §5.13）: Span 固定が ON でも表示の範囲を2点にし、固定は変えず
+        # 「Span 固定を外しました」も出さない
+        app.call("marker_clear")
+        app.call("marker_add", kind="M", trace=1, freq_hz=80 * MHZ)
+        app.call("marker_add", kind="M", trace=1, freq_hz=150 * MHZ)
+        app.call("marker_set", id="M2", ref="M1")
+        marks = {m["id"]: m["freq_hz"] for m in app.call("get_state")["markers"]["markers"]}
+        lo, hi = sorted((marks["M1"], marks["M2"]))
+        p.wait("gsApp.markers.markers.length === 2", "マーカー")
+        p.ev("gsApp.selectedMarker = 'M2'; gsApp.handlers().marker_span(); 1")
+        p.wait(f"gsApp.pbView && gsApp.st.playback.view.start_hz === {lo} && gsApp.st.playback.view.stop_hz === {hi}",
+               "表示の範囲が2点")
+        time.sleep(0.3)
+        st = app.call("get_state")
+        self.assertEqual(st["sweep"]["span_lock_hz"], live["span_lock_hz"])
+        self.assertNotEqual(p.ev("(gsApp.notes.span || {}).text || ''"), texts.LABELS["span_lock_released"])
+        p.ev("document.querySelector('[data-field=pb_live]').click(); 1")
+        p.wait("!gsApp.pbView.visible", "ライブに戻る")
+        st = app.call("get_state")
+        self.assertEqual((st["sweep"]["start_hz"], st["sweep"]["stop_hz"], st["sweep"]["span_lock_hz"]),
+                         (live["start_hz"], live["stop_hz"], live["span_lock_hz"]))
+        self.assertEqual(p.errors, [])

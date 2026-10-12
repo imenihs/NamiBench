@@ -18,6 +18,7 @@
       return {
         wfFollow: true, wfWindow: null, wfEpoch: null, wfSeq: 0, wfUnit: "dBm", wfInfo: {},
         pbActive: false, pbSession: null, lowerPct: 40, bmName: "", bmFreq: "", wfShownLayout: "spectrum", wfBusy: false, wfAgain: false,
+        densityText: "",  // 何秒分の密度か（届いた密度の絵と一緒の文: onDensity。Qt の density_view と同じ）
       };
     },
     computed: {
@@ -48,7 +49,7 @@
         if (this.pbActive) return this.wfWindow ? null : X.get("REASON_TEXTS", "wf_whole");
         return this.wfFollow ? X.get("REASON_TEXTS", "wf_following") : null;
       },
-      densitySeconds() { return this.dv.density_seconds || ""; },
+      densitySeconds() { return this.densityText; },
       // 密度を描かない理由（行にするトレースの単位が縦軸と違う: display_view.density_reason）。題の行の秒の場所に出す
       densityReason() { return this.dv.density_reason || null; },
       runReason() { return this.ui.run_reason || null; },
@@ -176,7 +177,11 @@
         this.wfSeq = p.seq || 0;
         if (this.wfFollow && !this.pbActive && this.$wf) this.$wf.append(rows);
       },
-      onDensity(p) { if (this.$dens) this.$dens.setDensity(p); },
+      onDensity(p) {
+        // 秒の文は絵と一緒に届いたもの（状態の秒は、再生中に密度の元を記録から読み終えた後に古いまま残る: P §9.3）
+        this.densityText = (p && p.value_count && p.seconds_text) || "";
+        if (this.$dens) this.$dens.setDensity(p);
+      },
       // ---------------------------------------------------------- 行を取り直す（P §9.2）
       async fetchRows() {
         if (!this.$wf || (this.shownLayout !== "waterfall" && !this.pbActive && this.part !== "waterfall")) { this.wfEpoch = null; return; }

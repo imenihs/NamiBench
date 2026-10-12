@@ -232,5 +232,4 @@ def ui(st: dict) -> dict:
         "tab": display_tab_view(st),
         "playback": playback_view(st),
         "bandplan": bandplan_view(st),
-        "density_seconds": density_seconds_text(((st.get("waterfall") or {}).get("density") or {}).get("seconds")),
     }

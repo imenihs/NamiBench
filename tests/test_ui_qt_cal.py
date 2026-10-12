@@ -278,7 +278,13 @@ class CalUiTest(UiBase):
         d.btn_rbw.click()
         self.wait(lambda: d.v["measuring"], what="RBW を測り始める")
         self.assertTrue(d.rbw_progress.isVisible())
+        # 校正の掃引で SG 500MHz を出している間は、メインのモードが SA のままでも SG の欄の状態は「SG 出力中 500MHz」
+        # （機器へ渡している信号源で決める: 設計J §4.12・K §4.3）
+        sg_on = texts.tpl("source_sg", freq=texts.format_freq(500_000_000))
+        self.wait(lambda: self.win.source_tab.sg_state.text() == sg_on, what="SG の欄の状態が SG 出力中")
+        self.assertNotEqual(self.state()["sweep"]["mode"], "sg")
         self.wait_idle(d)
+        self.assertNotEqual(self.win.source_tab.sg_state.text(), sg_on)  # 測り終えたら出していない理由に戻る
         self.assertEqual(d.rbw_table.rowCount(), 1)
         self.assertEqual(d.rbw_table.columnCount(), 6)
         self.assertEqual(problems(d, "RBW 測る"), [])
