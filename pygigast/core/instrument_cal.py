@@ -164,7 +164,7 @@ class CalMixin:
             # 作業が既にあっても状態を送る: 開いた画面は、作業のある状態を受けて初めて窓を開いたものとし（Web）、その後に
             # 作業の無い状態が届いたら閉じる。送らないと、開いた直後に別の画面が作業を閉じても窓の扱いが残る
             self._changed()
-            return self._cal_result()
+            return self._cal_opened()
         serial = self._cal_serial()
         model = self._profile.get("model") if serial else None
         store = self._cal_store
@@ -174,9 +174,14 @@ class CalMixin:
                 self._cal_session = cw.CalSession(kind, model, serial, *r)
                 self._pluto_cal_sync(self._cal_session)
                 self._changed()
-            return self._cal_result()
+            return self._cal_opened()
 
         return self._io(lambda: _read_store(store, serial), then)
+
+    def _cal_opened(self) -> dict:
+        """開いた結果。version は作業のある状態の版: 画面は、これ以降の版で作業の無い状態が届いたら閉じたと分かる
+        （状態は最新だけが届くので、作業のある状態を見ないまま閉じた状態だけを受けることがある）。"""
+        return {**self._cal_result(), "version": self._version}
 
     def _cmd_cal_set_kind(self, kind: str, discard: bool = False) -> dict:
         """何を校正するかを選ぶ（K §4.1 の 1）。保存していない作業があれば、discard で捨てると決めるまで断る。"""
@@ -256,8 +261,10 @@ class CalMixin:
                 raise CommandError("bad_value", "nf_freq_hz", {"min": lo, "max": hi})
             s.nf_freq_hz = nf_freq_hz
         if current is not None:
-            if isinstance(current, bool) or not isinstance(current, int) or not (0 <= current < cw.GRID_POINTS):
-                raise CommandError("bad_value", "current", {"min": 0, "max": cw.GRID_POINTS - 1})
+            # 点の一覧の行（band の境目は2行: K §4.2.1）
+            n = len(s.points)
+            if isinstance(current, bool) or not isinstance(current, int) or not (0 <= current < n):
+                raise CommandError("bad_value", "current", {"min": 0, "max": n - 1})
             if s.pending is not None:
                 raise CommandError("calibration_confirm_pending")
             s.select(current)
@@ -327,7 +334,7 @@ class CalMixin:
         if s.pending is not None:
             raise CommandError("calibration_confirm_pending")
         idx = s.current
-        f = cw.measure_freq(s.points[idx].freq_hz)
+        f = s.points[idx].measure_hz
         step = _CalStep(("point", idx), self._cal_adopted(Mode.SA, f, cw.FREQ_RBW_HZ), cw.AVERAGES)
 
         def on_step(job: _CalJob, st: _CalStep, res: dict) -> None:

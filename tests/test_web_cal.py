@@ -40,7 +40,7 @@ class CalServerTest(_Base):
         ui = s["ui"]["cal"]
         self.assertEqual(ui, json.loads(json.dumps(cal_view.view(s))))
         self.assertEqual(ui["title"], qt_texts.MENU_ITEMS["cal_freq"].rstrip("…"))
-        self.assertEqual(len(ui["points"]), 121)
+        self.assertEqual(len(ui["points"]), 132)  # band の境目の 11 か所は2行（K §4.2.1）
         self.assertEqual(self.post("cal_close")[0], 200)
         self.assertIsNone(self.state()["ui"]["cal"])
 
@@ -121,6 +121,43 @@ class CalBrowserTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual(page.errors, [])
 
+
+    def test_band_edge_rows_show_band_and_sg_frequency(self):
+        # band の境目は2行。どちらの帯の欄か・SG に出させる周波数が行に出る（Qt と同じ: K §4.2.1）
+        page, app = self.page, self.app
+        for w, h in ((1280, 720), (1920, 1080)):
+            open_app(page, app, w, h)
+            page.ev("gsApp.openCal('freq'); 1")
+            page.wait("!!document.querySelector('.calwin')", "校正の画面")
+            page.ev("gsApp.calNext(); 1")
+            page.wait("gsApp.calWin.page === 1 && !!document.querySelector('.calwin .cal-points tbody tr')", "測る")
+            app.call("cal_set", current=11)
+            page.wait("gsApp.calView && gsApp.calView.points[11].current", "上の帯の行")
+            page.settle()
+            heads = page.ev("[...document.querySelectorAll('.calwin .cal-points thead th')].map(e => e.textContent.trim())")
+            self.assertEqual(heads[:3], [cal_view.C["col_freq"], cal_view.C["col_band"], cal_view.C["col_sg_freq"]])
+            rows = page.ev("[...document.querySelectorAll('.calwin .cal-points tbody tr')]"
+                           ".map(r => [...r.querySelectorAll('td')].slice(0, 3).map(e => e.textContent.trim()))")
+            self.assertEqual(len(rows), 132)
+            self.assertEqual(rows[9], ["900", "", "900"])
+            self.assertEqual(rows[10], ["1000", cal_view.C["band_lower"], "999.5"])
+            self.assertEqual(rows[11], ["1000", cal_view.C["band_upper"], "1000.5"])
+            self.assertIn("1000.500MHz", page.ev("document.querySelector('.calwin .cal-instruction').textContent"))
+            self.assertEqual(page.problems(".modal.calwin", f"校正 測る {w}x{h}"), [])
+            page.ev("gsApp.calNext(); 1")
+            page.wait("gsApp.calWin.page === 2", "確かめる")
+            page.settle()
+            heads = page.ev("[...document.querySelectorAll('.calwin .cal-check-points thead th')].map(e => e.textContent.trim())")
+            self.assertEqual(heads[1], cal_view.C["col_band"])
+            self.assertEqual(page.problems(".modal.calwin", f"校正 確かめる {w}x{h}"), [])
+            page.ev("gsApp.calClose(); 1")
+            page.wait("!gsApp.calWin", "閉じた")
+            # 本体の作業も閉じ終わるまで待つ（閉じるの命令が次の開くより後に届くと、次の試験の作業を閉じてしまう）
+            end = time.monotonic() + 10
+            while app.call("get_state")["calibration_work"] is not None:
+                self.assertLess(time.monotonic(), end)
+                time.sleep(0.05)
+        self.assertEqual(page.errors, [])
 
     def test_opens_while_sweeping_and_keeps_the_scroll(self):
         # 掃引中は作業ができる前の状態（作業なし）が届く。それで窓を閉じない。手でスクロールした点の一覧を、状態が

@@ -274,16 +274,20 @@ def _check_view(wk: dict, kind: str) -> dict:
             state = C["st_pending"]
         warn = None
         if legacy and p.get("warn"):
-            warn = w("measured_warn", diff=_measured_diff(f"freq:{p['freq_hz']}", {"after": p["after_db"], **p}))
-        points.append({"index": p["index"], "freq": mhz_text(p["freq_hz"]), "before": db_text(p["before_db"]),
+            warn = w("measured_warn", diff=_measured_diff("freq", {"after": p["after_db"], **p}))
+        points.append({"index": p["index"], "freq": mhz_text(p["freq_hz"]), "band": _band_text(p.get("side")),
+                       "sg_freq": mhz_text(p["measure_hz"]) if "measure_hz" in p else "",
+                       "before": db_text(p["before_db"]),
                        "after": db_text(p["after_db"]), "diff": db_text(p["after_db"] - p["before_db"]),
                        "state": state, "big": bool(p.get("big")), "current": p["index"] == wk.get("current"),
                        "measured": db_text(p.get("measured")) if legacy else "", "warn": warn,
                        "status": p["status"]})
     limit = pg.BIG_DIFF_DB if pluto else cw.CONFIRM_DIFF_DB
-    out: dict = {"items": rows, "points": points, "legacy": legacy,
+    # band の境目を2行に分けた一覧（周波数特性・旧ファイル）は、どちらの帯の欄かの列を持つ（K §4.2.1）
+    out: dict = {"items": rows, "points": points, "legacy": legacy, "band_column": not pluto,
                  "big_tip": w("big_tip", limit=f"{limit:g}"),
-                 "headers": {"freq": C["col_freq"], "before": C["col_before"], "after": C["col_after"],
+                 "headers": {"freq": C["col_freq"], "band": C["col_band"], "sg_freq": C["col_sg_freq"],
+                             "before": C["col_before"], "after": C["col_after"],
                              "diff": C["col_diff"], "state": C["col_state"], "item": C["col_item"],
                              "measured": C["col_measured"]}}
     if kind in (cw.KIND_FREQ, cw.KIND_LEGACY, cw.KIND_PLUTO_GAIN) and points:
@@ -302,6 +306,11 @@ def _check_view(wk: dict, kind: str) -> dict:
     # 確かめ待ちの点がある間は保存できない（答えてから: K §4.2）
     out["save_reason"] = None if wk.get("savable") and not wk.get("pending") else _save_reason(wk, kind)
     return out
+
+
+def _band_text(side: Optional[str]) -> str:
+    """band の境目の2行のどちらの帯の欄か（K §4.2.1）。境目でない行は空。"""
+    return {cw.SIDE_LOWER: C["band_lower"], cw.SIDE_UPPER: C["band_upper"]}.get(side or "", "")
 
 
 def _measured_diff(item: str, it: dict) -> str:

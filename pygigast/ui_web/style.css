@@ -481,6 +481,9 @@ form.auth button { height: auto; font-size: 18px; padding: 8px; }
 .cal-arrow { color: var(--text-dim); flex: none; }
 .cal-freq { flex: 1 1 auto; min-height: 0; display: flex; gap: var(--gap); }
 .cal-points { flex: 2 1 0; min-width: 330px; overflow: auto; border: 1px solid var(--axis); }
+/* 点の一覧は全部の列が切れずに入る幅より狭くしない（Qt の _fit_columns と同じ）。幅は中身に合わせてあるので横の
+   スクロールバーは出さない（1px 未満の端数で出てしまう） */
+.cal-freq > .cal-points { min-width: max-content; overflow-x: hidden; }
 .cal-points tbody tr { cursor: pointer; }
 .cal-side { flex: 3 1 0; min-width: 0; }
 /* PlutoSDR の利得の補正（設計Q §7.6）: 結果の一覧を広く（Qt の cal_dialog と同じ 3:2）。行は選ばない */
