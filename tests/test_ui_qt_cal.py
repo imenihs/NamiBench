@@ -90,8 +90,8 @@ class CalUiTest(UiBase):
         self.assertFalse(d.btn_measure.isEnabled())
         self.assertFalse(d.btn_back.isEnabled())
         self.wait_idle(d)
-        self.assertEqual(d.points.item(5, 3).text(), cal_view.C["st_measured"])
-        self.assertTrue(d.points.item(5, 2).text().startswith("+"))
+        self.assertEqual(d.points.item(5, 5).text(), cal_view.C["st_measured"])
+        self.assertTrue(d.points.item(5, 4).text().startswith("+"))
         self.assertTrue(d.v["points"][6]["current"])  # 次の点へ
         # Enter でも測る（欄にいないとき）。信号が無い点は理由を手順のそばに出す
         self.dev.config.signals = []
@@ -103,15 +103,15 @@ class CalUiTest(UiBase):
         self.assertEqual(d.freq_message.text(), texts.ERRORS["cal_no_signal"])
         d.btn_skip.click()
         self.wait(lambda: d.v["points"][6]["status"] == "skipped", what="飛ばす")
-        self.assertEqual(d.points.item(6, 3).text(), cal_view.C["st_skipped"])
+        self.assertEqual(d.points.item(6, 5).text(), cal_view.C["st_skipped"])
         # 確かめる: 表とグラフ
         d.btn_next.click()
         self.assertEqual(d.page, CHECK)
         self.assertEqual(d.btn_next.text(), cal_view.C["save"])
         self.assertTrue(d.check_area.isVisible())
-        self.assertEqual(d.check_points.rowCount(), 121)
+        self.assertEqual(d.check_points.rowCount(), 132)  # 境目の 11 か所は2行（K §4.2.1）
         self.assertEqual(d.items.item(0, 0).text(), cal_view.C["item_level"])
-        self.assertEqual(len(d.curve_after.getData()[0]), 121)
+        self.assertEqual(len(d.curve_after.getData()[0]), 132)
         found = problems(d, "確かめる")
         self.assertEqual(found, [])
         d.btn_next.click()
@@ -123,6 +123,48 @@ class CalUiTest(UiBase):
         d.btn_next.click()
         self.assertEqual(d.page, PREPARE)
         self.assertNotEqual(d.base.text(), cal_view.C["cal_none"])
+
+    def test_band_edge_shows_two_rows_with_band_and_sg_frequency(self):
+        # band の境目は2行。どちらの帯の欄か・SG に出させる周波数が行に出る。選ぶと指示もその周波数（K §4.2.1）
+        self.connect_sim()
+        d = self.open("freq")
+        d.btn_next.click()
+        self.assertEqual(d.page, MEASURE)
+        heads = [d.points.horizontalHeaderItem(i).text() for i in range(d.points.columnCount())]
+        self.assertEqual(heads[:3], [cal_view.C["col_freq"], cal_view.C["col_band"], cal_view.C["col_sg_freq"]])
+        self.assertEqual(d.points.rowCount(), 132)
+        cells = [[d.points.item(r, c).text() for c in range(3)] for r in range(d.points.rowCount())]
+        self.assertEqual(cells[9], ["900", "", "900"])
+        self.assertEqual(cells[10], ["1000", cal_view.C["band_lower"], "999.5"])
+        self.assertEqual(cells[11], ["1000", cal_view.C["band_upper"], "1000.5"])
+        self.assertEqual(cells[0], ["0", "", "10"])
+        self.assertEqual(cells[-1], ["12000", "", "12000"])
+        self.assertEqual(sum(1 for c in cells if c[1] == cal_view.C["band_lower"]), 11)
+        self.assertEqual(sum(1 for c in cells if c[1] == cal_view.C["band_upper"]), 11)
+        # 上の帯の行を選ぶと、指示は境目の 0.5MHz 上。測るとその行だけ「測った」
+        d.points.selectRow(11)
+        self.wait(lambda: d.v["points"][11]["current"], what="上の帯の行を選ぶ")
+        self.assertIn("1000.500MHz", d.instruction.text())
+        self.dev.config.signals = [(1_000_500_000, -10.0)]
+        d.btn_measure.click()
+        self.wait(lambda: d.v["measuring"], what="測り始める")
+        self.wait_idle(d)
+        self.assertEqual(d.points.item(11, 5).text(), cal_view.C["st_measured"])
+        self.assertEqual(d.points.item(10, 5).text(), "")
+        # 下の帯の行を飛ばすと、その行だけ「飛ばした」
+        d.points.selectRow(10)
+        self.wait(lambda: d.v["points"][10]["current"], what="下の帯の行を選ぶ")
+        self.assertIn("999.500MHz", d.instruction.text())
+        d.btn_skip.click()
+        self.wait(lambda: d.v["points"][10]["status"] == "skipped", what="飛ばす")
+        self.assertEqual(d.points.item(11, 5).text(), cal_view.C["st_measured"])
+        self.assertEqual(problems(d, "測る"), [])
+        # 確かめる表も、境目の行に帯が出る
+        d.btn_next.click()
+        self.assertEqual(d.page, CHECK)
+        self.assertEqual(d.check_points.horizontalHeaderItem(1).text(), cal_view.C["col_band"])
+        self.assertEqual(d.check_points.item(11, 1).text(), cal_view.C["band_upper"])
+        self.assertEqual(problems(d, "確かめる"), [])
 
     def test_close_asks_and_can_save_measured_points(self):
         self.connect_sim()

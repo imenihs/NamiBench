@@ -56,10 +56,10 @@
       <div class="cal-freq" v-if="v.kind === 'freq'">
         <div class="cal-points" tabindex="0" @keydown="a.calPointKey($event)">
           <table class="mtable">
-            <thead><tr><th class="r">{{ v.headers.freq }}</th><th class="r">{{ v.headers.before }}</th><th class="r">{{ v.headers.after }}</th><th class="fill">{{ v.headers.state }}</th></tr></thead>
+            <thead><tr><th class="r">{{ v.headers.freq }}</th><th>{{ v.headers.band }}</th><th class="r">{{ v.headers.sg_freq }}</th><th class="r">{{ v.headers.before }}</th><th class="r">{{ v.headers.after }}</th><th class="fill">{{ v.headers.state }}</th></tr></thead>
             <tbody>
               <tr v-for="p in v.points" :key="p.index" :class="{sel: p.current}" @click="a.calSelect(p.index)">
-                <td class="r">{{ p.freq }}</td><td class="r">{{ p.before }}</td><td class="r">{{ p.after }}</td>
+                <td class="r">{{ p.freq }}</td><td>{{ p.band }}</td><td class="r">{{ p.sg_freq }}</td><td class="r">{{ p.before }}</td><td class="r">{{ p.after }}</td>
                 <td class="fill" :class="{warn: p.big}" :title="p.big ? v.big_tip : ''">{{ p.big ? C('big_mark') + ' ' : '' }}{{ p.state }}</td>
               </tr>
             </tbody>
@@ -172,10 +172,10 @@
           <div class="cal-graph" ref="graph"></div>
         </div>
         <div class="cal-scroll cal-check-points"><table class="mtable">
-          <thead><tr><th class="r">{{ v.headers.freq }}</th><th class="r">{{ v.headers.before }}</th><th class="r">{{ v.headers.after }}</th>
+          <thead><tr><th class="r">{{ v.headers.freq }}</th><th v-if="v.band_column">{{ v.headers.band }}</th><th class="r">{{ v.headers.before }}</th><th class="r">{{ v.headers.after }}</th>
             <th class="r">{{ v.headers.diff }}</th><th class="r" v-if="v.legacy">{{ v.headers.measured }}</th><th></th></tr></thead>
           <tbody><tr v-for="p in v.points" :key="p.index">
-            <td class="r">{{ p.freq }}</td><td class="r">{{ p.before }}</td><td class="r">{{ p.after }}</td><td class="r">{{ p.diff }}</td>
+            <td class="r">{{ p.freq }}</td><td v-if="v.band_column">{{ p.band }}</td><td class="r">{{ p.before }}</td><td class="r">{{ p.after }}</td><td class="r">{{ p.diff }}</td>
             <td class="r" v-if="v.legacy">{{ p.measured }}</td>
             <td class="fill" :class="{warn: p.big || p.warn}" :title="p.warn || (p.big ? v.big_tip : '')">{{ p.warn || (p.big ? C('big_mark') : '') }}</td>
           </tr></tbody>
@@ -207,10 +207,12 @@
         if (this.readOnlyBlocks("cal_open")) return;
         // 窓は作業ができてから出す（Qt と同じ）: コアは校正データを読んでから作業を作るので、それより前に届いた状態には
         // 作業が無い。それを「別の画面で閉じた」と取り違えないよう、作業を一度見るまでは閉じない（opened）
-        if (!this.calWin) this.calWin = { page: PREPARE, asked: null, opened: false, pointsSig: null };
+        if (!this.calWin) this.calWin = { page: PREPARE, asked: null, opened: false, openVersion: null, pointsSig: null };
         // 戻り値は開くの命令が終わるまでの Promise（試験が、命令が届く前に別の画面で閉じる形を作らないために待つ）
         return this.cmd("cal_open", { kind }).then((r) => {
           if (!r && this.calWin && !this.calWin.opened) this.calWin = null; // 開けなかった（知らせは cmd が出す）
+          // 作業のある状態の版。状態は最新だけが届くので、作業のある状態を見ないまま閉じた状態だけが届くことがある
+          else if (r && this.calWin && r.version != null) this.calWin.openVersion = r.version;
         });
       },
       // 状態が届いたとき（app.js の onEvent）。作業が閉じた（別の画面で閉じた）ら窓も閉じる。確かめ待ちの点は1回だけ聞く
@@ -219,7 +221,8 @@
         const w = this.calWin;
         if (!w) return;
         if (!v) {
-          if (w.opened) this.calWin = null;
+          // 作業を見た後か、作業のある版より後の状態で作業が無い → 別の画面で閉じた
+          if (w.opened || (w.openVersion != null && p.version > w.openVersion)) this.calWin = null;
           return;
         }
         w.opened = true;
@@ -241,7 +244,7 @@
       calRevealSel(v) {
         const w = this.calWin;
         if (!w || !v) return;
-        const sig = JSON.stringify([w.page, (v.points || []).map((p) => [p.freq, p.before, p.after, p.state, p.big, p.current])]);
+        const sig = JSON.stringify([w.page, (v.points || []).map((p) => [p.freq, p.band, p.before, p.after, p.state, p.big, p.current])]);
         if (sig === w.pointsSig) return;
         w.pointsSig = sig;
         this.$nextTick(() => {

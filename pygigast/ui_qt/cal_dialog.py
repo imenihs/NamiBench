@@ -122,6 +122,18 @@ def _table(columns: int, readonly: bool = False) -> QTableWidget:
     return t
 
 
+def _fit_columns(t: QTableWidget) -> None:
+    """表の幅を、全部の列が切れずに入る幅以上にする（列が増えた一覧が狭い窓で見切れないように）。"""
+    hh = t.horizontalHeader()
+    n = t.columnCount()
+    need = sum(max(t.sizeHintForColumn(c), hh.sectionSizeHint(c)) for c in range(n))
+    if n and hh.stretchLastSection():
+        # 伸ばす最後の列は、狭くても既定の幅（defaultSectionSize）より縮まない
+        c = n - 1
+        need += max(0, hh.defaultSectionSize() - max(t.sizeHintForColumn(c), hh.sectionSizeHint(c)))
+    t.setMinimumWidth(need + t.verticalScrollBar().sizeHint().width() + 2 * t.frameWidth())
+
+
 def _set_row(t: QTableWidget, row: int, cells: list[str], right: tuple[int, ...], warn_cols: tuple[int, ...] = (),
              warn_color: Optional[str] = None, tips: Optional[dict] = None, bold: bool = False) -> None:
     for c, text in enumerate(cells):
@@ -259,7 +271,7 @@ class CalDialog(QDialog):
         # ---- 周波数特性（K §4.2）: 点の一覧と、いまの点の指示
         w = QWidget()
         h = sizes.hbox(w)
-        self.points = _table(4)
+        self.points = _table(6)
         self.points.itemSelectionChanged.connect(self._point_selected)
         self.points.setMinimumWidth(330)
         h.addWidget(self.points, 2)
@@ -504,10 +516,13 @@ class CalDialog(QDialog):
         kind = v["kind"]
         if kind == "freq":
             h = v["headers"]
-            self._fill_points(self.points, v["points"], [h["freq"], h["before"], h["after"], h["state"]],
-                              lambda p: [p["freq"], p["before"], p["after"],
+            # band の境目は2行（どちらの帯の欄か・SG に出させる周波数: K §4.2.1）
+            self._fill_points(self.points, v["points"],
+                              [h["freq"], h["band"], h["sg_freq"], h["before"], h["after"], h["state"]],
+                              lambda p: [p["freq"], p["band"], p["sg_freq"], p["before"], p["after"],
                                          (C["big_mark"] + " " if p["big"] else "") + p["state"]],
-                              right=(0, 1, 2), select=True)
+                              right=(0, 2, 3, 4), select=True)
+            _fit_columns(self.points)
             self.f_sg.set_value(v["inputs"]["sg_level_dbm"])
             self.f_loss.set_value(v["inputs"]["cable_loss_db"])
             for f in (self.f_sg, self.f_loss):
@@ -575,7 +590,8 @@ class CalDialog(QDialog):
 
     def _fill_points(self, t: QTableWidget, points: list, headers: list, cells, right: tuple[int, ...],
                      select: bool = False, warn: bool = False) -> None:
-        sig = (id(t), tuple((p["freq"], p["before"], p["after"], p["state"], p["big"], p.get("warn"),
+        sig = (id(t), tuple((p["freq"], p["band"], p["sg_freq"], p["before"], p["after"], p["state"], p["big"],
+                             p.get("warn"),
                              p["current"] if select else False) for p in points), tuple(headers))
         if getattr(t, "_sig", None) == sig:
             return
@@ -625,12 +641,17 @@ class CalDialog(QDialog):
         g = v.get("graph")
         self.check_area.setVisible(g is not None)
         if g is not None:
-            pheads = [h["freq"], h["before"], h["after"], h["diff"]] + ([h["measured"]] if legacy else []) + [""]
+            # band の境目の2行は、どちらの帯の欄かの列で分かる（K §4.2.1。PlutoSDR の利得の補正には無い）
+            band = v["band_column"]
+            pheads = ([h["freq"]] + ([h["band"]] if band else []) + [h["before"], h["after"], h["diff"]]
+                      + ([h["measured"]] if legacy else []) + [""])
+            nb = 1 if band else 0
             self._fill_points(self.check_points, v["points"], pheads,
-                              lambda p: [p["freq"], p["before"], p["after"], p["diff"]]
+                              lambda p: [p["freq"]] + ([p["band"]] if band else [])
+                              + [p["before"], p["after"], p["diff"]]
                               + ([p["measured"]] if legacy else [])
                               + [p["warn"] or (C["big_mark"] if p["big"] else "")],
-                              right=(0, 1, 2, 3) + ((4,) if legacy else ()), warn=legacy)
+                              right=(0, 1 + nb, 2 + nb, 3 + nb) + ((4 + nb,) if legacy else ()), warn=legacy)
             self._draw_graph(g)
         self.check_filler.setVisible(g is None)
         self.save_reason.setText(v.get("save_reason") or "")

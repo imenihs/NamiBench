@@ -3,9 +3,11 @@
 補正値は利用者に足し引きさせず、ここで計算する（設計K §2・M-10）。スレッド・入出力を持たない純粋な計算だけ
 （測る掃引の段取りは instrument_cal.py）。
 
-- 周波数特性と全体のレベル（K §4.2）: 0〜12000MHz の 100MHz おき 121 点。点ごとの「当てる補正」（全体のレベル＋
-  その周波数の補正）を測り、500MHz の点を全体のレベル、ほかの点はそこからの差として持つ。測っていない・飛ばした点は
-  前の値のまま（当てる補正が変わらないように持ち直す）
+- 周波数特性と全体のレベル（K §4.2）: 0〜12000MHz の 100MHz おき 121 周波数。表の欄ごとの「当てる補正」（全体の
+  レベル＋その欄の補正）を測り、500MHz の欄を全体のレベル、ほかの欄はそこからの差として持つ。測っていない・飛ばした欄は
+  前の値のまま（当てる補正が変わらないように持ち直す）。band の境目（1000・2000…11000MHz）は欄が2つ（下の band の
+  最後・上の band の最初）あり、値も違う。境目ちょうどのトーンの山は下の band の側に出るので、境目は2行に分け、下の
+  band の欄は境目の 0.5MHz 下、上の band の欄は 0.5MHz 上で測って、それぞれその欄だけに入れる（K §4.2.1）
 - RBW（K §4.3）: 180kHz を基準に、30・15kHz のパワー平均のピークの差を補正にする
 - NF の増幅度（K §4.4）: 6dB のアッテネータの有無の HOT−COLD の差が 6.0dB になる値（旧アプリと同じ意味の amp_raw）
 - 旧ファイル（K §4.5・設計D §5.6）: 取り込む値を、校正作業で測った値と比べて大きく違う所に印を付ける
@@ -41,9 +43,15 @@ SOURCE_LEGACY = "legacy_file"
 
 GRID_STEP_HZ = FREQ_STEP_HZ
 BAND_SPAN_HZ = FREQ_STEP_HZ * (POINTS_PER_BAND - 1)
-GRID_POINTS = HF_BANDS * (POINTS_PER_BAND - 1) + 1  # 0〜12000MHz の 121 点
+GRID_POINTS = HF_BANDS * (POINTS_PER_BAND - 1) + 1  # 0〜12000MHz の 121 周波数（点の一覧の行は grid_rows: 境目は2行）
 # 0MHz の点は旧アプリと同じく 10MHz で測る（局発の漏れの外）
 ZERO_POINT_MEASURE_HZ = 10_000_000
+# band の境目の欄を測る位置（境目からのずれ）。境目ちょうどのトーンの山は下の band の側に出て、上の band の欄の値が
+# 読めない（K §4.2.1）
+EDGE_OFFSET_HZ = 500_000
+# 境目の2行のどちらの band の欄か
+SIDE_LOWER = "lower"
+SIDE_UPPER = "upper"
 # 全体のレベルにする点（旧 Common-Bias。旧アプリの手順の「SG=500MHz」）
 LEVEL_POINT_HZ = 500_000_000
 # 1点を測る掃引: Span 1MHz・RBW 180kHz・30回のパワー平均（T12: 1回のピークは偏る）・イメージ除去なし（b3=1）
@@ -96,19 +104,61 @@ def grid_freqs() -> list[int]:
     return [i * GRID_STEP_HZ for i in range(GRID_POINTS)]
 
 
-def measure_freq(freq_hz: int) -> int:
-    """その点を測る周波数（SG に出させる周波数）。0MHz の点だけ 10MHz。"""
+def measure_freq(freq_hz: int, side: Optional[str] = None) -> int:
+    """その行を測る周波数（SG に出させる周波数）。0MHz の点は 10MHz、band の境目の行は境目の 0.5MHz 下・上
+    （K §4.2.1）。"""
+    if side == SIDE_LOWER:
+        return int(freq_hz) - EDGE_OFFSET_HZ
+    if side == SIDE_UPPER:
+        return int(freq_hz) + EDGE_OFFSET_HZ
     return ZERO_POINT_MEASURE_HZ if freq_hz == 0 else int(freq_hz)
 
 
-def cells_of(freq_hz: int) -> list[tuple[int, int]]:
-    """その周波数を持つ表の欄（band, k）。band の境目（1000MHz など）は2つの band の両方に出る。"""
+@dataclass(frozen=True)
+class GridRow:
+    """校正の点の一覧の1行: 表の欄1つ（band, k）と、それを測る周波数。"""
+    freq_hz: int  # 表の周波数（100MHz おき）
+    band: int
+    k: int
+    side: Optional[str]  # band の境目の行は SIDE_LOWER / SIDE_UPPER、ほかは None
+    measure_hz: int
+
+    @property
+    def cell(self) -> tuple[int, int]:
+        return self.band, self.k
+
+    @property
+    def item(self) -> str:
+        """記録と比べる項目の名前。境目の行は欄の側を付ける（2行が別の値を持つ）。"""
+        return f"freq:{self.freq_hz}" if self.side is None else f"freq:{self.freq_hz}:{self.side}"
+
+
+def grid_rows() -> list[GridRow]:
+    """校正の点の一覧（K §4.2・§4.2.1）。band の境目は下の band の欄・上の band の欄の2行（この順）。"""
     out = []
-    for b in range(HF_BANDS):
-        k, r = divmod(int(freq_hz) - b * BAND_SPAN_HZ, GRID_STEP_HZ)
-        if r == 0 and 0 <= k < POINTS_PER_BAND:
-            out.append((b, int(k)))
+    for f in grid_freqs():
+        b, k = point_cell(f)
+        if k == 0 and b > 0:
+            out.append(GridRow(f, b - 1, POINTS_PER_BAND - 1, SIDE_LOWER, measure_freq(f, SIDE_LOWER)))
+            out.append(GridRow(f, b, 0, SIDE_UPPER, measure_freq(f, SIDE_UPPER)))
+        else:
+            out.append(GridRow(f, b, k, None, measure_freq(f)))
     return out
+
+
+def item_cell(item: str) -> tuple[int, int]:
+    """項目 "freq:<Hz>"・"freq:<Hz>:lower|upper" の欄。側が無い境目は上の band の欄（換算と同じ: point_cell）。"""
+    parts = item.split(":")
+    f = int(parts[1])
+    side = parts[2] if len(parts) > 2 else None
+    if side == SIDE_LOWER:
+        b, k = point_cell(f)
+        if k != 0 or b == 0:
+            raise ValueError(f"境目でない周波数: {item}")
+        return b - 1, POINTS_PER_BAND - 1
+    if side not in (None, SIDE_UPPER):
+        raise ValueError(f"知らない項目: {item}")
+    return point_cell(f)
 
 
 def point_cell(freq_hz: int) -> tuple[int, int]:
@@ -130,9 +180,13 @@ def totals_grid(cal: Optional[Calibration]) -> np.ndarray:
 
 
 def total_at(cal: Optional[Calibration], freq_hz: int) -> float:
-    """その点の当てる補正（dB）。"""
-    b, k = point_cell(freq_hz)
-    return float(totals_grid(cal)[b, k])
+    """その周波数の欄（境目は上の band の欄）の当てる補正（dB）。"""
+    return cell_total(cal, point_cell(freq_hz))
+
+
+def cell_total(cal: Optional[Calibration], cell: tuple[int, int]) -> float:
+    """その欄の当てる補正（dB）。"""
+    return float(totals_grid(cal)[cell])
 
 
 def correction_from_peak(sg_level_dbm: float, cable_loss_db: float, peak_dbm: float) -> float:
@@ -165,27 +219,27 @@ def build(
     serial: str,
     created_at: str,
     source: CalibrationSource,
-    totals: Optional[dict[int, float]] = None,
+    totals: Optional[dict[tuple[int, int], float]] = None,
     rbw: Optional[dict[int, float]] = None,
     nf_amp: Optional[float] = None,
     work: Optional[dict] = None,
 ) -> Calibration:
     """前の校正に、測った値を差し替えた新しい校正データ（K §2: やり直した点だけ差し替える）。
 
-    totals は 周波数 → 当てる補正（その周波数の欄を全部その値にする）。500MHz を測ったときだけ、その値を全体のレベルに
+    totals は 欄（band, k）→ 当てる補正（その欄だけに入れる。band の境目の2つの欄は別々に測る: K §4.2.1）。
+    500MHz を測ったときだけ、その値を全体のレベルに
     して、ほかの欄はそこからの差として持ち直す（測っていない欄の当てる補正は変わらない）。500MHz を測っていないときは
     全体のレベルを前の値のままにする: 全体のレベルは表の外（TG・S11 と表の上端より上の周波数）にも効くので、
     500MHz の欄の差の分だけ動かすと、測っていない所の値が変わる（RBW・NF だけの校正でも変わってしまう）
     """
     grid = totals_grid(base)
-    for f, t in (totals or {}).items():
-        for b, k in cells_of(f):
-            grid[b, k] = float(t)
+    for (b, k), t in (totals or {}).items():
+        grid[int(b), int(k)] = float(t)
     # 当てる補正を先に 0.01dB に丸めてから分ける（全体のレベルと差を別々に丸めると、足した値が測った値から
     # 0.01dB ずれる）
     grid = np.round(grid, 2)
-    if LEVEL_POINT_HZ in (totals or {}):
-        lb, lk = point_cell(LEVEL_POINT_HZ)
+    lb, lk = point_cell(LEVEL_POINT_HZ)
+    if (lb, lk) in (totals or {}):
         level = _r(grid[lb, lk])
     else:
         level = _r(base.level_offset_db) if base is not None else 0.0
@@ -216,9 +270,9 @@ def build(
 # ---------------------------------------------------------------- 比べる（K §4.1 の 3・設計D §5.6）
 
 def item_value(cal: Optional[Calibration], item: str) -> Optional[float]:
-    """項目（"level"・"rbw:30000"・"nf_amp"・"nf_enr"・"freq:<Hz>"）の値。無ければ None。"""
+    """項目（"level"・"rbw:30000"・"nf_amp"・"nf_enr"・"freq:<Hz>[:lower|upper]"）の値。無ければ None。"""
     if item.startswith("freq:"):
-        return total_at(cal, int(item[5:])) if cal is not None else None
+        return cell_total(cal, item_cell(item)) if cal is not None else None
     if cal is None:
         return None
     if item == "level":
@@ -262,7 +316,7 @@ def measured_items(history: list[Calibration]) -> dict[str, float]:
     return out
 
 
-# 種類ごとに確かめる画面へ並べる項目（周波数特性の 121 点は points で別に並べる）
+# 種類ごとに確かめる画面へ並べる項目（周波数特性の点の一覧は points で別に並べる）
 ITEMS_OF_KIND = {
     KIND_FREQ: ("level",),
     KIND_RBW: ("rbw:30000", "rbw:15000"),
@@ -279,7 +333,7 @@ PLUTO_ITEM = "pluto_gain_max"
 
 @dataclass
 class Point:
-    freq_hz: int
+    row: GridRow  # 表の欄と測る周波数
     status: str = POINT_NONE
     total_db: Optional[float] = None  # 測った当てる補正
     peak_dbm: Optional[float] = None  # 補正なしの測定値（30回のパワー平均のピーク）
@@ -287,6 +341,14 @@ class Point:
     # 測ったときの SG のレベル・ケーブルの損失（途中で変えても、その点はそのときの値で計算した）
     sg_level_dbm: Optional[float] = None
     cable_loss_db: Optional[float] = None
+
+    @property
+    def freq_hz(self) -> int:
+        return self.row.freq_hz
+
+    @property
+    def measure_hz(self) -> int:
+        return self.row.measure_hz
 
 
 class CalSession:
@@ -325,7 +387,7 @@ class CalSession:
         self.clear()
 
     def clear(self) -> None:
-        self.points = [Point(f) for f in grid_freqs()]
+        self.points = [Point(r) for r in grid_rows()]
         self.current = 0
         self.pending: Optional[dict] = None
         self.message: Optional[dict] = None
@@ -404,7 +466,7 @@ class CalSession:
         """1点を測った結果。補正値を計算し、いまの補正との差が大きければ確かめ待ちにする（True を返す）。"""
         p = self.points[index]
         total = correction_from_peak(self.sg_level_dbm, self.cable_loss_db, peak_dbm)
-        before = total_at(self.base, p.freq_hz)
+        before = cell_total(self.base, p.row.cell)
         self.message = None
         cond = (self.sg_level_dbm, self.cable_loss_db)
         if self.base is not None and abs(total - before) > CONFIRM_DIFF_DB:
@@ -513,12 +575,13 @@ class CalSession:
         src = CalibrationSource(kind=SOURCE_KIND)
         if self.kind == KIND_FREQ:
             done = [p for p in self.points if p.status == POINT_MEASURED]
-            work["measured"] = [{"item": f"freq:{p.freq_hz}", "before": _r(total_at(base, p.freq_hz)),
+            work["measured"] = [{"item": p.row.item, "before": _r(cell_total(base, p.row.cell)),
                                  "after": _r(p.total_db), "peak_dbm": _r(p.peak_dbm), "at": p.at,
+                                 "measure_hz": p.measure_hz,
                                  "sg_level_dbm": p.sg_level_dbm, "cable_loss_db": p.cable_loss_db} for p in done]
-            work["skipped"] = [p.freq_hz for p in self.points if p.status == POINT_SKIPPED]
+            work["skipped"] = [p.row.item for p in self.points if p.status == POINT_SKIPPED]
             work["conditions"] = {"span_hz": SPAN_HZ, "rbw_hz": FREQ_RBW_HZ, "averages": AVERAGES, "b3": B3_BASIS}
-            return build(base, source=src, totals={p.freq_hz: p.total_db for p in done}, work=work, **common)
+            return build(base, source=src, totals={p.row.cell: p.total_db for p in done}, work=work, **common)
         if self.kind == KIND_RBW:
             new = self.rbw_new() or {}
             work["measured"] = [{"item": f"rbw:{r}", "before": item_value(base, f"rbw:{r}"), "after": _r(v)}
@@ -561,10 +624,11 @@ class CalSession:
             bg = totals_grid(self.base)
             ag = totals_grid(after_cal) if after_cal is not None else bg
             for i, p in enumerate(self.points):
-                item = f"freq:{p.freq_hz}"
-                cell = point_cell(p.freq_hz)
+                item = p.row.item
+                cell = p.row.cell
                 before, after = float(bg[cell]), float(ag[cell])
-                row = {"index": i, "freq_hz": p.freq_hz, "measure_hz": measure_freq(p.freq_hz), "status": p.status,
+                row = {"index": i, "freq_hz": p.freq_hz, "side": p.row.side, "measure_hz": p.measure_hz,
+                       "status": p.status,
                        "before_db": before, "after_db": after, "big": is_big(item, before, after)}
                 if self.kind == KIND_LEGACY:
                     row.update(self._legacy_check(item, after if legacy_cal is not None else None))

@@ -26,6 +26,11 @@ def gain_at(f: int) -> float:
     return -20.0 * f / 12_000_000_000
 
 
+def row(freq_hz: int, side=None) -> int:
+    """点の一覧の行の番号（band の境目は2行: K §4.2.1）。"""
+    return next(i for i, r in enumerate(cw.grid_rows()) if r.freq_hz == freq_hz and r.side == side)
+
+
 class CalCase(InstrumentCase):
     def setUp(self):
         super().setUp()
@@ -97,7 +102,7 @@ class FreqResponseTest(CalCase):
 
     def test_saved_calibration_corrects_the_reading(self):
         self.call("cal_open", kind="freq")
-        self.call("cal_set", current=15, sg_level_dbm=-20.0, cable_loss_db=1.5)
+        self.call("cal_set", current=row(1_500_000_000), sg_level_dbm=-20.0, cable_loss_db=1.5)
         self.sg(1_500_000_000, -21.5)  # SG −20dBm・ケーブル 1.5dB → SP 入力に −21.5dBm
         self.assertEqual(self.measure()["code"], "task_done")
         self.call("cal_save")
@@ -109,6 +114,34 @@ class FreqResponseTest(CalCase):
         peak = max(v for v in tr["values"] if v is not None)
         # 換算後は SP 入力のレベル（SG − ケーブルの損失）
         self.assertAlmostEqual(peak, -21.5, delta=0.3)
+
+    def test_band_edge_rows_measure_beside_the_edge(self):
+        # 境目の2行（K §4.2.1）: 上の帯の行は境目の 0.5MHz 上に SG を置いて測り、その欄だけに入る
+        self.call("cal_open", kind="freq")
+        lo, up = row(2_000_000_000, cw.SIDE_LOWER), row(2_000_000_000, cw.SIDE_UPPER)
+        w = self.call("cal_set", current=up)["calibration_work"]
+        self.assertEqual((w["points"][lo]["measure_hz"], w["points"][up]["measure_hz"]), (1_999_500_000, 2_000_500_000))
+        self.sg(2_000_500_000)
+        done = self.measure()
+        self.assertEqual(done["code"], "task_done")
+        w = self.work()
+        self.assertEqual((w["points"][lo]["status"], w["points"][up]["status"]), ("none", "measured"))
+        expect = -10.0 - (-10.0 + B3_DB + gain_at(2_000_500_000))
+        self.assertAlmostEqual(w["points"][up]["after_db"], expect, delta=0.05)
+        self.assertEqual(w["points"][lo]["after_db"], w["points"][lo]["before_db"])
+        # 下の帯の行は 0.5MHz 下で測る
+        self.call("cal_set", current=lo)
+        self.sg(1_999_500_000, -12.0)
+        self.assertEqual(self.measure()["code"], "task_done")
+        w = self.work()
+        expect_lo = -10.0 - (-12.0 + B3_DB + gain_at(1_999_500_000))
+        self.assertAlmostEqual(w["points"][lo]["after_db"], expect_lo, delta=0.05)
+        self.assertAlmostEqual(w["points"][up]["after_db"], expect, delta=0.05)
+        cal = self.call("cal_save")
+        tg = cw.totals_grid(self.inst._cal)
+        self.assertAlmostEqual(tg[1, 10], expect_lo, delta=0.05)
+        self.assertAlmostEqual(tg[2, 0], expect, delta=0.05)
+        self.assertTrue(cal["file"].endswith(".json"))
 
     def test_no_signal_keeps_previous_value(self):
         self.call("cal_open", kind="freq")
@@ -133,15 +166,16 @@ class FreqResponseTest(CalCase):
         self.call("import_legacy_calibration", path=str(p), serial=SERIAL)
         w = self.call("cal_open", kind="freq")["calibration_work"]
         self.assertEqual(w["base"]["source"]["kind"], "legacy_file")
-        base_total = w["points"][15]["before_db"]
-        self.call("cal_set", current=15)
+        i15 = row(1_500_000_000)
+        base_total = w["points"][i15]["before_db"]
+        self.call("cal_set", current=i15)
         # 補正値が前より 10dB 大きくなる入力: 補正 = −10 − 読み = 前 + 10 → 読み = −20 − 前
         self.sg(1_500_000_000, -20.0 - base_total - B3_DB - gain_at(1_500_000_000))
         done = self.measure()
         self.assertTrue(done["detail"]["result"]["pending"])
         w = self.work()
         self.assertIsNotNone(w["pending"])
-        self.assertEqual(w["points"][15]["status"], "none")
+        self.assertEqual(w["points"][i15]["status"], "none")
         for name, kw in (("cal_measure", {}), ("cal_skip", {}), ("cal_save", {})):
             with self.assertRaises(CommandError) as cm:
                 self.call(name, **kw)
@@ -149,19 +183,22 @@ class FreqResponseTest(CalCase):
         self.call("cal_confirm", accept=True)
         w = self.work()
         self.assertIsNone(w["pending"])
-        self.assertEqual(w["points"][15]["status"], "measured")
+        self.assertEqual(w["points"][i15]["status"], "measured")
         with self.assertRaises(CommandError) as cm:
             self.call("cal_confirm", accept=True)
         self.assertEqual(cm.exception.code, "calibration_no_pending")
 
     def test_skip_and_select(self):
         self.call("cal_open", kind="freq")
-        self.call("cal_set", current=120)
+        last = len(cw.grid_rows()) - 1  # 境目は2行（K §4.2.1）: 132 行
+        self.assertEqual(last, 131)
+        self.call("cal_set", current=last)
         w = self.call("cal_skip")["calibration_work"]
-        self.assertEqual(w["points"][120]["status"], "skipped")
+        self.assertEqual(w["points"][last]["status"], "skipped")
         self.assertEqual(w["current"], 0)
-        with self.assertRaises(CommandError):
-            self.call("cal_set", current=121)
+        with self.assertRaises(CommandError) as cm:
+            self.call("cal_set", current=last + 1)
+        self.assertEqual(cm.exception.detail, {"min": 0, "max": last})
         with self.assertRaises(CommandError):
             self.call("cal_set", sg_level_dbm=50.0)
         with self.assertRaises(CommandError):

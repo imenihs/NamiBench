@@ -1,6 +1,7 @@
 """校正作業の計算（設計K §4.2〜§4.5。core/level/cal_work.py）。機器を使わない計算だけを確かめる。
 
-- 121 点の格子・0MHz を 10MHz で測る・band の境目は2つの欄
+- 121 周波数の格子・0MHz を 10MHz で測る・band の境目は2行（下の帯の欄を 0.5MHz 下、上の帯の欄を 0.5MHz 上で測り、
+  その欄だけに入れる: K §4.2.1）
 - 補正値 =（SG のレベル − ケーブルの損失）− 補正なしの測定値。換算に当てると SG のレベルに戻る（符号の取り違えを防ぐ）
 - 500MHz を全体のレベルにし、測っていない点の当てる補正は変わらない（やり直した点だけ差し替える）
 - RBW の補正・NF の増幅度の向き
@@ -46,10 +47,29 @@ class GridTest(unittest.TestCase):
         self.assertEqual(cw.measure_freq(0), 10_000_000)
         self.assertEqual(cw.measure_freq(1_500_000_000), 1_500_000_000)
 
+    def test_rows_split_band_edges(self):
+        rows = cw.grid_rows()
+        self.assertEqual(len(rows), 121 + 11)  # 境目 1000〜11000MHz の 11 か所が2行
+        by = {(r.freq_hz, r.side): r for r in rows}
+        for b in range(1, 12):
+            f = b * 1_000_000_000
+            lo, up = by[(f, cw.SIDE_LOWER)], by[(f, cw.SIDE_UPPER)]
+            self.assertEqual((lo.cell, lo.measure_hz), ((b - 1, 10), f - 500_000))
+            self.assertEqual((up.cell, up.measure_hz), ((b, 0), f + 500_000))
+            self.assertEqual(rows.index(lo) + 1, rows.index(up))  # 下の帯・上の帯の順に並ぶ
+            self.assertNotIn((f, None), by)
+        # 境目でない点・0MHz・12000MHz は1行のまま
+        self.assertEqual((by[(0, None)].cell, by[(0, None)].measure_hz), ((0, 0), 10_000_000))
+        self.assertEqual((by[(500_000_000, None)].cell, by[(500_000_000, None)].measure_hz), ((0, 5), 500_000_000))
+        self.assertEqual((by[(12_000_000_000, None)].cell, by[(12_000_000_000, None)].measure_hz),
+                         ((11, 10), 12_000_000_000))
+        # 表の欄はちょうど1回ずつ出る
+        self.assertEqual(sorted(r.cell for r in rows), [(b, k) for b in range(12) for k in range(11)])
+        self.assertEqual(len({r.item for r in rows}), len(rows))
+        self.assertEqual(cw.item_cell("freq:1000000000:lower"), (0, 10))
+        self.assertEqual(cw.item_cell("freq:1000000000:upper"), (1, 0))
+
     def test_cells(self):
-        self.assertEqual(cw.cells_of(1_000_000_000), [(0, 10), (1, 0)])
-        self.assertEqual(cw.cells_of(12_000_000_000), [(11, 10)])
-        self.assertEqual(cw.cells_of(500_000_000), [(0, 5)])
         # 境目は次の band の値（換算と同じ）。12000MHz は最後の欄
         self.assertEqual(cw.point_cell(1_000_000_000), (1, 0))
         self.assertEqual(cw.point_cell(12_000_000_000), (11, 10))
@@ -61,14 +81,14 @@ class CorrectionTest(unittest.TestCase):
         total = cw.correction_from_peak(-10.0, 1.0, -13.5)
         self.assertAlmostEqual(total, 2.5)
         cal = cw.build(None, model="gigast-v5", serial="S", created_at=AT, source=cw_source(),
-                       totals={1_500_000_000: total})
+                       totals={cw.point_cell(1_500_000_000): total})
         self.assertAlmostEqual(-13.5 + applied(cal, 1_500_000_000), -11.0, places=6)
 
     def test_level_point_and_unmeasured_points_keep_their_correction(self):
         base = legacy_cal()
         before = {f: applied(base, f) for f in (0, 700_000_000, 999_000_000, 1_000_000_000, 5_500_000_000)}
         cal = cw.build(base, model="gigast-v5", serial="SIM00001", created_at=AT, source=cw_source(),
-                       totals={500_000_000: 4.25, 1_500_000_000: -3.0})
+                       totals={(0, 5): 4.25, (1, 5): -3.0})
         # 500MHz の点が全体のレベル（その点の差は 0）
         self.assertAlmostEqual(cal.level_offset_db, 4.25)
         self.assertEqual(cal.bands[0].values[5], 0.0)
@@ -86,24 +106,26 @@ class CorrectionTest(unittest.TestCase):
         b0[5] = -2.0
         src = dataclasses.replace(src, level_offset_db=1.0,
                                   bands=(dataclasses.replace(src.bands[0], values=tuple(b0)),) + src.bands[1:])
-        for kw in ({"rbw": {30_000: 0.4, 15_000: 1.6}}, {"nf_amp": -6.0}, {"totals": {1_500_000_000: -3.0}}):
+        for kw in ({"rbw": {30_000: 0.4, 15_000: 1.6}}, {"nf_amp": -6.0}, {"totals": {(1, 5): -3.0}}):
             cal = cw.build(src, model="gigast-v5", serial="SIM00001", created_at=AT, source=cw_source(), **kw)
             self.assertEqual(cal.level_offset_db, 1.0, msg=str(kw))
-            measured = cw.cells_of(1_500_000_000) if "totals" in kw else []
+            measured = [(1, 5)] if "totals" in kw else []
             for i, band in enumerate(cal.bands):
                 for k, v in enumerate(band.values):
                     if (i, k) not in measured:
                         self.assertEqual(v, src.bands[i].values[k], msg=f"{kw} {i} {k}")
 
-    def test_boundary_point_sets_both_cells(self):
-        cal = cw.build(legacy_cal(), model="gigast-v5", serial="SIM00001", created_at=AT, source=cw_source(),
-                       totals={1_000_000_000: 7.0})
+    def test_boundary_cells_are_written_separately(self):
+        base = legacy_cal()
+        bg = cw.totals_grid(base)
+        cal = cw.build(base, model="gigast-v5", serial="SIM00001", created_at=AT, source=cw_source(),
+                       totals={(0, 10): 7.0})
         tg = cw.totals_grid(cal)
         self.assertAlmostEqual(tg[0, 10], 7.0)
-        self.assertAlmostEqual(tg[1, 0], 7.0)
+        self.assertAlmostEqual(tg[1, 0], bg[1, 0], places=6)  # 上の帯の欄は前の値のまま
 
     def test_no_previous_calibration(self):
-        cal = cw.build(None, model="gigast-v5", serial="S", created_at=AT, source=cw_source(), totals={0: 1.0})
+        cal = cw.build(None, model="gigast-v5", serial="S", created_at=AT, source=cw_source(), totals={(0, 0): 1.0})
         self.assertEqual(cal.level_offset_db, 0.0)  # 500MHz を測っていない → 前の値（補正なし）のまま
         self.assertEqual(cal.rbw_offset_db, {180_000: 0.0})  # 測っていない RBW の補正は作らない
         self.assertIsNone(cal.nf)
@@ -130,6 +152,11 @@ def cw_source():
     return CalibrationSource(kind=cw.SOURCE_KIND)
 
 
+def row_index(s, freq_hz: int, side=None) -> int:
+    """点の一覧の行の番号（境目は2行あるので、周波数と帯の側で探す）。"""
+    return next(i for i, p in enumerate(s.points) if p.freq_hz == freq_hz and p.row.side == side)
+
+
 class SessionTest(unittest.TestCase):
     def session(self, base=None, kind=cw.KIND_FREQ, measured=None):
         return cw.CalSession(kind, "gigast-v5", "SIM00001", base, "a.json" if base else None, measured)
@@ -144,7 +171,7 @@ class SessionTest(unittest.TestCase):
         s.skip()
         self.assertEqual(s.points[6].status, cw.POINT_SKIPPED)
         self.assertEqual(s.current, 7)
-        s.select(120)
+        s.select(len(s.points) - 1)
         s.skip()
         self.assertEqual(s.current, 0)  # 後ろに無ければ前から（測った・飛ばした点は飛ばす）
         self.assertEqual(s.unsaved(), 1)
@@ -167,16 +194,18 @@ class SessionTest(unittest.TestCase):
         s.confirm(True)
         self.assertEqual(s.points[5].status, cw.POINT_MEASURED)
         # 6dB 以内なら確かめない
-        s.select(15)
-        self.assertFalse(s.point_result(15, -10.0 - cw.total_at(s.base, 1_500_000_000) + 5.9, AT))
+        i15 = row_index(s, 1_500_000_000)
+        s.select(i15)
+        self.assertFalse(s.point_result(i15, -10.0 - cw.total_at(s.base, 1_500_000_000) + 5.9, AT))
 
     def test_candidate_records_before_and_after(self):
         base = legacy_cal()
         s = self.session(base=base)
         s.sg_level_dbm, s.cable_loss_db = -20.0, 2.0
-        s.select(15)
-        s.point_result(15, -24.0 - cw.total_at(base, 1_500_000_000) + 0.0 + 2.0, AT)
-        s.select(16)
+        i15 = row_index(s, 1_500_000_000)
+        s.select(i15)
+        s.point_result(i15, -24.0 - cw.total_at(base, 1_500_000_000) + 0.0 + 2.0, AT)
+        s.select(row_index(s, 1_600_000_000))
         s.skip()
         cand = s.candidate(AT)
         self.assertEqual(cand.source.kind, cw.SOURCE_KIND)
@@ -188,7 +217,8 @@ class SessionTest(unittest.TestCase):
         self.assertAlmostEqual(m["before"], round(cw.total_at(base, 1_500_000_000), 2))
         self.assertEqual(m["sg_level_dbm"], -20.0)
         self.assertEqual(m["cable_loss_db"], 2.0)
-        self.assertEqual(w["skipped"], [1_600_000_000])
+        self.assertEqual(w["skipped"], ["freq:1600000000"])
+        self.assertEqual(m["measure_hz"], 1_500_000_000)
         # JSON で保存して読み戻せる（work を含む）
         back = Calibration.from_dict(cand.to_dict())
         self.assertEqual(back.work, cand.work)
@@ -242,9 +272,9 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(cand.work["kind"], cw.KIND_LEGACY)
 
     def test_measured_items_newest_first_and_only_from_work(self):
-        a = cw.build(None, model="m", serial="S", created_at=AT, source=cw_source(), totals={0: 1.0},
+        a = cw.build(None, model="m", serial="S", created_at=AT, source=cw_source(), totals={(0, 0): 1.0},
                      work={"measured": [{"item": "freq:0", "after": 1.0}, {"item": "rbw:30000", "after": 0.3}]})
-        b = cw.build(None, model="m", serial="S", created_at=AT, source=cw_source(), totals={0: 2.0},
+        b = cw.build(None, model="m", serial="S", created_at=AT, source=cw_source(), totals={(0, 0): 2.0},
                      work={"measured": [{"item": "freq:0", "after": 2.0}]})
         lg = legacy_cal()
         self.assertEqual(cw.measured_items([a, b, lg]), {"freq:0": 2.0, "rbw:30000": 0.3})
@@ -261,7 +291,7 @@ class SessionTest(unittest.TestCase):
     def test_snapshot_shape(self):
         s = self.session(base=legacy_cal())
         snap = s.snapshot(task_id="t1", device_reason=None)
-        self.assertEqual(len(snap["points"]), 121)
+        self.assertEqual(len(snap["points"]), 132)
         self.assertEqual([i["item"] for i in snap["items"]], ["level"])
         self.assertEqual(snap["task_id"], "t1")
         self.assertEqual(snap["points"][0]["measure_hz"], 10_000_000)
@@ -269,6 +299,162 @@ class SessionTest(unittest.TestCase):
         # RBW・NF は点の一覧を送らない（中身が変わらない）
         s.set_kind(cw.KIND_RBW)
         self.assertEqual(s.snapshot()["points"], [])
+
+
+class BandEdgeTest(unittest.TestCase):
+    """band の境目の2行（K §4.2.1）: 下の帯の欄は境目の 0.5MHz 下、上の帯の欄は 0.5MHz 上で測り、その欄だけに入れる。"""
+
+    SG, LOSS = -10.0, 1.0
+
+    def setUp(self):
+        # 本当の当てる補正: band ごとに違う値と、band の中のゆるい傾き。境目の2つの欄は大きく違う
+        rng = np.random.default_rng(3)
+        totals = {}
+        for b in range(12):
+            off = float(rng.uniform(-6.0, 6.0))
+            for k in range(11):
+                totals[(b, k)] = off + 0.05 * k
+        self.truth = cw.build(None, model="gigast-v5", serial="SIM00001", created_at=AT, source=cw_source(),
+                              totals=totals)
+        self.tg = cw.totals_grid(self.truth)
+
+    def reading(self, f: int) -> float:
+        """補正なしの読み（機器の代わり）。境目ちょうどのトーンの山は下の帯の側に出る（実機: K §4.2.1）。"""
+        b, k = cw.point_cell(f)
+        if k == 0 and b > 0 and f == b * 1_000_000_000:
+            true = float(self.tg[b - 1, 10])
+        else:
+            true = applied(self.truth, f)
+        return self.SG - self.LOSS - true
+
+    def session(self, base=None):
+        s = cw.CalSession(cw.KIND_FREQ, "gigast-v5", "SIM00001", base, "a.json" if base else None)
+        s.sg_level_dbm, s.cable_loss_db = self.SG, self.LOSS
+        return s
+
+    def test_lower_row_writes_only_lower_cell_and_upper_only_upper(self):
+        base = legacy_cal()
+        bg = cw.totals_grid(base)
+        s = self.session(base)
+        lo, up = row_index(s, 2_000_000_000, cw.SIDE_LOWER), row_index(s, 2_000_000_000, cw.SIDE_UPPER)
+        self.assertEqual(s.points[lo].measure_hz, 1_999_500_000)
+        self.assertEqual(s.points[up].measure_hz, 2_000_500_000)
+        # 下の帯の行: 前の値から 2dB（確かめない大きさ）
+        s.select(lo)
+        self.assertFalse(s.point_result(lo, self.SG - self.LOSS - (bg[1, 10] + 2.0), AT))
+        tg = cw.totals_grid(s.candidate(AT))
+        self.assertAlmostEqual(tg[1, 10], round(bg[1, 10] + 2.0, 2), places=6)
+        self.assertAlmostEqual(tg[2, 0], bg[2, 0], places=6)
+        self.assertEqual(s.current, up)  # 次は同じ境目の上の帯の行
+        # 上の帯の行: 前の値から −3dB
+        self.assertFalse(s.point_result(up, self.SG - self.LOSS - (bg[2, 0] - 3.0), AT))
+        tg = cw.totals_grid(s.candidate(AT))
+        self.assertAlmostEqual(tg[1, 10], round(bg[1, 10] + 2.0, 2), places=6)
+        self.assertAlmostEqual(tg[2, 0], round(bg[2, 0] - 3.0, 2), places=6)
+        # ほかの欄と全体のレベルは変わらない
+        for b in range(12):
+            for k in range(11):
+                if (b, k) not in ((1, 10), (2, 0)):
+                    self.assertAlmostEqual(tg[b, k], bg[b, k], places=6, msg=(b, k))
+        cand = s.candidate(AT)
+        self.assertEqual(cand.level_offset_db, base.level_offset_db)
+        self.assertEqual([m["item"] for m in cand.work["measured"]],
+                         ["freq:2000000000:lower", "freq:2000000000:upper"])
+        self.assertEqual([m["measure_hz"] for m in cand.work["measured"]], [1_999_500_000, 2_000_500_000])
+        # 一覧の「前」「新」はその行の欄の値
+        snap = s.snapshot()
+        self.assertEqual(snap["points"][lo]["side"], cw.SIDE_LOWER)
+        self.assertAlmostEqual(snap["points"][lo]["before_db"], bg[1, 10])
+        self.assertAlmostEqual(snap["points"][up]["before_db"], bg[2, 0])
+        self.assertAlmostEqual(snap["points"][up]["after_db"], round(bg[2, 0] - 3.0, 2), places=6)
+
+    def test_old_edge_error_is_gone(self):
+        # 前のやり方: 境目ちょうどで1回測り、2つの欄の両方に入れる → 上の帯の欄が下の帯の値になる
+        for b in (1, 2, 4):
+            f = b * 1_000_000_000
+            old = cw.correction_from_peak(self.SG, self.LOSS, self.reading(f))
+            self.assertAlmostEqual(old, self.tg[b - 1, 10], places=6)
+            self.assertGreater(abs(old - self.tg[b, 0]), 1.0, msg=f)  # 上の帯の欄は大きく外れる
+        # いまのやり方: 全部の行を、その行の SG の周波数で測る
+        s = self.session()
+        for i, p in enumerate(s.points):
+            s.select(i)
+            self.assertFalse(s.point_result(i, self.reading(p.measure_hz), AT))
+        cand = s.candidate(AT)
+        tg = cw.totals_grid(cand)
+        for b in range(1, 12):
+            # 境目の2つの欄が、それぞれ本当の値（0.5MHz ずれた所の読みなので、band の中の傾きの分の 0.01dB 以内）
+            self.assertAlmostEqual(tg[b - 1, 10], self.tg[b - 1, 10], delta=0.011, msg=b)
+            self.assertAlmostEqual(tg[b, 0], self.tg[b, 0], delta=0.011, msg=b)
+            # 換算に当てると、境目のすぐ上・すぐ下で SG のレベルを読み戻す
+            for f in (b * 1_000_000_000 - 500_000, b * 1_000_000_000 + 500_000):
+                self.assertAlmostEqual(self.reading(f) + applied(cand, f), self.SG - self.LOSS, delta=0.02, msg=f)
+
+    def test_skip_and_confirm_per_row(self):
+        base = legacy_cal()
+        bg = cw.totals_grid(base)
+        s = self.session(base)
+        lo, up = row_index(s, 3_000_000_000, cw.SIDE_LOWER), row_index(s, 3_000_000_000, cw.SIDE_UPPER)
+        # 下の帯の行が前の値と 7dB 違う → その行だけ確かめ待ち
+        s.select(lo)
+        self.assertTrue(s.point_result(lo, self.SG - self.LOSS - (bg[2, 10] + 7.0), AT))
+        self.assertEqual(s.pending["index"], lo)
+        self.assertAlmostEqual(s.pending["before_db"], bg[2, 10])
+        self.assertEqual(s.snapshot()["pending"]["index"], lo)
+        s.confirm(False)
+        self.assertEqual((s.points[lo].status, s.points[up].status), (cw.POINT_NONE, cw.POINT_NONE))
+        # 下の帯の行を飛ばす → 次は上の帯の行。上の帯の行は飛ばされていない
+        s.skip()
+        self.assertEqual((s.points[lo].status, s.points[up].status), (cw.POINT_SKIPPED, cw.POINT_NONE))
+        self.assertEqual(s.current, up)
+        # 上の帯の行の差は、上の帯の欄の値と比べる（下の帯の欄と比べない）
+        self.assertFalse(s.point_result(up, self.SG - self.LOSS - (bg[3, 0] + 5.0), AT))
+        s.select(up)
+        self.assertTrue(s.point_result(up, self.SG - self.LOSS - (bg[3, 0] + 6.5), AT))
+        s.confirm(True)
+        self.assertEqual(s.points[up].status, cw.POINT_MEASURED)
+        cand = s.candidate(AT)
+        self.assertEqual(cand.work["skipped"], ["freq:3000000000:lower"])
+        tg = cw.totals_grid(cand)
+        self.assertAlmostEqual(tg[2, 10], bg[2, 10], places=6)
+        self.assertAlmostEqual(tg[3, 0], round(bg[3, 0] + 6.5, 2), places=6)
+
+    def test_level_point_unchanged(self):
+        # 500MHz の行は1行・500MHz で測り、全体のレベルになる。境目を測っても全体のレベルは変わらない
+        base = legacy_cal()
+        s = self.session(base)
+        i = row_index(s, cw.LEVEL_POINT_HZ)
+        self.assertEqual((s.points[i].measure_hz, s.points[i].row.cell), (500_000_000, (0, 5)))
+        e = row_index(s, 1_000_000_000, cw.SIDE_UPPER)
+        s.point_result(e, self.SG - self.LOSS - cw.cell_total(base, (1, 0)), AT)
+        self.assertEqual(s.candidate(AT).level_offset_db, base.level_offset_db)
+        s.point_result(i, self.SG - self.LOSS - 4.25, AT)
+        if s.pending:
+            s.confirm(True)  # 前の値と大きく違う: 入れる
+        self.assertAlmostEqual(s.candidate(AT).level_offset_db, 4.25)
+
+    def test_saved_table_loads(self):
+        s = self.session(legacy_cal())
+        for side in (cw.SIDE_LOWER, cw.SIDE_UPPER):
+            i = row_index(s, 5_000_000_000, side)
+            s.point_result(i, self.reading(s.points[i].measure_hz), AT)
+            if s.pending:
+                s.confirm(True)
+        cand = s.candidate(AT)
+        back = Calibration.from_dict(cand.to_dict())
+        self.assertEqual(back.bands, cand.bands)
+        self.assertEqual(back.work, cand.work)
+        self.assertEqual(len(back.bands), 12)
+        self.assertTrue(all(len(b.values) == 11 for b in back.bands))
+        LevelConverter(load_profile(GIGAST_PROFILE_PATH), back)  # 換算に使える
+        # 保存した記録は、境目の行ごとに旧ファイルの比べに使える
+        m = cw.measured_items([back])
+        self.assertEqual(set(m), {"freq:5000000000:lower", "freq:5000000000:upper"})
+        lg = cw.CalSession(cw.KIND_LEGACY, "gigast-v5", "SIM00001", back, "b.json", m)
+        lg.set_legacy(legacy_cal(), "gigast.txt", "0" * 64)
+        rows = {(p["freq_hz"], p["side"]): p for p in lg.snapshot()["points"]}
+        self.assertEqual(rows[(5_000_000_000, cw.SIDE_LOWER)]["measured"], m["freq:5000000000:lower"])
+        self.assertEqual(rows[(5_000_000_000, cw.SIDE_UPPER)]["measured"], m["freq:5000000000:upper"])
 
 
 if __name__ == "__main__":
