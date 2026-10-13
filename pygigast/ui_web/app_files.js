@@ -55,6 +55,47 @@
     a.remove();
   }
 
+  // 名前を付けて作らせたファイルの処理（task_id）と、その終わりの知らせを突き合わせる。
+  // 終わりの知らせ（WebSocket）は、命令の戻り（HTTP。task_id と file_id）より先に届くことがある（別の通り道で、
+  // 短い処理はすぐ終わる）。まだ戻りを受けていない処理の終わりの知らせは少しだけ覚えておき、戻りを受けたときに照らす。
+  // 覚えないと、その知らせは誰の処理か分からずに捨てられ、ダウンロードが始まらない
+  const TASK_END = new Set(["task_done", "task_failed", "task_cancelled"]);
+  const MAX_EARLY_ENDS = 32;
+  function makeFileTasks() {
+    const pending = new Map(); // task_id → { name }（戻りを受け、終わりを待っている）
+    const early = new Map(); // task_id → 終わりの知らせ（戻りより先に届いた）
+    // 終わった: 作れていればダウンロードするもの { id, name }、作れなかった・やめたなら null
+    const result = (p, mine) => {
+      const d = p.detail || {};
+      return p.code === "task_done" && d.file_id ? { id: d.file_id, name: mine.name } : null;
+    };
+    return {
+      // 命令の戻りを受けた。もう終わっていれば、その結果を返す
+      started(taskId, file) {
+        const p = early.get(taskId);
+        if (p) {
+          early.delete(taskId);
+          return result(p, file);
+        }
+        pending.set(taskId, file);
+        return null;
+      },
+      // 知らせが届いた。自分の処理の終わりなら、その結果を返す
+      ended(p) {
+        if (!TASK_END.has(p.code)) return null;
+        const id = (p.detail || {}).task_id;
+        const mine = pending.get(id);
+        if (!mine) {
+          early.set(id, p);
+          while (early.size > MAX_EARLY_ENDS) early.delete(early.keys().next().value);
+          return null;
+        }
+        pending.delete(id);
+        return result(p, mine);
+      },
+    };
+  }
+
   // QR か URL で開いたときの鍵（#k=…）。読んだらすぐアドレスから消す（画面を見せても漏れない）
   function takeKeyFromHash() {
     const m = /(?:^#|&)k=([^&]+)/.exec(location.hash || "");
@@ -66,10 +107,11 @@
   // 表示のバンドプランの読み込み・書き出し（app_display.js）も同じ選び方・ダウンロードを使う
   root.GSPickFiles = pickFiles;
   root.GSDownload = download;
+  root.GSFileTasks = makeFileTasks;
 
   root.GSAppFiles = {
     data() {
-      return { pendingFiles: {}, connectInfo: null, connectLeft: 0, copiedKind: "" };
+      return { connectInfo: null, connectLeft: 0, copiedKind: "" };
     },
     computed: {
       access() { return (this.info && this.info.access) || { kind: "operate", local: true }; },
@@ -102,19 +144,22 @@
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       },
       // ---- 作るファイル（終わったらダウンロード）
+      // 作らせているファイルの処理（Vue の反応の外に置く。画面には出さない）
+      fileTasks() {
+        if (!this.$fileTasks) this.$fileTasks = makeFileTasks();
+        return this.$fileTasks;
+      },
       async makeFile(command, args) {
         const r = await this.cmd(command, args);
-        if (r && r.file_id) this.pendingFiles = { ...this.pendingFiles, [r.task_id]: { id: r.file_id, name: r.name } };
+        if (r && r.file_id) {
+          const f = this.fileTasks().started(r.task_id, { name: r.name });
+          if (f) download(f.id, f.name);
+        }
         return r;
       },
       onNoticeFiles(p) {
-        const d = p.detail || {};
-        const mine = this.pendingFiles[d.task_id];
-        if (!mine) return;
-        const rest = { ...this.pendingFiles };
-        delete rest[d.task_id];
-        this.pendingFiles = rest;
-        if (p.code === "task_done" && d.file_id) download(d.file_id, mine.name);
+        const f = this.fileTasks().ended(p);
+        if (f) download(f.id, f.name);
       },
       saveDialog() {
         this.openModal(W("save_title"), [

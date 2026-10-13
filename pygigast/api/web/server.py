@@ -617,6 +617,8 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         try:
             # 命令の名前は位置で渡す（引数に name を持つ命令とぶつけないため）
             fut = api.call(command, **tr.args)
+            # 作らせるファイルと処理の番号は、制御スレッドが結果を入れたその場で結び付ける（終わりの知らせより先: webfiles.Translated）
+            fut.add_done_callback(lambda f: tr.bind(f.result()) if not f.cancelled() and f.exception() is None else None)
             result = tr.after(await _await(fut))
         except CommandError as e:
             tr.on_error()
