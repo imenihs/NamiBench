@@ -52,6 +52,11 @@
       },
       // TG 高調波の平均除去の選択（設計Q §7.7。中身は screen_pluto.tg_harmonic_view: Qt の PlutoTxPanel と同じ）
       tgHarmView() { return this.plutoView.tg_harmonic || { items: [], value: 1, reason: X.get("PLUTO_LABELS", "not_pluto") }; },
+      // 設定の PlutoSDR のページの基準の補正（設計Q §7.10。中身は screen_pluto.xo_view: Qt の settings_dialog と同じ）
+      plutoXo() {
+        return this.plutoView.xo || { ppm: 0, lo: -200, hi: 200, decimals: 3, unit: "ppm", reason: X.get("PLUTO_LABELS", "not_pluto"),
+                                      hz_text: "", warn_text: "" };
+      },
     },
     methods: {
       onStateRtl(p) {
@@ -111,6 +116,12 @@
         const n = Number(code);
         if (n === this.tgHarmView.value) return;
         this.cmd("plutosdr_set", { tg_harmonic_avg: n }, { field: "plutotx" });
+      },
+      // 基準の補正（設計Q §7.10）。同じ値は送り直さない（変えるとトレースの蓄積を捨てる: Qt の settings_dialog と同じ）。
+      // 「初期値に戻す」（reset）は 0 を送る
+      setPlutoXo(v, reset) {
+        if (!reset && Number(v) === this.plutoXo.ppm) return;
+        this.cmd("plutosdr_xo_set", { ppm: Number(v) }, { field: "pluto_xo" });
       },
       // ---- 聞く
       listenStart() {

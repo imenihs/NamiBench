@@ -1191,6 +1191,31 @@ class WebLayoutPlutoTest(unittest.TestCase):
         self.assertEqual(self.page.errors, [])
         self.assertEqual(sorted(set(found)), [])
 
+    def test_settings_page_xo(self):
+        """設定の PlutoSDR のページの基準の補正（設計Q §7.10）: 欄・読み戻した基準の Hz・範囲の外で書かなかった知らせが
+        全部出た形と、測っている間に欄が使えない形（Qt の LayoutPlutoTest と同じ場面）。"""
+        app = self.app
+        found: list[str] = []
+        state = app.api._inst._device.inner._xo  # 繋いだときに範囲の外で書かなかった形（偽物の機器の状態をそのまま作る）
+        state.refused_ppm = 250.0
+        try:
+            for w, h in SIZES:
+                open_app(self.page, app, w, h)
+                self.page.ev("gsApp.openSettings('plutosdr'); 1")
+                self.page.wait("!!gsApp.plutoXo.hz_text && !!gsApp.plutoXo.warn_text", "Hz と知らせの行")
+                self.page.settle()
+                found += self.page.problems(".modal.setwin", f"{w}×{h} 設定 PlutoSDR 基準の補正")
+            app.call("run", mode="continuous")
+            self.page.wait("!!gsApp.plutoXo.reason", "測っている間は使えない")
+            self.page.settle()
+            found += self.page.problems(".modal.setwin", "設定 PlutoSDR 基準の補正 測っている間")
+        finally:
+            state.refused_ppm = None
+            app.call("stop")
+            self.page.ev("gsApp.closeSettings(); 1")
+        self.assertEqual(self.page.errors, [])
+        self.assertEqual(sorted(set(found)), [])
+
     def test_tg_harmonic_selector(self):
         """TG 高調波の平均除去（設計Q §7.7）: TG で選べて、選択肢に見積もりの秒が付いた形（Qt の LayoutPlutoTest と同じ）。"""
         app = self.app

@@ -12,7 +12,8 @@
   TG 高調波の平均除去（設計Q §7.7。選択肢の文字に、いまの条件での1回の掃引の見積もりを出す: イメージ除去の選択と同じ形。
   TG・S11 のときだけ選べる: S11 は機器から見れば TG と同じ掃引）
 - 欄は PlutoSDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）
-- 設定の画面の PlutoSDR のページ: 見つけた libiio.dll の場所（無い・32 ビット版なら注意の色で理由）と URI
+- 設定の画面の PlutoSDR のページ: 見つけた libiio.dll の場所（無い・32 ビット版なら注意の色で理由）と URI と
+  基準の補正（ppm。機器ごとに覚える: 設計Q §7.10）
 """
 from __future__ import annotations
 
@@ -26,6 +27,9 @@ from .texts_pluto import PLUTO_LABELS, TG_HARMONIC_CHOICES
 GAIN_CHOICE_STEP_DB = 10
 # 送信の減衰の一覧に並べる刻み（dB）。打てば機器の範囲のどの値でも（0.25dB 刻みへの丸めはコア）
 TX_ATTEN_CHOICE_STEP_DB = 10
+# 基準の補正の欄（設計Q §7.10）: 小数 3 桁の ppm
+XO_DECIMALS = 3
+XO_UNIT = "ppm"
 # 利得・送信の減衰を変えさせない理由のコード（コアの instrument_pluto_cal）→ 欄のツールチップに出す理由
 LOCK_REASONS = {
     "plutosdr_tg_conditions_locked": "tg_locked",
@@ -75,6 +79,46 @@ def tx_atten_choices(lo: float, hi: float) -> list[float]:
     if out[-1] != lo:
         out.append(float(lo))
     return out
+
+
+def _ppm_text(v: float) -> str:
+    return f"{float(v):.{XO_DECIMALS}f}".replace("-", "−")
+
+
+def xo_view(st: dict) -> dict:
+    """設定の画面の PlutoSDR のページの基準の補正の欄（設計Q §7.10。Qt と Web が同じものを出す）: 値（ppm、小数 3 桁）・
+    打てる範囲（繋いでいる機器の申告から。繋いでいなければ ±200ppm 相当）・使えない理由（PlutoSDR に繋いだことが無い・
+    属性を持たない機器・掃引や送信の間）・機器から読み戻した基準の Hz（繋いでいないときは次に書く機器）・繋いだときに
+    範囲の外で書かなかった知らせ。"""
+    x = (st.get("plutosdr") or {}).get("xo") or {}
+    serial = x.get("serial")
+    live = bool(x.get("live"))
+    reason = None
+    if not serial:
+        reason = PLUTO_LABELS["not_pluto"]
+    elif live and x.get("supported") is False:
+        reason = texts.ERRORS["plutosdr_xo_unsupported"]
+    elif live and x.get("lock"):
+        reason = texts.ERRORS.get(x["lock"], x["lock"])
+    hz_text = ""
+    if live and x.get("hz") is not None:
+        hz_text = texts.tpl("pluto_xo_hz", hz=f"{int(x['hz']):,}")
+    elif serial and not live:
+        hz_text = texts.tpl("pluto_xo_next", serial=serial)
+    warn_text = ""
+    if live and x.get("refused_ppm") is not None:
+        warn_text = texts.tpl("pluto_xo_refused", ppm=_ppm_text(x["refused_ppm"]), min=_ppm_text(x.get("min_ppm", 0)),
+                              max=_ppm_text(x.get("max_ppm", 0)))
+    return {
+        "ppm": float(x.get("ppm") or 0.0),
+        "lo": float(x.get("min_ppm", -200.0)),
+        "hi": float(x.get("max_ppm", 200.0)),
+        "decimals": XO_DECIMALS,
+        "unit": XO_UNIT,
+        "reason": reason,
+        "hz_text": hz_text,
+        "warn_text": warn_text,
+    }
 
 
 def pluto_view(st: dict) -> dict:
@@ -146,4 +190,6 @@ def pluto_view(st: dict) -> dict:
         "dll_warn": not pl.get("dll_path") or bits not in (None, 64),
         "dll_custom": bool(pl.get("dll_folder")),
         "uri": pl.get("uri") or "",
+        # 設定の画面の基準の補正の欄（設計Q §7.10）
+        "xo": xo_view(st),
     }

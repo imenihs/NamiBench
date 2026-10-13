@@ -565,6 +565,29 @@ class LayoutPlutoTest(PlutoUiBase):
         self.assertTrue(self.win.source_tab.s11_state.isVisible())
         self.assertEqual(sorted(set(found)), [])
 
+    def test_settings_page_xo(self):
+        # 設定の PlutoSDR のページ（設計Q §7.10）: 基準の補正の欄・読み戻した基準の Hz・範囲の外で書かなかった知らせが
+        # 全部出た形と、測っている間に欄が使えない形
+        from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL
+
+        found = []
+        self.cmd("plutosdr_xo_set", ppm=150.0, serial=FAKE_SERIAL)
+        self.lib.pluto._set_raw("ad9361-phy", "", False, "xo_correction_available", "[39996000 1 40004000]")
+        self.connect_pluto()
+        self.win._settings_dialog("plutosdr")
+        d = self.win._settings
+        self.pump(0.3)
+        self.assertTrue(d.pl_xo_hz.isVisible())
+        self.assertTrue(d.pl_xo_warn.isVisible())
+        found += problems(d, "設定 PlutoSDR 基準の補正")
+        self.cmd("run", mode="continuous")
+        self.wait(lambda: not d.pl_xo.isEnabled(), what="測っている間は使えない")
+        self.pump(0.2)
+        found += problems(d, "設定 PlutoSDR 基準の補正 測っている間")
+        self.cmd("stop")
+        d.close()
+        self.assertEqual(sorted(set(found)), [])
+
 
     def test_ext_iq_streaming(self):
         # 外部 IQ の送信の間（設計S §1 §7）: 状態バーの「外部 IQ 出力中」と［送信を止める］・信号源のタブの外部の行・

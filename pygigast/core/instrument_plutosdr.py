@@ -6,7 +6,8 @@
   TG 高調波の平均除去の回数（設計Q §7.7））、
   「利得を合わせる」の口、rtl_tcp の出口へ流す IQ（4.096MS/s を相手の求める整数分の1の速さに落とす）
 - 個体の校正（レベルの dBm 化）はまだ無い（設計Q §7.1: 後で入れる）。それまでレベルは「dB（未校正）」。
-  受信の利得の補正（利得を変えても値が変わらないようにする表: 設計Q §7.6）は instrument_pluto_cal.py
+  受信の利得の補正（利得を変えても値が変わらないようにする表: 設計Q §7.6）は instrument_pluto_cal.py、
+  基準の補正（基準の水晶のずれを ppm で直す: 設計Q §7.10）は instrument_pluto_xo.py
 - 送信（SG・TG）は機器の層が掃引の間だけ出す。止めた・SA に戻した・掃引を渡していない間は止める（on_idle）
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ from .devices.plutosdr.iio import find_dll as find_iio_dll
 from .devices.rtlsdr.dll import dll_bits
 from .instrument_common import CommandError
 from .instrument_pluto_cal import _PlutoCalJob
+from .instrument_pluto_xo import load_xo_settings
 from .rtltcp import TUNER_UNKNOWN
 from .rtltcp.decimate import IqDecimator, factor_for
 from .trace import ConditionChange
@@ -97,10 +99,12 @@ class PlutoSdrInstrumentDevice(Device):
         self.inner.close()
 
 
-def open_plutosdr_device(lib, uri: str, profile: Optional[dict] = None) -> PlutoSdrInstrumentDevice:
-    """URI で開く。利得・送信の減衰は開いた後に本体が入れ直す（_plutosdr_prepare）。"""
+def open_plutosdr_device(lib, uri: str, profile: Optional[dict] = None,
+                         xo_ppm_by_serial: Optional[dict] = None) -> PlutoSdrInstrumentDevice:
+    """URI で開く。利得・送信の減衰は開いた後に本体が入れ直す（_plutosdr_prepare）。基準の補正（シリアル番号 → ppm）は
+    開く途中で機器の口が書く（LO の書ける下限を確かめる前に書くため: 設計Q §7.10）。"""
     dev = pl_driver.PlutoSdrDevice(profile, lib=lib)
-    dev.open(uri)
+    dev.open(uri, xo_ppm_by_serial=xo_ppm_by_serial)
     return PlutoSdrInstrumentDevice(dev)
 
 
@@ -124,6 +128,8 @@ class PlutoSdrMixin:
             # TG 高調波の平均除去の回数（1 はなし。選べる回数でなければ初期値: 設計Q §7.7）
             "tg_harmonic_avg": tg if isinstance(tg, int) and not isinstance(tg, bool) and tg in tg_spec["choices"]
             else tg_spec["default"],
+            # 基準の補正（設計Q §7.10）: シリアル番号 → ppm と、最後に繋いだ PlutoSDR（繋いでいないときの補正の欄の対象）
+            **load_xo_settings(cfg),
         }
         self._pluto_decim: Optional[IqDecimator] = None
         # 外部 IQ の送信で読む速さが変わり、rtl_tcp の相手の求める速さに整数で落とせない間は送らない（設計S §1 の P3）
@@ -144,6 +150,8 @@ class PlutoSdrMixin:
                 b.set_dll_folder(self._pluto_cfg["dll_folder"])
             if hasattr(b, "set_uri"):
                 b.set_uri(self._pluto_cfg["uri"])
+            if hasattr(b, "set_xo_ppm"):
+                b.set_xo_ppm(self._pluto_cfg["xo_ppm"])
 
     def _is_plutosdr(self) -> bool:
         return isinstance(self._device, PlutoSdrInstrumentDevice)
@@ -248,6 +256,8 @@ class PlutoSdrMixin:
             "fw_version": None if dev is None else dev.fw_version,
             # 中心を動かせないとき（rtl_tcp の相手: RTL-SDR と同じ扱い）
             "fixed_center": None if (dev is None or tgt is None) else {"cause": tgt[0], "tuner_center_hz": tgt[1]},
+            # 基準の補正（設計Q §7.10。中身は instrument_pluto_xo.py）
+            "xo": self._pluto_xo_state(),
         }
 
     def _plutosdr_save_settings(self) -> None:
@@ -263,6 +273,7 @@ class PlutoSdrMixin:
         """機器スレッドを始める前: 利得・送信の減衰を入れ、rtl_tcp へ IQ を流す口をつなぐ。"""
         self._rtlsdr_cal = None  # PlutoSDR の個体の校正（dBm 化）はまだ無い（設計Q §7.1）
         self._pluto_gain_load(dev.identity().serial)  # 受信の利得の補正の表（設計Q §7.6）
+        self._pluto_xo_attached(dev)  # 基準の補正（機器の口が開くときに書いた: 設計Q §7.10）
         try:
             self._pluto_gain_sent = self._plutosdr_gain_setting()
             dev.set_gain(self._pluto_gain_sent)

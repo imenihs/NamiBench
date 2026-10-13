@@ -44,6 +44,7 @@ from .instrument_waterfall import WaterfallMixin
 from .instrument_plutosdr import PlutoSdrMixin
 from .instrument_pluto_cal import PlutoGainCalMixin
 from .instrument_pluto_ref_fit import PlutoRefFitMixin
+from .instrument_pluto_xo import PlutoXoMixin
 from .instrument_rtlsdr import RTLSDR_ENCODING, RtlSdrMixin
 from .instrument_rtltcp import RtlTcpMixin
 from .instrument_step import RUN_STATE as STEP_RUN_STATE, StepSweepMixin
@@ -195,7 +196,7 @@ class _DeviceWorker(threading.Thread):
 
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
-                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, PlutoGainCalMixin, PlutoRefFitMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
+                 BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, PlutoGainCalMixin, PlutoRefFitMixin, PlutoXoMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
                  SweepProgressMixin, ExtTxMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 

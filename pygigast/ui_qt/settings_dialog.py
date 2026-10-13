@@ -35,9 +35,11 @@ from PySide6.QtWidgets import (
 
 from ..core.report_layout import PNG_PALETTE_CHOICES, PNG_PALETTE_DEFAULT
 from . import screen_model, sizes, texts, widget_sync
-from .screen_pluto import pluto_view
+from .fields import DecimalField
+from .screen_pluto import XO_DECIMALS, XO_UNIT, pluto_view
 from .settings_colors import PalettePage
 from .settings_keys import KeysPage
+from .tab_traces import set_enabled
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -466,8 +468,32 @@ class SettingsDialog(QDialog):
         v.addLayout(form)
         reset = _reset_button(lambda: self.win.call("plutosdr_set", uri="ip:192.168.2.1"))
         v.addLayout(sizes.buttons_row(reset))
+        # 基準の補正（設計Q §7.10）: ppm の欄と、機器から読み戻した基準の Hz（繋いでいないときは次に書く機器）・繋いだときに
+        # 範囲の外で書かなかった知らせ（中身は screen_pluto.xo_view: Web と同じ）
+        form = sizes.form()
+        self.pl_xo = DecimalField(S["plutosdr_xo"], XO_UNIT, self._set_pluto_xo, XO_DECIMALS)
+        self.pl_xo.setToolTip(S["plutosdr_xo_tip"])
+        form.addRow(self.pl_xo.name, self.pl_xo)
+        self.pl_xo_hz = QLabel("")
+        self.pl_xo_hz.setObjectName("dim")
+        form.addRow("", self.pl_xo_hz)
+        self.pl_xo_warn = QLabel("")
+        self.pl_xo_warn.setObjectName("warn")
+        self.pl_xo_warn.setWordWrap(True)
+        sizes.grow(self.pl_xo_warn)  # 窓の幅まで伸ばして折り返す（S-02）
+        form.addRow("", self.pl_xo_warn)
+        v.addLayout(form)
+        self.pl_xo_reset = _reset_button(lambda: self.win.call("plutosdr_xo_set", field=self.pl_xo, ppm=0.0))
+        v.addLayout(sizes.buttons_row(self.pl_xo_reset))
         v.addStretch(1)
         return page
+
+    def _set_pluto_xo(self, ppm: float) -> None:
+        # 同じ値は送り直さない（変えるとトレースの蓄積を捨てる）
+        if ppm == pluto_view(self.win.state)["xo"]["ppm"]:
+            self.pl_xo.set_value(ppm)
+            return
+        self.win.call("plutosdr_xo_set", field=self.pl_xo, ppm=float(ppm))
 
     def _choose_pluto_dll(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, texts.SETTINGS_LABELS["plutosdr_choose_title"])
@@ -506,6 +532,15 @@ class SettingsDialog(QDialog):
         self.pl_dll_default.setEnabled(pv["dll_custom"])
         if not self.pl_uri.hasFocus():
             self.pl_uri.setText(pv["uri"])
+        xv = pv["xo"]
+        self.pl_xo.set_range(xv["lo"], xv["hi"])
+        self.pl_xo.set_value(xv["ppm"])
+        set_enabled(self.pl_xo, xv["reason"], texts.SETTINGS_LABELS["plutosdr_xo_tip"])
+        self.pl_xo_reset.setEnabled(xv["reason"] is None)
+        self.pl_xo_hz.setText(xv["hz_text"])
+        self.pl_xo_hz.setVisible(bool(xv["hz_text"]))
+        self.pl_xo_warn.setText(xv["warn_text"])
+        self.pl_xo_warn.setVisible(bool(xv["warn_text"]))
         self._apply_known(st)
         self.palette_page.apply(st)
         self.apply_notify()
