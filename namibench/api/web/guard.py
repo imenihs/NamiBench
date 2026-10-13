@@ -24,7 +24,7 @@ from .access import KIND_OPERATE, Access, cookie_name, host_allowed, is_loopback
 READ_COMMANDS = {"get_state", "get_trace", "peak_list", "reference_list", "png_layout", "mouse_reading",
                  "waterfall_rows", "waterfall_reading", "density_get"}
 # 札の無い LAN の接続に出してよいもの（認証の画面だけ）
-_PUBLIC_STATIC = {"/auth.js", "/style.css", "/favicon.svg"}
+_PUBLIC_STATIC = {"/auth.js", "/style.css", "/favicon.png"}
 _AUTH_PATH = "/api/v1/auth"
 
 
@@ -63,7 +63,7 @@ def auth_page() -> bytes:
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(L["auth_title"])}</title>
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.png" type="image/png">
 <link rel="stylesheet" href="style.css">
 </head><body class="auth-body">
 <noscript>{e(L["auth_need_js"])}</noscript>

@@ -4,11 +4,12 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
-from PySide6.QtGui import QIcon, QImageReader
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from ..api.local import create_default
-from ..resources import ICON_PNG, ICON_SVG
+from ..resources import ICON_SIZES, icon_png
 from . import wheel_guard
 from .main_window import MainWindow
 from .prefs import UiPrefs
@@ -18,9 +19,11 @@ APP_USER_MODEL_ID = "NamiBench.NamiBench"
 
 
 def app_icon() -> QIcon:
-    """アプリのアイコン。SVG を読めない Qt（SVG のプラグインが無い）では同じ絵の PNG を使う。"""
-    svg_ok = b"svg" in {bytes(f).lower() for f in QImageReader.supportedImageFormats()}
-    return QIcon(str(ICON_SVG if svg_ok else ICON_PNG))
+    """アプリのアイコン。大きさごとの PNG を全部入れ、Qt が表示する大きさに合うものを選ぶ（小さいときは単純な絵）。"""
+    icon = QIcon()
+    for s in ICON_SIZES:
+        icon.addFile(str(icon_png(s)), QSize(s, s))
+    return icon
 
 
 def _set_app_user_model_id() -> None:

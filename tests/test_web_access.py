@@ -237,10 +237,10 @@ class GuardTest(unittest.TestCase):
         self.assertNotIn("app.js", page)
         self.assertEqual(asgi(self.app, "GET", "/auth.js")[0], 200)
         # 認証の画面のアイコン（Qt の窓と同じ絵）も札なしで出す
-        self.assertIn('href="favicon.svg"', page)
-        st, h, body = asgi(self.app, "GET", "/favicon.svg")
-        self.assertEqual((st, h["content-type"][0]), (200, "image/svg+xml"))
-        self.assertTrue(body.startswith(b"<svg"))
+        self.assertIn('href="favicon.png"', page)
+        st, h, body = asgi(self.app, "GET", "/favicon.png")
+        self.assertEqual((st, h["content-type"][0]), (200, "image/png"))
+        self.assertTrue(body.startswith(b"\x89PNG"))
         for path in ("/api/v1/state", "/api/v1/texts", "/api/v1/info", "/app.js", "/index.html?x"):
             st, _, body = asgi(self.app, "GET", path.split("?")[0])
             if path.startswith("/index.html"):

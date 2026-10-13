@@ -36,7 +36,7 @@ from ... import __version__
 from ..local import CommandError, LocalApi
 from ...core import colormaps
 from ...core import report_layout as rl
-from ...resources import ICON_SVG
+from ...resources import FAVICON_SIZE, icon_png
 from ...ui_qt import screen_model, source_view, texts
 from . import view
 from .access import KIND_OPERATE, Access
@@ -508,10 +508,10 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
             return JSONResponse(error_body(e), status_code=500)
         return JSONResponse(to_jsonable(view.state_view(st)))
 
-    @app.get("/favicon.svg")
+    @app.get("/favicon.png")
     async def favicon() -> FileResponse:
-        # Qt の窓のアイコンと同じ絵（namibench/resources: 絵は1か所に置く）
-        return FileResponse(ICON_SVG, media_type="image/svg+xml")
+        # Qt の窓のアイコンと同じ絵（namibench/resources: 絵は1か所に置く）。タブの大きさの単純な絵
+        return FileResponse(icon_png(FAVICON_SIZE), media_type="image/png")
 
     @app.get("/api/v1/texts")
     async def get_texts() -> JSONResponse:
