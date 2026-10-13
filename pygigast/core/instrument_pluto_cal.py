@@ -7,11 +7,12 @@
 - 校正の作業（校正の画面の「PlutoSDR の利得の補正」。全自動）: 機器の口（driver.gain_calibration）を別のスレッドで
   動かす。その間は機器スレッドに掃引を渡さない（掃引と口を取り合わない）。周波数を1つ測るたびに作業に列を足す。
   やめた・失敗した・切れたときも、それまでの列は残る（保存すれば、測っていない周波数は前の表のまま）
-- TG で基準を選んでいる間は、受信の利得を変えさせない（基準と違う利得で測ると比がずれる。表があっても補正の
-  誤差が比に乗る）。利得の欄・「利得を合わせる」・rtl_tcp の相手の利得の命令のどれも
-- S11 は、オープンを測り始めた時点から、基準を捨てるか S11 を出るまで、受信の利得と送信の減衰の両方を変えさせない
-  （設計Q §7.8 の決定①。オープン・ショート・被測定物の受けた電力が同じ物差しでないと |Γ| がその差だけずれる。送信の
-  減衰は基準にも測った値にも入っていない）。オープンを捨てる条件（S11 を出た・電源の入れ直し）で外れる
+- TG・S11 では、基準を取り始めた時点（S11 はオープンを測り始めた時点）から、その基準を捨てるかそのモードを出るまで、
+  受信の利得と送信の減衰の両方を変えさせない（設計Q §7.8 の決定①・§7.9）。基準と違う利得・出力で測ると比がその差
+  だけずれる（利得は補正の表があっても誤差が比に乗る。送信の減衰は基準にも測った値にも入っていない: 減衰 −40 → −20dB
+  で受信は +20dB）。利得の欄・「利得を合わせる」・送信の減衰の欄・rtl_tcp の相手の利得の命令のどれも。同じ値を送るのは
+  変えていないので断らない。固定の理由にするのは、いまのモードの基準だけ（ほかのモードの基準は当たらない）。
+  S11 の測ったオープンを捨てる条件（S11 を出た・電源の入れ直し）でも外れる
 """
 from __future__ import annotations
 
@@ -31,10 +32,11 @@ from .storage import Cancelled
 from .types import DeviceDisconnected, DeviceError, Mode, SweepDiscarded
 
 TASK_PLUTO_GAIN = "cal_pluto_gain"
-# 利得を変えさせない理由のコード（状態と命令の断りで同じ）
-GAIN_LOCK_REFERENCE = "plutosdr_gain_reference_in_use"
-# S11 でオープンを測った後（利得と送信の減衰の両方: 設計Q §7.8）
+# 利得と送信の減衰を変えさせない理由のコード（状態と命令の断りで同じ）。TG は基準を取り始めた後（設計Q §7.9）、
+# S11 はオープンを測り始めた後（設計Q §7.8）
+TG_CONDITIONS_LOCK = "plutosdr_tg_conditions_locked"
 S11_CONDITIONS_LOCK = "plutosdr_s11_conditions_locked"
+_CONDITIONS_LOCK = {Mode.TG: TG_CONDITIONS_LOCK, Mode.S11: S11_CONDITIONS_LOCK}
 
 
 def _now_iso() -> str:
@@ -86,28 +88,26 @@ class PlutoGainCalMixin:
         return {"created_at": cal.created_at, "freqs": len(f), "range_hz": [f[0], f[-1]] if f else None}
 
     def _pluto_gain_lock(self) -> Optional[str]:
-        """受信の利得を変えさせない理由のコード（TG で基準を選んでいる間・S11 の _pluto_s11_lock の間）。"""
-        if not self._is_plutosdr():
-            return None
-        if self._adopted.mode == Mode.S11:
-            return self._pluto_s11_lock()
-        if self._adopted.mode == Mode.TG and self._pluto_ref_of(Mode.TG):
-            return GAIN_LOCK_REFERENCE
-        return None
+        """受信の利得を変えさせない理由のコード（_pluto_conditions_lock の間）。"""
+        return self._pluto_conditions_lock() if self._is_plutosdr() else None
 
     def _pluto_tx_atten_lock(self) -> Optional[str]:
-        """送信の減衰を変えさせない理由のコード（S11 の _pluto_s11_lock の間だけ。TG はいまのまま: 設計Q §7.8）。"""
-        if not self._is_plutosdr() or self._adopted.mode != Mode.S11:
-            return None
-        return self._pluto_s11_lock()
+        """送信の減衰を変えさせない理由のコード（利得と同じ期間: 設計Q §7.8・§7.9）。"""
+        return self._pluto_conditions_lock() if self._is_plutosdr() else None
 
-    def _pluto_s11_lock(self) -> Optional[str]:
-        """S11 で、オープンを測っている（利得を合わせている間も）・測ったオープンがある・基準を選んでいる間（設計Q §7.8
-        の決定①）。オープンを捨てる（S11 を出た・電源の入れ直し: _s11_open_follow）・基準を捨てると外れる。"""
+    def _pluto_conditions_lock(self) -> Optional[str]:
+        """いまのモード（TG・S11）で、基準を取っている（取る前に利得を合わせている間も）・選んでいる基準がそのモードの
+        ものである・S11 で測ったオープンがある間は、理由のコード。基準を捨てる・そのモードを出る（S11 のオープンは
+        _s11_open_follow が捨てる）と外れる。取るのをやめた・失敗した・切れたときは、ほかに理由が無ければ外れる。"""
+        mode = self._adopted.mode
+        code = _CONDITIONS_LOCK.get(mode)
+        if code is None:
+            return None
         job = getattr(self, "_ref_job", None)
-        measuring = job is not None and job.adopted.mode == Mode.S11
-        if measuring or getattr(self, "_s11_open", None) is not None or self._pluto_ref_of(Mode.S11):
-            return S11_CONDITIONS_LOCK
+        taking = job is not None and job.adopted.mode == mode
+        has_open = mode == Mode.S11 and getattr(self, "_s11_open", None) is not None
+        if taking or has_open or self._pluto_ref_of(mode):
+            return code
         return None
 
     def _pluto_ref_of(self, mode: Mode) -> bool:

@@ -28,11 +28,14 @@ PLUTO_LABELS = {
     "gain_cal_none": "利得の補正なし",
     "gain_cal_none_tip": "この PlutoSDR の受信の利得の補正がありません。利得を変えると、同じ信号の値が動きます"
                          "（校正の「PlutoSDR の利得の補正…」で測ります）",
-    "gain_locked_reference": "TG で基準を使っている間は変えられません（基準と同じ利得で測ります）",
+    # TG で基準を取り始めてから、基準を捨てるか TG を出るまで（受信の利得と送信の減衰: 設計Q §7.9）
+    "tg_locked": "TG で基準を取り始めてから、基準を捨てるか TG を出るまでは変えられません（基準と同じ条件で測ります）",
     # S11 でオープンを測った時点から、基準を捨てるか S11 を出るまで（受信の利得と送信の減衰: 設計Q §7.8）
     "s11_locked": "S11 でオープンを測ってから、基準を捨てるか S11 を出るまでは変えられません（オープン・ショートと同じ"
                   "条件で測ります）",
     "calibrating": "利得の補正を測っています",
+    # 進み具合の行: TG の基準の前の利得合わせ（設計Q §7.9。同じ作業の最初の段）
+    "ref_fit_task": "基準の前に受信の利得を合わせています",
 }
 
 # TG 高調波の平均除去の選択肢（設計Q §7.7。キーは回数: 1 はなし。並びは なし → 4回 → 8回）
@@ -46,18 +49,23 @@ PLUTO_ERRORS = {
     "plutosdr_dll_not_found": "PlutoSDR の DLL（libiio.dll）が見つかりません",
     "plutosdr_not_connected": "PlutoSDR に繋がっていません",
     "reference_wide_fft": "この機器の基準はいまの条件で取ります（RBW が違う基準は当たらないため）",
-    "plutosdr_gain_reference_in_use": "TG で基準を使っている間は受信の利得を変えられません（基準と同じ利得で測ります）",
+    "plutosdr_tg_conditions_locked": "TG で基準を取り始めてから、基準を捨てるか TG を出るまでは受信の利得と送信の減衰を"
+                                     "変えられません（基準と同じ条件で測ります）",
     "plutosdr_s11_conditions_locked": "S11 でオープンを測ってから、基準を捨てるか S11 を出るまでは受信の利得と送信の減衰を"
                                       "変えられません（オープン・ショートと同じ条件で測ります）",
     # 「オープンを測る」の前の利得合わせ（設計Q §7.8 の決定②）。合わせられなければオープンは測らない
     "s11_open_fit_failed": "受信の利得を合わせられなかったので、オープンを測っていません",
     "s11_open_overload": "いちばん小さい受信の利得でも振り切れるので、オープンを測っていません（送信の減衰で出力を"
                          "下げてください）",
+    # TG の「基準を取る」の前の利得合わせ（設計Q §7.9）。合わせられなければ基準は取らない
+    "tg_ref_fit_failed": "受信の利得を合わせられなかったので、基準を取っていません",
+    "tg_ref_overload": "いちばん小さい受信の利得でも振り切れるので、基準を取っていません（送信の減衰で出力を下げてください）",
 }
 
 PLUTO_NOTICES = {
     "plutosdr_setting_failed": "PlutoSDR に利得・送信の減衰を入れられませんでした（測定は続けます）",
     "s11_open_gain_fitted": "オープンを測る前に受信の利得を合わせました",
+    "tg_ref_gain_fitted": "基準を取る前に受信の利得を合わせました",
 }
 
 PLUTO_SETTINGS = {
@@ -72,6 +80,8 @@ TEMPLATES.update({
     "pluto_gain_used": "この範囲では {db} dB を使います",
     "pluto_tx_on": "出力中: {what}",
     "s11_open_gain_fitted": "オープンを測る前に受信の利得を {gain} dB に合わせました（前は {before}）",
+    "tg_ref_gain_fitted": "基準を取る前に受信の利得を {gain} dB に合わせました（前は {before}）",
+    "ref_taken_fitted": "受信の利得を {gain} dB に合わせて（前は {before}）基準を取りました: {name}",
     "ref_open_measured_fitted": "受信の利得を {gain} dB に合わせて（前は {before}）オープンを測りました。ショートを繋いで"
                                 "「ショートを測る」を押してください",
     "status_cal_pluto": "補正: PlutoSDR 未校正・単位 {unit}",

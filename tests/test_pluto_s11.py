@@ -5,7 +5,7 @@
 - 本体: オープン → ショートの手順と、被測定物のリターンロス／オープンの前に送信しながら利得を合わせ、選んだ利得を
   欄（状態）に出して知らせる（自動なら手動へ移す）／合わせられない・やめたらオープンを測らず理由を出す／オープンを
   測り始めてから基準を捨てるか S11 を出るまで、受信の利得と送信の減衰を変えさせない（電源の入れ直しでも外れる）／
-  TG はいまのまま（送信の減衰は変えられる・オープンの前の利得合わせは無い）／TG 高調波の平均除去が S11 にも効く／
+  TG の基準は S11 を固定しない（TG の基準の前の利得合わせと固定は tests/test_pluto_tg_ref.py）／TG 高調波の平均除去が S11 にも効く／
   基準の区間は補正の表を覚える（オープンとショートで表が違えば作らない）
 """
 from __future__ import annotations
@@ -32,7 +32,6 @@ from tests.test_ref_gain_table import A, B, table
 
 MHZ = 1_000_000
 S11_LOCK = "plutosdr_s11_conditions_locked"
-TG_LOCK = "plutosdr_gain_reference_in_use"
 GAMMA = 0.1  # 被測定物の反射（リターンロス 20dB）
 
 
@@ -387,18 +386,6 @@ class TestLocks(Case):
         self.call("connect", backend="plutosdr", serial=FAKE_SERIAL)
         self.assertEqual(self.notices("s11_open_discarded")[0]["detail"]["reason"], "power_cycled")
         self.assert_free()
-
-    def test_tg_is_unchanged(self):
-        self.s11(mode="tg")
-        self.clear()
-        self.call("reference_take", kind="fine")
-        self.assertEqual(self.task_end()["code"], "task_done")
-        self.assertEqual(self.notices("s11_open_gain_fitted"), [])  # TG は基準の前に利得を合わせない
-        pl = self.pluto()
-        self.assertEqual(pl["gain_db"], 60.0)
-        self.assertEqual(pl["gain_lock"], TG_LOCK)
-        self.assertIsNone(pl["tx_atten_lock"])
-        self.call("plutosdr_set", tx_atten_db=-20.0)  # TG の送信の減衰は今までどおり変えられる
 
     def test_tg_reference_does_not_lock_s11(self):
         """TG の基準を選んだまま S11 にしても、S11 の基準は無いので固定しない。オープンの前に利得を合わせる。"""

@@ -753,7 +753,7 @@
             <button data-act="take_wide" :disabled="!!ui.tg_wide_reason" @click="takeRef('wide')"
                     :title="W('take_wide_tip') + (ui.tg_wide_reason ? ' — ' + ui.tg_wide_reason : '')">{{ W('take_wide') }}</button>
             <button data-act="take_fine" :disabled="!!ui.tg_take_reason" @click="takeRef('fine')"
-                    :title="W('take_fine_tip') + (ui.tg_take_reason ? ' — ' + ui.tg_take_reason : '')">{{ W('take_fine') }}</button>
+                    :title="(ui.tg_fine_tip || W('take_fine_tip')) + (ui.tg_take_reason ? ' — ' + ui.tg_take_reason : '')">{{ W('take_fine') }}</button>
           </div>
           <div class="form">
             <label>{{ W('s11_range') }}</label>

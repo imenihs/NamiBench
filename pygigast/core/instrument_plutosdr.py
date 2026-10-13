@@ -237,10 +237,10 @@ class PlutoSdrMixin:
             "fitting": any(t.kind == "plutosdr_fit_gain" for t in getattr(self, "_tasks", {}).values()),
             # 受信の利得の補正の表（設計Q §7.6。無ければ None: 画面は利得の欄のそばに「利得の補正なし」）
             "gain_correction": self._pluto_gain_state(),
-            # 受信の利得を変えさせない理由のコード（TG・S11 で基準を選んでいる間: 設計Q §7.6。S11 はオープンを測った
-            # 時点から: 設計Q §7.8）
+            # 受信の利得を変えさせない理由のコード（TG は基準を取り始めた時点から: 設計Q §7.9。S11 はオープンを測り
+            # 始めた時点から: 設計Q §7.8。その基準を捨てるかそのモードを出るまで）
             "gain_lock": self._pluto_gain_lock() if dev is not None else None,
-            # 送信の減衰を変えさせない理由のコード（S11 でオープンを測った時点から、基準を捨てるか S11 を出るまで: 設計Q §7.8）
+            # 送信の減衰を変えさせない理由のコード（利得と同じ期間: 設計Q §7.8・§7.9）
             "tx_atten_lock": self._pluto_tx_atten_lock() if dev is not None else None,
             "calibrating": isinstance(getattr(self, "_cal_job", None), _PlutoCalJob),
             # 出している送信（"sg"・"tg"・外部 IQ の "ext"）
@@ -300,14 +300,14 @@ class PlutoSdrMixin:
         if agc is True and gain_db is not _UNSET and gain_db is not None:
             raise CommandError("bad_value", "agc", {"conflict": "gain_db"})
         if gain_db is not _UNSET or agc is not _UNSET:
-            self._pluto_check_gain_lock()  # TG・S11 で基準を選んでいる間は利得を変えない（設計Q §7.6）
+            self._pluto_check_gain_lock()  # TG・S11 で基準を取り始めてからは利得を変えない（設計Q §7.8・§7.9）
         if tx_atten_db is not _UNSET:
             rng = self._plutosdr_profile()["source"]["tx_atten_db"]
             lo, hi = float(rng["min"]), float(rng["max"])
             if not _is_number(tx_atten_db) or not lo <= tx_atten_db <= hi:
                 raise CommandError("bad_value", "tx_atten_db", {"min": lo, "max": hi})
             step = float(self._plutosdr_profile()["source"]["tx_atten_db"]["step"] or 0.25)
-            why = self._pluto_tx_atten_lock()  # S11 のオープン・ショート・被測定物は同じ出力で測る（設計Q §7.8）
+            why = self._pluto_tx_atten_lock()  # 基準と被測定物は同じ出力で測る（TG・S11: 設計Q §7.8・§7.9）
             if why is not None and round(round(float(tx_atten_db) / step) * step, 2) != self._plutosdr_atten_setting():
                 raise CommandError(why, "tx_atten_db")
         if tg_harmonic_avg is not _UNSET:
@@ -456,7 +456,7 @@ class PlutoSdrMixin:
         if want is _UNSET:
             return
         if self._pluto_gain_lock() is not None:
-            # TG・S11 で基準を選んでいる間は、相手の命令でも利得を変えない（設計Q §7.6）
+            # TG・S11 で基準を取り始めてからは、相手の命令でも利得を変えない（設計Q §7.8・§7.9）
             self._notice("rtltcp_gain_from_client", {"gain_db": self._pluto_cfg["gain_db"], "agc": self._pluto_cfg["agc"],
                                                      "applied": False, "code": self._pluto_gain_lock()})
             return

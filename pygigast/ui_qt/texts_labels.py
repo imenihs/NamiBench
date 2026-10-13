@@ -137,6 +137,8 @@ LABELS = {
     "take_wide_tip": "TG の範囲を 1MHz 刻みで取る",
     "take_fine": "いまの条件で細かく取る",
     "take_fine_tip": "いまの Start・Stop・Step でその範囲だけ取り、いまの基準へ上書き合成する",
+    # PlutoSDR（受信の利得を合わせてから取る: 設計Q §7.9）
+    "take_fine_tip_pluto": "受信の利得を合わせてから、いまの Start・Stop・Step でその範囲だけ取り、いまの基準へ上書き合成する",
     "reload": "一覧を読み直す",
     "select_none": "選ばない",
     "no_refs": "基準はありません",

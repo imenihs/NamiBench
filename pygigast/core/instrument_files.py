@@ -112,9 +112,9 @@ class _RefJob:
     show_zero: bool = False
     # 基準の値（設計E §6.7）。None は指定なし（新しい基準は 0dB、上書き合成ではその基準の値のまま）
     value_db: Optional[float] = None
-    # 掃引の前に受信の利得を合わせている（PlutoSDR の S11 のオープン: 設計Q §7.8）。その間は掃引を渡さない
+    # 掃引の前に受信の利得を合わせている（PlutoSDR の TG の基準・S11 のオープン: 設計Q §7.8・§7.9）。その間は掃引を渡さない
     fitting: bool = False
-    # 合わせた利得（{"gain_db", "previous_gain_db", "was_auto"}）。オープンを測り終えた知らせにも入れる
+    # 合わせた利得（{"gain_db", "previous_gain_db", "was_auto"}）。取り終えた（オープンを測り終えた）知らせにも入れる
     fitted: Optional[dict] = None
 
 
@@ -603,9 +603,9 @@ class FilesMixin:
             if standard == "short" and (self._s11_open is None or self._s11_open["kind"] != kind):
                 raise self._error("s11_open_missing", "standard")
         adopted = self._ref_adopted(kind, self._adopted)
-        fit = self._pluto_s11_open_needs_fit(mode, standard)
+        fit = self._pluto_ref_needs_fit(mode, standard)
         if fit:
-            self._pluto_s11_check_fit()  # ほかの「利得を合わせる」が動いていないこと
+            self._pluto_ref_check_fit()  # ほかの「利得を合わせる」が動いていないこと
         task = self._new_task("reference_take", total=averages,
                               detail={"kind": kind, "mode": mode.value, "standard": standard})
         self._ref_job = _RefJob(task, adopted, averages, kind, name, standard, self._run, show_zero=show_zero,
@@ -615,8 +615,8 @@ class FilesMixin:
         self._push_job()
         self._task_progress(task, 0, averages, 0.0)
         if fit:
-            # PlutoSDR の S11 のオープンは、まず送信しながら受信の利得を合わせてから測る（設計Q §7.8 の決定②）
-            self._pluto_s11_start_fit(self._ref_job)
+            # PlutoSDR の TG の基準・S11 のオープンは、まず送信しながら受信の利得を合わせてから測る（設計Q §7.8 の決定②・§7.9）
+            self._pluto_ref_start_fit(self._ref_job)
         self._changed()
         return {"task_id": task.task_id}
 
@@ -720,7 +720,8 @@ class FilesMixin:
                 # 0dB が見える REF にするのは dB の縦軸だけ（|Γ|・SWR の縦軸は REF を持たず、黙って REF の数字を変えない）
                 extra = (self._show_zero_level(target.applied_value_db)
                          if job.show_zero and self._ref_axis_is_db(mode) else {})
-                self._end_task(job.task, None, {"reference_id": target.ref_id, "name": target.name, **extra})
+                self._end_task(job.task, None, {"reference_id": target.ref_id, "name": target.name, **extra,
+                                                **({"gain_fitted": job.fitted} if job.fitted else {})})
                 if prev_run not in ("continuous", "single") and self._conn == "connected":
                     # 取った基準ですぐ測って 0dB 付近になることを示す（設計E §6.2）
                     try:

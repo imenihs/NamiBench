@@ -80,6 +80,8 @@ TEMPLATES.update({
 REF_QUICK_LABELS = {
     "button": "基準を取る",
     "tip": "TG の範囲を 1MHz 刻みで1回測り、0dB の基準にする",
+    # PlutoSDR（FFT の機器はいまの条件で取る。受信の利得を合わせてから取る: 設計Q §7.9）
+    "tip_pluto": "受信の利得を合わせてから、いまの条件で1回測り、0dB の基準にする",
     "taking_reason": "基準を取っています",
 }
 
