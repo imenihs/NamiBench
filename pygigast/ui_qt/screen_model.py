@@ -371,12 +371,14 @@ def ref_quick_view(st: dict) -> dict:
     elif task is not None:
         reason = REF_QUICK_LABELS["taking_reason"]
     else:
-        reason = texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
+        # PlutoSDR は受信の利得を合わせてから取る（設計Q §7.8・§7.9）。再生中は基準を取らない（設計P §5）
+        reason = screen_s11.pluto_fit_reason(st) or texts.live_lock_reason(st)
     if sw.get("mode") == "s11":
         q = screen_s11.s11_quick(st)
         label, button_tip, take = q["label"], q["tip"], q["take"]
     else:
-        label, button_tip, take = REF_QUICK_LABELS["button"], REF_QUICK_LABELS["tip"], \
+        pluto = bool((st.get("plutosdr") or {}).get("connected"))
+        label, button_tip, take = REF_QUICK_LABELS["button"], REF_QUICK_LABELS["tip_pluto" if pluto else "tip"], \
             {"standard": None, "kind": _tg_quick_kind(st), "show_zero": True}
         q = {"open_text": ""}
     n = st.get("normalization") or {}
@@ -687,6 +689,7 @@ def s11_ui(st: dict) -> dict:
         "trace_drawn": {str(t.get("number")): screen_s11.trace_drawn_reason(t, unit) for t in traces},
         "s11": screen_s11.s11_view(st),
         "tg_take_reason": screen_s11.tg_take_reason(st),
+        "tg_fine_tip": screen_s11.tg_fine_tip(st),
         "tg_wide_reason": screen_s11.tg_wide_reason(st),
         "ref_state": screen_s11.ref_state_text(st),
         "ref_value": screen_s11.ref_value_view(st),  # 基準の値の欄（設計E §6.7）

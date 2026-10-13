@@ -86,7 +86,7 @@ class PlutoGainServerTest(unittest.TestCase):
         self.assertEqual(t["CAL_MENU_OF_KIND"]["pluto_gain"], "cal_pluto_gain")
         self.assertNotIn("cal_pluto_gain", t["MENU_NOT_YET"])
         self.assertEqual(t["ERRORS"]["cal_pluto_no_signal"], qt_texts.ERRORS["cal_pluto_no_signal"])
-        self.assertEqual(t["ERRORS"]["plutosdr_gain_reference_in_use"], qt_texts.ERRORS["plutosdr_gain_reference_in_use"])
+        self.assertEqual(t["ERRORS"]["plutosdr_tg_conditions_locked"], qt_texts.ERRORS["plutosdr_tg_conditions_locked"])
         menu = (UI_WEB / "app_menu.js").read_text(encoding="utf-8")
         self.assertIn('this.openCal("pluto_gain")', menu)
         cal = (UI_WEB / "app_cal.js").read_text(encoding="utf-8")

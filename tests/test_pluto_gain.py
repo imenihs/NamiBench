@@ -353,14 +353,15 @@ class TestInstrumentWork(InstCase):
         self.call("reference_take", kind="fine")
         self.task_end("reference_take")
         st = self.call("get_state")["plutosdr"]
-        self.assertEqual(st["gain_lock"], "plutosdr_gain_reference_in_use")
-        for kw in ({"gain_db": 50.0}, {"agc": True}):
+        self.assertEqual(st["gain_lock"], "plutosdr_tg_conditions_locked")
+        # 送信の減衰も同じ期間だけ変えさせない（設計Q §7.9。同じ値は断らない）
+        for kw in ({"gain_db": 50.0}, {"agc": True}, {"tx_atten_db": -12.0}):
             with self.assertRaises(CommandError) as cm:
                 self.call("plutosdr_set", **kw)
-            self.assertEqual(cm.exception.code, "plutosdr_gain_reference_in_use")
+            self.assertEqual(cm.exception.code, "plutosdr_tg_conditions_locked")
         with self.assertRaises(CommandError):
             self.call("plutosdr_fit_gain")
-        self.call("plutosdr_set", tx_atten_db=-12.0)  # 送信の減衰は変えられる
+        self.call("plutosdr_set", tx_atten_db=-10.0)
         self.call("set_mode", mode="sa")
         self.assertIsNone(self.call("get_state")["plutosdr"]["gain_lock"])
         self.call("plutosdr_set", gain_db=50.0)

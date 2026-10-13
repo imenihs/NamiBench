@@ -300,7 +300,7 @@ class SourceTab(QWidget):
         # TG の「広く取る」「いまの条件で細かく取る」（S11 はオープン・ショートの2段で取る: 設計E §6.5）
         reason = screen_s11.tg_take_reason(st)
         set_enabled(self.take_wide, screen_s11.tg_wide_reason(st), L["take_wide_tip"])
-        set_enabled(self.take_fine, reason, L["take_fine_tip"])
+        set_enabled(self.take_fine, reason, screen_s11.tg_fine_tip(st))  # PlutoSDR は利得を合わせてから（Web と同じ）
         rv = screen_s11.ref_value_view(st)  # S11 の基準には使わない（Web と同じ）
         set_enabled(self.take_value, rv["reason"], rv["tip"])
         v = screen_s11.s11_view(st)

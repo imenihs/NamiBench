@@ -176,9 +176,9 @@ def _is_fft(st: dict) -> bool:
     return (st.get("connection") or {}).get("sweep_kind") == "fft"
 
 
-def _pluto_open_reason(st: dict) -> Optional[str]:
-    """PlutoSDR の「オープンを測る」は受信の利得を合わせてから測る（設計Q §7.8）ので、利得を合わせている・利得の補正を
-    測っている間は押せない。"""
+def pluto_fit_reason(st: dict) -> Optional[str]:
+    """PlutoSDR の TG の基準・S11 の「オープンを測る」は受信の利得を合わせてから測る（設計Q §7.8・§7.9）ので、利得を
+    合わせている・利得の補正を測っている間は押せない。"""
     from .texts_pluto import PLUTO_LABELS
 
     pl = st.get("plutosdr") or {}
@@ -206,7 +206,7 @@ def s11_view(st: dict) -> dict:
     fft = _is_fft(st)
     pluto = bool((st.get("plutosdr") or {}).get("connected"))
     return {
-        "open_reason": common or _pluto_open_reason(st),
+        "open_reason": common or pluto_fit_reason(st),
         "open_tip": LABELS["s11_open_tip_pluto"] if pluto else LABELS["s11_open_tip"],
         "short_reason": common or (None if o else _r("s11_needs_open")),
         "range_reason": common or (texts.ERRORS["reference_wide_fft"] if fft else None),
@@ -273,7 +273,13 @@ def tg_take_reason(st: dict) -> Optional[str]:
         return texts.ERRORS["mode_not_normalizable"]
     if any(t.get("kind") == "reference_take" for t in st.get("tasks") or []):
         return REASON_TEXTS["taking_reference"]
-    return texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
+    # PlutoSDR は受信の利得を合わせてから取る（設計Q §7.9）
+    return pluto_fit_reason(st) or texts.live_lock_reason(st)  # 再生中は基準を取らない（設計P §5）
+
+
+def tg_fine_tip(st: dict) -> str:
+    """TG の「いまの条件で細かく取る」のツールチップ。PlutoSDR は受信の利得を合わせてから取ることを言う（設計Q §7.9）。"""
+    return LABELS["take_fine_tip_pluto"] if (st.get("plutosdr") or {}).get("connected") else LABELS["take_fine_tip"]
 
 
 def tg_wide_reason(st: dict) -> Optional[str]:
