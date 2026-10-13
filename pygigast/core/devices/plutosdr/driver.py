@@ -214,7 +214,7 @@ class PlutoSdrDevice(Device):
     def open(self, uri: str, gain_db: object = _DEFAULT_GAIN, tx_atten_db: Optional[float] = None,
              xo_ppm_by_serial: Optional[dict] = None) -> DeviceIdentity:
         """URI（"ip:192.168.2.1"・"usb:1.2.5" など）で開く。gain_db は手動の利得（dB）か None（自動）。
-        xo_ppm_by_serial はシリアル番号 → 基準の補正（ppm。設計Q §7.10）。無い機器は 0（書かない）。"""
+        xo_ppm_by_serial はシリアル番号 → 基準の補正（ppm。設計Q §7.10）。無い機器は 0（公称の 40MHz を書く）。"""
         self.close()
         if self._ext_base_fft is not None:
             # 外部 IQ の送信で速さを変えたまま閉じた: 元の速さを書く（設計S §1 の P2）
@@ -350,17 +350,17 @@ class PlutoSdrDevice(Device):
         return int((self._profile.get("xo") or {}).get("nominal_hz", xo.NOMINAL_HZ))
 
     def _xo_open(self, ppm) -> None:
-        """接続したとき: 申告の範囲といまの値を読み（範囲はプロファイルへ）、補正が 0 でなければ書く。範囲の外・機器が
-        断った値は書かずに続ける（refused_ppm に残し、本体が知らせる）。"""
+        """接続したとき: 申告の範囲といまの値を読み（範囲はプロファイルへ）、補正を書く（0 なら公称の値。前の接続で
+        書いた値が機器に残っていても、いつもアプリの値にそろえる）。範囲の外・機器が断った値は書かずに続ける
+        （refused_ppm に残し、本体が知らせる）。"""
         st = self._xo
         st.read(self._phy, parse_range)
         if st.range_hz is not None:
             prof = self._profile.setdefault("xo", {})
             prof["min_hz"], prof["max_hz"] = st.range_hz
-        if not ppm:
-            return
+        ppm = float(ppm or 0.0)
         try:
-            st.write(self._phy, float(ppm), self._xo_nominal())
+            st.write(self._phy, ppm, self._xo_nominal())
         except XoOutOfRange:
             st.refused_ppm = xo.round_ppm(ppm)
         except IioError as e:

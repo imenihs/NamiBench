@@ -1,6 +1,6 @@
 """PlutoSDR の基準の補正（設計Q §7.10）の試験。libiio の偽物（devices/plutosdr/fake.py）を使う。実機は使わない。
 
-- 機器の口: 繋ぐときに設定の ppm から計算した値を書く（送信を止めた後・LO の書ける下限を確かめる前）／0ppm は書かない／
+- 機器の口: 繋ぐときに設定の ppm から計算した値を書く（送信を止めた後・LO の書ける下限を確かめる前）／0ppm は公称の 40MHz を書く（前の値が残っていてもそろえる）／
   範囲の外は書かずに繋ぐ／属性を持たない機器でも繋げる／書いた後はサンプリング周波数を書き直し、LO は次の測定で書き直す
 - 本体: 測っている間・外部 IQ の送信の間は断る／止まっていれば書く／繋いでいなければ覚えて次の接続で書く／機器ごとに別の値／
   保存したデータに残る
@@ -76,13 +76,18 @@ class TestDriverXo(unittest.TestCase):
         self.assertEqual((st["supported"], st["hz"], st["range_hz"], st["ppm"], st["refused_ppm"]),
                          (True, 40_000_060, [39_992_000, 40_008_000], 1.5, None))
 
-    def test_zero_is_not_written(self):
-        # 0ppm は書かない（機器の値のまま）。読み戻した値は状態に出す
-        self.open(0.0)
-        self.assertEqual(xo_writes(self.pl), [])
-        self.assertEqual(self.dev.xo_state["hz"], 40_000_000)
-        self.open(None)
-        self.assertEqual(xo_writes(self.pl), [])
+    def test_zero_writes_nominal_even_over_a_value_left_from_before(self):
+        # 0ppm は公称の 40MHz を書く。前の接続で書いた値が機器に残っていても（電源は入ったまま）、アプリの値にそろえる
+        for ppm in (0.0, None):
+            with self.subTest(ppm=ppm):
+                lib = fake_lib()
+                lib.pluto._set_raw("ad9361-phy", "", False, "xo_correction", "39999284")
+                self.lib, self.pl = lib, lib.pluto
+                self.dev = pd.PlutoSdrDevice(lib=lib)
+                self.dev.open(FAKE_URI, xo_ppm_by_serial=None if ppm is None else {FAKE_SERIAL: ppm})
+                self.assertEqual(xo_writes(self.pl), ["40000000"])
+                self.assertEqual((self.pl.xo_hz, self.dev.xo_state["hz"], self.dev.xo_state["ppm"]), (40_000_000, 40_000_000, 0.0))
+                self.dev.close()
 
     def test_out_of_range_is_refused_but_connects(self):
         self.open(250.0)
@@ -155,31 +160,32 @@ class TestDriverXo(unittest.TestCase):
         self.dev.measure(a)
         self.assertTrue([w for w in self.pl.log[k:] if w[:2] == tx_lo], "送信の LO を書き直していない")
 
-    def test_zero_at_runtime_writes_back_the_connect_value(self):
+    def test_zero_at_runtime_writes_nominal(self):
         lib = fake_lib()
-        lib.pluto._set_raw("ad9361-phy", "", False, "xo_correction", "40000123")  # 機器の環境変数で合わせてある形
+        lib.pluto._set_raw("ad9361-phy", "", False, "xo_correction", "40000123")  # 前の接続で書いた値が残っている形
         self.lib, self.pl = lib, lib.pluto
         self.dev = pd.PlutoSdrDevice(lib=lib)
         self.dev.open(FAKE_URI)
-        self.assertEqual(xo_writes(self.pl), [])
+        self.assertEqual(xo_writes(self.pl), ["40000000"])
         self.dev.set_xo_ppm(1.0)
         self.assertEqual(self.pl.xo_hz, 40_000_040)
         self.dev.set_xo_ppm(0.0)
-        self.assertEqual(self.pl.xo_hz, 40_000_123)
+        self.assertEqual(self.pl.xo_hz, 40_000_000)
         self.assertEqual(self.dev.xo_state["ppm"], 0.0)
 
     def test_runtime_out_of_range_and_ext_tx(self):
         self.open()
+        n0 = len(xo_writes(self.pl))  # 繋いだときの 1 回（公称の値）
         with self.assertRaises(xo.XoOutOfRange):
             self.dev.set_xo_ppm(201.0)
-        self.assertEqual(xo_writes(self.pl), [])
+        self.assertEqual(xo_writes(self.pl)[n0:], [])
         self.dev._ext = object()  # 外部 IQ の送信の間（押すスレッドがいる形）
         try:
             with self.assertRaises(InvalidSweep):
                 self.dev.set_xo_ppm(1.0)
         finally:
             self.dev._ext = None
-        self.assertEqual(xo_writes(self.pl), [])
+        self.assertEqual(xo_writes(self.pl)[n0:], [])
 
 
 class TestInstrumentXo(PlutoCase):
@@ -225,13 +231,14 @@ class TestInstrumentXo(PlutoCase):
 
     def test_refused_while_sweeping(self):
         self.connect()
+        n0 = len(xo_writes(self.lib.pluto))
         self.call("run", mode="continuous")
         self.assertEqual(self.xo()["lock"], "plutosdr_xo_busy")
         with self.assertRaises(CommandError) as cm:
             self.call("plutosdr_xo_set", ppm=2.0)
         self.assertEqual(cm.exception.code, "plutosdr_xo_busy")
         self.assertIn(cm.exception.code, texts.ERRORS)
-        self.assertEqual(xo_writes(self.lib.pluto), [])
+        self.assertEqual(xo_writes(self.lib.pluto)[n0:], [])
         self.call("stop")
         self.wait_state(lambda st: st["run"]["state"] == "stopped", what="止まる")
         self.call("plutosdr_xo_set", ppm=2.0)
@@ -239,11 +246,12 @@ class TestInstrumentXo(PlutoCase):
 
     def test_range_and_bad_values(self):
         self.connect()
+        n0 = len(xo_writes(self.lib.pluto))
         for bad in (200.5, -201.0, "1", True, float("nan")):
             with self.assertRaises(CommandError) as cm:
                 self.call("plutosdr_xo_set", ppm=bad)
             self.assertEqual(cm.exception.code, "bad_value")
-        self.assertEqual(xo_writes(self.lib.pluto), [])
+        self.assertEqual(xo_writes(self.lib.pluto)[n0:], [])
 
     def test_not_connected_remembers_and_writes_on_next_connect(self):
         # PlutoSDR に繋いだことが無い: どの機器の値か決まらないので断る（serial を渡せば覚える）
@@ -254,8 +262,9 @@ class TestInstrumentXo(PlutoCase):
         self.call("disconnect")
         x = self.xo()
         self.assertEqual((x["serial"], x["live"], x["hz"]), (FAKE_SERIAL, False, None))
+        n0 = len(xo_writes(self.lib.pluto))
         self.call("plutosdr_xo_set", ppm=-3.0)  # 最後に繋いだ PlutoSDR の値として覚える
-        self.assertEqual(xo_writes(self.lib.pluto), [])
+        self.assertEqual(xo_writes(self.lib.pluto)[n0:], [])
         self.assertEqual(self.xo()["ppm"], -3.0)
         self.connect()
         self.assertEqual(self.lib.pluto.xo_hz, 39_999_880)
@@ -313,13 +322,14 @@ class TestExtTxXo(ExtCase):
 
     def test_refused_while_streaming(self):
         self.streaming()
+        n0 = len(xo_writes(self.pl))
         self.call("stop")
         self.until(lambda st: st["run"]["state"] == "stopped", what="掃引が止まる")
         self.assertEqual(self.state()["plutosdr"]["xo"]["lock"], "ext_tx_active")
         with self.assertRaises(CommandError) as cm:
             self.call("plutosdr_xo_set", ppm=1.0)
         self.assertEqual(cm.exception.code, "ext_tx_active")
-        self.assertEqual(xo_writes(self.pl), [])
+        self.assertEqual(xo_writes(self.pl)[n0:], [])
 
 
 if __name__ == "__main__":
