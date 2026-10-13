@@ -180,11 +180,18 @@ class WebFiles:
 
 @dataclass
 class Translated:
-    """Web の口の命令をコアの命令に写したもの。after(戻り値) で戻り値を Web の形にする。"""
+    """Web の口の命令をコアの命令に写したもの。after(戻り値) で戻り値を Web の形にする。
+
+    bind(戻り値) は制御スレッドが命令の結果を入れたその場で呼ぶ（Future の done callback）。長い処理の
+    終わりの知らせは同じ制御スレッドがその後に出すので、知らせより先に処理の番号とファイルが結び付く。
+    after で結び付けると、短い処理では Web の口が命令の戻りを受け取る前に終わりの知らせが配られ、
+    知らせに file_id が付かずにダウンロードできなくなる（全体の試験の負荷で起きた）。
+    """
 
     args: dict
     after: Callable[[object], object]
     on_error: Callable[[], None] = lambda: None  # コアが断ったとき（作りかけのフォルダを消す）
+    bind: Callable[[object], None] = lambda r: None
 
 
 def translate(files: WebFiles, command: str, args: dict) -> Translated:
@@ -207,14 +214,16 @@ def translate(files: WebFiles, command: str, args: dict) -> Translated:
             out = files.new_output(name, NAMED_OUTPUTS[command])
             args["path"] = str(out.path)
 
-        def after(r: object, out: WebFile = out) -> object:
+        def bind(r: object, out: WebFile = out) -> None:
             tid = r.get("task_id") if isinstance(r, dict) else None
             files.bind_task(out.file_id, tid)
+
+        def after(r: object, out: WebFile = out) -> object:
             if isinstance(r, dict):
                 return {**{k: v for k, v in r.items() if k != "path"}, "file_id": out.file_id, "name": out.name}
             return r
 
-        return Translated(args, after, lambda out=out: files.discard_output(out.file_id))
+        return Translated(args, after, lambda out=out: files.discard_output(out.file_id), bind)
 
     if command == "open":
         ids = args.pop("uploads", None)

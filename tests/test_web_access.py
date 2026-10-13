@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 import tempfile
 import time
 import unittest
@@ -529,6 +531,43 @@ class WebFilesServerTest(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertIn(b"frequency_hz,trace1_dBm", data[:4000])
 
+    def test_task_end_notice_before_command_returns_has_file_id(self):
+        """書き出しが、Web の口が命令の戻りを受け取るより先に終わっても、終わりの知らせに file_id が付く。
+
+        全体の試験の負荷で、戻りを受け取る前に終わりの知らせが配られ、file_id の無い知らせになることがあった
+        （ダウンロードが始まらない）。戻りを受け取るのを遅らせて、その順を毎回作る。
+        """
+        from websockets.sync.client import connect as ws_connect
+
+        self.sweep_once()
+        real_await = web._await
+
+        async def late(fut):
+            r = await real_await(fut)
+            await asyncio.sleep(0.5)  # この間に、終わった書き出しの知らせが配られる
+            return r
+
+        ws = ws_connect(f"ws://127.0.0.1:{self.srv.port}/api/v1/events", open_timeout=10, max_size=None)
+        try:
+            ws.recv(timeout=10)
+            with mock.patch.object(web, "_await", late):
+                st, r = self.post("export_csv", {"name": "early", "traces": [1]})
+            self.assertEqual(st, 200, r)
+            end = time.monotonic() + 20
+            done = None
+            while time.monotonic() < end and done is None:
+                m = ws.recv(timeout=end - time.monotonic())
+                if isinstance(m, str):
+                    d = json.loads(m)
+                    if d["kind"] == "notice" and d["payload"]["code"] == "task_done":
+                        done = d["payload"]["detail"]
+            self.assertEqual(done["task_id"], r["task_id"])
+            self.assertEqual(done.get("file_id"), r["file_id"])
+        finally:
+            ws.close()
+        st, h, data = self.get(f"/api/v1/files/{r['file_id']}")
+        self.assertEqual(st, 200)
+
     def test_legacy_calibration_by_upload(self):
         from tests.test_level import build_legacy_bytes
 
@@ -562,6 +601,41 @@ class WebFilesServerTest(unittest.TestCase):
         # 自分の PC（127.0.0.1）からは鍵なしで操作できる（A §4.3.2 の 8）
         st, _, b = self.get("/api/v1/info")
         self.assertEqual(json.loads(b)["access"], {"kind": "operate", "local": True})
+
+
+@unittest.skipUnless(shutil.which("node"), "Node が無い")
+class FileTasksJsTest(unittest.TestCase):
+    """画面（app_files.js）は、終わりの知らせが命令の戻りより先に届いても、作らせたファイルをダウンロードする。"""
+
+    SCRIPT = r"""
+globalThis.window = globalThis;
+require(process.argv[1]);
+const out = {};
+const done = (tid, fid) => ({ code: "task_done", detail: { task_id: tid, file_id: fid } });
+// 戻り → 知らせ（いつもの順）
+let t = GSFileTasks();
+out.normal = [t.started("A", { name: "a.csv" }), t.ended(done("A", "F1"))];
+// 知らせ → 戻り（WebSocket が先に着いた）
+t = GSFileTasks();
+out.early = [t.ended(done("B", "F2")), t.started("B", { name: "b.csv" })];
+// 作れなかった・やめた処理はダウンロードしない
+t = GSFileTasks();
+out.failed = [t.ended({ code: "task_failed", detail: { task_id: "C" } }), t.started("C", { name: "c.csv" })];
+// 終わりでない知らせ・他の画面の処理は、待っている処理を消さない
+t = GSFileTasks();
+out.other = [t.started("D", { name: "d.h5" }), t.ended({ code: "saved", detail: { task_id: "D" } }),
+             t.ended(done("X", "FX")), t.ended(done("D", "F4"))];
+console.log(JSON.stringify(out));
+"""
+
+    def test_order(self):
+        js = Path(__file__).resolve().parent.parent / "pygigast" / "ui_web" / "app_files.js"
+        got = json.loads(subprocess.run(["node", "-e", self.SCRIPT, str(js)], capture_output=True, text=True,
+                                        timeout=30, check=True, encoding="utf-8").stdout)
+        self.assertEqual(got["normal"], [None, {"id": "F1", "name": "a.csv"}])
+        self.assertEqual(got["early"], [None, {"id": "F2", "name": "b.csv"}])
+        self.assertEqual(got["failed"], [None, None])
+        self.assertEqual(got["other"], [None, None, None, {"id": "F4", "name": "d.h5"}])
 
 
 class ConsoleTest(unittest.TestCase):
