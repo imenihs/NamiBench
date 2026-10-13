@@ -17,6 +17,8 @@
   // - ブラウザから使う: 変えるのは pyGigaSt の PC の画面。ここはいまの様子を映し、接続のしかたの窓だけ開ける。
   //   暗号化していないことは、スマートフォンや PC からも使う間だけそのチェックの下に出す（A §4.3.2 の 7・U-14）
   // - RTL-SDR: 見つけた rtlsdr.dll の場所。無い・32 ビット版なら注意の色で理由（中身は screen_model.rtl_view: Qt と同じ）
+  // - PlutoSDR: libiio.dll の場所と URI（PC の画面で変える）と、基準の補正の欄（設計Q §7.10。ブラウザからも変えられる。
+  //   中身は ui.pluto.xo = screen_pluto.xo_view: Qt の settings_dialog と同じ欄の並び）
   const SETTINGS = `
 <div class="modal-back settings-back" @click="a.closeSettings()">
 <div class="modal setwin" @click.stop>
@@ -212,6 +214,15 @@
         <input class="w-name" :value="a.plutoView.uri" readonly disabled :title="a.W('dll_folder_web')">
       </div>
       <div class="row"><button disabled :title="a.W('dll_folder_web')">{{ a.S('reset') }}</button></div>
+      <div class="form">
+        <label>{{ a.T('SETTINGS_LABELS', 'plutosdr_xo') }}</label>
+        <db-field data-field="pluto_xo" :value="a.plutoXo.ppm" :unit="a.plutoXo.unit" :lo="a.plutoXo.lo" :hi="a.plutoXo.hi"
+                  :decimals="a.plutoXo.decimals" :disabled="!!a.plutoXo.reason || a.readOnly" :field-note="a.notes.pluto_xo" @clear-note="a.clearNote('pluto_xo')"
+                  :title="a.T('SETTINGS_LABELS', 'plutosdr_xo_tip') + (a.plutoXo.reason ? ' — ' + a.plutoXo.reason : '')" @commit="a.setPlutoXo($event)"></db-field>
+        <template v-if="a.plutoXo.hz_text"><label></label><div class="dim">{{ a.plutoXo.hz_text }}</div></template>
+        <template v-if="a.plutoXo.warn_text"><label></label><div class="warn">{{ a.plutoXo.warn_text }}</div></template>
+      </div>
+      <div class="row"><button :disabled="!!a.plutoXo.reason || a.readOnly" @click="a.setPlutoXo(0, true)">{{ a.S('reset') }}</button></div>
     </template>
   </div>
   <div class="modal-btns"><button @click="a.closeSettings()">{{ a.T('SETTINGS_LABELS', 'close') }}</button></div>

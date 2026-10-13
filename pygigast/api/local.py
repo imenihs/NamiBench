@@ -156,12 +156,17 @@ class _PlutoSdrBackend(DeviceBackend):
         self._lib_factory = lib_factory
         self._folder: Optional[str] = None
         self._uri: Optional[str] = None
+        self._xo_ppm: dict = {}
 
     def set_dll_folder(self, folder: Optional[str]) -> None:
         self._folder = folder
 
     def set_uri(self, uri: Optional[str]) -> None:
         self._uri = uri
+
+    def set_xo_ppm(self, table: dict) -> None:
+        """シリアル番号 → 基準の補正（ppm）。開くときに機器の口が書く（設計Q §7.10）。本体が写しを渡す。"""
+        self._xo_ppm = dict(table)
 
     def _lib(self):
         if self._lib_factory is not None:
@@ -189,7 +194,7 @@ class _PlutoSdrBackend(DeviceBackend):
 
                 raise DeviceDisconnected(f"シリアル番号 {serial} の PlutoSDR が見つからない")
             port = rows[0]["port"]
-        return open_plutosdr_device(self._lib(), port, profile=self._profile)
+        return open_plutosdr_device(self._lib(), port, profile=self._profile, xo_ppm_by_serial=self._xo_ppm)
 
 
 def create_default(traffic_log_dir=None) -> LocalApi:

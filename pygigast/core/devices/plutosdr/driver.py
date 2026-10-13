@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import copy
 import re
-import socket
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -43,17 +41,13 @@ from ..base import Device, load_profile
 from ..rtlsdr import spectrum
 from ..rtlsdr.driver import FftParams, fft_params, make_plan
 from ..rtlsdr.levels import ENCODING
-from . import tones
+from . import tones, xo
+from .discover import DEFAULT_URI, PlutoPortInfo, _SerialCache
+from .discover import discover as _discover
 from .iio import IioError, IioLib
+from .xo import XoOutOfRange
 
 PROFILE_PATH = Path(__file__).with_name("profile.json")
-DEFAULT_URI = "ip:192.168.2.1"
-IIOD_PORT = 30431
-# ip の URI に繋がるかを確かめる時間の上限（一覧を作るたびに待つので短く）
-PROBE_TIMEOUT_S = 0.3
-UNREACHABLE_CACHE_S = 3.0
-# 繋がっている ip の機器のシリアル番号を問い合わせ直す間隔（一覧は 0.5s ごとに作るので、毎回は文脈を作らない）
-SERIAL_CACHE_S = 5.0
 # 振り切れの判定（RTL-SDR と同じ割合: 設計Q §6.4）
 OVERLOAD_RATIO = spectrum.OVERLOAD_RATIO
 # 「利得を合わせる」の余裕（dB）。振り切れない一番高い利得からこれだけ下げる（2026-10-12 ユーザー決定: 3dB・全部のモード）
@@ -64,7 +58,6 @@ FIT_SAMPLES = 16384
 _EINVAL, _ERANGE = 22, 34
 _DEFAULT_GAIN = object()
 _RANGE_RE = re.compile(r"\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]")
-_SERIAL_RE = re.compile(r"serial=([0-9A-Za-z]+)")
 # 測れる測定。S11 は機器から見れば TG と同じ掃引（多トーン・方形の窓・TG 高調波の平均除去・見積もり: 設計Q §7.8。
 # GigaSt でも本体は S11 を信号源「tg」として扱う）。反射の比は本体が基準（オープン・ショート）から作る
 _MODES = (Mode.SA, Mode.SG, Mode.TG, Mode.S11)
@@ -161,114 +154,14 @@ def gain_limits(profile: dict, centers) -> tuple[int, int]:
     return lo, hi
 
 
-# ---------------------------------------------------------------------- 見つける
-
-@dataclass(frozen=True)
-class PlutoPortInfo:
-    port: str  # URI
-    serial: str
-    description: str
-    available: bool = True
-
-
-class _SerialCache:
-    """ip の URI → (シリアル番号, 説明, 問い合わせた時刻)。"""
-
-    def __init__(self) -> None:
-        self._d: dict[str, tuple[str, str, float]] = {}
-
-    def get(self, uri: str) -> Optional[tuple[str, str]]:
-        v = self._d.get(uri)
-        if v is None or time.monotonic() - v[2] > SERIAL_CACHE_S:
-            return None
-        return v[0], v[1]
-
-    def put(self, uri: str, serial: str, desc: str) -> None:
-        self._d[uri] = (serial, desc, time.monotonic())
-
-    def drop(self, uri: str) -> None:
-        self._d.pop(uri, None)
-
+# ---------------------------------------------------------------------- 見つける（中身は discover.py）
 
 _cache = _SerialCache()
 
 
-_unreachable_until: dict[str, float] = {}
-
-
-def _reachable(uri: str) -> bool:
-    """ip の URI の iiod に TCP で繋がるか（繋がらない宛先で文脈を作ると長く待つため、先に短く確かめる）。
-
-    繋がらなかった宛先は UNREACHABLE_CACHE_S の間は確かめ直さない（一覧は 0.5s ごとに作るので、時間切れまで待つ
-    確かめを毎回しない）。
-    """
-    if time.monotonic() < _unreachable_until.get(uri, 0.0):
-        return False
-    host = uri[3:]
-    try:
-        with socket.create_connection((host, IIOD_PORT), timeout=PROBE_TIMEOUT_S):
-            _unreachable_until.pop(uri, None)
-            return True
-    except OSError:
-        _unreachable_until[uri] = time.monotonic() + UNREACHABLE_CACHE_S
-        return False
-
-
-def _ask_serial(lib, uri: str) -> Optional[tuple[str, str]]:
-    try:
-        ctx = lib.open(uri, 2000)
-    except DeviceError:
-        return None
-    try:
-        return (ctx.attr("hw_serial") or ""), (ctx.attr("hw_model") or "PlutoSDR")
-    finally:
-        ctx.close()
-
-
 def discover(lib, uris=(DEFAULT_URI,), cache: Optional[_SerialCache] = None) -> list[PlutoPortInfo]:
-    """USB で見える PlutoSDR と、設定の URI で繋がる PlutoSDR を、シリアル番号で1行にまとめて並べる。
-
-    同じ機器が USB と ip の両方で見えるときは、設定の URI の行だけを出す（設計Q §7.2: URI は設定で変えられる）。
-    """
-    cache = cache or _cache
-    reach = getattr(lib, "reachable", None) or _reachable
-    rows: dict[str, PlutoPortInfo] = {}
-    order: list[str] = []
-    for uri in uris:
-        if not uri:
-            continue
-        info: Optional[tuple[str, str]]
-        if uri.startswith("ip:"):
-            if not reach(uri):
-                cache.drop(uri)
-                continue
-            info = cache.get(uri) or _ask_serial(lib, uri)
-        else:
-            info = _ask_serial(lib, uri)
-        if info is None:
-            continue
-        cache.put(uri, info[0], info[1])
-        key = info[0] or uri
-        if key not in rows:
-            rows[key] = PlutoPortInfo(port=uri, serial=info[0], description=info[1])
-            order.append(key)
-    try:
-        found = lib.scan("usb")
-    except Exception:  # noqa: BLE001 — USB の一覧が作れなくても ip の行は出す
-        found = []
-    for uri, desc in found:
-        m = _SERIAL_RE.search(desc or "")
-        serial = m.group(1) if m else ""
-        key = serial or uri
-        if key in rows:
-            continue
-        name = "PlutoSDR"
-        mm = re.search(r"\(([^()]*PlutoSDR[^()]*)\)", desc or "")
-        if mm:
-            name = mm.group(1)
-        rows[key] = PlutoPortInfo(port=uri, serial=serial, description=name)
-        order.append(key)
-    return [rows[k] for k in order]
+    """USB で見える PlutoSDR と、設定の URI で繋がる PlutoSDR を、シリアル番号で1行にまとめて並べる（discover.py）。"""
+    return _discover(lib, uris, cache or _cache)
 
 
 # ---------------------------------------------------------------------- 機器の口
@@ -310,6 +203,7 @@ class PlutoSdrDevice(Device):
         self.iq_sink_error: Optional[str] = None
         self.connected_at: Optional[float] = None
         self.fw_version: Optional[str] = None
+        self._xo = xo.XoState()  # 基準の補正（設計Q §7.10）
 
     # ---- 繋ぐ ----
     def _get_lib(self):
@@ -317,8 +211,10 @@ class PlutoSdrDevice(Device):
             self._lib = IioLib.load(self._dll_folder)
         return self._lib
 
-    def open(self, uri: str, gain_db: object = _DEFAULT_GAIN, tx_atten_db: Optional[float] = None) -> DeviceIdentity:
-        """URI（"ip:192.168.2.1"・"usb:1.2.5" など）で開く。gain_db は手動の利得（dB）か None（自動）。"""
+    def open(self, uri: str, gain_db: object = _DEFAULT_GAIN, tx_atten_db: Optional[float] = None,
+             xo_ppm_by_serial: Optional[dict] = None) -> DeviceIdentity:
+        """URI（"ip:192.168.2.1"・"usb:1.2.5" など）で開く。gain_db は手動の利得（dB）か None（自動）。
+        xo_ppm_by_serial はシリアル番号 → 基準の補正（ppm。設計Q §7.10）。無い機器は 0（公称の 40MHz を書く）。"""
         self.close()
         if self._ext_base_fft is not None:
             # 外部 IQ の送信で速さを変えたまま閉じた: 元の速さを書く（設計S §1 の P2）
@@ -332,16 +228,19 @@ class PlutoSdrDevice(Device):
             self._bind(ctx)
             serial = ctx.attr("hw_serial") or ""
             self.fw_version = ctx.attr("fw_version")
-            self._read_ranges()
-            try:
-                self._tx_rf_bw = int(round(float(self._txc.attr("rf_bandwidth").split()[0])))
-            except (IioError, ValueError, IndexError):
-                self._tx_rf_bw = None  # 読めなければ外部 IQ の送信の間も送信の帯域には触らない
             # つないだら送信を止める（2026-10-11 ユーザー決定「電源入れたときは、送信止めて」）: 電源投入時は送信の LO が
             # 2450MHz で動作・減衰 −10dB のままで、受信に線が出る。出力をいちばん小さくし、LO を止め、波形を消す
             self._silence_tx()
             self._destroy_tx_buffer()
             self._dds_off()
+            # 基準の補正は送信を止めた後、範囲を読んで LO の書ける下限を確かめる前に書く（LO もサンプリング周波数も
+            # 基準から作るので、下限はその基準で確かめる: 設計Q §7.10）
+            self._xo_open((xo_ppm_by_serial or {}).get(serial))
+            self._read_ranges()
+            try:
+                self._tx_rf_bw = int(round(float(self._txc.attr("rf_bandwidth").split()[0])))
+            except (IioError, ValueError, IndexError):
+                self._tx_rf_bw = None  # 読めなければ外部 IQ の送信の間も送信の帯域には触らない
             fs = int(self._profile["fft"]["sample_rate_hz"])
             self._rx.set_attr("sampling_frequency", fs)
             self._rx.set_attr("rf_bandwidth", int(self._profile["fft"].get("rf_bandwidth_hz", fs)))
@@ -445,6 +344,64 @@ class PlutoSdrDevice(Device):
             else:
                 bad = mid
         return good
+
+    # ---- 基準の補正（設計Q §7.10。中身は xo.py）----
+    def _xo_nominal(self) -> int:
+        return int((self._profile.get("xo") or {}).get("nominal_hz", xo.NOMINAL_HZ))
+
+    def _xo_open(self, ppm) -> None:
+        """接続したとき: 申告の範囲といまの値を読み（範囲はプロファイルへ）、補正を書く（0 なら公称の値。前の接続で
+        書いた値が機器に残っていても、いつもアプリの値にそろえる）。範囲の外・機器が断った値は書かずに続ける
+        （refused_ppm に残し、本体が知らせる）。"""
+        st = self._xo
+        st.read(self._phy, parse_range)
+        if st.range_hz is not None:
+            prof = self._profile.setdefault("xo", {})
+            prof["min_hz"], prof["max_hz"] = st.range_hz
+        ppm = float(ppm or 0.0)
+        try:
+            st.write(self._phy, ppm, self._xo_nominal())
+        except XoOutOfRange:
+            st.refused_ppm = xo.round_ppm(ppm)
+        except IioError as e:
+            if not self._is_value_error(e):
+                raise
+            st.refused_ppm = xo.round_ppm(ppm)
+
+    def set_xo_ppm(self, ppm: float, wait_s: float = 2.0) -> bool:
+        """基準の補正を ppm にする（本体は掃引も送信もしていないときだけ呼ぶ）。書いたら True（属性を持たない機器は
+        False）。書いた後はサンプリング周波数を書き直し、受信・送信の LO は次の測定で書き直させる（どちらも基準から
+        作るので、書き直すまでは前の基準のままの機器がある）。範囲の外は XoOutOfRange、外部 IQ の送信の間は InvalidSweep。"""
+        if not self._lock.acquire(timeout=wait_s):
+            raise DeviceError("PlutoSDR が測っている途中")
+        try:
+            if self._ctx is None:
+                raise DeviceDisconnected("開いていない")
+            if self._ext is not None:
+                raise InvalidSweep("外部 IQ の送信の間は基準の補正を変えない")
+            try:
+                self._tx_off()
+                wrote = self._xo.write(self._phy, ppm, self._xo_nominal())
+                if wrote:
+                    self._rx.set_attr("sampling_frequency", int(self._profile["fft"]["sample_rate_hz"]))
+                    self._tuned_hz = None
+                    self._tx_tuned_hz = None
+                    self._xo.refused_ppm = None
+                return wrote
+            except IioError as e:
+                if self._is_value_error(e):
+                    raise DeviceError(f"PlutoSDR が基準の補正を断った: {e}") from e
+                self._drop()
+                raise DeviceDisconnected(str(e)) from e
+        finally:
+            self._lock.release()
+
+    @property
+    def xo_state(self) -> dict:
+        """基準の補正のいまの様子（本体の状態に出す）。hz は機器から読み戻した値。"""
+        st = self._xo
+        return {"supported": st.supported, "hz": st.hz, "range_hz": None if st.range_hz is None else list(st.range_hz),
+                "ppm": st.ppm, "refused_ppm": st.refused_ppm}
 
     # ---- 利得・送信の減衰（測っている間は次の measure の始めに効かせる）----
     def set_gain(self, gain_db: Optional[float]) -> None:
@@ -722,7 +679,10 @@ class PlutoSdrDevice(Device):
             "gain_db": self.gain_db,
             "gain_mode": "auto" if self._gain_setting is None else "manual",
             "gain_setting_db": self._gain_setting,
-            "ppm": 0,
+            # 基準の補正（設計Q §7.10）: このアプリが書いた ppm（書いていなければ 0）と、機器から読み戻した基準の Hz
+            # （属性を持たない機器は None）。周波数の意味が変わるので保存したデータに残す
+            "ppm": self._xo.ppm,
+            "xo_correction_hz": self._xo.hz,
             "window": win,
             "fft_n": p.n,
             "averages": p.averages,

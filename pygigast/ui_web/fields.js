@@ -439,7 +439,7 @@
     props: {
       value: { type: Number, default: 0 },
       unit: { type: String, default: "dB" },
-      choices: { type: Array, default: () => [] }, // 数の並び
+      choices: { type: Array, default: () => [] }, // 数の並び（空なら一覧を付けない: PlutoSDR の基準の補正。Qt の DecimalField）
       signed: { type: Boolean, default: false },
       lo: { type: Number, default: null },
       hi: { type: Number, default: null },
@@ -479,7 +479,7 @@
       },
     },
     template: `
-      <num-field class="field-sm" :label="label" :text="text" :note="note || fieldNote" :choices="items" :wheel-exp="0"
+      <num-field class="field-sm" :label="label" :text="text" :note="note || fieldNote" :choices="items.length ? items : null" :wheel-exp="0"
                  :disabled="disabled" :title="title" @commit="onCommit" @step="onStep" @clear-note="onClearNote"></num-field>`,
   };
 

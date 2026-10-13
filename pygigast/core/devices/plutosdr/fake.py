@@ -27,6 +27,10 @@ kernel_buffers 個。いっぱいなら一番古いバッファが流れ終わ�
 push_fail を立てると push は push_hang_s 待ってから失敗する（抜けた・時間切れ）。fail_reads は受信の読みだけを失敗させる
 （属性の書き込みは通る）。sampling_frequency は rate_reject の値を断り（EINVAL）、rate_readback で読み戻す値を変えられる。
 LO の周波数は lo_floor より下を断る（EINVAL。実機と同じく送信 LO は申告の下限そのものを断る）。
+
+基準の補正（設計Q §7.10 の試験用）: ad9361-phy の機器の属性 xo_correction（初期値 40000000）と xo_correction_available
+（実機の申告と同じ [39992000 1 40008000]）。xo_range の外を書くと EINVAL。xo_attr=False は属性を持たない機器。
+書いた値は記録するだけで、偽の信号の周波数は変えない。
 """
 from __future__ import annotations
 
@@ -46,6 +50,7 @@ FAKE_USB_URI = "usb:9.9.9"
 _GAIN_BANDS = ((1_300_000_000, -1, 73), (4_000_000_000, -3, 71), (6_000_000_001, -10, 62))
 _EINVAL = -22
 _EIO = -5
+_ENOENT = -2
 
 
 def measured_like_gain_error(lo_hz: float, gain_db: float) -> float:
@@ -74,7 +79,7 @@ class FakePluto:
                  adc_noise_dbfs: Optional[float] = None, relock_ripple: Optional[float] = None,
                  relock_below_hz: float = 1_000_000_000, bridge: bool = False,
                  dut_gamma: Optional[Callable[[np.ndarray], np.ndarray]] = None, directivity_db: float = 40.0,
-                 leak_delay_s: float = 1.3e-9) -> None:
+                 leak_delay_s: float = 1.3e-9, xo_attr: bool = True) -> None:
         self.serial = serial
         self.bridge = bool(bridge)
         self.dut_gamma = dut_gamma  # 標準器を外したときに繋がっている被測定物の反射（周波数の配列 → 複素）
@@ -109,6 +114,11 @@ class FakePluto:
         self.lock = threading.Lock()
         self.attrs: dict[tuple[str, str, bool, str], str] = {}
         p = ("ad9361-phy",)
+        # 基準の補正（設計Q §7.10）: 機器の属性（通路でない）。xo_attr=False は属性を持たない機器（読むと ENOENT）
+        self.xo_range = (39_992_000, 40_008_000)
+        if xo_attr:
+            self._set_raw(p[0], "", False, "xo_correction", "40000000")
+            self._set_raw(p[0], "", False, "xo_correction_available", "[39992000 1 40008000]")
         self._set_raw(p[0], "voltage0", False, "sampling_frequency", "4000000")
         self._set_raw(p[0], "voltage0", False, "rf_bandwidth", "2333332")
         self._set_raw(p[0], "voltage0", False, "gain_control_mode", "manual")
@@ -149,6 +159,13 @@ class FakePluto:
             if not mn <= g <= mx:
                 raise IioError("channel_attr_write", _EINVAL, "Invalid argument")
             v = f"{g:.6f} dB"
+        if dev == "ad9361-phy" and ch == "" and name == "xo_correction":
+            if (dev, ch, out, name) not in self.attrs:
+                raise IioError("device_attr_write", _ENOENT, "No such file or directory")
+            hz = int(float(v))
+            if not self.xo_range[0] <= hz <= self.xo_range[1]:
+                raise IioError("device_attr_write", _EINVAL, "Invalid argument")
+            v = str(hz)
         if dev == "ad9361-phy" and ch in self.lo_floor and out and name == "frequency":
             if int(float(v)) < self.lo_floor[ch]:
                 raise IioError("channel_attr_write", _EINVAL, "Invalid argument")
@@ -170,6 +187,11 @@ class FakePluto:
     @property
     def rx_lo(self) -> float:
         return self._num("ad9361-phy", "altvoltage0", True, "frequency")
+
+    @property
+    def xo_hz(self) -> Optional[int]:
+        v = self.attrs.get(("ad9361-phy", "", False, "xo_correction"))
+        return None if v is None else int(v)
 
     @property
     def fs(self) -> float:

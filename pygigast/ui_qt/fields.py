@@ -660,6 +660,28 @@ class LocalDbChoiceField(DbChoiceField):
         self._on_commit(v)
 
 
+class DecimalField(DbField):
+    """一覧を持たない小数の欄（標準の段。PlutoSDR の基準の補正 ppm: 設計Q §7.10）。打った値・送った値・出す値は打てる
+    ドロップダウンの欄と同じ決まり（decimals 桁へ丸める・lo・hi の外は欄の下に範囲を知らせて元の値に戻す・↑↓ は
+    カーソルの桁で端で止める・ホイールは 1 目盛で 1）。Web は一覧を渡さない db-field（fields.js）。"""
+
+    def __init__(self, name: str, unit: str, on_commit: Callable[[float], None], decimals: int,
+                 lo: Optional[float] = None, hi: Optional[float] = None) -> None:
+        super().__init__(name, unit, on_commit, big=False)
+        self.lo, self.hi, self.decimals = lo, hi, decimals
+        self._special, self._on_special = None, None
+        self.special_shown = False
+        self.edit.wheel_exp = 0
+
+    def set_range(self, lo: Optional[float], hi: Optional[float]) -> None:
+        self.lo, self.hi = lo, hi
+
+    _commit_text = DbChoiceField._commit_text
+    _stepped = DbChoiceField._stepped
+    _accept = DbChoiceField._accept
+    set_value = DbChoiceField.set_value
+
+
 class RefLevelField(DbChoiceField):
     """REF レベルの欄（J §4.1）: 一覧は +20〜−120 を 10dB 刻み。範囲は持たず、丸めない（打った値のまま）。"""
 

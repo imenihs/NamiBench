@@ -131,12 +131,13 @@ RAW_ENCODINGS = {
     ENCODING_GIGAST: RawEncoding(np.dtype(np.uint16)),
     # 振り切れの正弦波を 1.0 とするリニアの電力（devices/rtlsdr/levels.py）。レベルへの換算に利得と
     # 個体の校正（根か区間の calibration）と、PlutoSDR の利得の補正の点ごとの値（gain_corr_db）が要る。どう測ったか（窓・FFT の点数・平均の回数・ppm・
-    # PlutoSDR の TG 高調波の平均除去の回数 tg_harmonic_avg: 設計Q §7.7）も残す
+    # PlutoSDR の TG 高調波の平均除去の回数 tg_harmonic_avg: 設計Q §7.7・PlutoSDR の基準の補正で読み戻した基準の周波数
+    # xo_correction_hz: 設計Q §7.10。補正の ppm は ppm）も残す
     ENCODING_RTLSDR: RawEncoding(
         np.dtype(np.float32),
         extra_keys=("gain_db", "gain_mode", "ppm", "window", "fft_n", "averages", "sample_rate_hz",
                     "dc_delta_hz", "passband_corrected", "half_usable_hz", "realtime", "fixed_center",
-                    "gain_corr_db", "tg_harmonic_avg"),
+                    "gain_corr_db", "tg_harmonic_avg", "xo_correction_hz"),
         nan_is_no_value=True,
     ),
 }

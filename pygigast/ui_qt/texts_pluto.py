@@ -60,12 +60,16 @@ PLUTO_ERRORS = {
     # TG の「基準を取る」の前の利得合わせ（設計Q §7.9）。合わせられなければ基準は取らない
     "tg_ref_fit_failed": "受信の利得を合わせられなかったので、基準を取っていません",
     "tg_ref_overload": "いちばん小さい受信の利得でも振り切れるので、基準を取っていません（送信の減衰で出力を下げてください）",
+    # 基準の補正（設計Q §7.10）
+    "plutosdr_xo_busy": "掃引している間は基準の補正を変えられません（掃引を止めてから変えます）",
+    "plutosdr_xo_unsupported": "この PlutoSDR は基準の補正（xo_correction）を持っていません",
 }
 
 PLUTO_NOTICES = {
     "plutosdr_setting_failed": "PlutoSDR に利得・送信の減衰を入れられませんでした（測定は続けます）",
     "s11_open_gain_fitted": "オープンを測る前に受信の利得を合わせました",
     "tg_ref_gain_fitted": "基準を取る前に受信の利得を合わせました",
+    "plutosdr_xo_refused": "PlutoSDR の基準の補正が機器の範囲の外なので、書いていません（機器の基準の値のまま測ります）",
 }
 
 PLUTO_SETTINGS = {
@@ -74,6 +78,10 @@ PLUTO_SETTINGS = {
     "plutosdr_choose_title": "libiio.dll（64 ビット版）のあるフォルダ",
     "plutosdr_uri": "URI",
     "plutosdr_uri_tip": "USB の RNDIS で繋ぐ PlutoSDR は ip:192.168.2.1。USB で見つかる機器は一覧に自動で出ます",
+    # 基準の補正（設計Q §7.10。名前はユーザー指定）
+    "plutosdr_xo": "基準の補正",
+    "plutosdr_xo_tip": "基準の水晶（40MHz）のずれ（ppm）。送信・受信の周波数とサンプリング周波数が同じ割合で合います。"
+                       "PlutoSDR ごとに覚え、繋いだときに書きます。0 は書きません（機器の値のまま）",
 }
 
 TEMPLATES.update({
@@ -86,4 +94,8 @@ TEMPLATES.update({
                                 "「ショートを測る」を押してください",
     "status_cal_pluto": "補正: PlutoSDR 未校正・単位 {unit}",
     "status_cal_pluto_gain": "補正: PlutoSDR 利得の補正 {at}・単位 {unit}",
+    # 基準の補正（設計Q §7.10）: 機器から読み戻した基準の周波数・繋いでいないとき・繋いだときに書けなかった補正
+    "pluto_xo_hz": "機器の基準 {hz} Hz",
+    "pluto_xo_next": "{serial} に繋いだときに書きます",
+    "pluto_xo_refused": "{ppm} ppm は機器の範囲（{min}〜{max} ppm）の外なので書いていません",
 })

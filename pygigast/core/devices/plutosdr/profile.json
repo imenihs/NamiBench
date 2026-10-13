@@ -111,6 +111,13 @@
     "basis": "provisional_until_measured",
     "note": "external IQ transmit port. Rates: below 2.083334 MS/s the AD9364 needs its FIR (not handled); above 4.096 MS/s the push has not been shown to keep up (raise after measuring). block 65536 samples kept up in txstream (2026-10-12). The app queue holds queue_blocks blocks (the credit), the device starts after prefill_blocks blocks, a missing block is filled with zeros, and no sample for starve_s seconds (first_data_s after ready) stops the transmit. All provisional"
   },
+  "xo": {
+    "nominal_hz": 40000000,
+    "min_hz": 39992000,
+    "max_hz": 40008000,
+    "range_basis": "device_reported",
+    "note": "reference clock correction (ad9361-phy xo_correction = the true reference frequency in Hz). min_hz / max_hz are replaced on connect by xo_correction_available (one unit reported [39992000 1 40008000], +-200 ppm)"
+  },
   "raw": {
     "encoding": "rtlsdr_power_w",
     "level_reference": "dbfs",
