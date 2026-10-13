@@ -104,7 +104,7 @@ class PlutoGainCalMixin:
         if code is None:
             return None
         job = getattr(self, "_ref_job", None)
-        taking = job is not None and job.adopted.mode == mode
+        taking = (job is not None and job.adopted.mode == mode) or getattr(self, "_ref_saving_mode", None) == mode
         has_open = mode == Mode.S11 and getattr(self, "_s11_open", None) is not None
         if taking or has_open or self._pluto_ref_of(mode):
             return code

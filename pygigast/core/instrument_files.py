@@ -704,14 +704,18 @@ class FilesMixin:
             target = new_reference(job.name or default_name, self._profile, serial, mode, value_db=job.value_db or 0.0)
         target.merge(seg)
         d = self._references_dir(serial)
+        # 保存が済んで選ぶまでの間も、取ったときの条件を固定の理由にする（PlutoSDR の利得・送信の減衰: 設計Q §7.8・§7.9）
+        self._ref_saving_mode = mode
         wf = self._writer.submit(save_reference, d, target)
         prev_run = job.prev_run
 
         def done(f) -> None:
             def finish() -> None:
+                self._ref_saving_mode = None
                 exc = f.exception()
                 if exc is not None:
                     self._end_task(job.task, exc)
+                    self._changed()
                     return
                 if merge and self._ref is cur and cur.value_db != target.value_db:
                     # 上書き合成で基準の値が変わった: 直したのと同じく、その基準の比の値を同じだけずらす

@@ -268,3 +268,35 @@ class TestTgLocks(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHoldWhileSaving(Case):
+    def test_hold_continues_until_the_reference_is_saved_and_selected(self):
+        """基準を取り終えてから保存が済んで選ぶまでの間も、利得と送信の減衰を変えさせない（設計Q §7.9）。"""
+        from pygigast.core import instrument_files as inf
+
+        gate = threading.Event()
+        entered = threading.Event()
+        real = inf.save_reference
+
+        def slow_save(*a, **kw):
+            entered.set()
+            gate.wait(10)
+            return real(*a, **kw)
+
+        inf.save_reference = slow_save
+        try:
+            self.tg()
+            self.clear()
+            self.call("reference_take", kind="fine")
+            self.assertTrue(entered.wait(30), "保存に入らない")
+            for kw in ({"tx_atten_db": -20.0}, {"gain_db": 10.0}):
+                with self.assertRaises(CommandError) as cm:
+                    self.call("plutosdr_set", **kw)
+                self.assertEqual(cm.exception.code, TG_LOCK, kw)
+        finally:
+            gate.set()
+            inf.save_reference = real
+        self.assertEqual(self.task_end()["code"], "task_done")
+        with self.assertRaises(CommandError):
+            self.call("plutosdr_set", tx_atten_db=-20.0)  # 選んだ後も固定
