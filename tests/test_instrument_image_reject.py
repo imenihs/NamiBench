@@ -8,12 +8,12 @@
 import json
 import unittest
 
-from pygigast.core import report_layout as rl
-from pygigast.core.devices.gigast import protocol
-from pygigast.core.sweep import image_reject as ir
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.devices.gigast.driver import timing_fn
-from pygigast.core.types import Mode, SweepRequest
+from namibench.core import report_layout as rl
+from namibench.core.devices.gigast import protocol
+from namibench.core.sweep import image_reject as ir
+from namibench.core.sweep.model import SweepModel
+from namibench.core.devices.gigast.driver import timing_fn
+from namibench.core.types import Mode, SweepRequest
 
 from tests.instrument_helpers import InstrumentCase
 
@@ -132,8 +132,8 @@ class TestConditionKind(unittest.TestCase):
     """選択を変えたら蓄積を捨てる。NF・ゼロスパンでは測る値が変わらないので捨てない（設計F §7.3・§5.3）。"""
 
     def test_kind(self):
-        from pygigast.core.instrument_display import _condition_kind
-        from pygigast.core.trace import ConditionChange
+        from namibench.core.instrument_display import _condition_kind
+        from namibench.core.trace import ConditionChange
 
         m = model()
         sa = at(m, 500 * MHZ, 600 * MHZ, "fast")
@@ -175,7 +175,7 @@ class TestInstrument(InstrumentCase):
         self.assertAlmostEqual(sw["estimated_sweep_s"], est["accurate"])
 
     def test_bad_choice_is_command_error(self):
-        from pygigast.core.instrument_common import CommandError
+        from namibench.core.instrument_common import CommandError
 
         with self.assertRaises(CommandError) as cm:
             self.call("set_sweep", image_reject="slow")

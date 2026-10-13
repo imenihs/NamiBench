@@ -80,7 +80,7 @@ class _PartWindow(QWidget):
 
     def __init__(self, title: str, on_close: Callable[[], None]) -> None:
         super().__init__(None, Qt.WindowType.Window)
-        self.setWindowTitle(f"pyGigaSt — {title}")
+        self.setWindowTitle(f"NamiBench — {title}")
         self._on_close = on_close
         self.lay = sizes.vbox(self, inset=False)
         sizes.window(self.lay)

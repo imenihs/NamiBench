@@ -180,7 +180,7 @@ class PlutoGainCalMixin:
                 exc = e
             self._post_call(lambda: self._cal_pluto_end(job, exc))
 
-        threading.Thread(target=run, name="pygigast-pluto-gain-cal", daemon=True).start()
+        threading.Thread(target=run, name="namibench-pluto-gain-cal", daemon=True).start()
         self._task_progress(task, 0, total, 0.0)
         self._changed()
         return {"task_id": task.task_id}

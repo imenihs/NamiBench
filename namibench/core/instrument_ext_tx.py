@@ -346,7 +346,7 @@ class ExtTxMixin:
                 res = ("rejected", str(e))  # 機器が速さを受け付けなかった
             self._q.put(("call", lambda: self._exttx_prepared(sess, dev, res)))
 
-        threading.Thread(target=run, name="pygigast-ext-rate", daemon=True).start()
+        threading.Thread(target=run, name="namibench-ext-rate", daemon=True).start()
         self._changed()
 
     def _exttx_on_start_if_current(self, cid: int, msg: dict) -> None:
@@ -469,7 +469,7 @@ class ExtTxMixin:
                 pass
             self._q.put(("call", self._exttx_release_hold))
 
-        threading.Thread(target=run, name="pygigast-ext-rate", daemon=True).start()
+        threading.Thread(target=run, name="namibench-ext-rate", daemon=True).start()
 
     def _exttx_release_hold(self) -> None:
         if self._ext_hold:

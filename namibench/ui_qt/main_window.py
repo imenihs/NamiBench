@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
         self.prefs = prefs or UiPrefs()
         # 画面の配色（コアの配色を写す: 設計J §4.4）。部品は同じ辞書を見るので、中身だけを入れ替える
         self.pal = dict(DARK)
-        self.setWindowTitle("pyGigaSt")
+        self.setWindowTitle("NamiBench")
         self.state: dict = {}
         self._ref_dbm = DEFAULT_REF
         self._db_div = DEFAULT_DIV

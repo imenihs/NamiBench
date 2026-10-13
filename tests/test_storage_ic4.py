@@ -14,7 +14,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from pygigast.core.storage.h5file import (
+from namibench.core.storage.h5file import (
     LAYOUT_IMAGE_CANCEL,
     LAYOUT_IMAGE_CANCEL_4,
     H5Record,
@@ -24,8 +24,8 @@ from pygigast.core.storage.h5file import (
     segment_meta_for,
     write_h5,
 )
-from pygigast.core.storage.recording import Recorder, RecordingReader, convert_to_h5, new_recording_path
-from pygigast.core.types import RawSweep
+from namibench.core.storage.recording import Recorder, RecordingReader, convert_to_h5, new_recording_path
+from namibench.core.types import RawSweep
 
 from tests.test_storage import MHZ, adopted, header, pattern
 

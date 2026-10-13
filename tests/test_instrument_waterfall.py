@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 
-from pygigast.core.instrument import CommandError
+from namibench.core.instrument import CommandError
 from tests.instrument_helpers import InstrumentCase
 from tests.test_instrument_s11 import S11Case
 
@@ -296,7 +296,7 @@ class PlaybackTest(InstrumentCase):
         self.assertEqual(self.call("get_state")["sweep"]["start_hz"], 50 * MHZ)
 
     def test_save_extract_and_export_during_playback(self):
-        from pygigast.core.storage.h5file import H5Record
+        from namibench.core.storage.h5file import H5Record
         from tests.instrument_helpers import SERIAL
 
         with self.assertRaises(CommandError) as cm:
@@ -403,7 +403,7 @@ class PlaybackTest(InstrumentCase):
 
     def test_playback_never_changes_live_conditions(self):
         # 再生中はライブの条件を変えない（設計P §5・H §3.1）。どの道から来ても _apply・_set_adopted で止まる
-        from pygigast.core.types import SweepRequest
+        from namibench.core.types import SweepRequest
 
         h5 = self.record(4)
         self.call("set_mode", mode="tg")
@@ -480,7 +480,7 @@ class PlaybackTest(InstrumentCase):
         """再生中の色の範囲の「自動」（設計P §9.2）: ウォーターフォールに出している行の全体で決め、カーソルを動かしても
         変えない。時間方向に選んだときはその範囲の行で決め直す。記録の前半（50〜200MHz）と後半（SG の 500MHz を含む
         300〜2100MHz）で最大が違う形にする。"""
-        from pygigast.core import waterfall as wf
+        from namibench.core import waterfall as wf
 
         self.connect(start_hz=50 * MHZ, stop_hz=200 * MHZ)
         self.call("record_start")
@@ -518,8 +518,8 @@ class PlaybackTest(InstrumentCase):
         """再生中の密度（設計P §9.3）: 元は記録の中のカーソルの時刻までの直近の掃引（重みが 1/256 になるまで = 半分に
         なる回数の 8 倍）を記録から読む。カーソルを飛ばしても、通過した掃引ではなくカーソルまでの掃引になり、何秒分かは
         記録の時刻から出す。"""
-        from pygigast.core import waterfall as wf
-        from pygigast.core.storage.record_source import RecordSource
+        from namibench.core import waterfall as wf
+        from namibench.core.storage.record_source import RecordSource
 
         half = 5
         n = wf.DENSITY_REPLAY_HALVES * half
@@ -609,7 +609,7 @@ class ReferenceSegmentTest(InstrumentCase):
         self.assertEqual(old["cond"]["unit"], "dBm")
         self.assertEqual((new["cond"]["unit"], new["cond"]["ref"]), ("dB", "ケーブルA"))
         self.assertNotEqual(old["cond"], new["cond"])  # 画面は境目の線と条件を出す
-        from pygigast.ui_qt import display_view
+        from namibench.ui_qt import display_view
 
         label = display_view.boundary_label(new["cond"])
         self.assertIn("dB", label)
@@ -666,7 +666,7 @@ class ZeroSpanAndFormatTest(S11Case):
         self.assertEqual(done["detail"]["result"]["errors"][0]["code"], "playback_zero_span")
 
     def test_swr_rows_range_and_density_use_display_values(self):
-        from pygigast.core.trace import formats
+        from namibench.core.trace import formats
 
         self.s11_reference()
         self.call("set_view", layout="density")

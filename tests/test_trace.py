@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.trace import (
+from namibench.core.trace import (
     DIFF_NO_OVERLAP,
     DIFF_QUANTITY_MISMATCH,
     NOTICE_AVERAGE_TYPE_RESET,
@@ -26,7 +26,7 @@ from pygigast.core.trace import (
     difference,
     to_db,
 )
-from pygigast.core.types import Frame, FreqAxis, Quantity, ValueKind
+from namibench.core.types import Frame, FreqAxis, Quantity, ValueKind
 
 MHZ = 1_000_000
 AXIS = FreqAxis(100 * MHZ, 1 * MHZ, 4)

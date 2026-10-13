@@ -201,7 +201,7 @@ class WriterThread:
     仕事は入れた順に行うので、記録の追記 → 記録の終了 → HDF5 へのまとめ、の順が崩れない。
     """
 
-    def __init__(self, name: str = "pygigast-writer") -> None:
+    def __init__(self, name: str = "namibench-writer") -> None:
         self._q: "queue.Queue[Optional[tuple]]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._closed = False

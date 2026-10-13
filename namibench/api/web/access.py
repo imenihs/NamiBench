@@ -32,7 +32,7 @@ BLOCK_S = 60.0  # 間違えたときに止める時間（1 分）
 KEY_BYTES = 24  # 鍵の長さ（バイト。URL に入れるときは 32 文字）
 SESSION_BYTES = 24
 
-COOKIE_PREFIX = "pygigast_s_"  # クッキーの名前（ポートごとに分ける。クッキーはポートを区別しないため）
+COOKIE_PREFIX = "namibench_s_"  # クッキーの名前（ポートごとに分ける。クッキーはポートを区別しないため）
 
 _LOCAL_NAMES = {"127.0.0.1", "localhost", "::1"}
 

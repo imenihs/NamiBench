@@ -1,9 +1,9 @@
 """マーカー表の行だけを消す・セルを直す決まり（G §3.7）。Qt と Web が同じ marker_rows の決まりを使う。"""
 import unittest
 
-from pygigast.api.web import view
-from pygigast.core.units import ParseError
-from pygigast.ui_qt import marker_rows as mr
+from namibench.api.web import view
+from namibench.core.units import ParseError
+from namibench.ui_qt import marker_rows as mr
 
 SNAP = {
     "markers": [
@@ -84,7 +84,7 @@ class WebRowsTest(unittest.TestCase):
 
     def test_web_app_uses_rows(self):
         from pathlib import Path
-        root = Path(__file__).resolve().parents[1] / "pygigast/ui_web"
+        root = Path(__file__).resolve().parents[1] / "namibench/ui_web"
         html = (root / "index.html").read_text(encoding="utf-8")
         js = (root / "app.js").read_text(encoding="utf-8") + (root / "app_menu.js").read_text(encoding="utf-8")
         self.assertIn('@dblclick="startEdit(r, i)"', html)

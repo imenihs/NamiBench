@@ -9,7 +9,7 @@
 import time
 import unittest
 
-from pygigast.ui_qt import screen_model, texts
+from namibench.ui_qt import screen_model, texts
 from tests.instrument_helpers import InstrumentCase
 
 MHZ = 1_000_000

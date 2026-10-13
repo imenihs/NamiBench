@@ -12,14 +12,14 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.units import minus_sign
-from pygigast.ui_qt import screen_pluto, texts
-from pygigast.ui_qt.fields import range_note
+from namibench.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.core.units import minus_sign
+from namibench.ui_qt import screen_pluto, texts
+from namibench.ui_qt.fields import range_note
 from tests import test_web_server as wst
 from tests.test_web_server import UI_WEB, _Server
 
@@ -140,8 +140,8 @@ console.log(JSON.stringify(out));
 """
 
     def test_same_rules_as_qt(self):
-        from pygigast.api.web import server as web
-        from pygigast.ui_qt.fields import db_choice_text, db_value_text, range_note
+        from namibench.api.web import server as web
+        from namibench.ui_qt.fields import db_choice_text, db_value_text, range_note
 
         with tempfile.TemporaryDirectory() as d:
             tj = Path(d) / "texts.json"

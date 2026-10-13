@@ -17,19 +17,19 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.core import report_layout as rl
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.gigast.driver import timing_fn
-from pygigast.core.instrument import GIGAST_PROFILE_PATH
-from pygigast.core.instrument_common import adopted_to_dict
-from pygigast.core.storage.h5file import FileHeader, TraceData, save_snapshot
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import FreqAxis, Mode, Quantity, SweepRequest, ValueKind
-from pygigast.ui_qt import screen_model, texts
+from namibench.core import report_layout as rl
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.gigast.driver import timing_fn
+from namibench.core.instrument import GIGAST_PROFILE_PATH
+from namibench.core.instrument_common import adopted_to_dict
+from namibench.core.storage.h5file import FileHeader, TraceData, save_snapshot
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import FreqAxis, Mode, Quantity, SweepRequest, ValueKind
+from namibench.ui_qt import screen_model, texts
 
 MHZ = 1_000_000
 KHZ = 1_000
-UI_WEB = Path(__file__).resolve().parent.parent / "pygigast" / "ui_web"
+UI_WEB = Path(__file__).resolve().parent.parent / "namibench" / "ui_web"
 
 
 def adopted_state(center, span, rbw, mode=Mode.SA, points=None) -> dict:

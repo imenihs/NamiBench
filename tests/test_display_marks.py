@@ -9,11 +9,11 @@ import unittest
 
 import numpy as np
 
-from pygigast.core import display_marks as dm
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.rtlsdr.driver import PROFILE_PATH as RTL_PROFILE
-from pygigast.core.instrument import GIGAST_PROFILE_PATH
-from pygigast.ui_qt import screen_model, texts
+from namibench.core import display_marks as dm
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.rtlsdr.driver import PROFILE_PATH as RTL_PROFILE
+from namibench.core.instrument import GIGAST_PROFILE_PATH
+from namibench.ui_qt import screen_model, texts
 from tests.instrument_helpers import InstrumentCase
 
 GIGAST = load_profile(GIGAST_PROFILE_PATH)

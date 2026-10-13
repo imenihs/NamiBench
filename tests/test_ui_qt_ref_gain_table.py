@@ -5,7 +5,7 @@ RBW・イメージ除去の違う基準と同じ場所（状態バーの基準�
 """
 from __future__ import annotations
 
-from pygigast.ui_qt import texts
+from namibench.ui_qt import texts
 from tests.test_ref_gain_table import A, table
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 

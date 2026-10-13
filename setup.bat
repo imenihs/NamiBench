@@ -1,9 +1,9 @@
 @echo off
-rem pyGigaSt environment setup for Windows.
+rem NamiBench environment setup for Windows.
 rem Works from both cmd.exe and PowerShell (PowerShell: .\setup.bat).
 rem
 rem Usage:
-rem   setup.bat                      use PYGIGAST_PYTHON, or "py -3.13", or python on PATH
+rem   setup.bat                      use NAMIBENCH_PYTHON, or "py -3.13", or python on PATH
 rem   setup.bat C:\path\python.exe   use this Python as the base
 rem
 rem Creates .\venv (virtualenv if available, otherwise venv) and installs requirements.txt.
@@ -14,7 +14,7 @@ cd /d "%~dp0"
 
 set "PY=%~1"
 if not "%PY%"=="" goto :check
-set "PY=%PYGIGAST_PYTHON%"
+set "PY=%NAMIBENCH_PYTHON%"
 if not "%PY%"=="" goto :check
 where py >nul 2>nul
 if errorlevel 1 goto :use_path_python

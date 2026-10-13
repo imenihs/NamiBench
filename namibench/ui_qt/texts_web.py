@@ -50,15 +50,15 @@ WEB_LABELS = {
     "kind_operate": "操作",
     "kind_view": "見るだけ",
     # ---- ブラウザの認証の画面（ユーザー決定の文言: A §4.3.2 の 2）
-    "auth_title": "pyGigaSt",
-    "auth_prompt": "pyGigaSt の PC に出ている6桁の認証番号を入れてください",
+    "auth_title": "NamiBench",
+    "auth_prompt": "NamiBench の PC に出ている6桁の認証番号を入れてください",
     "auth_button": "入る",
     "auth_checking": "確かめています…",
     "auth_need_js": "この画面は JavaScript を使います",
     # ---- 見るだけの接続（A §4.3.2 の 4）
     "read_only": "見るだけの接続です",
     # ---- serve のコンソール
-    "console_title": "pyGigaSt をブラウザから使う（同じネットワークのスマートフォンや PC からも使えます）",
+    "console_title": "NamiBench をブラウザから使う（同じネットワークのスマートフォンや PC からも使えます）",
     "console_local": "この PC のブラウザ: {url}",
     "console_operate": "操作できる: {url}",
     "console_view": "見るだけ: {url}",
@@ -66,13 +66,13 @@ WEB_LABELS = {
     "console_keys": "Enter で新しい認証番号、r + Enter で認証を作り直し（全部のブラウザを切る）、Ctrl+C で終わり",
     "console_regenerated": "認証を作り直しました。前の QR コード・リンク・認証番号は使えません",
     "console_no_address": "この PC のネットワークのアドレスが見つかりません。ネットワークに繋がっているか確かめてください",
-    "console_local_only": "pyGigaSt をブラウザから使う: {url}（この PC だけ。スマートフォンや別の PC からも使うときは --lan を付けて起動）",
+    "console_local_only": "NamiBench をブラウザから使う: {url}（この PC だけ。スマートフォンや別の PC からも使うときは --lan を付けて起動）",
 }
 
 WEB_KINDS = {"operate": "操作", "view": "見るだけ"}
 
 WEB_ERRORS = {
-    "path_not_allowed": "ブラウザからは pyGigaSt の PC のフォルダを指定できません（ダウンロード・アップロードを使います）",
+    "path_not_allowed": "ブラウザからは NamiBench の PC のフォルダを指定できません（ダウンロード・アップロードを使います）",
     "read_only": "見るだけの接続です",
     "auth_required": "認証が要ります",
     "wrong_code": "認証番号が違うか、2分を過ぎています。PC に出ている今の番号を入れてください",

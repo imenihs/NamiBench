@@ -18,7 +18,7 @@ import json
 import time
 import unittest
 
-from pygigast.ui_qt import peak_view, texts
+from namibench.ui_qt import peak_view, texts
 from tests.test_marker_dips import bef_in_tg
 from tests.test_web_layout import App, EdgePage, edge_available, open_app
 

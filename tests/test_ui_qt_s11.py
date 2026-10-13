@@ -14,8 +14,8 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.trace import formats
-from pygigast.ui_qt import screen_s11, texts
+from namibench.core.trace import formats
+from namibench.ui_qt import screen_s11, texts
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000

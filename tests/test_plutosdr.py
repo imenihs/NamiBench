@@ -11,18 +11,18 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.api.local import _PlutoSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr import tones
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
-from pygigast.core.devices.plutosdr.iio import dll_bits, find_dll
-from pygigast.core.devices.rtlsdr import levels, spectrum
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.rtltcp.decimate import IqDecimator, factor_for
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import DeviceDisconnected, Mode, SweepRequest
+from namibench.api.local import _PlutoSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr import tones
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
+from namibench.core.devices.plutosdr.iio import dll_bits, find_dll
+from namibench.core.devices.rtlsdr import levels, spectrum
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.core.instrument_common import CommandError
+from namibench.core.rtltcp.decimate import IqDecimator, factor_for
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import DeviceDisconnected, Mode, SweepRequest
 
 MHZ = 1_000_000
 UNCAL = "dB（未校正）"
@@ -254,7 +254,7 @@ class TestInstrument(PlutoCase):
 
     def test_dll_not_found_row(self):
         inst_b = self.inst._backends["plutosdr"]
-        from pygigast.core.devices.plutosdr.iio import IioNotFound
+        from namibench.core.devices.plutosdr.iio import IioNotFound
 
         def missing():
             raise IioNotFound("x")
@@ -527,7 +527,7 @@ class TestShutdownStopsTx(PlutoCase):
     def test_shutdown_returns_after_tg_off(self):
         self.shutdown_and_check(self.start_output("tg"))
     def test_shutdown_turns_tx_off_when_device_thread_hangs(self):
-        import pygigast.core.instrument as ins
+        import namibench.core.instrument as ins
 
         pl = self.start_output("sg")
         gate = threading.Event()

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import unittest
 
-from pygigast.core.devices.rtlsdr import driver
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import Mode, SweepRequest
+from namibench.core.devices.rtlsdr import driver
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import Mode, SweepRequest
 
 MHZ = 1_000_000
 KHZ = 1_000
@@ -52,7 +52,7 @@ class TestFft(Base):
         self.assertEqual(self.m.fft_setting(3770), ("flattop", 2048))
 
     def test_profile_rbw_matches_enbw(self):
-        from pygigast.core.devices.rtlsdr import spectrum as sp
+        from namibench.core.devices.rtlsdr import spectrum as sp
         for c in self.profile["rbw"]["choices"]:
             self.assertEqual(c["rbw_hz"], sp.rbw_hz(c["window"], c["fft_n"], 2_048_000), c)
 

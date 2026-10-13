@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from pygigast.core.marker import Kind, MarkerTable, Sign, ThresholdSetting
+from namibench.core.marker import Kind, MarkerTable, Sign, ThresholdSetting
 from tests.test_marker import f, ratio_view
 from tests.instrument_helpers import InstrumentCase
 

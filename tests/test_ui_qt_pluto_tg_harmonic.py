@@ -5,10 +5,10 @@ PlutoSDR に繋いでいるときだけ出る（送信の欄ごと）・TG の�
 """
 import unittest
 
-from pygigast.core.devices.plutosdr.fake import FAKE_URI
-from pygigast.ui_qt import screen_pluto, texts
-from pygigast.ui_qt.tab_traces import combo_width
-from pygigast.ui_qt.texts_pluto import PLUTO_LABELS, TG_HARMONIC_CHOICES
+from namibench.core.devices.plutosdr.fake import FAKE_URI
+from namibench.ui_qt import screen_pluto, texts
+from namibench.ui_qt.tab_traces import combo_width
+from namibench.ui_qt.texts_pluto import PLUTO_LABELS, TG_HARMONIC_CHOICES
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 
 MHZ = 1_000_000

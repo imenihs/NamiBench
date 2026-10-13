@@ -111,7 +111,7 @@ SETTINGS_TEXTS = {
     "choose": "選ぶ…",
     "save_web_reason": "ブラウザではブラウザの保存先へダウンロードします",
     # ブラウザでは変えられない項目
-    "web_only_pc": "pyGigaSt の PC の画面で変えます",
+    "web_only_pc": "NamiBench の PC の画面で変えます",
 }
 
 # 配色の名前（設計J §4.4 の表の名前）
@@ -300,7 +300,7 @@ SETTINGS_ERRORS = {
     "palette_name_too_long": "名前が長すぎます",
     "unknown_palette": "その配色はありません（消されたか、読めません）",
     "palette_unwritable": "配色を書けませんでした",
-    "palette_file_unreadable": "配色のファイルを読めません（pyGigaSt で書き出した配色のファイルではありません）",
+    "palette_file_unreadable": "配色のファイルを読めません（NamiBench で書き出した配色のファイルではありません）",
 }
 
 REASON_TEXTS.update({

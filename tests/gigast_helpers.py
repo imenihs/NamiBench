@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pygigast.core.devices.gigast import protocol
-from pygigast.core.sweep import image_reject as ir
-from pygigast.core.types import AdoptedSweep, FreqAxis, Mode, SweepSegment
+from namibench.core.devices.gigast import protocol
+from namibench.core.sweep import image_reject as ir
+from namibench.core.types import AdoptedSweep, FreqAxis, Mode, SweepSegment
 
 
 def adopted(

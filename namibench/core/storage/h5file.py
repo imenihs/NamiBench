@@ -764,7 +764,7 @@ class H5Record:
     """保存ファイルを開いて、必要な範囲だけ読む（設計H §3.1）。
 
     開くのは属性と t_start だけ（数 ms）。生の値・概観は求めた範囲の chunk だけを読む。
-    知らない形式・版のファイルは開かずに StorageError（not_pygigast_file / unsupported_version）。
+    知らない形式・版のファイルは開かずに StorageError（not_namibench_file / unsupported_version）。
     """
 
     def __init__(self, path: Path | str) -> None:
@@ -793,7 +793,7 @@ class H5Record:
 
     def _check(self) -> None:
         if _attr_str(self._f.attrs, "format") != FILE_FORMAT:
-            raise StorageError("not_pygigast_file", {"file": self.path.name})
+            raise StorageError("not_namibench_file", {"file": self.path.name})
         ver = int(self._f.attrs.get("version", -1))
         if ver != FILE_VERSION:
             raise StorageError("unsupported_version", {"what": "file", "version": ver})

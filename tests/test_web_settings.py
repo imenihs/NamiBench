@@ -17,12 +17,12 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.api.web import server as web
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.units import format_freq
-from pygigast.ui_qt import texts as qt_texts
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.api.web import server as web
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.core.units import format_freq
+from namibench.ui_qt import texts as qt_texts
 from tests import test_web_server as tws
 
 UI_WEB = tws.UI_WEB
@@ -256,7 +256,7 @@ console.log(JSON.stringify({
 """
 
     def test_same_rules_as_qt(self):
-        from pygigast.ui_qt import keymap
+        from namibench.ui_qt import keymap
 
         with tempfile.TemporaryDirectory() as d:
             tj = Path(d) / "texts.json"
@@ -289,7 +289,7 @@ class LevelTextTest(unittest.TestCase):
     VALUES = [116.99, 106.99, 96.99000000000001, 0.0, -0.01, -0.04, -37.0, -120.0, 3.05, -106.98999999999999]
 
     def test_same_as_python(self):
-        from pygigast.core.units import level_text
+        from namibench.core.units import level_text
 
         script = "const U = require(process.argv[1]); console.log(JSON.stringify(JSON.parse(process.argv[2]).map(U.levelText)));"
         out = subprocess.run(["node", "-e", script, str(UI_WEB / "units.js"), json.dumps(self.VALUES)],
@@ -347,7 +347,7 @@ console.log(JSON.stringify(out));
 """
 
     def test_three_choices_like_qt(self):
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         user = {**rl.DARK_DEFAULT, "graph_bg": "#203040", "panel_bg": "#302010", "trace1": "#ff00ff"}
         with tempfile.TemporaryDirectory() as d:
@@ -373,7 +373,7 @@ console.log(JSON.stringify(out));
         self.assertEqual(got["afterReset"]["palette"], "screen")
 
     def test_choices_table_and_wiring(self):
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         # 選ぶ欄の並びと語は表から（Qt と Web が同じ表: J §5）
         table = web.texts_json()["PNG_PALETTES"]

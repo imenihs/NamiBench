@@ -22,7 +22,6 @@ import concurrent.futures
 import dataclasses
 import json
 import math
-import os
 import sqlite3
 import threading
 import time
@@ -60,14 +59,6 @@ WORK_SUFFIX = ".sqlite"
 
 # append の calibration の既定: 記録を始めたときの校正（FileHeader.calibration）のまま
 SAME_CALIBRATION = object()
-
-
-def default_recordings_dir() -> Path:
-    """作業ファイルの置き場所（利用者のデータの場所）。Windows は %APPDATA%\\pyGigaSt\\recordings。"""
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        return Path(appdata) / "pyGigaSt" / "recordings"
-    return Path.home() / ".pygigast" / "recordings"
 
 
 def new_recording_path(directory: Path | str, started: Optional[datetime] = None) -> Path:
@@ -190,7 +181,7 @@ class Recorder:
         self.path = Path(path)
         self.header = header
         self._own_writer = writer is None
-        self._writer = writer or WriterThread("pygigast-recorder")
+        self._writer = writer or WriterThread("namibench-recorder")
         self._on_committed = on_committed
         self._on_error = on_error
         self._lock = threading.Lock()  # 状態表示の数だけを守る（書き込みの状態は書き込みスレッドだけが触る）
@@ -410,7 +401,7 @@ class RecordingReader:
             raise StorageError("cannot_open", {"file": self.path.name, "error": str(e)}) from e
         if meta.get("format") != WORK_FORMAT:
             self._conn.close()
-            raise StorageError("not_pygigast_file", {"file": self.path.name})
+            raise StorageError("not_namibench_file", {"file": self.path.name})
         if meta.get("version") != str(WORK_VERSION):
             self._conn.close()
             raise StorageError("unsupported_version", {"what": "work_file", "version": meta.get("version")})

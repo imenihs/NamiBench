@@ -163,7 +163,7 @@ LABELS = {
     "connecting": "接続しています…",
     "keys_note": "入力の欄にいる間は、文字・数字・矢印などのキーは欄に渡します。",
     "keys_note_browser": "ブラウザが先に取るキー（F5・Ctrl+数字・Ctrl+Shift+C など）は使わない割り当てにしています。",
-    "about": "pyGigaSt {version} — GigaSt v5 を PC から操作・表示するアプリケーション",
+    "about": "NamiBench {version} — GigaSt v5 を PC から操作・表示するアプリケーション",
     # ---- ファイル（Web はサーバーの PC のパスを使わない: 作るものはダウンロード、開くものはアップロード）
     "save_title": "保存",
     "file_name": "ファイル名",
@@ -175,7 +175,7 @@ LABELS = {
     "export_stop": "Stop",
     "export_all_placeholder": "全部",
     "record_finish_title": "記録をまとめる",
-    "dll_folder_web": "pyGigaSt の PC の画面で変えます",
+    "dll_folder_web": "NamiBench の PC の画面で変えます",
     "no_clipboard_text": "この接続ではブラウザがコピーを許しません。欄の文字を選んでコピーしてください",
     # ---- PNG（設計I）
     "png_save_title": "PNG を保存",

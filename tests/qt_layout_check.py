@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pygigast.ui_qt import sizes
+from namibench.ui_qt import sizes
 
 TIER_H = {"L": sizes.H_L, "S": sizes.H_S, None: sizes.H_M}
 # 値の種類の幅（S-02）。入力欄はこのどれか

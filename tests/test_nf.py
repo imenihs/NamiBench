@@ -7,14 +7,14 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.level import nf as nfc
-from pygigast.core.storage.h5file import H5Record
-from pygigast.core.trace import ConditionChange, TraceAction
-from pygigast.core.trace.ops import to_db
-from pygigast.core.trace.trace import Trace
-from pygigast.core.types import FreqAxis, Frame, Quantity, ValueKind
-from pygigast.ui_qt import nf_view, screen_model
-from pygigast.ui_qt import texts
+from namibench.core.level import nf as nfc
+from namibench.core.storage.h5file import H5Record
+from namibench.core.trace import ConditionChange, TraceAction
+from namibench.core.trace.ops import to_db
+from namibench.core.trace.trace import Trace
+from namibench.core.types import FreqAxis, Frame, Quantity, ValueKind
+from namibench.ui_qt import nf_view, screen_model
+from namibench.ui_qt import texts
 from tests.instrument_helpers import InstrumentCase
 from tests.test_level import build_legacy_bytes
 
@@ -283,7 +283,7 @@ class InstrumentNfTest(InstrumentCase):
     def test_old_state_nf_axis_is_not_used(self):
         """前の版の状態に NF の縦軸（amplitude_nf）があっても、NF に入ったとき縦軸を変えない。"""
         self.inst.shutdown()
-        from pygigast.core.settings import Settings
+        from namibench.core.settings import Settings
 
         st = Settings(self.root / "data" / "settings.json")
         state = dict(st.get("state") or {})
@@ -318,7 +318,7 @@ class InstrumentNfTest(InstrumentCase):
                 else:
                     self.assertLess(row["diff_db"], -0.5)
         # 画面の欄（Qt・Web 共通の peak_view）も最大からで、谷を探せる
-        from pygigast.ui_qt import peak_view
+        from namibench.ui_qt import peak_view
 
         st = self.call("get_state")
         self.assertEqual(st["display_quantity"], "nf")
@@ -338,7 +338,7 @@ class InstrumentNfTest(InstrumentCase):
         peak = st["ref_auto"]["peaks"]["1"]
         self.assertEqual(peak["unit"], "dB")
         self.assertIsNotNone(peak["max"])
-        from pygigast.ui_qt import screen_model
+        from namibench.ui_qt import screen_model
 
         v = screen_model.ref_auto_view(st, ["1"], "dB", 10.0, True)
         self.assertIsNone(v["reason"])

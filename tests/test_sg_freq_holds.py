@@ -11,7 +11,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.trace import (
+from namibench.core.trace import (
     NOTICE_RESET_BY_CONDITION,
     ConditionChange,
     HoldAfterCount,
@@ -20,8 +20,8 @@ from pygigast.core.trace import (
     TraceAction,
     TraceSet,
 )
-from pygigast.core.types import Frame, FreqAxis, Quantity, SweepRequest, ValueKind
-from pygigast.ui_qt import texts
+from namibench.core.types import Frame, FreqAxis, Quantity, SweepRequest, ValueKind
+from namibench.ui_qt import texts
 from tests.instrument_helpers import InstrumentCase
 
 MHZ = 1_000_000

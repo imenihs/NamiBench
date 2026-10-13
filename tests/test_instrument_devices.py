@@ -8,13 +8,13 @@ from pathlib import Path
 
 import serial
 
-from pygigast.api.local import _RtlSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.gigast.transport import is_port_in_use
-from pygigast.core.devices.rtlsdr import dll
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, CommandError, Instrument
-from pygigast.core.units import ParseError, minus_sign, parse_db
-from pygigast.ui_qt import screen_model, texts
+from namibench.api.local import _RtlSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.gigast.transport import is_port_in_use
+from namibench.core.devices.rtlsdr import dll
+from namibench.core.instrument import GIGAST_PROFILE_PATH, CommandError, Instrument
+from namibench.core.units import ParseError, minus_sign, parse_db
+from namibench.ui_qt import screen_model, texts
 from tests.device_helpers import FakeGigaBackend
 from tests.instrument_helpers import InstrumentCase
 from tests.test_instrument_rtlsdr import FakeLib

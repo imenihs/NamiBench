@@ -5,11 +5,11 @@
 """
 import unittest
 
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL
-from pygigast.ui_qt import texts
-from pygigast.ui_qt.fields import DecimalField, range_note
-from pygigast.ui_qt.screen_pluto import xo_view
-from pygigast.ui_qt.texts_pluto import PLUTO_LABELS
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL
+from namibench.ui_qt import texts
+from namibench.ui_qt.fields import DecimalField, range_note
+from namibench.ui_qt.screen_pluto import xo_view
+from namibench.ui_qt.texts_pluto import PLUTO_LABELS
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 
 

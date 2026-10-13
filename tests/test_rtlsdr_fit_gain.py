@@ -85,7 +85,7 @@ class FitGainTest(RtlSdrCase):
         self.assertFalse(self.call("get_state")["rtlsdr"]["overload"])
 
     def test_texts_for_the_one_notice(self):
-        from pygigast.ui_qt import texts
+        from namibench.ui_qt import texts
 
         self.lib.tones = [(TONE_HZ, 0.9)]
         self.connect_rtl()
@@ -106,12 +106,12 @@ class FitGainTest(RtlSdrCase):
         res = n["detail"]["result"]
         self.assertEqual(res["gain_db"], 0.0)
         self.assertTrue(res["overload"])
-        from pygigast.ui_qt import texts
+        from namibench.ui_qt import texts
 
         self.assertIn("いちばん小さい段でも振り切れています", texts.notice_view(n)["text"])
 
     def test_refused_under_agc_and_without_rtlsdr(self):
-        from pygigast.core.instrument_common import CommandError
+        from namibench.core.instrument_common import CommandError
 
         with self.assertRaises(CommandError) as cm:
             self.call("rtlsdr_fit_gain")
@@ -123,7 +123,7 @@ class FitGainTest(RtlSdrCase):
         self.assertEqual(cm.exception.code, "rtlsdr_fit_needs_manual_gain")
 
     def test_button_reason(self):
-        from pygigast.ui_qt import screen_model, texts
+        from namibench.ui_qt import screen_model, texts
 
         v = screen_model.rtl_view({"rtlsdr": {"connected": False}})
         self.assertEqual(v["fit_reason"], texts.RTL_LABELS["not_rtlsdr"])

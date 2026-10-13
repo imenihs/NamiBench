@@ -1,8 +1,8 @@
 """Qt の画面: 機器の範囲の外・意味の無い区間の帯と、REF の自動（設計J §4.8・§4.1）。シミュレータの本体で通す。"""
 import unittest
 
-from pygigast.core import display_marks as dm
-from pygigast.ui_qt import png_data, texts
+from namibench.core import display_marks as dm
+from namibench.ui_qt import png_data, texts
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000

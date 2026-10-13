@@ -18,10 +18,10 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from pygigast.core.instrument import CommandError
-from pygigast.core.marker import MarkerTable, ThresholdSetting
-from pygigast.core.marker.markers import Y_KIND_NF, Y_KIND_POWER, Y_KIND_TG, Kind
-from pygigast.core.normalize import (
+from namibench.core.instrument import CommandError
+from namibench.core.marker import MarkerTable, ThresholdSetting
+from namibench.core.marker.markers import Y_KIND_NF, Y_KIND_POWER, Y_KIND_TG, Kind
+from namibench.core.normalize import (
     VALUE_DB_LIMIT,
     ReferenceFileError,
     check_value_db,
@@ -31,12 +31,12 @@ from pygigast.core.normalize import (
     s11_segment_from_frames,
     save_reference,
 )
-from pygigast.core.ref_value import shift_ratio_levels
-from pygigast.core.trace import TraceAction
-from pygigast.core.trace.average import AverageType
-from pygigast.core.trace.trace import Trace
-from pygigast.core.types import FreqAxis, Frame, Mode, Quantity, ValueKind
-from pygigast.core.zero_span import History
+from namibench.core.ref_value import shift_ratio_levels
+from namibench.core.trace import TraceAction
+from namibench.core.trace.average import AverageType
+from namibench.core.trace.trace import Trace
+from namibench.core.types import FreqAxis, Frame, Mode, Quantity, ValueKind
+from namibench.core.zero_span import History
 from tests.instrument_helpers import SERIAL, InstrumentCase
 from tests.test_normalize import CONN, MHZ, PROFILE, apply, db_to_w, linear_db, make_frame, ref_from, to_db_ratio
 

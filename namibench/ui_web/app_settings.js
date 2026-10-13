@@ -14,6 +14,8 @@
   const S = (k, kw) => X.fmtText(X.get("SETTINGS_TEXTS", k), kw);
   const P = (k, kw) => X.fmtText(X.get("PRESET_TEXTS", k), kw);
   const V = (k, kw) => X.fmtText(X.get("VIEW_TEXTS", k), kw);
+  // localStorage の名前の頭 "pygigast." はアプリの名前を変える前のまま（ブラウザに残した覚え書きを読み続けるため。
+  // app.js・app_keys.js・app_markers.js も同じ）
   const PNG_STORE = "pygigast.png";
   const MANUAL_STORE = "pygigast.manual_port";
   const LAYOUT_STORE = "pygigast.layout";
@@ -121,7 +123,7 @@
           return { code, name: GSKeys.commandName(code), key, def: GSKeys.keyLabel(d[code] || ""), where, changed };
         });
       },
-      // 「ブラウザから使う」のページ（Qt と同じ欄。変えるのは pyGigaSt の PC の画面: U-08）。いまこのページを出している
+      // 「ブラウザから使う」のページ（Qt と同じ欄。変えるのは NamiBench の PC の画面: U-08）。いまこのページを出している
       // Web の口の様子: 使えている（このブラウザが開いている）・同じネットワークからも使えるか・ポート番号。
       // 様子の文の URL はこのブラウザが開いている URL。同じネットワークからも使えるのに、このブラウザがこの PC の中の
       // 宛先（127.0.0.1 など）で開いているときは、ほかの機器が使う URL をここでは知らないので文を出さない

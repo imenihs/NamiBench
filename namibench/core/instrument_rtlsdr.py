@@ -641,7 +641,7 @@ class RtlSdrMixin:
             except BaseException as e:  # noqa: BLE001 — 終わりの知らせ（task_failed）にする
                 fut.set_exception(e)
 
-        threading.Thread(target=run, name="pygigast-rtl-fit", daemon=True).start()
+        threading.Thread(target=run, name="namibench-rtl-fit", daemon=True).start()
         return fut
 
     def _sdr_fit_applied(self, res: dict) -> dict:

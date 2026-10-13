@@ -1,6 +1,6 @@
 import unittest
 
-from pygigast.core.units import ParseError, drag_ref_level, format_freq, parse_db, parse_freq_hz
+from namibench.core.units import ParseError, drag_ref_level, format_freq, parse_db, parse_freq_hz
 
 
 class ParseFreqTest(unittest.TestCase):

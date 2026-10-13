@@ -11,10 +11,10 @@ import json
 import time
 import unittest
 
-from pygigast.api.web import server as web
-from pygigast.api.web import view
-from pygigast.ui_qt import texts as qt_texts
-from pygigast.core.devices.plutosdr.fake import FAKE_URI
+from namibench.api.web import server as web
+from namibench.api.web import view
+from namibench.ui_qt import texts as qt_texts
+from namibench.core.devices.plutosdr.fake import FAKE_URI
 from tests.test_ref_gain_table import A, table
 from tests.test_web_layout import App, EdgePage, edge_available, open_app
 from tests import test_web_pluto_gain as twp

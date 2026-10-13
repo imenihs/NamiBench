@@ -11,6 +11,19 @@ from typing import Any, Optional
 from PySide6.QtCore import QSettings
 
 
+def copy_legacy(new: QSettings, old: QSettings) -> bool:
+    """新しい覚え書きが空で古い覚え書き（名前を変える前）があれば、全部をコピーする。古いほうは消さない・変えない。
+
+    データの置き場所のコピー（core/paths.py）と同じ決まり。窓の並びなどが前と同じになるだけなので知らせない。
+    """
+    if new.allKeys() or not old.allKeys():
+        return False
+    for key in old.allKeys():
+        new.setValue(key, old.value(key))
+    new.sync()
+    return True
+
+
 class UiPrefs:
     def __init__(self, settings: Optional[QSettings] = None) -> None:
         self._s = settings
@@ -18,7 +31,9 @@ class UiPrefs:
 
     @classmethod
     def for_app(cls) -> "UiPrefs":
-        return cls(QSettings("pyGigaSt", "pyGigaSt-qt"))
+        s = QSettings("NamiBench", "NamiBench-qt")
+        copy_legacy(s, QSettings("pyGigaSt", "pyGigaSt-qt"))  # 名前を変える前の覚え書き
+        return cls(s)
 
     def get(self, key: str, default: Any = None) -> Any:
         if self._s is None:

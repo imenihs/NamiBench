@@ -14,15 +14,15 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.api.local import _PlutoSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr import gain_cal
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto, measured_like_gain_error
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.level import pluto_gain as pg
-from pygigast.core.types import DeviceDisconnected, SweepDiscarded
+from namibench.api.local import _PlutoSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr import gain_cal
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto, measured_like_gain_error
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.core.instrument_common import CommandError
+from namibench.core.level import pluto_gain as pg
+from namibench.core.types import DeviceDisconnected, SweepDiscarded
 from tests.test_plutosdr import _output_on_wrong
 
 MHZ = 1_000_000
@@ -376,9 +376,9 @@ class TestRecordKeepsCorrection(InstCase):
         """記録に当てた補正を残し、再生の換算でも同じ値になる（設計Q §7.6。表は記録に入らない）。"""
         import types
 
-        from pygigast.core.devices.rtlsdr import levels as rtl_levels
-        from pygigast.core.record_frames import SegmentLevels
-        from pygigast.core.storage.h5file import H5Record
+        from namibench.core.devices.rtlsdr import levels as rtl_levels
+        from namibench.core.record_frames import SegmentLevels
+        from namibench.core.storage.h5file import H5Record
 
         self.connect()
         # Stop が Step の整数倍に乗らない範囲（測る点は Stop の先まで1点多く、保存は Stop まで）
@@ -414,7 +414,7 @@ class TestRecordKeepsCorrection(InstCase):
             ok = np.isfinite(want)
             np.testing.assert_allclose(got1[ok] - want[ok], want_corr[ok], atol=1e-3)
         # 周波数の範囲を途中から切り出しても、補正は同じ周波数の値で足す（設計H §3.1）
-        from pygigast.core.storage.h5file import extract_h5
+        from namibench.core.storage.h5file import extract_h5
 
         cut = extract_h5(path, self.root / "cut.h5", f_range_hz=(100_300_000, 100_800_000))
         with H5Record(cut) as h:

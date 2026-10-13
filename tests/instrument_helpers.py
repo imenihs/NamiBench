@@ -5,9 +5,9 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.api.local import _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.api.local import _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
 
 SERIAL = _SimulatorBackend.SERIAL
 

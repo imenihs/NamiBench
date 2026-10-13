@@ -8,14 +8,14 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.core import bandplan as bp
-from pygigast.core import colormaps
-from pygigast.core import waterfall as wf
-from pygigast.core.palette import Palette
-from pygigast.core.record_frames import SegmentLevels
-from pygigast.core.storage.h5file import MemorySegment, segment_meta_for, write_h5
-from pygigast.core.storage.record_source import RecordSource
-from pygigast.core.storage.recording import Recorder, new_recording_path
+from namibench.core import bandplan as bp
+from namibench.core import colormaps
+from namibench.core import waterfall as wf
+from namibench.core.palette import Palette
+from namibench.core.record_frames import SegmentLevels
+from namibench.core.storage.h5file import MemorySegment, segment_meta_for, write_h5
+from namibench.core.storage.record_source import RecordSource
+from namibench.core.storage.recording import Recorder, new_recording_path
 from tests.test_storage import adopted, header, pattern, raw_sweep
 
 MHZ = 1_000_000
@@ -166,7 +166,7 @@ class DisplayViewTest(unittest.TestCase):
     """画面の中身（Qt と Web が同じものを使う: ui_qt/display_view.py）のうち、ほかの設計と組むところ。"""
 
     def test_zero_span_and_density_unit(self):
-        from pygigast.ui_qt import display_view, texts
+        from namibench.ui_qt import display_view, texts
 
         st = {"sweep": {"start_hz": 100, "stop_hz": 100, "step_hz": 0, "points": 500}, "view": {"layout": "density"}}
         why = texts.REASON_TEXTS["layout_zero_span"]
@@ -196,7 +196,7 @@ class PlaybackLockViewTest(unittest.TestCase):
     """再生中に使えない、ライブの条件を変える欄（Qt と Web が同じ理由を出す: 設計P §5）。"""
 
     def test_locks_and_reasons(self):
-        from pygigast.ui_qt import display_view, screen_model, texts
+        from namibench.ui_qt import display_view, screen_model, texts
 
         why = texts.REASON_TEXTS["playback_active"]
         live = {"sweep": {"step_hz": 1000, "mode": "sa"}, "undo": {"undo_blocked": None, "redo_blocked": None}}
@@ -319,9 +319,9 @@ class RecordSourceTest(unittest.TestCase):
         a = adopted(points=11)
         meta = segment_meta_for(raw_sweep(0, a))
         h = header()
-        from pygigast.core.devices.base import load_profile
-        from pygigast.core.instrument import GIGAST_PROFILE_PATH
-        from pygigast.core.level.convert import LevelConverter
+        from namibench.core.devices.base import load_profile
+        from namibench.core.instrument import GIGAST_PROFILE_PATH
+        from namibench.core.level.convert import LevelConverter
 
         prof = load_profile(GIGAST_PROFILE_PATH)
         h.profile = prof

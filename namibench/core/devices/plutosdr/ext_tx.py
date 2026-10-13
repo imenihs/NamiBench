@@ -179,7 +179,7 @@ class ExtTxStream:
         self.close_ctx = None  # 閉じる側から渡されたコンテキスト（止める順の後に、このスレッドが閉じる）
         self.end_reason: Optional[str] = None
         self.end_detail: Optional[str] = None
-        self._thread = threading.Thread(target=self._run, name="pygigast-ext-tx", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="namibench-ext-tx", daemon=True)
 
     # ---- ほかのスレッドから ----
     @property

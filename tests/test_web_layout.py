@@ -48,7 +48,7 @@ TABS = ("trace", "marker", "view", "source")
 
 def layout_config() -> dict:
     """数える台本に渡す値（Qt の sizes.py と同じ値。sizes.py は Qt を読まずに読める）。"""
-    from pygigast.ui_qt import sizes
+    from namibench.ui_qt import sizes
 
     return {
         "H": {"L": sizes.H_L, "M": sizes.H_M, "S": sizes.H_S}, "rowH": sizes.ROW_H,
@@ -349,10 +349,10 @@ class App:
     """
 
     def __init__(self, lan: bool = True, rtl: bool = False, zero_span: bool = False, pluto: bool = False) -> None:
-        from pygigast.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
-        from pygigast.api.web import server as web
-        from pygigast.core.devices.base import load_profile
-        from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
+        from namibench.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
+        from namibench.api.web import server as web
+        from namibench.core.devices.base import load_profile
+        from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
 
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
@@ -368,8 +368,8 @@ class App:
             backends["rtlsdr"] = _RtlSdrBackend(lib_factory=lambda: lib)
         if pluto:
             # PlutoSDR（libiio の偽物）: 受信の欄（トレース・掃引のタブ）と送信の欄（信号源のタブ）が出る
-            from pygigast.api.local import _PlutoSdrBackend
-            from pygigast.core.devices.plutosdr.fake import FakeIioLib
+            from namibench.api.local import _PlutoSdrBackend
+            from namibench.core.devices.plutosdr.fake import FakeIioLib
 
             plib = FakeIioLib()
             backends["plutosdr"] = _PlutoSdrBackend(lib_factory=lambda: plib)
@@ -730,7 +730,7 @@ class WebLayoutTest(unittest.TestCase):
     def test_menu_bar_and_top_bar_same_as_qt(self):
         """メニューバーの題・並び・アクセスキー・項目は Qt と同じ表から同じ形（ui_qt/menu_table.table と同じ作り方）。
         広い画面の上段には Qt に無い部品（「≡」・保存・PNG）を置かない（狭い画面だけ「≡」）。"""
-        from pygigast.ui_qt import texts as T
+        from namibench.ui_qt import texts as T
 
         open_app(self.page, self.app, *SIZES[0])
         titles = self.page.ev("[...document.querySelectorAll('.menubar .menubar-title')].filter((e) => e.getClientRects().length)"
@@ -839,7 +839,7 @@ class WebLayoutTest(unittest.TestCase):
         self.page.settle()
         text = self.page.ev("(() => { const b = document.querySelector('[data-sec=files] [data-act=open]');"
                             " b.click(); return b.textContent.trim(); })()")
-        from pygigast.ui_qt import texts as T
+        from namibench.ui_qt import texts as T
 
         self.assertEqual(text, T.MENU_ITEMS["open"])
         self.assertEqual(self.page.ev("window.__opened"), 1)
@@ -1123,7 +1123,7 @@ class WebLayoutRefValueTest(unittest.TestCase):
 class TopFreqSampleTest(unittest.TestCase):
     def test_web_uses_the_same_samples_as_qt(self):
         """上段の周波数の欄の幅を決める見本は Qt と Web で同じ（同じ並び・同じ文字。同じ幅になる: U-09）。"""
-        from pygigast.api.web import server as web
+        from namibench.api.web import server as web
 
         js = (Path(web.UI_WEB_DIR) / "app.js").read_text(encoding="utf-8")
         samples = json.dumps(layout_config()["freqSamples"], ensure_ascii=False)

@@ -18,9 +18,9 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.api.web import server as web
-from pygigast.api.web import view
-from pygigast.ui_qt import texts as qt_texts
+from namibench.api.web import server as web
+from namibench.api.web import view
+from namibench.ui_qt import texts as qt_texts
 from tests import test_web_settings as tws_settings
 
 UI_WEB = tws_settings.UI_WEB
@@ -157,7 +157,7 @@ function vm() {
 """
 
     def test_same_rules_as_qt(self):
-        from pygigast.ui_qt import texts
+        from namibench.ui_qt import texts
 
         p = {
             "unit": texts.notice_view({"code": "level_unit_changed", "detail": {"unit": "dBuV"}}),

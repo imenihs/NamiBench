@@ -8,8 +8,8 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-from pygigast.ui_qt import nf_view, texts
-from pygigast.ui_qt.plot_layers import marked_points
+from namibench.ui_qt import nf_view, texts
+from namibench.ui_qt.plot_layers import marked_points
 from tests.qt_layout_check import problems
 from tests.test_ui_qt_support import UiBase
 
@@ -136,7 +136,7 @@ class NfQtTest(UiBase):
         self.assertLess(self.win.ref_level() - peak, 2 * 10.0)
         ref = self.win.ref_level()
         # PNG（画面と同じ縦軸・単位で焼き込む: 設計I）
-        from pygigast.ui_qt import png_data, png_export
+        from namibench.ui_qt import png_data, png_export
 
         data = png_data.build(self.win)
         c = data["conditions"]

@@ -5,9 +5,9 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.instrument import CommandError
-from pygigast.core.storage.h5file import FileHeader, TraceData, save_snapshot
-from pygigast.core.types import FreqAxis, Quantity, ValueKind
+from namibench.core.instrument import CommandError
+from namibench.core.storage.h5file import FileHeader, TraceData, save_snapshot
+from namibench.core.types import FreqAxis, Quantity, ValueKind
 from tests.instrument_helpers import SERIAL, InstrumentCase
 
 START, STOP = 50_000_000, 200_000_000

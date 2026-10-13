@@ -174,7 +174,7 @@ class RtlTcpMixin:
         self._rtl_env.reset()
         self._rtl_ticker_stop = threading.Event()
         self._rtl_ticker = threading.Thread(target=self._rtltcp_ticker, args=(self._rtl_ticker_stop,),
-                                            name="pygigast-rtltcp-tick", daemon=True)
+                                            name="namibench-rtltcp-tick", daemon=True)
         self._rtl_ticker.start()
         self._notice("rtltcp_started", {"port": actual, "bind": bind})
 

@@ -16,14 +16,14 @@ from typing import Optional
 
 import numpy as np
 
-from pygigast.core.devices.base import load_profile
-from pygigast.core.level.calibration import Calibration, CalibrationStore, default_root, load_file
-from pygigast.core.level.convert import ConvertedLevels, LevelConverter, dbm_to_watt
-from pygigast.core.level.legacy_cal import LegacyCal, LegacyCalError, parse_legacy_cal, vb_val
-from pygigast.core.types import AdoptedSweep, FreqAxis, Mode
+from namibench.core.devices.base import load_profile
+from namibench.core.level.calibration import Calibration, CalibrationStore, load_file
+from namibench.core.level.convert import ConvertedLevels, LevelConverter, dbm_to_watt
+from namibench.core.level.legacy_cal import LegacyCal, LegacyCalError, parse_legacy_cal, vb_val
+from namibench.core.types import AdoptedSweep, FreqAxis, Mode
 
 ROOT = Path(__file__).resolve().parent.parent
-PROFILE = load_profile(ROOT / "pygigast" / "core" / "devices" / "gigast" / "profile.json")
+PROFILE = load_profile(ROOT / "namibench" / "core" / "devices" / "gigast" / "profile.json")
 REAL_BA205 = ROOT / "ref" / "original" / "ba205.txt"
 REAL_GIGAST = ROOT / "ref" / "original" / "GigaSt" / "gigast.txt"
 
@@ -364,15 +364,6 @@ class TestCalibrationStore(unittest.TestCase):
                 store.set_current("TEST0001", "../x.json")
             with self.assertRaises(FileNotFoundError):
                 store.set_current("TEST0001", "missing.json")
-
-    def test_default_root(self):
-        import os
-        from unittest import mock
-        with mock.patch.dict(os.environ, {"APPDATA": str(Path("X:/appdata"))}):
-            self.assertEqual(default_root(), Path("X:/appdata") / "pyGigaSt" / "calibration")
-        env = {k: v for k, v in os.environ.items() if k != "APPDATA"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            self.assertEqual(default_root(), Path.home() / ".pygigast" / "calibration")
 
 
 # ---------------------------------------------------------------------------

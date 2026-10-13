@@ -4,7 +4,7 @@ import contextlib
 import io
 import unittest
 
-from pygigast.ui_qt import texts
+from namibench.ui_qt import texts
 from tests.instrument_helpers import InstrumentCase
 
 

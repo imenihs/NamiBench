@@ -7,10 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import texts
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import texts
 from tests.device_helpers import FakeGigaBackend
 from tests.test_web_server import WebServerTest, _Server
 
@@ -81,7 +81,7 @@ class WebDevicesTest(unittest.TestCase):
         進み具合の棒と処理の帯）。画面の部品に棒と「やめる」が無く、表示の中身にも持たない。"""
         import re
         from pathlib import Path
-        html = (Path(__file__).resolve().parents[1] / "pygigast" / "ui_web" / "index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).resolve().parents[1] / "namibench" / "ui_web" / "index.html").read_text(encoding="utf-8")
         block = re.search(r'<div class="refquick".*?\n\s*</div>', html, re.S).group(0)
         self.assertNotIn("<progress", block)
         self.assertNotIn("cancel", block)

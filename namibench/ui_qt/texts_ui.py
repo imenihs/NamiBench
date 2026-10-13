@@ -102,7 +102,7 @@ MENU_ITEMS = {
     "settings_keys": "キー操作…",
     "web_connect": "ブラウザからの接続のしかた…",
     "help_keys": "キー操作の一覧",
-    "help_about": "pyGigaSt について",
+    "help_about": "NamiBench について",
 }
 
 # メニューの並び（None は区切り線）。mode は MODES から作る
@@ -215,7 +215,7 @@ TEMPLATES = {
     "status_rtltcp_error": "rtl_tcp: ポート {port} を開けません（{reason}）",
     "status_listen": "聞いている: {freq}・{mode}",
     "status_tasks": "処理中 {n} 件",
-    "status_ws_down": "pyGigaSt の PC と切れています（繋ぎ直しています）",
+    "status_ws_down": "NamiBench の PC と切れています（繋ぎ直しています）",
     "source_sg": "SG 出力中 {freq}",
     "source_tg": "TG 出力中",
     "waiting_sweep_end": "いまの掃引の終わりを待っています（残り約 {s} 秒）",

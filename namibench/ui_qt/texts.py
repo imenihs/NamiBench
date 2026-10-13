@@ -240,6 +240,9 @@ NOTICES = {
     "record_error": "記録の書き込みで失敗がありました",
     "reference_unreadable": "前回使っていた基準が読めません（選び直してください）",
     "settings_reset": "設定ファイルが読めないため初期値で起動しました",
+    # 名前を変える前のデータの場所からのコピー（core/paths.py）。{from}・{to}・{reason} は notice_text が埋める
+    "data_moved": "データの置き場所を {from} から {to} へコピーしました（前の場所は残しています）",
+    "data_move_failed": "データを {to} へコピーできなかったので、前の場所 {from} のまま使います（{reason}）",
     "settings_unwritable": "設定ファイルに書けません",
     "device_profile_changed": "機器が変わったので、掃引条件をその機器に合わせました",
     "rtlsdr_overload": "入力が振り切れています。利得を下げてください（振り切れた間の値は正しくありません）",
@@ -282,7 +285,7 @@ ERRORS = {
     "unknown_backend": "その種類の機器は使えません",
     "unknown_mode": "そのモードはありません",
     "bad_arguments": "操作の値が正しくありません",
-    "server_unreachable": "pyGigaSt の PC に繋がりません",
+    "server_unreachable": "NamiBench の PC に繋がりません",
     "rtlsdr_dll_not_found": "RTL-SDR の DLL（rtlsdr.dll）が見つかりません",
     "rtlsdr_not_connected": "RTL-SDR に繋がっていません",
     "rtlsdr_level_needs_manual_gain": "レベルの校正は利得を手動にしてから行います（AGC の間は利得が分からないため）",
@@ -359,6 +362,9 @@ def notice_text(n: dict) -> str:
         text += tpl("paren", text=f"{d['ratio'] * 100:.2f} %")
     elif code == "auto_connected" and d.get("name"):
         text = tpl("auto_connected", name=d["name"])
+    elif code in ("data_moved", "data_move_failed"):
+        for k in ("from", "to", "reason"):
+            text = text.replace("{" + k + "}", str(d.get(k) or ""))
     elif code == "reference_value_changed" and d.get("name") is not None:
         # 基準の値を直した（設計E §6.7）。0 dB に戻したときも値を言う
         text = tpl("ref_value_changed", name=d["name"], value=ref_value_text(d.get("value_db")) or "0.0 dB")
@@ -721,7 +727,7 @@ TASK_CANCELLED = {
 
 STORAGE_ERRORS = {
     "cannot_open": "ファイルを開けません",
-    "not_pygigast_file": "pyGigaSt の保存ファイルではありません",
+    "not_namibench_file": "NamiBench の保存ファイルではありません",
     "unsupported_version": "知らない版のファイルなので開きません",
     "axis_mismatch": "周波数の点が違うトレースは同じ表に並べられません",
     "unit_mismatch": "電力と比のトレースは同じ単位で書き出せません",

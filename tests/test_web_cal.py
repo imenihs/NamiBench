@@ -13,8 +13,8 @@ import time
 import unittest
 import urllib.request
 
-from pygigast.ui_qt import cal_view
-from pygigast.ui_qt import texts as qt_texts
+from namibench.ui_qt import cal_view
+from namibench.ui_qt import texts as qt_texts
 from tests import test_web_server as tws
 from tests.test_level import build_legacy_bytes
 from tests.test_web_layout import App, EdgePage, edge_available, open_app

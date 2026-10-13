@@ -17,15 +17,15 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from pygigast.core.storage import Cancelled, StorageError, WriterThread, adopted_from_dict, adopted_to_dict
-from pygigast.core.storage.export import (
+from namibench.core.storage import Cancelled, StorageError, WriterThread, adopted_from_dict, adopted_to_dict
+from namibench.core.storage.export import (
     LAYOUT_LONG,
     convert_unit,
     export_record_csv,
     export_touchstone,
     export_traces_csv,
 )
-from pygigast.core.storage.h5file import (
+from namibench.core.storage.h5file import (
     LAYOUT_IMAGE_CANCEL,
     LAYOUT_NF,
     OVERVIEW_LEVELS,
@@ -39,14 +39,14 @@ from pygigast.core.storage.h5file import (
     split_raw,
     write_h5,
 )
-from pygigast.core.storage.recording import (
+from namibench.core.storage.recording import (
     Recorder,
     RecordingReader,
     convert_to_h5,
     find_unfinished,
     new_recording_path,
 )
-from pygigast.core.types import AdoptedSweep, Adjustment, FreqAxis, Mode, Quantity, RawSweep, ValueKind
+from namibench.core.types import AdoptedSweep, Adjustment, FreqAxis, Mode, Quantity, RawSweep, ValueKind
 
 ROOT = Path(__file__).resolve().parent.parent
 MHZ = 1_000_000
@@ -265,7 +265,7 @@ class TestH5(TmpCase):
             f.attrs["format"] = "something-else"
         with self.assertRaises(StorageError) as cm:
             H5Record(p)
-        self.assertEqual(cm.exception.code, "not_pygigast_file")
+        self.assertEqual(cm.exception.code, "not_namibench_file")
         p2 = save_snapshot(self.dir / "v.h5", header(), raw_sweep(0, adopted()))
         with h5py.File(p2, "a") as f:
             f.attrs["version"] = np.int64(99)
@@ -390,7 +390,7 @@ class TestRecording(TmpCase):
             sys.path.insert(0, {str(ROOT)!r})
             sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
             from test_storage import adopted, raw_sweep, header
-            from pygigast.core.storage.recording import Recorder
+            from namibench.core.storage.recording import Recorder
             def done(s):
                 print(s.sweeps_committed, flush=True)
             rec = Recorder({str(path)!r}, header(), on_committed=done)

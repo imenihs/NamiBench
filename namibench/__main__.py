@@ -1,7 +1,7 @@
-"""`python -m pygigast` の起動（設計A §2.1）。
+"""`python -m namibench` の起動（設計A §2.1）。
 
-- `pygigast`: Qt 画面＋コア。`--web` を付けると Web の口も同時に開く（設定の「Web の口」でも開ける）
-- `pygigast serve`: 画面なしでコアと Web の口だけ（Raspberry Pi などに繋いでブラウザから使う）
+- `python -m namibench`: Qt 画面＋コア。`--web` を付けると Web の口も同時に開く（設定の「Web の口」でも開ける）
+- `python -m namibench serve`: 画面なしでコアと Web の口だけ（Raspberry Pi などに繋いでブラウザから使う）
 
 Web の口は既定で自分の PC（127.0.0.1）だけに開く。LAN へ開くのは `--lan` か Qt の設定で明示したときだけで、
 そのときは認証が要る（設計A §4.3.2）。`serve --lan` はコンソールに URL・文字の QR・認証番号を出し、
@@ -22,7 +22,7 @@ def _add_web_args(p: argparse.ArgumentParser) -> None:
 
 
 def serve_main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="pygigast serve", description="画面を出さずに起動し、ブラウザから使う")
+    p = argparse.ArgumentParser(prog="python -m namibench serve", description="画面を出さずに起動し、ブラウザから使う")
     _add_web_args(p)
     p.add_argument("--traffic-log", metavar="DIR", help="機器との送受信を記録するフォルダ（既定は記録しない）")
     p.add_argument("--simulator", action="store_true", help="起動したらシミュレータに繋ぐ（実機が無いときの確認用）")
@@ -55,7 +55,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv and argv[0] == "serve":
         return serve_main(argv[1:])
-    p = argparse.ArgumentParser(prog="pygigast")
+    p = argparse.ArgumentParser(prog="python -m namibench")
     p.add_argument("--traffic-log", metavar="DIR", help="機器との送受信を記録するフォルダ（既定は記録しない）")
     p.add_argument("--web", action="store_true", help="デスクトップの画面と一緒に、ブラウザからも使えるようにする")
     _add_web_args(p)

@@ -10,8 +10,8 @@
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import QMessageBox
 
-from pygigast.ui_qt import texts
-from pygigast.ui_qt.tab_display import PREF_NOTIFY_RATIO
+from namibench.ui_qt import texts
+from namibench.ui_qt.tab_display import PREF_NOTIFY_RATIO
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000

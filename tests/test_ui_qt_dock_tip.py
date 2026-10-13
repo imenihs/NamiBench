@@ -37,9 +37,9 @@ class FileTraceColorOrderTest(unittest.TestCase):
         import re
         from pathlib import Path
 
-        from pygigast.core.palette import FILE_TRACE_ORDER
+        from namibench.core.palette import FILE_TRACE_ORDER
 
-        js = (Path(__file__).resolve().parents[1] / "pygigast/ui_web/app.js").read_text(encoding="utf-8")
+        js = (Path(__file__).resolve().parents[1] / "namibench/ui_web/app.js").read_text(encoding="utf-8")
         m = re.search(r"const FILE_COLORS = \[([^\]]*)\]", js)
         self.assertIsNotNone(m)
         web = tuple(x.strip().strip('"') for x in m.group(1).split(","))

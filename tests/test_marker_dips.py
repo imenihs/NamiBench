@@ -15,9 +15,9 @@ from unittest import mock
 
 import numpy as np
 
-from pygigast.core.devices.simulator import device as simdev
-from pygigast.core.instrument import CommandError
-from pygigast.core.marker import (
+from namibench.core.devices.simulator import device as simdev
+from namibench.core.instrument import CommandError
+from namibench.core.marker import (
     BASE_MAX,
     DIP,
     LEFT,

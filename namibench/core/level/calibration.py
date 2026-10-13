@@ -219,14 +219,6 @@ def _as_int_hz(v) -> int:
 # ---- 置き場所 ----
 
 
-def default_root() -> Path:
-    """校正データの置き場所（利用者のデータの場所）。Windows は %APPDATA%\\pyGigaSt\\calibration。"""
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        return Path(appdata) / "pyGigaSt" / "calibration"
-    return Path.home() / ".pygigast" / "calibration"
-
-
 class CalibrationStore:
     """<root>/<シリアル番号>/<日時>.json に校正を足していき、current.json が使うものを指す。
 

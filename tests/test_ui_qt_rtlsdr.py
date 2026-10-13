@@ -5,10 +5,10 @@
 """
 import unittest
 
-from pygigast.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import texts
+from namibench.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import texts
 from tests.test_instrument_rtlsdr import FakeLib, free_port
 from tests.test_ui_qt_support import UiBase
 

@@ -5,12 +5,12 @@ Web の口は空いているポート（0）で 127.0.0.1 / 0.0.0.0 に本当に
 import unittest
 from unittest import mock
 
-from pygigast.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
-from pygigast.api.web import access as acc
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import texts
-from pygigast.ui_qt.settings_dialog import SettingsDialog
+from namibench.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
+from namibench.api.web import access as acc
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import texts
+from namibench.ui_qt.settings_dialog import SettingsDialog
 from tests.test_rtlsdr_fit_gain import GainLib, TONE_HZ
 from tests.test_ui_qt_rtlsdr import MHZ, RtlUiBase
 from tests.test_ui_qt_support import UiBase

@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.marker import (
+from namibench.core.marker import (
     BASE_MAX,
     BASE_NOISE_FLOOR,
     DIP,
@@ -34,7 +34,7 @@ from pygigast.core.marker import (
     threshold_band,
     top_peaks,
 )
-from pygigast.core.types import FreqAxis, Frame, Quantity, ValueKind
+from namibench.core.types import FreqAxis, Frame, Quantity, ValueKind
 
 MHZ = 1_000_000
 

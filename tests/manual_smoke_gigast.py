@@ -22,12 +22,12 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from pygigast.core.devices.gigast import protocol
-from pygigast.core.devices.gigast.driver import GigaStDevice
-from pygigast.core.devices.gigast.traffic_log import TrafficLog
-from pygigast.core.devices.gigast.transport import discover
-from pygigast.core.sweep import image_reject as ir
-from pygigast.core.types import AdoptedSweep, DeviceDisconnected, FreqAxis, Mode, SweepDiscarded, SweepSegment
+from namibench.core.devices.gigast import protocol
+from namibench.core.devices.gigast.driver import GigaStDevice
+from namibench.core.devices.gigast.traffic_log import TrafficLog
+from namibench.core.devices.gigast.transport import discover
+from namibench.core.sweep import image_reject as ir
+from namibench.core.types import AdoptedSweep, DeviceDisconnected, FreqAxis, Mode, SweepDiscarded, SweepSegment
 
 PROFILE = protocol.default_profile()
 

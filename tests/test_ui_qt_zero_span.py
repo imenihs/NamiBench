@@ -8,8 +8,8 @@
 """
 import numpy as np
 
-from pygigast.core import report_layout as rl
-from pygigast.ui_qt import png_data, png_export, screen_model, texts
+from namibench.core import report_layout as rl
+from namibench.ui_qt import png_data, png_export, screen_model, texts
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000

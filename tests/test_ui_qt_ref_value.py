@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from pygigast.ui_qt import screen_model, texts
+from namibench.ui_qt import screen_model, texts
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000

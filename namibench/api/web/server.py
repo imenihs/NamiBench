@@ -29,13 +29,14 @@ from typing import Any, Optional
 
 import numpy as np
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ... import __version__
 from ..local import CommandError, LocalApi
 from ...core import colormaps
 from ...core import report_layout as rl
+from ...resources import ICON_SVG
 from ...ui_qt import screen_model, source_view, texts
 from . import view
 from .access import KIND_OPERATE, Access
@@ -306,6 +307,8 @@ class _Hub:
         # 掃引の進み具合（設計J §4.13）。最新の1つだけを送り、途中から繋いだ画面にも送る
         self._progress_seq = 0
         self.last_progress: Optional[str] = None
+        # 起動の間の知らせ（データの置き場所を移した など）。後から繋いだ画面にも1回ずつ渡す
+        self.startup_notices: list[str] = []
         self.last_state: Optional[dict] = None
         # 測定中のトレース 1〜4 の最新の中身（間引く前）。マウスの位置の読み値（設計G §2）に使う
         self.latest_traces: dict[str, dict] = {}
@@ -390,6 +393,8 @@ class _Hub:
             for c in self.clients:
                 c.put_latest("sweep_progress", self._progress_seq, text)
         else:
+            if kind == "notice" and payload.get("startup"):
+                self.startup_notices.append(text)
             for c in self.clients:
                 c.put_notice(text)
 
@@ -483,7 +488,7 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
         finally:
             hub.stop()
 
-    app = FastAPI(title="pyGigaSt", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None,
+    app = FastAPI(title="NamiBench", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)
     app.state.hub = hub
 
@@ -503,6 +508,11 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
             return JSONResponse(error_body(e), status_code=500)
         return JSONResponse(to_jsonable(view.state_view(st)))
 
+    @app.get("/favicon.svg")
+    async def favicon() -> FileResponse:
+        # Qt の窓のアイコンと同じ絵（namibench/resources: 絵は1か所に置く）
+        return FileResponse(ICON_SVG, media_type="image/svg+xml")
+
     @app.get("/api/v1/texts")
     async def get_texts() -> JSONResponse:
         return JSONResponse(texts_json())
@@ -511,7 +521,7 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
     async def get_info(request: Request) -> JSONResponse:
         who = gs(request)
         # 配色の初期値（J §4.4）とトレースの線の描き方（設計F §9）も渡す（Qt と同じ値を1か所から: U-09）
-        return JSONResponse({"app": "pyGigaSt", "version": __version__, "lan": access.lan,
+        return JSONResponse({"app": "NamiBench", "version": __version__, "lan": access.lan,
                              "trace_rate_hz": trace_rate_hz,
                              "palettes": {"dark": rl.DARK_DEFAULT, "light": rl.LIGHT_DEFAULT},
                              "line_styles": rl.LINE_STYLES,
@@ -660,6 +670,8 @@ def create_app(api: LocalApi, *, trace_rate_hz: float = TRACE_RATE_HZ, lan: bool
                               dumps({"kind": "state", "payload": view.state_view(st)}))
             if hub.last_progress is not None:
                 client.put_latest("sweep_progress", 0, hub.last_progress)  # 届いていれば後の知らせが上書きする
+            for text in hub.startup_notices:
+                client.put_notice(text)
             # 途中から繋いだ画面にも、いま出ているトレースを描かせる
             ids: list = [t["number"] for t in st.get("traces", []) if t.get("has_values") and t.get("visible")]
             ids += [tr["id"] for f in st.get("files", []) for tr in f.get("traces", [])]

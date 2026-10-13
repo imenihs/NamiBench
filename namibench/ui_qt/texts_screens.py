@@ -170,7 +170,7 @@ LABELS.update({
     "ref_delete_confirm": "基準「{name}」を消します。取り直すまで戻せません。",
     "ref_delete_in_use": "\nいま使っている基準なので、TG の表示は受けた電力（dBm）に戻ります。",
     # ---- ファイル（Qt の窓。Web はダウンロード・アップロード）
-    "filter_h5": "pyGigaSt の保存ファイル (*.h5);;すべて (*)",
+    "filter_h5": "NamiBench の保存ファイル (*.h5);;すべて (*)",
     "filter_csv": "CSV (*.csv);;すべて (*)",
     "filter_txt": "テキスト (*.txt);;すべて (*)",
     "open_dialog": "開く",

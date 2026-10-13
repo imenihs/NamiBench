@@ -7,11 +7,11 @@ from collections import deque
 import numpy as np
 import serial
 
-from pygigast.core.devices.gigast import protocol
-from pygigast.core.devices.gigast.driver import GigaStDevice, Reconnector
-from pygigast.core.devices.gigast.protocol import Limits
-from pygigast.core.devices.gigast.transport import PortInfo, Transport
-from pygigast.core.types import DeviceDisconnected, DeviceIdentity, InvalidSweep, Mode, SweepDiscarded
+from namibench.core.devices.gigast import protocol
+from namibench.core.devices.gigast.driver import GigaStDevice, Reconnector
+from namibench.core.devices.gigast.protocol import Limits
+from namibench.core.devices.gigast.transport import PortInfo, Transport
+from namibench.core.types import DeviceDisconnected, DeviceIdentity, InvalidSweep, Mode, SweepDiscarded
 
 from tests.gigast_helpers import adopted
 

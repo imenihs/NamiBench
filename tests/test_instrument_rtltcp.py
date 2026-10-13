@@ -4,7 +4,7 @@ import struct
 import time
 import unittest
 
-from pygigast.core.rtltcp import encode_header
+from namibench.core.rtltcp import encode_header
 from tests.instrument_helpers import InstrumentCase
 
 

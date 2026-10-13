@@ -5,9 +5,9 @@ import unittest
 
 import numpy as np
 
-from pygigast.api.local import _SimulatorBackend
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.listen import AUDIO_RATE, LISTEN_TUNER_OFFSET_HZ
+from namibench.api.local import _SimulatorBackend
+from namibench.core.instrument_common import CommandError
+from namibench.core.listen import AUDIO_RATE, LISTEN_TUNER_OFFSET_HZ
 from tests.test_instrument_rtlsdr import MHZ, RtlSdrCase
 
 

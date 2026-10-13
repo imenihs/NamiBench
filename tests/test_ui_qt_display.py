@@ -7,8 +7,8 @@ import numpy as np
 from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QPushButton
 
-from pygigast.ui_qt import texts
-from pygigast.ui_qt.waterfall_view import ROW_PX
+from namibench.ui_qt import texts
+from namibench.ui_qt.waterfall_view import ROW_PX
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000
@@ -280,8 +280,8 @@ class PlaybackFollowTest(UiBase):
                   what="単発")
 
     def test_delta_span_colour_range_and_density_in_playback(self):
-        from pygigast.core import waterfall as wf
-        from pygigast.ui_qt.display_view import density_seconds_text
+        from namibench.core import waterfall as wf
+        from namibench.ui_qt.display_view import density_seconds_text
 
         self.cmd("connect", backend="simulator", serial="SIM00001")
         self.cmd("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)

@@ -18,16 +18,16 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.api.local import _PlutoSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
-from pygigast.core.devices.rtlsdr import driver as rtl_driver
-from pygigast.core.devices.rtlsdr import spectrum
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import DeviceError, Mode, SweepDiscarded, SweepRequest
+from namibench.api.local import _PlutoSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
+from namibench.core.devices.rtlsdr import driver as rtl_driver
+from namibench.core.devices.rtlsdr import spectrum
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.core.instrument_common import CommandError
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import DeviceError, Mode, SweepDiscarded, SweepRequest
 from tests.test_ref_gain_table import A, B, table
 
 MHZ = 1_000_000

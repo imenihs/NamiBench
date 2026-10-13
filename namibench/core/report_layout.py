@@ -44,7 +44,7 @@ from . import zero_span as zs
 from .trace import formats
 from .units import format_freq, level_text, minus_sign, time_axis_unit
 
-META_KEY = "pygigast"
+META_KEY = "pygigast"  # 保存した PNG の印（tEXt のキー）。前に書いた画像を読めるよう、アプリの名前を変えてもこの文字のまま
 
 # 条件の行のイメージ除去（設計F §7.3。画像にだけ焼き込む語: 画面の選択肢と同じ名前）
 IMAGE_REJECT_WORDS = {"accurate": "正確", "fast": "スピード", "off": "なし"}
@@ -267,7 +267,7 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
     when = [format_measured_at(data.get("measured_at"))]
     if dev_text:
         when.append(dev_text)
-    when.append(f"pyGigaSt {data.get('app_version') or app_version}".strip())
+    when.append(f"NamiBench {data.get('app_version') or app_version}".strip())
     rows["when"] = ("text", when)
 
     cond: list[str] = []

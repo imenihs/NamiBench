@@ -8,12 +8,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import screen_exttx, screen_pluto, texts
+from namibench.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import screen_exttx, screen_pluto, texts
 from tests import test_web_server as wst
 from tests.exttx_helpers import RawClient, free_port
 from tests.test_web_server import UI_WEB, _Server

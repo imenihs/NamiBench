@@ -5,15 +5,15 @@
 """
 import unittest
 
-from pygigast.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.units import minus_sign
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import texts
-from pygigast.ui_qt.fields import DbChoiceField, range_note
-from pygigast.ui_qt.texts_pluto import PLUTO_LABELS
+from namibench.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.units import minus_sign
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import texts
+from namibench.ui_qt.fields import DbChoiceField, range_note
+from namibench.ui_qt.texts_pluto import PLUTO_LABELS
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000
@@ -200,7 +200,7 @@ class TestPlutoPanels(PlutoUiBase):
 
     def test_settings_page_and_device_list(self):
         self.connect_pluto(single=False)
-        from pygigast.ui_qt.settings_dialog import SettingsDialog
+        from namibench.ui_qt.settings_dialog import SettingsDialog
 
         dlg = SettingsDialog(self.win)
         try:

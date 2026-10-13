@@ -19,7 +19,6 @@ import copy
 import dataclasses
 import datetime
 import inspect
-import os
 import queue
 import threading
 import time
@@ -50,8 +49,9 @@ from .instrument_rtltcp import RtlTcpMixin
 from .instrument_step import RUN_STATE as STEP_RUN_STATE, StepSweepMixin
 from .instrument_view import ViewMixin
 from .instrument_zerospan import ZeroSpanMixin, zero_span_request
-from .level.calibration import Calibration, CalibrationStore, default_root
+from .level.calibration import Calibration, CalibrationStore
 from .level.convert import LevelConverter
+from .paths import prepare_data_root
 from .settings import Settings
 from .level.legacy_cal import LegacyCalError, parse_legacy_cal
 from .sweep import image_reject as ir
@@ -69,7 +69,7 @@ from .types import (
 )
 
 __all__ = ["Instrument", "CommandError", "DeviceBackend", "GIGAST_PROFILE_PATH", "adopted_to_dict",
-           "adjustments_to_list", "app_data_root"]
+           "adjustments_to_list"]
 
 GIGAST_PROFILE_PATH = Path(__file__).parent / "devices" / "gigast" / "profile.json"
 
@@ -81,12 +81,6 @@ WAIT_PROGRESS_THRESHOLD_S = 1.0
 SHUTDOWN_DEVICE_WAIT_S = 3.0
 
 EventCallback = Callable[[str, dict], None]
-
-
-def app_data_root() -> Path:
-    """利用者のデータの場所（校正は設計D §5.2、覚えた機器は設計B §7.3）。"""
-    base = os.environ.get("APPDATA")
-    return Path(base) / "pyGigaSt" if base else Path.home() / ".pygigast"
 
 
 _sweep_key = sweep_key
@@ -115,7 +109,7 @@ class _DeviceWorker(threading.Thread):
     """
 
     def __init__(self, device: Device, post: Callable[[tuple], None]) -> None:
-        super().__init__(name="pygigast-device", daemon=True)
+        super().__init__(name="namibench-device", daemon=True)
         self.device = device
         self._post = post
         self._cv = threading.Condition()
@@ -220,13 +214,22 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         # 起動時のプロファイル（GigaSt）。同じ機種の機器をつないだときはこれと見積もりをそのまま使う
         self._base_profile = self._profile
         self._base_timing_fn = timing_fn
-        root = data_root or app_data_root()
-        self._root = Path(root)
+        # 起動の間に出た知らせ（購読より先に出るので、購読した相手ごとに1回ずつ渡す: subscribe）
+        self._startup_notices: list[tuple[str, dict]] = []
+        if data_root is None:
+            # アプリの起動: 利用者のデータの場所を決める（名前を変える前の場所からのコピーもここ: core/paths.py）
+            prepared = prepare_data_root()
+            root = prepared.path
+            if prepared.notice is not None:
+                self._startup_notices.append(prepared.notice)
+        else:
+            root = Path(data_root)
+        self._root = root
         self._settings = Settings(root / "settings.json")
         # 起動時は前回終了時の状態に戻る（設計O §1.2）。戻せない値は掃引条件モデルが直して知らせる
         saved = self._settings.get("state")
         self._adopted = self._restore_state(saved)
-        self._cal_store = CalibrationStore(cal_root or default_root())
+        self._cal_store = CalibrationStore(cal_root or root / "calibration")
         self._cal: Optional[Calibration] = None
         self._converter = LevelConverter(self._profile, None)
 
@@ -276,7 +279,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._init_devices()
         self._init_step(saved if isinstance(saved, dict) else None)  # SG のステップ掃引（設計L §1.3）
 
-        self._thread = threading.Thread(target=self._loop, name="pygigast-control", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="namibench-control", daemon=True)
         self._running = True
         self._thread.start()
         # rtl_tcp を出すと決めていれば起動時に始める（設計Q §4.3。既定は出さない）
@@ -285,7 +288,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._q.put(("call", self._start_exttx_if_enabled))
         if self._settings.load_problem:
             # 設定が読めなかったことを1回知らせる（設計O §1.1。黙って初期値にしない）
-            self._q.put(("notice", "settings_reset", self._settings.load_problem))
+            self._startup_notices.append(("settings_reset", self._settings.load_problem))
 
     def _restore_state(self, st: Optional[dict]) -> AdoptedSweep:
         base = self._model.default()
@@ -341,6 +344,9 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         """イベントを購読する。cb は制御スレッドから呼ばれる（画面へは API 層が渡し直す）。"""
         with self._subs_lock:
             self._subs.append(cb)
+        if self._startup_notices:
+            # 起動の間の知らせは購読より先に出るので、この相手にだけ制御スレッドから渡し直す
+            self._q.put(("startup_notices", cb))
 
         def unsubscribe() -> None:
             with self._subs_lock:
@@ -446,6 +452,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             pass
         elif kind == "notice":
             self._notice(item[1], item[2])
+        elif kind == "startup_notices":
+            self._send_startup_notices(item[1])
 
     # ---- 状態とイベント
 
@@ -465,6 +473,17 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
 
     def _notice(self, code: str, detail: Optional[dict] = None) -> None:
         self._emit("notice", {"code": code, "detail": detail or {}, "time": time.time()})
+
+    def _send_startup_notices(self, cb: EventCallback) -> None:
+        """起動の間の知らせを購読した相手1つへ渡す。startup の印は、Web の口が後から繋いだ画面へ渡し直すのに使う。"""
+        with self._subs_lock:
+            if cb not in self._subs:
+                return  # 渡す前に購読をやめた
+        for code, detail in self._startup_notices:
+            try:
+                cb("notice", {"code": code, "detail": detail, "time": time.time(), "startup": True})
+            except Exception:  # noqa: BLE001 — 画面側の失敗で制御スレッドを止めない
+                traceback.print_exc()
 
     def _snapshot(self) -> dict:
         cal = None

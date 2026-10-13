@@ -13,10 +13,10 @@ import unittest
 
 import numpy as np
 
-from pygigast.core import step_sweep as ss
-from pygigast.core.storage import Cancelled
-from pygigast.core.storage.h5file import H5Record
-from pygigast.ui_qt import screen_model, source_view, texts
+from namibench.core import step_sweep as ss
+from namibench.core.storage import Cancelled
+from namibench.core.storage.h5file import H5Record
+from namibench.ui_qt import screen_model, source_view, texts
 from tests.instrument_helpers import InstrumentCase
 
 MHZ = 1_000_000

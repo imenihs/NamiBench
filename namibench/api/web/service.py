@@ -68,7 +68,7 @@ class WebService:
             app = create_app(self.api, trace_rate_hz=self.trace_rate_hz, access=self.access, files=self.files)
             cfg = uvicorn.Config(app, host=host, port=self.port, log_level="critical", lifespan="on", ws="auto")
             server = uvicorn.Server(cfg)
-            th = threading.Thread(target=server.run, name="pygigast-web", daemon=True)
+            th = threading.Thread(target=server.run, name="namibench-web", daemon=True)
             th.start()
             end = time.monotonic() + START_TIMEOUT_S
             while not server.started and th.is_alive() and time.monotonic() < end:

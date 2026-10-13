@@ -222,7 +222,7 @@
         this.info = await GSApi.getJson("/api/v1/info");
         this.colors = this.info.palettes;
       } catch (e) { this.note(null, String(e)); }
-      if (this.part) document.title = `pyGigaSt — ${this.partTitle}`;
+      if (this.part) document.title = `NamiBench — ${this.partTitle}`;
       this.watchKeyStore();
       this.watchPolarityStore();
       this.watchThSpec();
@@ -1016,7 +1016,7 @@
 
       // ------------------------------------------------------------ 別ウィンドウ（J §4.3.2）
       detach(p) {
-        const w = window.open(`/?part=${p}`, `pygigast_${p}`, "width=960,height=640");
+        const w = window.open(`/?part=${p}`, `namibench_${p}`, "width=960,height=640");
         if (!w) { this.note(null, W("popup_blocked")); return; }
         this.detachedWins = this.detachedWins || {};
         this.detachedWins[p] = w;

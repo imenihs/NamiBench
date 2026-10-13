@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.core.instrument_common import CommandError
+from namibench.core.instrument_common import CommandError
 from tests.instrument_helpers import InstrumentCase
 
 MHZ = 1_000_000
@@ -232,7 +232,7 @@ class FormatTest(S11Case):
 
     def test_old_state_with_trace_formats_is_read_as_the_axis_format(self):
         self.inst.shutdown()
-        from pygigast.core.settings import Settings
+        from namibench.core.settings import Settings
 
         st = Settings(self.root / "data" / "settings.json")
         state = dict(st.get("state") or {})
@@ -466,7 +466,7 @@ class UnitFollowTest(S11Case):
 
     def test_xy_y_rows_carry_the_unit_they_were_set_in(self):
         """表の Y の行は置いたときの単位で書く: 電力で置いた −50 を SWR の縦軸で「SWR」と書かない。"""
-        from pygigast.ui_qt import marker_rows
+        from namibench.ui_qt import marker_rows
         self.s11_reference()
         self.call("set_mode", mode="sa")
         self.single()

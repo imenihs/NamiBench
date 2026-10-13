@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.listen import AUDIO_RATE, Demodulator, Mode
+from namibench.core.listen import AUDIO_RATE, Demodulator, Mode
 
 FS = 2_048_000  # RTL-SDR のサンプリング速度（設計Q §6.3）
 OFFSET = 300_000  # 聞いている間のチューナーの中心からのずれ（設計Q §6.8）

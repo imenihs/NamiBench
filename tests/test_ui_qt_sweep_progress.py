@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect
 
-from pygigast.ui_qt import sizes
+from namibench.ui_qt import sizes
 from tests.qt_layout_check import problems
 from tests.test_ui_qt_support import UiBase
 
@@ -25,7 +25,7 @@ def grect(w) -> QRect:
 class SizeValuesTest(unittest.TestCase):
     def test_web_has_the_same_values(self):
         """棒の高さと割合の文字の幅は Qt（sizes.py）と Web（style.css の :root）で同じ値（U-09）。"""
-        css = (ROOT / "pygigast" / "ui_web" / "style.css").read_text(encoding="utf-8")
+        css = (ROOT / "namibench" / "ui_web" / "style.css").read_text(encoding="utf-8")
         root = re.search(r":root\s*{(.*?)}", css, re.S).group(1)
         have = {m.group(1): int(m.group(2)) for m in re.finditer(r"(--[\w-]+):\s*(\d+)(?:px)?;", root)}
         self.assertEqual(have.get("--progress-bar-h"), sizes.PROGRESS_BAR_H)

@@ -7,8 +7,8 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.devices.gigast import image_reject as ir
-from pygigast.core.devices.gigast import protocol
+from namibench.core.devices.gigast import image_reject as ir
+from namibench.core.devices.gigast import protocol
 
 P = protocol.default_profile()
 CPD = ir.counts_per_db(P)  # 1dB あたりの count（1986/80）
