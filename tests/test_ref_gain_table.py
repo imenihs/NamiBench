@@ -16,9 +16,9 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL
-from pygigast.core.level import pluto_gain as pg
-from pygigast.core.normalize import (
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL
+from namibench.core.level import pluto_gain as pg
+from namibench.core.normalize import (
     ReferenceBuildError,
     load_reference,
     new_reference,
@@ -26,10 +26,10 @@ from pygigast.core.normalize import (
     save_reference,
     segment_from_frames,
 )
-from pygigast.core.normalize import apply as ap
-from pygigast.core.normalize.reference import PROFILE_GAIN_TABLE
-from pygigast.core.storage.h5file import H5Record
-from pygigast.core.types import Mode
+from namibench.core.normalize import apply as ap
+from namibench.core.normalize.reference import PROFILE_GAIN_TABLE
+from namibench.core.storage.h5file import H5Record
+from namibench.core.types import Mode
 from tests.test_normalize import CONN, MHZ, PROFILE, SERIAL, apply, db_to_w, linear_db, make_frame
 from tests.test_pluto_gain import InstCase
 

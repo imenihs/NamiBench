@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# pyGigaSt environment setup for Linux / macOS (and Git Bash on Windows).
+# NamiBench environment setup for Linux / macOS (and Git Bash on Windows).
 #
 # Usage:
-#   ./setup.sh                    use PYGIGAST_PYTHON, or python3 on PATH
+#   ./setup.sh                    use NAMIBENCH_PYTHON, or python3 on PATH
 #   ./setup.sh /path/to/python3   use this Python as the base
 #
 # Creates ./venv (virtualenv if available, otherwise venv) and installs requirements.txt.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PY="${1:-${PYGIGAST_PYTHON:-python3}}"
+PY="${1:-${NAMIBENCH_PYTHON:-python3}}"
 
 if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 13) else 1)' >/dev/null 2>&1; then
     echo "Python 3.13 or later was not found. Pass the path: ./setup.sh /path/to/python3" >&2

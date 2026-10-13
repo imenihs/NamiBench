@@ -7,11 +7,11 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.marker import Kind, MarkerTable, ThresholdSetting
-from pygigast.core.marker import analysis as an
-from pygigast.core.marker.markers import marker_from_def, marker_to_def
-from pygigast.core.trace import Trace, TraceAction, formats
-from pygigast.core.types import AdoptedSweep, FreqAxis, Frame, Mode, Quantity, ValueKind
+from namibench.core.marker import Kind, MarkerTable, ThresholdSetting
+from namibench.core.marker import analysis as an
+from namibench.core.marker.markers import marker_from_def, marker_to_def
+from namibench.core.trace import Trace, TraceAction, formats
+from namibench.core.types import AdoptedSweep, FreqAxis, Frame, Mode, Quantity, ValueKind
 
 MHZ = 1_000_000
 
@@ -110,7 +110,7 @@ class TraceFormatTest(unittest.TestCase):
 
     def test_legacy_axis_format(self):
         """前の版の状態・プリセットのトレースごとの形式は、縦軸を決めていたトレースの形式として読む。"""
-        from pygigast.core.instrument_display import legacy_axis_format
+        from namibench.core.instrument_display import legacy_axis_format
 
         rows = [{"number": 2, "visible": True, "format": "swr"}, {"number": 1, "visible": False, "format": "gamma"}]
         self.assertEqual(legacy_axis_format({}, rows), "swr")  # 表示している一番番号の小さいトレース

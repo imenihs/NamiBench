@@ -13,8 +13,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-from pygigast.ui_qt import cal_view, texts
-from pygigast.ui_qt.cal_dialog import CHECK, MEASURE, PREPARE, SAVED
+from namibench.ui_qt import cal_view, texts
+from namibench.ui_qt.cal_dialog import CHECK, MEASURE, PREPARE, SAVED
 from tests.qt_layout_check import problems
 from tests.test_level import build_legacy_bytes
 from tests.test_ui_qt_support import UiBase

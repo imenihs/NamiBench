@@ -13,8 +13,8 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.instrument_playback import _recorded_value
-from pygigast.core.marker.markers import Y_KIND_NF, Y_KIND_TG
+from namibench.core.instrument_playback import _recorded_value
+from namibench.core.marker.markers import Y_KIND_NF, Y_KIND_TG
 from tests.instrument_helpers import InstrumentCase
 from tests.test_instrument_waterfall import sweep_once, wait_state
 
@@ -102,8 +102,8 @@ class KindsTest(FollowCase):
 
     def test_kinds_persist_in_defs(self):
         """XY の Y の基準の id としきい値の基準の id は、前回終了時の状態（マーカー表の置き方）に残る。"""
-        from pygigast.core.marker import MarkerTable, ThresholdSetting
-        from pygigast.core.marker.markers import Kind
+        from namibench.core.marker import MarkerTable, ThresholdSetting
+        from namibench.core.marker.markers import Kind
 
         t = MarkerTable()
         t.set_xy(y1=20.0, y2=-3.0)
@@ -121,7 +121,7 @@ class KindsTest(FollowCase):
 
     def test_tg_threshold_is_not_converted_to_swr(self):
         """TG の比で決めたしきい値は反射の形式へ直さない（数字のまま。S11 の形式の換算は S11 の比の値だけ）。"""
-        from pygigast.core.marker import ThresholdSetting
+        from namibench.core.marker import ThresholdSetting
 
         th = ThresholdSetting(-3.0, "below", fmt="db", power=False, ref="A")
         self.assertEqual(th.level_in("swr"), -3.0)

@@ -15,8 +15,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from pygigast.core.storage import CONDITIONS_VERSION, StorageError, adopted_from_dict, adopted_to_dict
-from pygigast.core.storage.h5file import (
+from namibench.core.storage import CONDITIONS_VERSION, StorageError, adopted_from_dict, adopted_to_dict
+from namibench.core.storage.h5file import (
     LAYOUT_IMAGE_REJECT,
     H5Record,
     MemorySegment,
@@ -26,8 +26,8 @@ from pygigast.core.storage.h5file import (
     split_raw,
     write_h5,
 )
-from pygigast.core.storage.recording import Recorder, RecordingReader, convert_to_h5, new_recording_path
-from pygigast.core.types import RawSegment, RawSweep
+from namibench.core.storage.recording import Recorder, RecordingReader, convert_to_h5, new_recording_path
+from namibench.core.types import RawSegment, RawSweep
 
 from tests.test_storage import MHZ, adopted, header, pattern
 

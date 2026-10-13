@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import unittest
 
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.gigast.driver import timing_fn
-from pygigast.core.devices.rtlsdr import driver as rtl
-from pygigast.core.instrument import GIGAST_PROFILE_PATH
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import Mode, SweepRequest
-from pygigast.ui_qt import screen_model
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.gigast.driver import timing_fn
+from namibench.core.devices.rtlsdr import driver as rtl
+from namibench.core.instrument import GIGAST_PROFILE_PATH
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import Mode, SweepRequest
+from namibench.ui_qt import screen_model
 from tests.test_ui_qt_support import UiBase
 
 MHZ = 1_000_000
@@ -93,7 +93,7 @@ class QtRbwFieldTest(UiBase):
         self.assertIn("TG", item.toolTip())
         self.assertIn("TG", combo.toolTip())
         # 上段の下に「180kHz で測っています」を出し続けない
-        from pygigast.ui_qt import texts
+        from namibench.ui_qt import texts
         self.assertFalse(any("で測っています" in line for line in texts.condition_lines(self.state())))
         self.cmd("set_mode", mode="sa")
         self.pump(0.5)

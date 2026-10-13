@@ -11,10 +11,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pygigast.api.web import server as web
-from pygigast.ui_qt import texts as qt_texts
+from namibench.api.web import server as web
+from namibench.ui_qt import texts as qt_texts
 
-UI_WEB = Path(__file__).resolve().parent.parent / "pygigast" / "ui_web"
+UI_WEB = Path(__file__).resolve().parent.parent / "namibench" / "ui_web"
 
 
 class CountTextsTest(unittest.TestCase):
@@ -72,8 +72,8 @@ class TraceLineMarkupTest(unittest.TestCase):
 
     def test_state_view_file_legend_and_png_lines(self):
         """参照トレースの凡例の文字は Qt と同じ関数、PNG の凡例の見本はトレースの線（参照トレースは参照トレースの線）。"""
-        from pygigast.api.web import view
-        from pygigast.core import report_layout as rl
+        from namibench.api.web import view
+        from namibench.core import report_layout as rl
 
         f = {"file_id": "F1", "name": "a.h5", "created_at": "2026-10-03T10:20:30", "device_serial": "SIM00001",
              "traces": [{"id": "F1.1", "number": 1}, {"id": "F1.2", "number": 2}]}
@@ -96,7 +96,7 @@ class LineStrokeJsTest(unittest.TestCase):
     """graph.js の線の幅と切れ目が core/report_layout.stroke と同じ（Qt と Web が同じ線を描く: 設計F §9）。"""
 
     def test_same_as_python(self):
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         script = (
             "globalThis.window = globalThis; require(process.argv[1]);"
@@ -182,7 +182,7 @@ console.log(JSON.stringify(out));
 """
 
     def test_same_rules_as_qt(self):
-        from pygigast.ui_qt.fields import COUNT_CHOICES, COUNT_MAX
+        from namibench.ui_qt.fields import COUNT_CHOICES, COUNT_MAX
 
         with tempfile.TemporaryDirectory() as d:
             tj = Path(d) / "texts.json"

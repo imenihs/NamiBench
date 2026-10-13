@@ -2,8 +2,8 @@
 import struct
 import unittest
 
-from pygigast.core.devices.gigast import protocol
-from pygigast.core.types import InvalidSweep, Mode
+from namibench.core.devices.gigast import protocol
+from namibench.core.types import InvalidSweep, Mode
 
 from tests.gigast_helpers import adopted
 

@@ -5,9 +5,9 @@ import unittest
 
 from PySide6.QtCore import Qt
 
-from pygigast.core.units import format_freq
-from pygigast.ui_qt import texts
-from pygigast.ui_qt.texts_exttx import EXT_TX_LABELS
+from namibench.core.units import format_freq
+from namibench.ui_qt import texts
+from namibench.ui_qt.texts_exttx import EXT_TX_LABELS
 from tests.exttx_helpers import LO, RawClient, free_port
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 

@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.ui_qt import texts
+from namibench.ui_qt import texts
 from tests.test_ui_qt_support import UiBase
 
 
@@ -398,7 +398,7 @@ class TraceLineQtTest(UiBase):
         self.assertEqual([s.item for s in samples], [c1, c2])
         self.assertEqual(samples[0].item.opts["pen"].dashPattern(), [8.0, 4.0])
         # PNG の中身にも線が入る（PNG は画面と同じ線で描く: I §3）
-        from pygigast.ui_qt import png_data
+        from namibench.ui_qt import png_data
 
         data = png_data.build(self.win)
         self.assertEqual([(t["number"], t["line"]) for t in data["traces"]], [(1, "dash"), (2, "solid")])

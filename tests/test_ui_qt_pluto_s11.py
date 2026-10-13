@@ -14,10 +14,10 @@ import threading
 import time
 import unittest
 
-from pygigast.core.devices.plutosdr.fake import FakeIioLib
-from pygigast.core.types import SweepDiscarded
-from pygigast.ui_qt import screen_pluto, screen_s11, texts
-from pygigast.ui_qt.texts_pluto import PLUTO_LABELS
+from namibench.core.devices.plutosdr.fake import FakeIioLib
+from namibench.core.types import SweepDiscarded
+from namibench.ui_qt import screen_pluto, screen_s11, texts
+from namibench.ui_qt.texts_pluto import PLUTO_LABELS
 from tests.test_pluto_s11 import bridge
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 

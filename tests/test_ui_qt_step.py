@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from pygigast.ui_qt import png_export, texts
-from pygigast.ui_qt.mark_bands import LEAK_SYMBOL
+from namibench.ui_qt import png_export, texts
+from namibench.ui_qt.mark_bands import LEAK_SYMBOL
 from tests.qt_layout_check import problems
 from tests.test_ui_qt_support import UiBase
 

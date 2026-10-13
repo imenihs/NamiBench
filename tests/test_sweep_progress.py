@@ -15,14 +15,14 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.devices.gigast import protocol
-from pygigast.core.devices.gigast.driver import GigaStDevice
-from pygigast.core.devices.gigast.protocol import Limits
-from pygigast.core.devices.gigast.transport import Transport
-from pygigast.core.devices.simulator.device import SimulatorDevice
-from pygigast.core.instrument import DeviceBackend, Instrument
-from pygigast.core.instrument_progress import MIN_INTERVAL_S, SHOW_ABOVE_S, ProgressReporter, SweepProgressMixin
-from pygigast.core.types import DeviceIdentity, Mode, SweepDiscarded
+from namibench.core.devices.gigast import protocol
+from namibench.core.devices.gigast.driver import GigaStDevice
+from namibench.core.devices.gigast.protocol import Limits
+from namibench.core.devices.gigast.transport import Transport
+from namibench.core.devices.simulator.device import SimulatorDevice
+from namibench.core.instrument import DeviceBackend, Instrument
+from namibench.core.instrument_progress import MIN_INTERVAL_S, SHOW_ABOVE_S, ProgressReporter, SweepProgressMixin
+from namibench.core.types import DeviceIdentity, Mode, SweepDiscarded
 from tests.gigast_helpers import adopted
 from tests.instrument_helpers import InstrumentCase
 from tests.test_gigast_driver import TRAILER, FakeSerial, make_device, payload
@@ -126,7 +126,7 @@ class DeviceCountsTest(unittest.TestCase):
 
     def test_rtlsdr_counts_positions(self):
         # RTL-SDR は周波数を動かした段（位置）の数。本体が使う包み（RtlSdrInstrumentDevice）を通しても同じ
-        from pygigast.core.instrument_rtlsdr import open_rtlsdr_device
+        from namibench.core.instrument_rtlsdr import open_rtlsdr_device
         from tests.test_rtlsdr_driver import MHZ, Base
 
         b = Base()

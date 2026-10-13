@@ -10,12 +10,12 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr import ext_tx
-from pygigast.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib, FakePluto
-from pygigast.core.devices.rtlsdr.driver import fft_at_rate, fft_params, make_plan
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import DeviceDisconnected, Mode, SweepRequest
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr import ext_tx
+from namibench.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib, FakePluto
+from namibench.core.devices.rtlsdr.driver import fft_at_rate, fft_params, make_plan
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import DeviceDisconnected, Mode, SweepRequest
 
 MHZ = 1_000_000
 LO = 1_575_420_000
@@ -296,7 +296,7 @@ class TestStream(StreamCase):
         model = SweepModel(prof, pd.timing_fn(prof))
         tg = model.apply(SweepRequest(mode=Mode.TG, start_hz=1574 * MHZ, stop_hz=1577 * MHZ,
                                       edited=("start_hz", "stop_hz")), model.default())
-        from pygigast.core.types import InvalidSweep
+        from namibench.core.types import InvalidSweep
 
         with self.assertRaises(InvalidSweep):
             self.dev.measure(tg)

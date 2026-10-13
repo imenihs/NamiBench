@@ -7,10 +7,10 @@ import random
 import unittest
 from pathlib import Path
 
-from pygigast.core.sweep.model import POINTS_AUTO, SweepModel
-from pygigast.core.types import AdoptedSweep, Mode, SweepRequest
+from namibench.core.sweep.model import POINTS_AUTO, SweepModel
+from namibench.core.types import AdoptedSweep, Mode, SweepRequest
 
-PROFILE_PATH = Path(__file__).resolve().parents[1] / "pygigast" / "core" / "devices" / "gigast" / "profile.json"
+PROFILE_PATH = Path(__file__).resolve().parents[1] / "namibench" / "core" / "devices" / "gigast" / "profile.json"
 
 MHZ = 1_000_000
 KHZ = 1_000

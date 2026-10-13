@@ -14,14 +14,14 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.api.local import _RtlSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.rtlsdr import dll
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.instrument_rtlsdr import RtlSdrCalibrationStore
-from pygigast.core.devices.rtlsdr import levels as rtl_levels
-from pygigast.core.storage.h5file import H5Record
+from namibench.api.local import _RtlSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.rtlsdr import dll
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.core.instrument_common import CommandError
+from namibench.core.instrument_rtlsdr import RtlSdrCalibrationStore
+from namibench.core.devices.rtlsdr import levels as rtl_levels
+from namibench.core.storage.h5file import H5Record
 
 FS = 2_048_000
 MHZ = 1_000_000

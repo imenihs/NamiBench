@@ -4,9 +4,9 @@ import unittest
 
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from pygigast.core import report_layout as rl
-from pygigast.core.palette import BASES
-from pygigast.ui_qt import keymap, texts
+from namibench.core import report_layout as rl
+from namibench.core.palette import BASES
+from namibench.ui_qt import keymap, texts
 from tests.test_ui_qt_support import UiBase
 
 

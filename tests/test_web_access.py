@@ -19,20 +19,20 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.api.web import access as acc
-from pygigast.api.web import routes_access, server as web
-from pygigast.api.web import webfiles
-from pygigast.api.web.service import WebService, console_block, console_command
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import texts
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.api.web import access as acc
+from namibench.api.web import routes_access, server as web
+from namibench.api.web import webfiles
+from namibench.api.web.service import WebService, console_block, console_command
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import texts
 from tests.test_web_server import _Server
 
 LAN_CLIENT = ("192.168.1.50", 50000)
 LAN_SERVER = ("192.168.1.10", 8080)
 HOST = "192.168.1.10:8080"
-PROMPT = "pyGigaSt の PC に出ている6桁の認証番号を入れてください"
+PROMPT = "NamiBench の PC に出ている6桁の認証番号を入れてください"
 
 
 class Clock:
@@ -236,6 +236,11 @@ class GuardTest(unittest.TestCase):
         self.assertIn("auth.js", page)
         self.assertNotIn("app.js", page)
         self.assertEqual(asgi(self.app, "GET", "/auth.js")[0], 200)
+        # 認証の画面のアイコン（Qt の窓と同じ絵）も札なしで出す
+        self.assertIn('href="favicon.png"', page)
+        st, h, body = asgi(self.app, "GET", "/favicon.png")
+        self.assertEqual((st, h["content-type"][0]), (200, "image/png"))
+        self.assertTrue(body.startswith(b"\x89PNG"))
         for path in ("/api/v1/state", "/api/v1/texts", "/api/v1/info", "/app.js", "/index.html?x"):
             st, _, body = asgi(self.app, "GET", path.split("?")[0])
             if path.startswith("/index.html"):
@@ -258,7 +263,7 @@ class GuardTest(unittest.TestCase):
         st, _, body = asgi(self.app, "GET", "/api/v1/info", {"cookie": cookie})
         self.assertEqual(json.loads(body)["access"], {"kind": "operate", "local": False})
         # 札は別のポートのアプリには渡らない名前（クッキーはポートを区別しないため）
-        self.assertTrue(cookie.startswith("pygigast_s_8080="))
+        self.assertTrue(cookie.startswith("namibench_s_8080="))
 
     def test_wrong_codes_block(self):
         code = self.access.new_code()
@@ -629,7 +634,7 @@ console.log(JSON.stringify(out));
 """
 
     def test_order(self):
-        js = Path(__file__).resolve().parent.parent / "pygigast" / "ui_web" / "app_files.js"
+        js = Path(__file__).resolve().parent.parent / "namibench" / "ui_web" / "app_files.js"
         got = json.loads(subprocess.run(["node", "-e", self.SCRIPT, str(js)], capture_output=True, text=True,
                                         timeout=30, check=True, encoding="utf-8").stdout)
         self.assertEqual(got["normal"], [None, {"id": "F1", "name": "a.csv"}])

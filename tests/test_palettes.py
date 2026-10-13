@@ -10,9 +10,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pygigast.core.palette import BASES, PALETTE_FORMAT, Palette, PaletteStore
-from pygigast.core.presets import PresetError
-from pygigast.core.instrument_common import CommandError
+from namibench.core.palette import BASES, PALETTE_FORMAT, Palette, PaletteStore
+from namibench.core.presets import PresetError
+from namibench.core.instrument_common import CommandError
 from tests.instrument_helpers import InstrumentCase
 
 

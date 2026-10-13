@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pygigast.core.devices.rtlsdr import dll
-from pygigast.core.types import DeviceDisconnected
+from namibench.core.devices.rtlsdr import dll
+from namibench.core.types import DeviceDisconnected
 
 
 class TestFind(unittest.TestCase):

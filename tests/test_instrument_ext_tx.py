@@ -17,10 +17,10 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.devices.plutosdr.fake import FAKE_URI
-from pygigast.core.exttx.protocol import HEADER, encode_hello
-from pygigast.core.instrument_common import CommandError
-from pygigast.ui_qt import screen_model, texts
+from namibench.core.devices.plutosdr.fake import FAKE_URI
+from namibench.core.exttx.protocol import HEADER, encode_hello
+from namibench.core.instrument_common import CommandError
+from namibench.ui_qt import screen_model, texts
 from tests.exttx_helpers import FS, LO, MHZ, RawClient, free_port, load_example_client, tone_iq
 from tests.test_plutosdr import PlutoCase, fake_lib
 
@@ -164,7 +164,7 @@ class TestRefuse(ExtCase):
     def test_calibrating(self):
         done = threading.Event()
 
-        from pygigast.core.instrument_pluto_cal import _PlutoCalJob
+        from namibench.core.instrument_pluto_cal import _PlutoCalJob
 
         def busy():
             self.inst._cal_job = object.__new__(_PlutoCalJob)  # 利得の補正を測っている形（中身は使わない）
@@ -240,7 +240,7 @@ class TestFlow(ExtCase):
         self.assertEqual(st["plutosdr"]["tx_on"], "ext")
         self.assertAlmostEqual(s["power_dbfs"], 20 * np.log10(0.3), delta=0.1)
         item = texts.ext_status_item(st)
-        from pygigast.core.units import format_freq
+        from namibench.core.units import format_freq
 
         self.assertEqual(item["text"], "外部 IQ 出力中 " + format_freq(LO))
         self.assertTrue(item["stop"])
@@ -453,7 +453,7 @@ class TestStopPaths(ExtCase):
 
 class TestRtlTcp(ExtCase):
     def test_decimator_paused_and_rebuilt(self):
-        from pygigast.core.rtltcp import RtlTcpServer  # noqa: F401
+        from namibench.core.rtltcp import RtlTcpServer  # noqa: F401
 
         p = free_port()
         self.call("rtltcp_set", enabled=True, port=p)
@@ -596,7 +596,7 @@ class TestSettingsSurviveRestart(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from pygigast.core.settings import Settings
+        from namibench.core.settings import Settings
 
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "settings.json"

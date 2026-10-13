@@ -6,10 +6,10 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.core.instrument import CommandError
-from pygigast.core.storage.h5file import FileHeader, H5Record
-from pygigast.core.storage.recording import Recorder, RecordingReader
-from pygigast.core.types import AdoptedSweep, FreqAxis, Mode, RawSweep
+from namibench.core.instrument import CommandError
+from namibench.core.storage.h5file import FileHeader, H5Record
+from namibench.core.storage.recording import Recorder, RecordingReader
+from namibench.core.types import AdoptedSweep, FreqAxis, Mode, RawSweep
 from tests.instrument_helpers import SERIAL, InstrumentCase
 
 
@@ -61,7 +61,7 @@ class ReferenceTest(InstrumentCase):
 
     def test_wide_reference_ignores_span_lock(self):
         # Span 固定中でも「広く取る」の範囲はアプリが決めた範囲のまま（固定の規則を通さない: C §5.12 の one_shot）
-        from pygigast.core.normalize.reference import wide_range_hz
+        from namibench.core.normalize.reference import wide_range_hz
         self.connect(100_000_000, 200_000_000)
         self.call("set_mode", mode="tg")
         self.call("set_sweep", span_lock=True)

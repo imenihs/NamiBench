@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings  # noqa: E402
 
-from pygigast.ui_qt.prefs import UiPrefs  # noqa: E402
+from namibench.ui_qt.prefs import UiPrefs  # noqa: E402
 from tests.test_ui_qt_support import UiBase  # noqa: E402
 
 
@@ -42,7 +42,7 @@ class AppStartTest(unittest.TestCase):
         """アプリの起動の口は、残る覚え書き（QSettings）を画面に渡す（渡さないと閉じたら全部消える）。"""
         from unittest import mock
 
-        from pygigast.ui_qt import app as qt_app
+        from namibench.ui_qt import app as qt_app
 
         got = {}
 
@@ -71,7 +71,7 @@ class AppStartTest(unittest.TestCase):
 class WebPrefsRestartTest(UiBase):
     def test_web_port_survives_restart(self):
         path = Path(tempfile.mkdtemp()) / "prefs.ini"
-        from pygigast.ui_qt.main_window import MainWindow
+        from namibench.ui_qt.main_window import MainWindow
 
         win = MainWindow(self.api, prefs=ini_prefs(path), check_unfinished=False)
         try:
@@ -97,8 +97,8 @@ class LanAtStartTest(UiBase):
         """前回 LAN に出していても、起動したときは出さず、そのことを知らせる（黙って切らない）。"""
         from PySide6.QtWidgets import QMessageBox
 
-        from pygigast.ui_qt import texts
-        from pygigast.ui_qt.main_window import MainWindow
+        from namibench.ui_qt import texts
+        from namibench.ui_qt.main_window import MainWindow
 
         path = Path(tempfile.mkdtemp()) / "prefs.ini"
         p = ini_prefs(path)
@@ -118,7 +118,7 @@ class LanAtStartTest(UiBase):
     def test_no_message_when_lan_was_off(self):
         from PySide6.QtWidgets import QMessageBox
 
-        from pygigast.ui_qt.main_window import MainWindow
+        from namibench.ui_qt.main_window import MainWindow
 
         path = Path(tempfile.mkdtemp()) / "prefs.ini"
         win = MainWindow(self.api, prefs=ini_prefs(path), check_unfinished=False)

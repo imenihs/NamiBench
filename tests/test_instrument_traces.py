@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.instrument import CommandError
+from namibench.core.instrument import CommandError
 from tests.instrument_helpers import InstrumentCase
 
 
@@ -259,8 +259,8 @@ class TraceLineTest(InstrumentCase):
 
     def test_old_or_broken_saved_line_is_solid(self):
         # 前の版の設定（線が無い）・読めない線は実線にし、ほかの欄は戻す
-        from pygigast.core.instrument_display import apply_trace_settings
-        from pygigast.core.trace import Trace
+        from namibench.core.instrument_display import apply_trace_settings
+        from namibench.core.trace import Trace
 
         t = Trace(2)
         apply_trace_settings(t, {"number": 2, "action": "max_hold", "count": 4, "visible": True})

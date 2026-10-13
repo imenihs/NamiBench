@@ -20,8 +20,8 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.api.web import server as web
-from pygigast.ui_qt import display_view, texts
+from namibench.api.web import server as web
+from namibench.ui_qt import display_view, texts
 from tests.test_web_server import UI_WEB, WebServerTest
 
 MHZ = 1_000_000
@@ -159,7 +159,7 @@ class WaterfallJsTest(unittest.TestCase):
     """waterfall.js の resample が Qt の waterfall_view.resample と同じ列を作る（Qt と Web で同じ絵: P §8）。"""
 
     def test_resample_same_as_python(self):
-        from pygigast.ui_qt.waterfall_view import resample
+        from namibench.ui_qt.waterfall_view import resample
 
         rng = np.random.default_rng(1)
         cases = []
@@ -338,7 +338,7 @@ class WebPlaybackFollowTest(unittest.TestCase):
             time.sleep(0.05)
 
     def test_delta_span_colour_range_and_density_in_playback(self):
-        from pygigast.core import waterfall as wf
+        from namibench.core import waterfall as wf
 
         app, p = self.app, self.page
         app.call("set_sweep", start_hz=50 * MHZ, stop_hz=200 * MHZ)

@@ -11,10 +11,10 @@ import unittest
 
 import numpy as np
 
-from pygigast.core import display_marks as dm
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH
-from pygigast.ui_qt import peak_view, screen_model, source_view, texts
+from namibench.core import display_marks as dm
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH
+from namibench.ui_qt import peak_view, screen_model, source_view, texts
 from tests.instrument_helpers import InstrumentCase
 
 MHZ = 1_000_000

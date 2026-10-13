@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.devices.rtlsdr import spectrum as sp
+from namibench.core.devices.rtlsdr import spectrum as sp
 
 FS = 2_048_000
 NS = (128, 256, 512, 1024, 2048, 4096, 8192, 16384)

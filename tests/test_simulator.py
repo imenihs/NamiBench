@@ -6,14 +6,14 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.core.devices.gigast import protocol
-from pygigast.core.devices.simulator.device import (
+from namibench.core.devices.gigast import protocol
+from namibench.core.devices.simulator.device import (
     ReplayIndex,
     SimulatorDevice,
     SynthConfig,
     dbm_to_ad,
 )
-from pygigast.core.types import DeviceDisconnected, InvalidSweep, Mode, SweepDiscarded
+from namibench.core.types import DeviceDisconnected, InvalidSweep, Mode, SweepDiscarded
 
 from tests.gigast_helpers import adopted
 
@@ -73,7 +73,7 @@ class TestSynth(unittest.TestCase):
 
     def test_moving_spur_shift_comes_from_profile(self):
         # b3=1 で動くスプリアスの位置は機種のプロファイルの値（画面の漏れの印と同じ値: 設計L §1.4）
-        from pygigast.core.devices.gigast.protocol import default_profile
+        from namibench.core.devices.gigast.protocol import default_profile
 
         prof = default_profile()
         self.assertEqual(prof["internal_spurs_hz"]["fixed_b3_shift_hz"], {"956000000": -10000000})

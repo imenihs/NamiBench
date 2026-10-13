@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pygigast.core.normalize import (
+from namibench.core.normalize import (
     KIND_WIDE,
     ReferenceBuildError,
     ReferenceFileError,
@@ -24,8 +24,8 @@ from pygigast.core.normalize import (
     swr,
     wide_range_hz,
 )
-from pygigast.core.normalize import apply as ap
-from pygigast.core.types import AdoptedSweep, FreqAxis, Frame, Mode, Quantity, ValueKind
+from namibench.core.normalize import apply as ap
+from namibench.core.types import AdoptedSweep, FreqAxis, Frame, Mode, Quantity, ValueKind
 
 MHZ = 1_000_000
 PROFILE = {"model": "test-model", "source": {"band_edges_hz": [1000 * MHZ, 2000 * MHZ, 3000 * MHZ]}}

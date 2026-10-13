@@ -11,12 +11,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
-from pygigast.api.web import server as web
-from pygigast.core import report_layout as rl
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import texts
+from namibench.api.local import LocalApi, _RtlSdrBackend, _SimulatorBackend
+from namibench.api.web import server as web
+from namibench.core import report_layout as rl
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import texts
 from tests.test_instrument_rtlsdr import FakeLib, free_port
 from tests.test_web_server import UI_WEB, WebServerTest, _Server, decode_trace
 

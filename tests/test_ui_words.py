@@ -13,10 +13,10 @@ import re
 import unittest
 from pathlib import Path
 
-from pygigast.ui_qt import screen_model, texts
+from namibench.ui_qt import screen_model, texts
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG = ROOT / "pygigast"
+PKG = ROOT / "namibench"
 
 # 使わない語（J §4.9 の表の左の列。開発者の俗称・内部の名前・設計の番号・プログラムの言葉）。
 # 大文字と小文字を区別しない（"FFT" も "fft" も機種名で言い換える: J §4.9 の表）

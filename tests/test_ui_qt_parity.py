@@ -7,8 +7,8 @@ import numpy as np
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QLabel
 
-from pygigast.core import report_layout as rl
-from pygigast.ui_qt import png_export, texts
+from namibench.core import report_layout as rl
+from namibench.ui_qt import png_export, texts
 from tests.test_screen_parity import write_file
 from tests.test_ui_qt_support import UiBase
 

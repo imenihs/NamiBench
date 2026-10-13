@@ -15,12 +15,12 @@ from unittest import mock
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QFontMetrics
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.api.web import access as acc
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import device_menu, sizes, texts
-from pygigast.ui_qt.files import UnfinishedDialog
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.api.web import access as acc
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import device_menu, sizes, texts
+from namibench.ui_qt.files import UnfinishedDialog
 from tests.device_helpers import FakeGigaBackend
 from tests.qt_layout_check import problems
 from tests.test_ui_qt_pluto_gain import PlutoGainUiBase
@@ -44,7 +44,7 @@ WEB_VARS = {
 
 class SizeValuesTest(unittest.TestCase):
     def test_web_has_the_same_values(self):
-        css = (ROOT / "pygigast" / "ui_web" / "style.css").read_text(encoding="utf-8")
+        css = (ROOT / "namibench" / "ui_web" / "style.css").read_text(encoding="utf-8")
         root = re.search(r":root\s*{(.*?)}", css, re.S).group(1)
         have = {m.group(1): int(m.group(2)) for m in re.finditer(r"(--[\w-]+):\s*(\d+)px", root)}
         self.assertEqual({k: have.get(k) for k in WEB_VARS}, WEB_VARS)
@@ -346,7 +346,7 @@ class LayoutTest(UiBase):
         （値の列を狭める）と、はみ出し・右端の「操作」の見切れ・切れた文字が見つかる。"""
         from PySide6.QtWidgets import QHeaderView
 
-        from pygigast.ui_qt.marker_table import COL_NOTE, COL_VALUE
+        from namibench.ui_qt.marker_table import COL_NOTE, COL_VALUE
 
         self.api.call("connect", backend="simulator", serial="SIM00001").result(10)
         self._single()
@@ -398,7 +398,7 @@ class LayoutTest(UiBase):
     def cal_pages(self) -> list[str]:
         """校正の画面（設計K）の手順: 準備・測る（周波数特性・RBW・NF の増幅度）・確かめる（周波数特性・旧校正ファイル）。
         測った点と結果がある形で数える（Web の test_web_layout.cal_views と同じ手順）。"""
-        from pygigast.ui_qt.cal_dialog import CHECK, MEASURE
+        from namibench.ui_qt.cal_dialog import CHECK, MEASURE
         from tests.test_level import build_legacy_bytes
 
         found = []
@@ -568,7 +568,7 @@ class LayoutPlutoTest(PlutoUiBase):
     def test_settings_page_xo(self):
         # 設定の PlutoSDR のページ（設計Q §7.10）: 基準の補正の欄・読み戻した基準の Hz・範囲の外で書かなかった知らせが
         # 全部出た形と、測っている間に欄が使えない形
-        from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL
+        from namibench.core.devices.plutosdr.fake import FAKE_SERIAL
 
         found = []
         self.cmd("plutosdr_xo_set", ppm=150.0, serial=FAKE_SERIAL)
@@ -629,7 +629,7 @@ class LayoutPlutoGainTest(PlutoGainUiBase):
     size = (1280, 720)
 
     def test_pages(self):
-        from pygigast.ui_qt.cal_dialog import CHECK, MEASURE
+        from namibench.ui_qt.cal_dialog import CHECK, MEASURE
 
         self.connect_pluto()
         found = []

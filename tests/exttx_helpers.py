@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from pygigast.core.exttx.protocol import HEADER, KIND_IQ, KIND_JSON, encode_hello, encode_json
+from namibench.core.exttx.protocol import HEADER, KIND_IQ, KIND_JSON, encode_hello, encode_json
 
 ROOT = Path(__file__).resolve().parents[1]
 MHZ = 1_000_000

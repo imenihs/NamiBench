@@ -5,9 +5,9 @@
 import threading
 from typing import Optional
 
-from pygigast.core.devices.simulator.device import SimulatorDevice
-from pygigast.core.instrument import DeviceBackend
-from pygigast.core.types import DeviceIdentity, PortInUse
+from namibench.core.devices.simulator.device import SimulatorDevice
+from namibench.core.instrument import DeviceBackend
+from namibench.core.types import DeviceIdentity, PortInUse
 
 USB_ID = "0403:6001"
 
@@ -43,7 +43,7 @@ class FakeGigaBackend(DeviceBackend):
             self.gate.wait(10)
         row = next((p for p in self.ports if p["port"] == port or (serial and p["serial"] == serial)), None)
         if row is None:
-            from pygigast.core.types import DeviceDisconnected
+            from namibench.core.types import DeviceDisconnected
 
             raise DeviceDisconnected("見つからない")
         if row["port"] in self.busy:

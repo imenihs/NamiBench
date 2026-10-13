@@ -11,12 +11,12 @@ if os.name == "nt" and "QT_QPA_FONTDIR" not in os.environ:
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from pygigast.api.local import LocalApi, _SimulatorBackend  # noqa: E402
-from pygigast.core.devices.base import load_profile  # noqa: E402
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
-from pygigast.ui_qt.main_window import MainWindow  # noqa: E402
-from pygigast.ui_qt.prefs import UiPrefs  # noqa: E402
-from pygigast.ui_qt import wheel_guard  # noqa: E402
+from namibench.api.local import LocalApi, _SimulatorBackend  # noqa: E402
+from namibench.core.devices.base import load_profile  # noqa: E402
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
+from namibench.ui_qt.main_window import MainWindow  # noqa: E402
+from namibench.ui_qt.prefs import UiPrefs  # noqa: E402
+from namibench.ui_qt import wheel_guard  # noqa: E402
 from tests import release_qt_clipboard_at_exit  # noqa: E402
 
 app = QApplication.instance() or QApplication([])

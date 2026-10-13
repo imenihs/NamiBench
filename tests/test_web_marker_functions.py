@@ -17,13 +17,13 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.api.web import server as web
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import marker_rows
-from pygigast.ui_qt import texts as qt_texts
-from pygigast.ui_qt.fields import (BANDWIDTH_CHOICES, BANDWIDTH_RANGE, FLOOR_CHOICES, FLOOR_RANGE, REF_CHOICES,
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.api.web import server as web
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import marker_rows
+from namibench.ui_qt import texts as qt_texts
+from namibench.ui_qt.fields import (BANDWIDTH_CHOICES, BANDWIDTH_RANGE, FLOOR_CHOICES, FLOOR_RANGE, REF_CHOICES,
                                    THRESHOLD_RANGE, db_choice_text, range_note, round_to)
 from tests.test_web_server import UI_WEB, _Server
 

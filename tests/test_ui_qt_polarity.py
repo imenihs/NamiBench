@@ -9,7 +9,7 @@
 """
 from PySide6.QtWidgets import QPushButton
 
-from pygigast.ui_qt import marker_rows, peak_view, texts
+from namibench.ui_qt import marker_rows, peak_view, texts
 from tests.test_marker_dips import bef_in_tg
 from tests.test_ui_qt_support import UiBase
 

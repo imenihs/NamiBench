@@ -13,13 +13,13 @@ import unittest
 
 import numpy as np
 
-from pygigast.core import report_layout as rl
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.storage.h5file import H5Record
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import Mode, SweepRequest
+from namibench.core import report_layout as rl
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
+from namibench.core.instrument_common import CommandError
+from namibench.core.storage.h5file import H5Record
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import Mode, SweepRequest
 from tests.test_plutosdr import PlutoCase
 
 MHZ = 1_000_000
@@ -180,7 +180,7 @@ class TestDriver(DeviceCase):
     def test_cancel_between_repeats(self):
         import threading
 
-        from pygigast.core.types import SweepDiscarded
+        from namibench.core.types import SweepDiscarded
 
         self.set_count(8)
         ev = threading.Event()
@@ -260,8 +260,8 @@ class TestInstrument(InstCase):
         self.call("plutosdr_set", tg_harmonic_avg=4)
         self.assertEqual(self.inst._settings.get("plutosdr")["tg_harmonic_avg"], 4)
         self.inst.shutdown()
-        from pygigast.api.local import _PlutoSdrBackend, _SimulatorBackend
-        from pygigast.core.instrument import Instrument
+        from namibench.api.local import _PlutoSdrBackend, _SimulatorBackend
+        from namibench.core.instrument import Instrument
 
         sim = _SimulatorBackend(self.profile)
         self.inst = Instrument({"simulator": sim, "plutosdr": _PlutoSdrBackend(lib_factory=lambda: self.lib)},

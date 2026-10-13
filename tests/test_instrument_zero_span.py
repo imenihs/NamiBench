@@ -11,7 +11,7 @@ import json
 
 import numpy as np
 
-from pygigast.core.instrument_common import CommandError
+from namibench.core.instrument_common import CommandError
 from tests.instrument_helpers import InstrumentCase
 
 MHZ = 1_000_000

@@ -15,11 +15,11 @@ from PySide6.QtGui import QMouseEvent, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from pygigast.api.local import LocalApi, _SimulatorBackend  # noqa: E402
-from pygigast.core.devices.base import load_profile  # noqa: E402
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
-from pygigast.ui_qt import texts  # noqa: E402
-from pygigast.ui_qt.main_window import MainWindow  # noqa: E402
+from namibench.api.local import LocalApi, _SimulatorBackend  # noqa: E402
+from namibench.core.devices.base import load_profile  # noqa: E402
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
+from namibench.ui_qt import texts  # noqa: E402
+from namibench.ui_qt.main_window import MainWindow  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
 

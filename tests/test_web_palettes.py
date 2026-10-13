@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from pygigast.ui_qt import texts
+from namibench.ui_qt import texts
 from tests.test_web_layout import App, EdgePage, edge_available, open_app
 
 S = texts.SETTINGS_TEXTS

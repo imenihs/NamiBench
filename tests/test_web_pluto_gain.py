@@ -13,14 +13,14 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import cal_view, screen_pluto
-from pygigast.ui_qt import texts as qt_texts
-from pygigast.ui_qt.texts_pluto import PLUTO_LABELS
+from namibench.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import cal_view, screen_pluto
+from namibench.ui_qt import texts as qt_texts
+from namibench.ui_qt.texts_pluto import PLUTO_LABELS
 from tests import test_web_server as tws
 from tests.test_pluto_gain import pluto, tx_stopped
 from tests.test_web_layout import App, EdgePage, edge_available, open_app

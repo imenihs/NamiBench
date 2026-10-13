@@ -10,9 +10,9 @@ from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QProgressBar, QPushButton
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
 from tests.device_helpers import FakeGigaBackend
 from tests.test_ui_qt_support import UiBase, app
 
@@ -174,8 +174,8 @@ class TestAutoConnectNotice(DevUiBase):
 
 class TestDllMissing(DevUiBase):
     def make_window(self):
-        from pygigast.api.local import _RtlSdrBackend
-        from pygigast.core.devices.rtlsdr import dll
+        from namibench.api.local import _RtlSdrBackend
+        from namibench.core.devices.rtlsdr import dll
 
         def missing():
             raise dll.DllNotFound("無い")

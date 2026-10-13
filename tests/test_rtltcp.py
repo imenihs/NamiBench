@@ -9,7 +9,7 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.rtltcp import (
+from namibench.core.rtltcp import (
     BIND_LOCAL,
     TUNER_R820T,
     EnvelopeToIQ,
@@ -131,7 +131,7 @@ class LoopbackTests(unittest.TestCase):
         self.server.on_command = bad
         s = self._connect()
         _recv_exact(s, 12)
-        with self.assertLogs("pygigast.core.rtltcp.server", level="ERROR"):
+        with self.assertLogs("namibench.core.rtltcp.server", level="ERROR"):
             s.sendall(bytes([0x01, 0, 0, 0, 1]))
             time.sleep(0.1)
         self.assertEqual(self.server.client_count, 1)

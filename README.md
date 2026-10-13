@@ -1,4 +1,4 @@
-# pyGigaSt
+# NamiBench
 
 自作スペクトラムアナライザ **GigaSt v5** を PC から操作するアプリです。
 スペクトラムアナライザ・トラッキングジェネレータ（TG）・信号源（SG）として使えます。RTL-SDR のドングルもスペクトラムアナライザとして、PlutoSDR はスペクトラムアナライザ・SG・TG として使えます。
@@ -30,9 +30,14 @@ Linux / macOS:
 ./setup.sh /path/to/python3
 ```
 
-- Python を指定しないときは、環境変数 `PYGIGAST_PYTHON`、次に `py -3.13`（Windows）、最後に PATH 上の `python` / `python3` を使います
+- Python を指定しないときは、環境変数 `NAMIBENCH_PYTHON`、次に `py -3.13`（Windows）、最後に PATH 上の `python` / `python3` を使います
 - `virtualenv` が入っていればそれを、無ければ標準の `venv` を使います
 - 作った環境の Python は `venv\Scripts\python.exe`（Linux / macOS は `venv/bin/python`）です。有効化（activate）しなくても使えます
+
+## データの置き場所
+
+- 設定・覚えた機器・校正・基準・プリセット・配色は、Windows は `%APPDATA%\NamiBench`、Linux / macOS は `~/.namibench` に置きます
+- 名前を変える前（pyGigaSt）の場所（`%APPDATA%\pyGigaSt`・`~/.pygigast`）があり、新しい場所がまだ無いときは、起動したときに中身を新しい場所へコピーして知らせます。前の場所は消しません。コピーできなかったときは、理由を知らせて前の場所のまま使います（次に起動したときにもう一度コピーします）
 
 ## PlutoSDR
 
@@ -49,9 +54,9 @@ Linux / macOS:
 ## Web 画面（ブラウザから使う）
 
 ```sh
-venv\Scripts\python.exe -m pygigast --web          # Qt 画面と一緒に開く（この PC のブラウザから http://127.0.0.1:8080/）
-venv\Scripts\python.exe -m pygigast serve          # 画面なしで開く
-venv\Scripts\python.exe -m pygigast serve --lan    # スマホや別の PC からも使う
+venv\Scripts\python.exe -m namibench --web          # Qt 画面と一緒に開く（この PC のブラウザから http://127.0.0.1:8080/）
+venv\Scripts\python.exe -m namibench serve          # 画面なしで開く
+venv\Scripts\python.exe -m namibench serve --lan    # スマホや別の PC からも使う
 ```
 
 - 既定はこの PC のブラウザからだけ使えます。スマホや別の PC からも使えるのは、`--lan` を付けて起動したときか、デスクトップの画面のメニュー「設定 → アプリ設定…」の「ブラウザから使う」で「同じネットワークのスマホや PC からも使えるようにする」を選んだときだけです
@@ -69,7 +74,7 @@ venv\Scripts\python.exe -m pygigast serve --lan    # スマホや別の PC か�
 - 色の範囲は「自動」か下限・上限で決めます。表示の形式が |Γ|・SWR のトレースを行にしているときは、縦軸と同じ範囲で色を付けます
 - ゼロスパン（横軸が時間）の間はウォーターフォール・密度表示を出しません（Span を戻すと元の組み合わせで出ます）
 - 記録（メニュー「ファイル → 記録を開始」）をまとめた保存ファイルを開くと再生します。ウォーターフォールの下の帯で再生・一時停止・速さ・時間のつまみを使い、「ライブに戻る」で測定に戻ります。メニュー「ファイル」の「記録を切り出す…」「記録を CSV に書き出す…」は、選んだ時間の範囲（選んでいなければ全体）といまの周波数の表示の範囲を書き出します。ゼロスパン・NF の区間がある記録は再生しません
-- バンドプランとブックマークは「表示」タブの「バンドプラン・ブックマーク」で読み込み・書き出しします。ファイルは次の形の JSON です（周波数は Hz の整数、色は `#rrggbb`）。中身は同梱していません（空の見本: `pygigast/core/bandplan_sample.json`）
+- バンドプランとブックマークは「表示」タブの「バンドプラン・ブックマーク」で読み込み・書き出しします。ファイルは次の形の JSON です（周波数は Hz の整数、色は `#rrggbb`）。中身は同梱していません（空の見本: `namibench/core/bandplan_sample.json`）
 
 ```json
 {"format": "pygigast-bandplan", "version": 1,

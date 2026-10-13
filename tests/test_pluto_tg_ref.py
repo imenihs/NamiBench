@@ -14,9 +14,9 @@ import threading
 import time
 import unittest
 
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FakeIioLib, FakePluto
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.types import DeviceError, SweepDiscarded
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FakeIioLib, FakePluto
+from namibench.core.instrument_common import CommandError
+from namibench.core.types import DeviceError, SweepDiscarded
 from tests import test_pluto_s11 as s11t
 
 MHZ = 1_000_000
@@ -273,7 +273,7 @@ if __name__ == "__main__":
 class TestHoldWhileSaving(Case):
     def test_hold_continues_until_the_reference_is_saved_and_selected(self):
         """基準を取り終えてから保存が済んで選ぶまでの間も、利得と送信の減衰を変えさせない（設計Q §7.9）。"""
-        from pygigast.core import instrument_files as inf
+        from namibench.core import instrument_files as inf
 
         gate = threading.Event()
         entered = threading.Event()

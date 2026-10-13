@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import time
 
-from pygigast.core.level import cal_work as cw
-from pygigast.core.instrument_common import CommandError
+from namibench.core.level import cal_work as cw
+from namibench.core.instrument_common import CommandError
 from tests.instrument_helpers import SERIAL, InstrumentCase
 from tests.test_level import build_legacy_bytes
 
@@ -276,8 +276,8 @@ class RbwTest(CalCase):
         self.assertEqual(st["source"], {"output": "sg", "freq_hz": 500_000_000})
         # SG の欄の状態も機器へ渡している信号源で決める（メインのモードが SA のままでも「SG 出力中 500MHz」: 設計J §4.12）。
         # Qt と Web は同じ文（Web は状態に付けた ui.sg_state）
-        from pygigast.api.web import view as web_view
-        from pygigast.ui_qt import texts as qt_texts
+        from namibench.api.web import view as web_view
+        from namibench.ui_qt import texts as qt_texts
 
         self.assertNotEqual(st["sweep"]["mode"], "sg")
         want = qt_texts.tpl("source_sg", freq=qt_texts.format_freq(500_000_000))

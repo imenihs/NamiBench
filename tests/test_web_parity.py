@@ -10,12 +10,12 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.ui_qt import texts
+from namibench.ui_qt import texts
 from tests.test_screen_parity import write_file
 from tests.test_web_layout import App, EdgePage, edge_available, open_app
 
 MHZ = 1_000_000
-UI_WEB = Path(__file__).resolve().parent.parent / "pygigast" / "ui_web"
+UI_WEB = Path(__file__).resolve().parent.parent / "namibench" / "ui_web"
 RBW = "document.querySelector('[data-tier=L] .field-select')"
 
 

@@ -11,15 +11,15 @@ import json
 import time
 import unittest
 
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr import xo
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
-from pygigast.core.devices.rtlsdr.driver import make_plan
-from pygigast.core.instrument_common import CommandError
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.storage.h5file import raw_extra_for
-from pygigast.core.types import InvalidSweep, Mode, SweepRequest
-from pygigast.ui_qt import texts
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr import xo
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
+from namibench.core.devices.rtlsdr.driver import make_plan
+from namibench.core.instrument_common import CommandError
+from namibench.core.sweep.model import SweepModel
+from namibench.core.storage.h5file import raw_extra_for
+from namibench.core.types import InvalidSweep, Mode, SweepRequest
+from namibench.ui_qt import texts
 from tests.test_instrument_ext_tx import ExtCase
 from tests.test_plutosdr import PlutoCase, fake_lib
 
@@ -310,7 +310,7 @@ class TestInstrumentXo(PlutoCase):
         self.single()  # 測れる
 
     def test_settings_survive_restart(self):
-        from pygigast.core.instrument_pluto_xo import load_xo_settings
+        from namibench.core.instrument_pluto_xo import load_xo_settings
 
         self.assertEqual(load_xo_settings({"xo_ppm": {"A": 1.23456, "B": "x", "": 1.0, "C": 0.0}, "xo_serial": "A"}),
                          {"xo_ppm": {"A": 1.235}, "xo_serial": "A"})

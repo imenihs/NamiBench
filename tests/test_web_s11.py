@@ -13,12 +13,12 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.api.web import server as web
-from pygigast.api.web import view
-from pygigast.ui_qt import screen_model, screen_s11
-from pygigast.ui_qt import texts as qt_texts
+from namibench.api.web import server as web
+from namibench.api.web import view
+from namibench.ui_qt import screen_model, screen_s11
+from namibench.ui_qt import texts as qt_texts
 
-UI_WEB = Path(__file__).resolve().parent.parent / "pygigast" / "ui_web"
+UI_WEB = Path(__file__).resolve().parent.parent / "namibench" / "ui_web"
 MHZ = 1_000_000
 
 

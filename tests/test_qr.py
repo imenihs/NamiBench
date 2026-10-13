@@ -7,7 +7,7 @@ QR の読み取りの部品が入っていないので、(1) 規格の解説で�
 import random
 import unittest
 
-from pygigast.api.web import qr
+from namibench.api.web import qr
 
 
 def _bits(v: int, n: int) -> str:

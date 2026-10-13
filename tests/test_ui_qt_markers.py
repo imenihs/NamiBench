@@ -111,7 +111,7 @@ class MarkerKeysTest(MarkerBase):
         self.win.plot.setFocus()
         self.pump(0.1)
         # offscreen ではマウスの位置が動かないことがあるので、位置の読みを差し替えて確かめる
-        from pygigast.ui_qt import main_window as mw
+        from namibench.ui_qt import main_window as mw
         orig = mw.QCursor.pos
         mw.QCursor.pos = staticmethod(lambda: self.win.plot.mapToGlobal(pos))
         try:
@@ -338,7 +338,7 @@ class MarkerCellEditTest(MarkerBase):
         self.pump(0.4)
 
     def test_edit_frequency_and_offsets(self):
-        from pygigast.ui_qt.marker_table import COL_DFREQ, COL_DVALUE, COL_FREQ
+        from namibench.ui_qt.marker_table import COL_DFREQ, COL_DVALUE, COL_FREQ
         self.win.marker_panel.btn_peak.click()
         self.wait(lambda: self.win.selected_marker == "M1", what="M1")
         # マーカーの周波数（MHz で打つ）
@@ -363,7 +363,7 @@ class MarkerCellEditTest(MarkerBase):
         self.assertEqual(self.marker("M1")["freq_hz"], before)
 
     def test_value_cell_of_marker_is_not_editable(self):
-        from pygigast.ui_qt.marker_table import COL_VALUE
+        from namibench.ui_qt.marker_table import COL_VALUE
         self.win.marker_panel.btn_peak.click()
         self.wait(lambda: self.win.selected_marker == "M1", what="M1")
         self.win.marker_panel.editing = None

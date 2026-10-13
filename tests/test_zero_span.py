@@ -14,15 +14,15 @@ import unittest
 
 import numpy as np
 
-from pygigast.core import zero_span as zs
-from pygigast.core import view_units
-from pygigast.core.devices.base import load_profile
-from pygigast.core.devices.gigast.driver import timing_fn
-from pygigast.core.instrument import GIGAST_PROFILE_PATH
-from pygigast.core.storage import adopted_from_dict, adopted_to_dict
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import Mode, SweepRequest
-from pygigast.core.units import ParseError, format_time_us, parse_time_us, time_axis_unit
+from namibench.core import zero_span as zs
+from namibench.core import view_units
+from namibench.core.devices.base import load_profile
+from namibench.core.devices.gigast.driver import timing_fn
+from namibench.core.instrument import GIGAST_PROFILE_PATH
+from namibench.core.storage import adopted_from_dict, adopted_to_dict
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import Mode, SweepRequest
+from namibench.core.units import ParseError, format_time_us, parse_time_us, time_axis_unit
 
 MHZ = 1_000_000
 KHZ = 1_000

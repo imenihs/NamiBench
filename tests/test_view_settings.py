@@ -13,9 +13,9 @@ import unittest
 
 import numpy as np
 
-from pygigast.core import view_units
-from pygigast.core.palette import BASES, MIN_CONTRAST, Palette, contrast_ratio, delta_e, normalize_color
-from pygigast.core.presets import PresetError, PresetStore
+from namibench.core import view_units
+from namibench.core.palette import BASES, MIN_CONTRAST, Palette, contrast_ratio, delta_e, normalize_color
+from namibench.core.presets import PresetError, PresetStore
 from tests.instrument_helpers import SERIAL, InstrumentCase
 
 
@@ -191,7 +191,7 @@ class InstrumentViewTest(InstrumentCase):
         self.assertAlmostEqual(float(rows[1][2]), float(p["values"][i]), places=3)
 
     def test_bad_values(self):
-        from pygigast.core.instrument import CommandError
+        from namibench.core.instrument import CommandError
 
         for kw in ({"level_unit": "dBW"}, {"ext_db": "x"}, {"freq_offset_hz": 1.5}, {"draw_style": "dots"},
                    {"function_lines": 1}):

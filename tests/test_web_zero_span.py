@@ -15,10 +15,10 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import screen_model, texts
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import screen_model, texts
 from tests.test_web_server import UI_WEB, _Server
 
 MHZ = 1_000_000

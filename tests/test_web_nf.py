@@ -12,8 +12,8 @@ import json
 import time
 import unittest
 
-from pygigast.ui_qt import nf_view
-from pygigast.ui_qt import texts as qt_texts
+from namibench.ui_qt import nf_view
+from namibench.ui_qt import texts as qt_texts
 from tests import test_web_server as tws
 from tests.test_web_layout import SIZES, App, EdgePage, edge_available, open_app
 from tests.test_web_settings import _Base

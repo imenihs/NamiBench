@@ -6,10 +6,10 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.devices.rtlsdr import dll, driver, levels
-from pygigast.core.devices.rtlsdr import spectrum as sp
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import DeviceDisconnected, DeviceError, InvalidSweep, SweepDiscarded, SweepRequest
+from namibench.core.devices.rtlsdr import dll, driver, levels
+from namibench.core.devices.rtlsdr import spectrum as sp
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import DeviceDisconnected, DeviceError, InvalidSweep, SweepDiscarded, SweepRequest
 
 FS = 2_048_000
 MHZ = 1_000_000
@@ -288,7 +288,7 @@ class TestMeasure(Base):
     def test_step_mismatch_rejected(self):
         s = self.sweep(100 * MHZ, 100_500_000, 1500)
         from dataclasses import replace
-        from pygigast.core.types import FreqAxis
+        from namibench.core.types import FreqAxis
         bad = replace(s, axis=FreqAxis(s.axis.start_hz, 999, s.axis.points))
         with self.assertRaises(InvalidSweep):
             self.dev.measure(bad)

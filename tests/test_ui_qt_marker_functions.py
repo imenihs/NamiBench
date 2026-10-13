@@ -11,8 +11,8 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
 
-from pygigast.ui_qt import marker_rows
-from pygigast.ui_qt.fields import BANDWIDTH_CHOICES, FLOOR_CHOICES, REF_CHOICES
+from namibench.ui_qt import marker_rows
+from namibench.ui_qt.fields import BANDWIDTH_CHOICES, FLOOR_CHOICES, REF_CHOICES
 from tests.test_ui_qt_support import UiBase, app
 
 MHZ = 1_000_000

@@ -6,11 +6,11 @@ import threading
 import time
 import unittest
 
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
-from pygigast.core.devices.plutosdr.iio import IioError
-from pygigast.core.sweep.model import SweepModel
-from pygigast.core.types import DeviceDisconnected, DeviceError, Mode, SweepDiscarded, SweepRequest
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib, FakePluto
+from namibench.core.devices.plutosdr.iio import IioError
+from namibench.core.sweep.model import SweepModel
+from namibench.core.types import DeviceDisconnected, DeviceError, Mode, SweepDiscarded, SweepRequest
 
 from tests.test_plutosdr import PlutoCase
 

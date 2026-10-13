@@ -1,6 +1,6 @@
-"""pyGigaSt の外部 IQ 送信の口へ IQ を流す最小のクライアント（プロトコル 1.0）。標準ライブラリと numpy だけ。
+"""NamiBench の外部 IQ 送信の口へ IQ を流す最小のクライアント（プロトコル 1.0）。標準ライブラリと numpy だけ。
 
-pyGigaSt の「設定 → 外部 IQ 送信」で受け付けを入れ、PlutoSDR に繋いでスペアナのモードにしてから動かす。
+NamiBench の「設定 → 外部 IQ 送信」で受け付けを入れ、PlutoSDR に繋いでスペアナのモードにしてから動かす。
 送信はケーブルと減衰器で被測定物へつなぎ、空中に出さない。
 
     python ext_iq_client.py --tone 250000 --rate 2600000 --lo 1575420000 --seconds 30
@@ -43,7 +43,7 @@ def recv_exact(sock, n):
     while len(buf) < n:
         chunk = sock.recv(n - len(buf))
         if not chunk:
-            raise ConnectionError("closed by pyGigaSt")
+            raise ConnectionError("closed by NamiBench")
         buf += chunk
     return bytes(buf)
 
@@ -133,7 +133,7 @@ def run(fs=2_600_000, lo_hz=1_575_420_000, tone_hz=250_000, seconds=30.0, port=1
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="pyGigaSt の外部 IQ 送信の口へトーンを流す")
+    ap = argparse.ArgumentParser(description="NamiBench の外部 IQ 送信の口へトーンを流す")
     ap.add_argument("--tone", type=float, default=250_000, help="LO からのトーンの離れ（Hz）")
     ap.add_argument("--rate", type=int, default=2_600_000, help="標本化の速さ（Hz）")
     ap.add_argument("--lo", type=int, default=1_575_420_000, help="送信の LO（Hz）")

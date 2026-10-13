@@ -8,11 +8,11 @@
 """
 from __future__ import annotations
 
-from pygigast.core.devices.plutosdr import driver as pd
-from pygigast.core.devices.plutosdr.fake import FakeIioLib
-from pygigast.ui_qt import cal_view, texts
-from pygigast.ui_qt.cal_dialog import CHECK, MEASURE, SAVED
-from pygigast.ui_qt.texts_pluto import PLUTO_LABELS
+from namibench.core.devices.plutosdr import driver as pd
+from namibench.core.devices.plutosdr.fake import FakeIioLib
+from namibench.ui_qt import cal_view, texts
+from namibench.ui_qt.cal_dialog import CHECK, MEASURE, SAVED
+from namibench.ui_qt.texts_pluto import PLUTO_LABELS
 from tests.test_pluto_gain import pluto, tx_stopped
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 from tests.test_ui_qt_support import UiBase

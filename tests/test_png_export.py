@@ -17,7 +17,7 @@ import numpy as np  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from pygigast.ui_qt import png_export as pe  # noqa: E402
+from namibench.ui_qt import png_export as pe  # noqa: E402
 from tests import release_qt_clipboard_at_exit  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
@@ -212,7 +212,7 @@ class FunctionLinesPngTest(unittest.TestCase):
         self.assertGreater(diff, 200)  # 横線1本と縦線2本ぶん
 
     def test_png_rows_drop_lines_when_off(self):
-        from pygigast.ui_qt import marker_rows
+        from namibench.ui_qt import marker_rows
         rows = [{"name": "M1 3dB 帯域幅", "kind": "function", "line": {"level": -3.0, "freqs_hz": [1]}}]
         self.assertIsNotNone(marker_rows.png_rows(rows)[0]["line"])
         self.assertIsNone(marker_rows.png_rows(rows, lines=False)[0]["line"])
@@ -286,7 +286,7 @@ class TraceLinePngTest(unittest.TestCase):
                 self.assertLess(covered, 0.85, line)
 
     def test_legend_sample_is_the_line(self):
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         data = {"conditions": {"start_hz": 1, "stop_hz": 2}, "traces": [
             {"number": 1, "action": "更新", "line": "thin"}, {"number": 2, "action": "平均", "line": "thick"},
@@ -313,9 +313,9 @@ class TraceLineRuleTest(unittest.TestCase):
     """線の描き方は1か所（core/report_layout）: 名前は core の TraceLine と画面の語の表と同じ。重なりの順。"""
 
     def test_names_and_order(self):
-        from pygigast.core import report_layout as rl
-        from pygigast.core.trace import TraceLine
-        from pygigast.ui_qt import texts
+        from namibench.core import report_layout as rl
+        from namibench.core.trace import TraceLine
+        from namibench.ui_qt import texts
 
         codes = [x.value for x in TraceLine]
         self.assertEqual(list(rl.TRACE_LINE_STYLES), codes)
@@ -337,7 +337,7 @@ class AxesRuleTest(unittest.TestCase):
     横軸の単位は数字の下の見出し。"""
 
     def test_layout_axes(self):
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         lay = rl.layout(sample_data(), (1600, 1000))
         ax = lay["axes"]
@@ -360,7 +360,7 @@ class AxesRuleTest(unittest.TestCase):
         self.assertGreater(long_lay["axes"]["x_every"], 1, long_lay["x_labels"])
 
     def test_zero_span_axis_is_time(self):
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         d = sample_data()
         d["conditions"].update(step_hz=0, stop_hz=d["conditions"]["start_hz"], points=501,
@@ -378,7 +378,7 @@ class AxesRuleTest(unittest.TestCase):
 
         from PySide6.QtGui import QPainter
 
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         for size in ((1600, 1000), (640, 400), (320, 240)):
             with self.subTest(size=size):

@@ -19,11 +19,11 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from pygigast.api.local import LocalApi, _SimulatorBackend  # noqa: E402
-from pygigast.core.devices.base import load_profile  # noqa: E402
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
-from pygigast.core.units import format_freq, format_time_us  # noqa: E402
-from pygigast.ui_qt import screen_model, texts  # noqa: E402
+from namibench.api.local import LocalApi, _SimulatorBackend  # noqa: E402
+from namibench.core.devices.base import load_profile  # noqa: E402
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument  # noqa: E402
+from namibench.core.units import format_freq, format_time_us  # noqa: E402
+from namibench.ui_qt import screen_model, texts  # noqa: E402
 
 MHZ = 1_000_000
 

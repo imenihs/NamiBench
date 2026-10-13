@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-UI_WEB = Path(__file__).resolve().parents[1] / "pygigast" / "ui_web"
+UI_WEB = Path(__file__).resolve().parents[1] / "namibench" / "ui_web"
 
 
 @unittest.skipUnless(shutil.which("node"), "Node が無い")

@@ -22,11 +22,11 @@ import numpy as np
 import uvicorn
 from websockets.sync.client import connect as ws_connect
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.api.web import server as web
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.core.units import drag_ref_level, format_freq, parse_freq_hz
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.api.web import server as web
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.core.units import drag_ref_level, format_freq, parse_freq_hz
 
 UI_WEB = Path(web.UI_WEB_DIR)
 
@@ -129,7 +129,7 @@ class WebServerTest(unittest.TestCase):
         info = json.loads(body)
         self.assertIn("version", info)
         # トレースの線の描き方（設計F §9）は Qt と同じ1か所の値
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         self.assertEqual(info["line_styles"], json.loads(json.dumps(rl.LINE_STYLES)))
         self.assertEqual(list(texts["TRACE_LINES"]), list(rl.TRACE_LINE_STYLES))

@@ -11,11 +11,11 @@ import threading
 import time
 import unittest
 
-from pygigast.core.devices.plutosdr.fake import FakeIioLib, FakePluto
-from pygigast.core.types import SweepDiscarded
-from pygigast.ui_qt import screen_pluto, texts
-from pygigast.ui_qt.texts_devices import REF_QUICK_LABELS
-from pygigast.ui_qt.texts_pluto import PLUTO_LABELS
+from namibench.core.devices.plutosdr.fake import FakeIioLib, FakePluto
+from namibench.core.types import SweepDiscarded
+from namibench.ui_qt import screen_pluto, texts
+from namibench.ui_qt.texts_devices import REF_QUICK_LABELS
+from namibench.ui_qt.texts_pluto import PLUTO_LABELS
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 
 MHZ = 1_000_000

@@ -7,8 +7,8 @@
 """
 import unittest
 
-from pygigast.api.web import view
-from pygigast.ui_qt import marker_rows, peak_view, texts
+from namibench.api.web import view
+from namibench.ui_qt import marker_rows, peak_view, texts
 
 L = texts.LABELS
 MHZ = 1_000_000

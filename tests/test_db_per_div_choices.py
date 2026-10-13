@@ -9,16 +9,16 @@ import time
 import unittest
 from pathlib import Path
 
-from pygigast.core.display_marks import auto_ref_level
-from pygigast.core.instrument import CommandError
-from pygigast.core.instrument_display import DB_PER_DIV_CHOICES
-from pygigast.core.report_layout import y_labels
-from pygigast.core.trace import formats
-from pygigast.core.units import drag_ref_level
-from pygigast.ui_qt import screen_s11
+from namibench.core.display_marks import auto_ref_level
+from namibench.core.instrument import CommandError
+from namibench.core.instrument_display import DB_PER_DIV_CHOICES
+from namibench.core.report_layout import y_labels
+from namibench.core.trace import formats
+from namibench.core.units import drag_ref_level
+from namibench.ui_qt import screen_s11
 from tests.instrument_helpers import InstrumentCase
 
-UI_WEB = Path(__file__).resolve().parent.parent / "pygigast" / "ui_web"
+UI_WEB = Path(__file__).resolve().parent.parent / "namibench" / "ui_web"
 
 
 class ChoicesTest(unittest.TestCase):

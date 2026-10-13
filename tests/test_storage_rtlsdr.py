@@ -10,9 +10,9 @@ import unittest
 import h5py
 import numpy as np
 
-from pygigast.core.storage.h5file import OVERVIEW_LEVELS, H5Record, save_snapshot
-from pygigast.core.storage.recording import Recorder, RecordingReader, convert_to_h5, new_recording_path
-from pygigast.core.types import RawSweep
+from namibench.core.storage.h5file import OVERVIEW_LEVELS, H5Record, save_snapshot
+from namibench.core.storage.recording import Recorder, RecordingReader, convert_to_h5, new_recording_path
+from namibench.core.types import RawSweep
 from tests.test_storage import MHZ, TmpCase, adopted, header, pattern, raw_sweep
 
 ENC = "rtlsdr_power_w"

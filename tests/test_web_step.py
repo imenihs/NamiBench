@@ -18,12 +18,12 @@ from pathlib import Path
 import numpy as np
 from websockets.sync.client import connect as ws_connect
 
-from pygigast.api.local import LocalApi, _SimulatorBackend
-from pygigast.api.web import server as web
-from pygigast.api.web import view
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
-from pygigast.ui_qt import texts
+from namibench.api.local import LocalApi, _SimulatorBackend
+from namibench.api.web import server as web
+from namibench.api.web import view
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from namibench.ui_qt import texts
 from tests.test_web_layout import App, EdgePage, edge_available, open_app
 from tests.test_web_server import _Server
 
@@ -64,7 +64,7 @@ class EncodeTest(unittest.TestCase):
         # 段ごとの線の濃さは Qt の画面・PNG・Web の canvas で同じ（core/step_sweep.LINE_ALPHA）
         import re
 
-        from pygigast.core import step_sweep as ss
+        from namibench.core import step_sweep as ss
 
         js = (Path(web.UI_WEB_DIR) / "graph.js").read_text(encoding="utf-8")
         self.assertEqual(float(re.search(r"STEP_LINE_ALPHA = ([\d.]+);", js).group(1)), ss.LINE_ALPHA)

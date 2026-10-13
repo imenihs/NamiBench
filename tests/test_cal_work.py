@@ -16,12 +16,12 @@ import unittest
 
 import numpy as np
 
-from pygigast.core.devices.base import load_profile
-from pygigast.core.instrument import GIGAST_PROFILE_PATH
-from pygigast.core.level import cal_work as cw
-from pygigast.core.level.calibration import Calibration
-from pygigast.core.level.convert import LevelConverter
-from pygigast.core.level.legacy_cal import parse_legacy_cal
+from namibench.core.devices.base import load_profile
+from namibench.core.instrument import GIGAST_PROFILE_PATH
+from namibench.core.level import cal_work as cw
+from namibench.core.level.calibration import Calibration
+from namibench.core.level.convert import LevelConverter
+from namibench.core.level.legacy_cal import parse_legacy_cal
 from tests.test_level import build_legacy_bytes
 
 AT = "2026-10-03T12:00:00+09:00"
@@ -147,7 +147,7 @@ class CorrectionTest(unittest.TestCase):
 
 
 def cw_source():
-    from pygigast.core.level.calibration import CalibrationSource
+    from namibench.core.level.calibration import CalibrationSource
 
     return CalibrationSource(kind=cw.SOURCE_KIND)
 

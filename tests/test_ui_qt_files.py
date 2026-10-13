@@ -9,11 +9,11 @@ from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication, QImage
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
-from pygigast.core.report_layout import DARK_DEFAULT, LIGHT_DEFAULT
-from pygigast.ui_qt import png_export, texts
-from pygigast.ui_qt.files import ExportDialog
-from pygigast.ui_qt.main_window import MainWindow
-from pygigast.ui_qt.prefs import UiPrefs
+from namibench.core.report_layout import DARK_DEFAULT, LIGHT_DEFAULT
+from namibench.ui_qt import png_export, texts
+from namibench.ui_qt.files import ExportDialog
+from namibench.ui_qt.main_window import MainWindow
+from namibench.ui_qt.prefs import UiPrefs
 from tests.test_ui_qt_support import UiBase, make_api
 
 
@@ -33,7 +33,7 @@ class SaveOpenTest(UiBase):
         tid = next(iter(self.win.traces.files))
         c = self.win.traces.files[tid]["curve"]
         # 参照トレースは点線（設計F §9: 選べない。切れ目は Web・PNG と同じ core/report_layout の参照トレースの線）
-        from pygigast.core import report_layout as rl
+        from namibench.core import report_layout as rl
 
         self.assertEqual(c.opts["pen"].style(), Qt.PenStyle.CustomDashLine)
         self.assertEqual(c.opts["pen"].dashPattern(), rl.REFERENCE_LINE_STYLE["dash"])
