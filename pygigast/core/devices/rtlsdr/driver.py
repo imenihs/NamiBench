@@ -78,7 +78,7 @@ class FftParams:
 
     @property
     def sample_bytes(self) -> int:
-        """K 回分の標本のバイト数（I と Q で 2 バイト）。"""
+        """K 回分のサンプルのバイト数（I と Q で 2 バイト）。"""
         return self.averages * self.n * 2
 
     @property
@@ -88,7 +88,7 @@ class FftParams:
 
 
 def grid_rate_hz(fft: dict) -> int:
-    """RBW の選択肢の FFT の長さ（fft_n）を決めた標本化の速さ。格子 = この速さ ÷ fft_n（速さを変えても格子と RBW は
+    """RBW の選択肢の FFT の長さ（fft_n）を決めたサンプリング周波数。格子 = この速さ ÷ fft_n（速さを変えても格子と RBW は
     変えない: 設計S §1 §3.2）。無ければいまの速さ（RTL-SDR・速さを変えていない PlutoSDR）。"""
     return int(fft.get("grid_rate_hz") or fft["sample_rate_hz"])
 
@@ -104,7 +104,7 @@ def fft_n_at_rate(fft: dict, base_n: int) -> Optional[int]:
 
 
 def fft_at_rate(base_fft: dict, fs: int) -> dict:
-    """標本化の速さを fs にした fft の写し（外部 IQ の送信の間: 設計S §1 §3.2）。格子は元の速さのまま、アナログの帯域は
+    """サンプリング周波数を fs にした fft の写し（外部 IQ の送信の間: 設計S §1 §3.2）。格子は元の速さのまま、アナログの帯域は
     速さと同じ。通過帯域の表は元の速さ・帯域で測ったものなので、別の速さでは当てない（生の値は「割り戻しなし」）。"""
     out = copy.deepcopy(base_fft)
     out["grid_rate_hz"] = grid_rate_hz(base_fft)
@@ -127,7 +127,7 @@ def fft_params(profile: dict, rbw_hz: int) -> FftParams:
         raise InvalidSweep(f"RBW {rbw_hz}Hz は選択肢に無い")
     n = fft_n_at_rate(fft, base_n)
     if n is None:
-        raise InvalidSweep(f"RBW {rbw_hz}Hz は標本化の速さ {fs}Hz で使えない")
+        raise InvalidSweep(f"RBW {rbw_hz}Hz はサンプリング周波数 {fs}Hz で使えない")
     grid = fs // n
     dc = fft["dc_exclusion"]
     return FftParams(

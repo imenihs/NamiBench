@@ -136,9 +136,9 @@ REASONS = {
     "image_reject_unsupported": "この機器はイメージ除去を持ちません",
     "device_default_range": "機器の範囲の外なので、その機器の既定の範囲",
     "device_changed": "機器が変わったため既定",
-    # 外部 IQ の送信で標本化の速さが変わった（設計S §1 §3.2）
-    "rbw_sample_rate": "外部 IQ の標本化の速さでは選んでいた RBW を使えません",
-    "span_sample_rate": "外部 IQ の標本化の速さで測れる幅",
+    # 外部 IQ の送信でサンプリング周波数が変わった（設計S §1 §3.2）
+    "rbw_sample_rate": "外部 IQ のサンプリング周波数では選んでいた RBW を使えません",
+    "span_sample_rate": "外部 IQ のサンプリング周波数で測れる幅",
     "span_sample_rate_restored": "外部 IQ の送信が終わったので、求めていた範囲に戻しました",
 }
 
@@ -485,7 +485,7 @@ RESET_CAUSES = {
     "level": "レベルの補正",
     "level_calibration": "レベルの補正",
     "enr": "ENR",
-    "sample_rate": "標本化の速さ",
+    "sample_rate": "サンプリング周波数",
     **DISPLAY_RESET_CAUSES,
 }
 

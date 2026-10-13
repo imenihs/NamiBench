@@ -65,7 +65,7 @@ def iq_from_u8(buf: np.ndarray) -> np.ndarray:
 
 
 def overload_ratio(buf: np.ndarray) -> float:
-    """I か Q が端（0 か 255 = ±127.5）に当たった標本の割合。"""
+    """I か Q が端（0 か 255 = ±127.5）に当たったサンプルの割合。"""
     b = np.asarray(buf, dtype=np.uint8)
     n = b.size // 2
     if n == 0:
@@ -83,7 +83,7 @@ def averaged_power(iq: np.ndarray, n: int, win: str, k: int) -> np.ndarray:
     """
     iq = np.asarray(iq)
     if iq.size < n * k:
-        raise ValueError(f"標本が足りない（{iq.size} < {n}×{k}）")
+        raise ValueError(f"サンプルが足りない（{iq.size} < {n}×{k}）")
     w = window(win, n)
     seg = iq[: n * k].reshape(k, n) * w
     x = np.fft.fft(seg, axis=1)

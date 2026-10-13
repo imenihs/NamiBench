@@ -9,7 +9,7 @@ EXT_TX_LABELS = {
     "port": "ポート番号",
     # 状態バーと信号源のタブの「送信（PlutoSDR）」
     "stop": "送信を止める",
-    "rate": "標本化の速さ",
+    "rate": "サンプリング周波数",
     "lo": "中心の周波数",
     "power": "IQ の強さ",
     "power_tip": "届いている IQ の平均の強さ（int16 の振り切れ 32767 に対する dBFS）。RF の強さはこれと送信の減衰で決まります",
@@ -35,7 +35,7 @@ EXT_TX_REFUSE_CODES = {
     "device_cannot_transmit": "いまの機器は送信できません",
     "mode_conflict": "SG・TG・S11 のモードの間は使えません",
     "calibrating": "校正を測っています",
-    "sample_rate_unsupported": "使えない標本化の速さです",
+    "sample_rate_unsupported": "使えないサンプリング周波数です",
     "lo_out_of_range": "送信の中心の周波数が範囲の外です",
     "already_started": "もう始めています",
 }
@@ -51,7 +51,7 @@ EXT_TX_NOTICES = {
     "ext_tx_started": "外部 IQ の送信を始めました",
     "ext_tx_stopped": "外部 IQ の送信を止めました",
     "ext_tx_refused": "外部 IQ の開始を断りました",
-    "ext_tx_rate_adjusted": "外部 IQ の標本化の速さに合わせて掃引の条件を変えました",
+    "ext_tx_rate_adjusted": "外部 IQ のサンプリング周波数に合わせて掃引の条件を変えました",
 }
 
 TEMPLATES.update({
@@ -59,10 +59,10 @@ TEMPLATES.update({
     "status_ext_preparing": "外部 IQ 準備中",
     "status_ext_on": "外部 IQ 出力中 {freq}",
     "status_ext_error": "外部 IQ: ポート {port} を開けません（{reason}）",
-    "status_ext_underrun": "途切れ: {n} 標本（0 で埋めた分）",
+    "status_ext_underrun": "途切れ: {n} サンプル（0 で埋めた分）",
     "ext_tx_on": "出力中: 外部 IQ（{client}）",
     "ext_listening": "待ち受け中: ポート {port}（この PC だけ）",
     "ext_stopped_state": "止まっています",
-    "ext_rbw_rate": "外部 IQ の標本化の速さ（{rate}）では使えません",
+    "ext_rbw_rate": "外部 IQ のサンプリング周波数（{rate}）では使えません",
     "rtltcp_rate_paused": "rtl_tcp の相手のサンプリング速度に合わせられないので、外部 IQ の送信の間は送りません",
 })

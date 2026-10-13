@@ -187,7 +187,7 @@ class SweepModel:
                 self._fft_table[rbw] = (str(c["window"]), self._fs // grid)
         self._rbw_choices = tuple(sorted(self._fft_table))
         if len(self._rate_unusable) == len(self._rbw_choices):
-            raise ValueError(f"標本化の速さ {self._fs}Hz で使える RBW が無い")
+            raise ValueError(f"サンプリング周波数 {self._fs}Hz で使える RBW が無い")
         self._rbw_default = int(r["default_hz"])
         if self._rbw_default not in self._fft_table:
             raise ValueError("rbw.default_hz が選択肢に無い")
@@ -763,7 +763,7 @@ class SweepModel:
         return step, _ceil_div(span, step) + 1
 
     def _fft_rate_choice(self, pref: int) -> int:
-        """いまの標本化の速さで使える RBW のうち、好みにいちばん近いもの（同じ窓を先に。上の段 → 下の段の順。
+        """いまのサンプリング周波数で使える RBW のうち、好みにいちばん近いもの（同じ窓を先に。上の段 → 下の段の順。
         外部 IQ の送信の間に、選んでいた RBW が使えなくなったとき: 設計S §1 §3.2・設計C §5.14）。"""
         if pref not in self._rate_unusable:
             return pref
@@ -826,7 +826,7 @@ class SweepModel:
         )
 
     def _fft_rate_span(self, start: int, stop: int, adj: _Adj) -> tuple[int, int]:
-        """いまの標本化の速さで使える RBW のうち、いちばん粗い格子でも点数が上限を超える Span は、Center を守って測れる
+        """いまのサンプリング周波数で使える RBW のうち、いちばん粗い格子でも点数が上限を超える Span は、Center を守って測れる
         幅へ狭める（外部 IQ の送信で粗い格子の RBW が使えないとき: 設計S §1 §3.2。速さを変えていなければ起きない）。"""
         grid = max(self._fft_grid[r] for r in self._rbw_choices if r not in self._rate_unusable)
         widest = grid * (self._points_max - 1)

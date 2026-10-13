@@ -279,7 +279,7 @@ class IioChannel:
 
 
 class IioBuffer:
-    """受信（refill）か送信（push）のバッファ。標本は I・Q の int16 が交互（2 通路を有効にしたとき）。"""
+    """受信（refill）か送信（push）のバッファ。サンプルは I・Q の int16 が交互（2 通路を有効にしたとき）。"""
 
     def __init__(self, dev: IioDevice, buf, samples: int) -> None:
         self.dev = dev
@@ -311,13 +311,13 @@ class IioBuffer:
         return np.ctypeslib.as_array((C.c_int16 * n).from_address(int(s))).copy()
 
     def push(self, iq: np.ndarray) -> None:
-        """int16 の並び（I, Q …）をバッファへ写して送る。長さはバッファの標本数 × 2。"""
+        """int16 の並び（I, Q …）をバッファへ写して送る。長さはバッファのサンプル数 × 2。"""
         b = self._need()
         s, e = self._f["buffer_start"](b), self._f["buffer_end"](b)
         n = (int(e) - int(s)) // 2 if s and e else 0
         data = np.asarray(iq, dtype=np.int16).ravel()
         if data.size != n:
-            raise ValueError(f"送る標本の数が違う（{data.size} ≠ {n}）")
+            raise ValueError(f"送るサンプルの数が違う（{data.size} ≠ {n}）")
         C.memmove(int(s), data.ctypes.data, n * 2)
         r = self._f["buffer_push"](b)
         if r < 0:
