@@ -300,3 +300,20 @@ class TestHoldWhileSaving(Case):
         self.assertEqual(self.task_end()["code"], "task_done")
         with self.assertRaises(CommandError):
             self.call("plutosdr_set", tx_atten_db=-20.0)  # 選んだ後も固定
+
+
+class TestOtherDeviceReference(Case):
+    def test_gigast_tg_reference_does_not_hold_plutosdr(self):
+        """ほかの機器の TG の基準を選んだまま PlutoSDR の TG にしても固定しない。最初の基準は利得を合わせてから取る。"""
+        self.call("connect", backend="simulator", serial="SIM00001")
+        self.call("set_mode", mode="tg")
+        self.clear()
+        self.call("reference_take", kind="fine")
+        self.assertEqual(self.task_end()["code"], "task_done")
+        self.assertIsNotNone(self.call("get_state")["normalization"]["selected"])
+        self.tg()
+        pl = self.pluto()
+        self.assertIsNone(pl["gain_lock"])
+        self.assertIsNone(pl["tx_atten_lock"])
+        p = self.take_tg()
+        self.assertIn("gain_fitted", p["detail"]["result"])

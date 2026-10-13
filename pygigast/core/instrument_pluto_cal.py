@@ -114,7 +114,9 @@ class PlutoGainCalMixin:
         """選んでいる基準がそのモードのものか（モードを替えても基準は選んだまま残る。ほかのモードの基準は当たらないので
         固定の理由にしない）。"""
         ref = getattr(self, "_ref", None)
-        return ref is not None and getattr(ref, "mode", None) == mode
+        # ほかの機器（シリアル番号の違う機器）の基準は当たらない（SERIAL_MISMATCH）ので、固定の理由にしない
+        serial = (getattr(self, "_identity", None) or {}).get("serial") or ""
+        return ref is not None and getattr(ref, "mode", None) == mode and getattr(ref, "serial", None) == serial
 
     def _pluto_check_gain_lock(self) -> None:
         why = self._pluto_gain_lock()
