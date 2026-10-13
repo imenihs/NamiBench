@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/namibench_logo_dark.png">
+    <img alt="NamiBench" src="assets/logo/namibench_logo_light.png" width="380">
+  </picture>
+</p>
+
 # NamiBench
 
 自作スペクトラムアナライザ **GigaSt v5** を PC から操作するアプリです。
@@ -81,3 +88,7 @@ venv\Scripts\python.exe -m namibench serve --lan    # スマホや別の PC か�
  "bands": [{"name": "430MHz 帯", "start_hz": 430000000, "stop_hz": 440000000, "color": "#4fa3ff"}],
  "bookmarks": [{"name": "ビーコン", "hz": 434500000}]}
 ```
+
+## アイコンとロゴ
+
+葛飾北斎『冨嶽三十六景 神奈川沖浪裏』（パブリックドメイン）をなぞり、色と形を整理して作った絵です。ロゴの文字は Noto Serif JP（SIL Open Font License）です。画像は `assets/logo/` と `namibench/resources/icon/` にあります。
