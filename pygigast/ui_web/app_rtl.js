@@ -41,13 +41,15 @@
       // 外部 IQ 送信の口（設計S §1。中身は screen_exttx.py: Qt の pluto_panel・settings_dialog・statusbar と同じ）
       extView() { return this.ui.ext_tx || { tx: { shown: false }, settings: { enabled: false, port: 1235, text: "", error_text: "" } }; },
       // PlutoSDR の受信・送信の欄（設計Q §7。中身は screen_pluto.pluto_view: Qt の pluto_panel.py と同じ）
-      plutoView() { return this.ui.pluto || { reason: "", gain_choices: [], gain_lo: null, gain_hi: null, auto_text: "" }; },
+      plutoView() {
+        return this.ui.pluto || { reason: "", gain_choices: [], gain_lo: null, gain_hi: null, auto_text: "",
+                                  tx_atten_choices: [], tx_atten_min: null, tx_atten_max: null };
+      },
       // 利得の欄の値（自動のときは欄が「自動」を出し、↑↓・ホイールはこの値から送る）
       plutoGainValue() {
         const v = this.plutoView;
         return v.agc || v.gain_db == null ? Number(v.gain_base) || 0 : Number(v.gain_db);
       },
-      plutoAttenText() { return (Number(this.plutoView.tx_atten_db) || 0).toFixed(2) + " dB"; },
       // TG 高調波の平均除去の選択（設計Q §7.7。中身は screen_pluto.tg_harmonic_view: Qt の PlutoTxPanel と同じ）
       tgHarmView() { return this.plutoView.tg_harmonic || { items: [], value: 1, reason: X.get("PLUTO_LABELS", "not_pluto") }; },
     },
@@ -98,12 +100,8 @@
         if (!v.agc && v.gain_setting === Number(value)) return;
         this.cmd("plutosdr_set", { gain_db: Number(value), agc: false }, { field: "pluto" });
       },
-      setTxAtten(text) {
-        let v;
-        try { v = GSUnits.parseDb(String(text).replace("dB", "")); } catch (e) { this.note("plutotx", X.w("bad_value")); return; }
-        this.sendTxAtten(v);
-      },
-      // 外部 IQ の送信の間は外部の送信の減衰（SG・TG と別の値: 設計S §1 の O1。Qt の PlutoTxPanel と同じ）
+      // 送信の減衰の欄（db-field: 打った・選んだ・↑↓・ホイールで送った値）。外部 IQ の送信の間は外部の送信の減衰
+      // （SG・TG と別の値: 設計S §1 の O1。Qt の PlutoTxPanel と同じ）
       sendTxAtten(v) {
         if (this.plutoView.tx_atten_ext) this.cmd("ext_tx_atten", { atten_db: v }, { field: "plutotx" });
         else this.cmd("plutosdr_set", { tx_atten_db: v }, { field: "plutotx" });
@@ -114,7 +112,6 @@
         if (n === this.tgHarmView.value) return;
         this.cmd("plutosdr_set", { tg_harmonic_avg: n }, { field: "plutotx" });
       },
-      stepTxAtten(exp, dir) { this.sendTxAtten((Number(this.plutoView.tx_atten_db) || 0) + dir * Math.pow(10, exp)); },
       // ---- 聞く
       listenStart() {
         const why = this.listenStartReason;

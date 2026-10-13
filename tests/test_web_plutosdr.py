@@ -17,7 +17,9 @@ from pygigast.core.devices.base import load_profile
 from pygigast.core.devices.plutosdr import driver as pd
 from pygigast.core.devices.plutosdr.fake import FAKE_URI, FakeIioLib
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
+from pygigast.core.units import minus_sign
 from pygigast.ui_qt import screen_pluto, texts
+from pygigast.ui_qt.fields import range_note
 from tests import test_web_server as wst
 from tests.test_web_server import UI_WEB, _Server
 
@@ -59,6 +61,9 @@ class WebPlutoTest(unittest.TestCase):
         self.assertEqual(ui["gain_choices"], [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0])
         self.assertEqual((ui["gain_lo"], ui["gain_hi"], ui["gain_db"]), (-1.0, 73.0, 30.0))
         self.assertEqual(ui["auto_text"], texts.PLUTO_LABELS["auto"])
+        # 送信の減衰の一覧（0〜−80dB の 10dB 刻みと最小の −89.75dB: −90 は機器の範囲の外）と打てる範囲
+        self.assertEqual(ui["tx_atten_choices"], [0.0, -10.0, -20.0, -30.0, -40.0, -50.0, -60.0, -70.0, -80.0, -89.75])
+        self.assertEqual((ui["tx_atten_min"], ui["tx_atten_max"], ui["tx_atten_db"]), (-89.75, 0.0, -40.0))
         self.assertEqual(self.post("plutosdr_set", {"gain_db": 20.0})[0], 200)
         self.assertEqual(self.state()["plutosdr"]["gain_db"], 20.0)
         code, body = self.post("plutosdr_set", {"tx_atten_db": 3.0})
@@ -81,6 +86,11 @@ class WebPlutoTest(unittest.TestCase):
         # 受信の利得は REF の欄と同じ db-field（Qt の DbChoiceField と同じ部品）。1dB 刻みの全部を並べた一覧は無い
         self.assertRegex(html, r'<db-field data-field="pluto_gain"[^>]*:decimals="0"[^>]*:special="plutoView.auto_text"')
         self.assertNotIn('<select data-field="pluto_gain"', html)
+        # 送信の減衰も同じ db-field。一覧と範囲は ui.pluto（Qt と同じ screen_pluto.pluto_view）から、小数 2 桁で出す
+        self.assertRegex(html, r'<db-field data-field="tx_atten"[^>]*:choices="plutoView.tx_atten_choices"'
+                               r'[^>]*:lo="plutoView.tx_atten_min"[^>]*:hi="plutoView.tx_atten_max"[^>]*:decimals="2"'
+                               r'''[^>]*:field-note="notes.plutotx"[^>]*@clear-note="clearNote\('plutotx'\)"''')
+        self.assertNotIn('<num-field data-field="tx_atten"', html)
         win = (UI_WEB / "app_windows.js").read_text(encoding="utf-8")
         self.assertIn("page === 'plutosdr'", win)
 
@@ -115,12 +125,23 @@ out.text = [d.text, db({ showSpecial: true }).text, db({ value: -0.2 }).text, db
 d.onCommit("42.4"); d.onCommit("80"); d.onCommit(" AUTO "); d.onCommit("AUTO dB");
 out.typed = d.emitted; out.note = d.note && d.note.text;
 d = db({ showSpecial: true, value: 71, hi: 71 }); d.onStep(0, 1); d.onStep(0, -1); out.stepped = d.emitted;
+// 送信の減衰（小数 2 桁・範囲 −89.75〜0dB・一覧は 0〜−80 と −89.75。呼ぶ側の知らせ fieldNote）
+const atten = (p) => db({ value: -30, choices: [0, -10, -20, -30, -40, -50, -60, -70, -80, -89.75], lo: -89.75, hi: 0,
+                          decimals: 2, special: null, ...p });
+d = atten({});
+out.attenItems = d.items.map((i) => i.text);
+out.attenText = [d.text, atten({ value: 0 }).text, atten({ value: -89.75 }).text];
+d.onCommit("5"); d.onCommit("-90"); out.attenNote = d.note && d.note.text; d.onCommit("−12.3"); d.onCommit("-89.75 dB");
+out.attenTyped = d.emitted;
+d = atten({ value: -89.75 }); d.onStep(0, -1); d.onStep(0, 1); d.onStep(-2, 1); out.attenStepped = d.emitted;
+d = atten({}); d.note = { text: "typed" }; d.onClearNote(); out.clearOwn = [d.note, d.emitted.length];
+d.onClearNote(); out.clearOuter = d.emitted;
 console.log(JSON.stringify(out));
 """
 
     def test_same_rules_as_qt(self):
         from pygigast.api.web import server as web
-        from pygigast.ui_qt.fields import db_value_text, range_note
+        from pygigast.ui_qt.fields import db_choice_text, db_value_text, range_note
 
         with tempfile.TemporaryDirectory() as d:
             tj = Path(d) / "texts.json"
@@ -136,6 +157,18 @@ console.log(JSON.stringify(out));
         self.assertEqual(got["note"], texts.LABELS["bad_value"])
         self.assertEqual(range_note(-1, 73, "dB"), range_note(-1.0, 73.0, "dB"))
         self.assertEqual(got["stepped"], [["commit", 71], ["commit", 70]])  # 端で止める
+        # 送信の減衰: 一覧の行・欄の文字は Qt の DbChoiceField（db_choice_text・db_value_text）と同じ
+        choices = screen_pluto.tx_atten_choices(-89.75, 0.0)
+        self.assertEqual(got["attenItems"], [db_choice_text(v, "dB", False) for v in choices])
+        self.assertEqual(got["attenItems"], ["0 dB"] + [f"−{a} dB" for a in range(10, 81, 10)] + ["−89.75 dB"])
+        self.assertEqual(got["attenText"], [f"{db_value_text(v, 2)} dB" for v in (-30, 0, -89.75)])
+        self.assertEqual(got["attenText"], ["−30.00 dB", "0.00 dB", "−89.75 dB"])
+        self.assertEqual(got["attenNote"], range_note(-89.75, 0.0, "dB"))  # 範囲の外は送らずに範囲を知らせる
+        self.assertEqual(got["attenTyped"], [["commit", -12.3], ["commit", -89.75]])  # 0.25dB への丸めはコア
+        self.assertEqual(got["attenStepped"], [["commit", -89.75], ["commit", -88.75], ["commit", -89.74]])
+        # 欄の知らせ: 打った値の知らせを先に消し、無ければ呼ぶ側の知らせ（notes.plutotx）を消させる
+        self.assertEqual(got["clearOwn"], [None, 0])
+        self.assertEqual(got["clearOuter"], [["clear-note", None]])
 
 
 def _edge_ok() -> bool:
@@ -200,6 +233,122 @@ class WebGainFieldBrowserTest(unittest.TestCase):
         p.ev(pick.format(sel=sel, v=texts.PLUTO_LABELS["auto"]))
         self.wait_state(lambda g: g["agc"], "自動")
         p.wait(f"{sel}.querySelector('input').value === {json.dumps(texts.PLUTO_LABELS['auto'])}", "欄が自動")
+        self.assertEqual(p.errors, [])
+
+
+@unittest.skipUnless(_edge_ok(), "Microsoft Edge が無い")
+class WebTxAttenBrowserTest(unittest.TestCase):
+    """ヘッドレスの Edge で、送信の減衰の欄の一覧から選ぶ・範囲の外を打つ（Qt の test_tx_atten_choices_and_range と同じ流れ）。
+    SG・TG では plutosdr_set、外部 IQ の送信の間は ext_tx_atten に届く。"""
+
+    SEL = "document.querySelector('[data-field=tx_atten]')"
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.test_web_layout import App, EdgePage
+
+        cls.app = App(lan=False, pluto=True)
+        try:
+            cls.page = EdgePage()
+        except Exception:
+            cls.app.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.page.close()
+        cls.app.close()
+
+    def wait_state(self, cond, what):
+        end = time.monotonic() + 15
+        while not cond(self.app.call("get_state")):
+            self.assertLess(time.monotonic(), end, what)
+            time.sleep(0.05)
+
+    def open_source(self):
+        from tests.test_web_layout import open_app
+
+        open_app(self.page, self.app, 1280, 720)
+        self.page.ev("gsApp.tab = 'source'; 1")
+        self.page.settle()
+
+    def pick(self, text):
+        self.page.ev(f"(() => {{ const s = {self.SEL}.querySelector('select'); s.value = {json.dumps(text)}; "
+                     "s.dispatchEvent(new Event('change')); return 1; })()")
+
+    def type_in(self, text):
+        self.page.ev(f"(() => {{ const i = {self.SEL}.querySelector('input'); i.focus(); i.value = {json.dumps(text)}; "
+                     "i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'})); "
+                     "return 1; })()")
+
+    def wait_shown(self, text, what):
+        self.page.wait(f"{self.SEL}.querySelector('input').value === {json.dumps(text)}", what)
+
+    def test_choose_in_sg_tg_and_out_of_range(self):
+        a, p = self.app, self.page
+        try:
+            self.open_source()
+            opts = p.ev(f"[...{self.SEL}.querySelectorAll('option')].map((o) => o.textContent.trim()).filter((t) => t)")
+            self.assertEqual(opts, ["0 dB"] + [f"−{v} dB" for v in range(10, 81, 10)] + ["−89.75 dB"])
+            self.wait_shown("−40.00 dB", "初めの値")
+            # SG・TG: 一覧から選ぶと plutosdr_set の tx_atten_db
+            for mode, extra, text, want in (("sg", {"sg_hz": 2_401_000_000}, "−30 dB", -30.0),
+                                            ("tg", {}, "−89.75 dB", -89.75)):
+                a.call("set_mode", mode=mode, **extra)
+                p.wait(f"gsApp.st.sweep.mode === '{mode}'", mode)
+                self.pick(text)
+                self.wait_state(lambda s: s["plutosdr"]["tx_atten_db"] == want, f"{mode} の送信の減衰")
+                self.wait_shown(minus_sign(f"{want:.2f} dB"), "欄が映す（小数 2 桁）")
+            # 範囲の外を打つと、欄の下に範囲を知らせて元に戻す（送らない）
+            self.type_in("5")
+            p.wait(f"!!{self.SEL}.querySelector('.note-pop')", "範囲の知らせ")
+            self.assertEqual(p.ev(f"{self.SEL}.querySelector('.note-pop span').textContent"),
+                             range_note(-89.75, 0.0, "dB"))
+            self.wait_shown("−89.75 dB", "元に戻す")
+            self.assertEqual(a.call("get_state")["plutosdr"]["tx_atten_db"], -89.75)
+        finally:
+            a.call("set_mode", mode="sg", sg_hz=2_401_000_000)
+            a.call("plutosdr_set", tx_atten_db=-40.0)
+        self.assertEqual(p.errors, [])
+
+    def test_command_note_under_the_field(self):
+        # 命令の知らせ（notes.plutotx: 機器が断った理由など）も、いままでと同じく欄の下に出る
+        p = self.page
+        self.open_source()
+        p.ev("gsApp.note('plutotx', 'refused'); 1")
+        p.wait(f"!!{self.SEL}.querySelector('.note-pop') && "
+               f"{self.SEL}.querySelector('.note-pop span').textContent === 'refused'", "呼ぶ側の知らせ")
+        self.assertEqual(p.errors, [])
+
+    def test_choose_while_ext_iq_streaming(self):
+        from tests.exttx_helpers import RawClient, free_port
+
+        a, p = self.app, self.page
+        a.call("set_mode", mode="sa")
+        a.call("set_sweep", start_hz=1_574_000_000, stop_hz=1_577_000_000, rbw_hz=48000)
+        a.call("run", mode="continuous")
+        port = free_port()
+        a.call("ext_tx_set", enabled=True, port=port)
+        c = RawClient(port)
+        try:
+            c.wait_type("welcome")
+            self.assertEqual(c.start(name="GPS emulator")["type"], "ready")
+            c.feed()
+            c.wait_type("on")
+            self.open_source()
+            p.wait("gsApp.plutoView.tx_atten_ext", "外部 IQ の送信の間")
+            before = a.call("get_state")["plutosdr"]["tx_atten_db"]
+            # 外部 IQ の送信の間は一覧から選ぶと ext_tx_atten（SG・TG の値は変えない）
+            self.pick("−20 dB")
+            self.wait_state(lambda s: s["ext_tx"]["atten_db"] == -20.0, "外部の送信の減衰")
+            self.assertEqual(a.call("get_state")["plutosdr"]["tx_atten_db"], before)
+            self.wait_shown("−20.00 dB", "欄が映す")
+        finally:
+            c.close()
+            a.call("ext_tx_set", enabled=False)
+            a.call("run", mode="single")
+            a.call("set_sweep", start_hz=2_400_000_000, stop_hz=2_402_000_000, rbw_hz=1500)
+            a.call("set_mode", mode="sg", sg_hz=2_401_000_000)
         self.assertEqual(p.errors, [])
 
 

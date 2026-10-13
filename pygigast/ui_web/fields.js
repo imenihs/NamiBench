@@ -451,8 +451,11 @@
       // 選ぶか同じ文字を打って確定すると special を出す。showSpecial の間は欄にその文字を出す（↑↓・ホイールは value から送る）
       special: { type: String, default: null },
       showSpecial: { type: Boolean, default: false },
+      // 呼ぶ側が欄の下に出す知らせ（命令が断られた理由など: PlutoSDR の送信の減衰）。打った値の知らせ（範囲の外・
+      // 読めない）があればそちらを出す。消すときは clear-note（Qt の DbChoiceField の flash_note と同じ場所に出る）
+      fieldNote: { type: Object, default: null },
     },
-    emits: ["commit", "special"],
+    emits: ["commit", "special", "clear-note"],
     data() { return { note: null }; },
     computed: {
       spec() { return { unit: this.unit, lo: this.lo, hi: this.hi, decimals: this.decimals }; },
@@ -470,10 +473,14 @@
         this.$emit("commit", r.value);
       },
       onStep(exp, dir) { this.$emit("commit", stepDb(this.value, exp, dir, this.spec)); },
+      onClearNote() {
+        if (this.note) this.note = null;
+        else this.$emit("clear-note");
+      },
     },
     template: `
-      <num-field class="field-sm" :label="label" :text="text" :note="note" :choices="items" :wheel-exp="0"
-                 :disabled="disabled" :title="title" @commit="onCommit" @step="onStep" @clear-note="note = null"></num-field>`,
+      <num-field class="field-sm" :label="label" :text="text" :note="note || fieldNote" :choices="items" :wheel-exp="0"
+                 :disabled="disabled" :title="title" @commit="onCommit" @step="onStep" @clear-note="onClearNote"></num-field>`,
   };
 
   // ---- 同じ列のドロップダウンの幅（J §4.11・S-02。2026-10-03 ユーザー指摘「箱の長さがそろってなくてガタガタ」）

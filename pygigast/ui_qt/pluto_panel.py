@@ -4,7 +4,8 @@
   刻みのどの値も打てる。一覧は自動と 10dB 刻み）・「利得を合わせる」・単位。
   設定の利得がいまの範囲で使えないときは、使う値を利得の欄の下に注意の色で出す（U-25）。受信の利得の補正の表が
   無いときは、利得の欄の下に「利得の補正なし」の印（理由はツールチップ: 設計Q §7.6）
-- 送信（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル。0.25dB 刻み）・TG 高調波の平均除去（設計Q §7.7。
+- 送信（右のタブ「信号源」）: 送信の減衰（SG・TG の出力のレベル。受信の利得と同じ打てるドロップダウンで、機器の範囲の
+  どの値も打てる（0.25dB 刻みへの丸めはコア）。一覧は 10dB 刻みと最小の出力の端）・TG 高調波の平均除去（設計Q §7.7。
   選択肢の文字にいまの条件での1回の掃引の見積もり。幅は秒を 999.9 にした見本で決めた固定の幅: イメージ除去の欄と同じ）
   と、出力中の表示
 - どちらも PlutoSDR に繋いでいるときだけ出す（設計J §4.5）。使えない操作は消さずに無効にして理由を出す（U-08）
@@ -17,7 +18,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QPushButton
 
 from . import sizes, widget_sync
-from .fields import DbChoiceField, DbField
+from .fields import DbChoiceField
 from .texts_exttx import EXT_TX_LABELS as XL
 from .screen_pluto import pluto_view, tg_harmonic_width_samples
 from .tab_traces import SameWidth, set_enabled
@@ -93,20 +94,13 @@ class PlutoRxPanel(QGroupBox):
         self.win.call("plutosdr_set", field=self.gain, agc=True)
 
 
-class _AttenField(DbField):
-    """送信の減衰の欄（0.25dB 刻みなので小数 2 桁で出す）。"""
-
-    def set_value(self, v: float) -> None:
-        self._value = v
-        self.edit.show_value(f"{v:.2f} dB")
-
-
 class PlutoTxPanel(QGroupBox):
     def __init__(self, win: "MainWindow") -> None:
         super().__init__(L["tx_group"])
         self.win = win
         form = sizes.form(self)
-        self.atten = _AttenField(L["tx_atten"], "dB", self._commit, big=False)
+        # 一覧・範囲は繋いだ機器の範囲で決まる（apply で入れる）。0.25dB 刻みなので小数 2 桁で出す
+        self.atten = DbChoiceField(L["tx_atten"], "dB", self._commit, (), signed=False, decimals=2, big=False)
         self.atten.setToolTip(L["tx_atten_tip"])
         form.addRow(self.atten.name, self.atten)
         self.tg_harmonic = QComboBox()
@@ -132,7 +126,6 @@ class PlutoTxPanel(QGroupBox):
         form.addRow("", sizes.buttons_row(self.ext_stop))
         self._ext_rows.append(form.rowCount() - 1)
         self._ext = False
-        self._step = 0.25
         self.hide()
 
     def _commit(self, v: float) -> None:
@@ -152,6 +145,7 @@ class PlutoTxPanel(QGroupBox):
     def apply(self, st: dict) -> None:
         v = pluto_view(st)
         self.setVisible(v["shown"])
+        self.atten.set_spec(v["tx_atten_choices"], False, v["tx_atten_min"], v["tx_atten_max"], 2)
         self.atten.set_value(v["tx_atten_db"])
         self._ext = bool(v["tx_atten_ext"])
         set_enabled(self.atten, v["tx_atten_reason"], XL["atten_tip"] if self._ext else L["tx_atten_tip"])  # S11 のオープンの後も（設計Q §7.8）
