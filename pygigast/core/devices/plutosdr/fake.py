@@ -26,6 +26,7 @@ None（標準器を外した）は dut_gamma(周波数の配列) → 複素の�
 kernel_buffers 個。いっぱいなら一番古いバッファが流れ終わるまで待つ）。押した標本は pushed に全部残す。
 push_fail を立てると push は push_hang_s 待ってから失敗する（抜けた・時間切れ）。fail_reads は受信の読みだけを失敗させる
 （属性の書き込みは通る）。sampling_frequency は rate_reject の値を断り（EINVAL）、rate_readback で読み戻す値を変えられる。
+LO の周波数は lo_floor より下を断る（EINVAL。実機と同じく送信 LO は申告の下限そのものを断る）。
 """
 from __future__ import annotations
 
@@ -101,6 +102,8 @@ class FakePluto:
         self.push_times: list[float] = []
         self._dac_ends: collections.deque = collections.deque()
         self.rate_reject: set[int] = set()
+        # LO に書ける最小（実機 2026-10-13: 送信は申告 46875001Hz を断り 46875002Hz から通る。受信は申告どおり）
+        self.lo_floor: dict[str, int] = {"altvoltage0": 70_000_000, "altvoltage1": 46_875_002}
         self.rate_readback: dict[int, int] = {}
         self.log: list[tuple[str, str, str]] = []  # (通路, 属性, 値) の書き込み
         self.lock = threading.Lock()
@@ -146,6 +149,9 @@ class FakePluto:
             if not mn <= g <= mx:
                 raise IioError("channel_attr_write", _EINVAL, "Invalid argument")
             v = f"{g:.6f} dB"
+        if dev == "ad9361-phy" and ch in self.lo_floor and out and name == "frequency":
+            if int(float(v)) < self.lo_floor[ch]:
+                raise IioError("channel_attr_write", _EINVAL, "Invalid argument")
         if dev == "ad9361-phy" and ch == "voltage0" and name == "sampling_frequency":
             fs = int(float(v))
             if fs in self.rate_reject:

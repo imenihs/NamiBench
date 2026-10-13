@@ -339,15 +339,14 @@ class PlutoSdrDevice(Device):
                 self._tx_rf_bw = None  # 読めなければ外部 IQ の送信の間も送信の帯域には触らない
             # つないだら送信を止める（2026-10-11 ユーザー決定「電源入れたときは、送信止めて」）: 電源投入時は送信の LO が
             # 2450MHz で動作・減衰 −10dB のままで、受信に線が出る。出力をいちばん小さくし、LO を止め、波形を消す
-            self._txc.set_attr("hardwaregain", self._atten_min_text())
-            self._txlo.set_attr("powerdown", 1)
+            self._silence_tx()
             self._destroy_tx_buffer()
             self._dds_off()
             fs = int(self._profile["fft"]["sample_rate_hz"])
             self._rx.set_attr("sampling_frequency", fs)
             self._rx.set_attr("rf_bandwidth", int(self._profile["fft"].get("rf_bandwidth_hz", fs)))
             f = self._profile["freq"]
-            first = int(f.get("default_start_hz", f["min_hz"]))
+            first = min(max(int(f.get("default_start_hz", f["min_hz"])), int(f["min_hz"])), int(f["max_hz"]))
             self._rxlo.set_attr("frequency", first)
             self._tuned_hz = first
             if gain_db is not _DEFAULT_GAIN:
@@ -399,13 +398,21 @@ class PlutoSdrDevice(Device):
         t = parse_range(self._txlo.attr("frequency_available"))
         if t:
             src["tx_lo_hz"] = [int(t[0]), int(t[2])]
+        a = parse_range(self._txc.attr("hardwaregain_available"))
+        if a:
+            src["tx_atten_db"]["min"], src["tx_atten_db"]["step"], src["tx_atten_db"]["max"] = a[0], a[1], a[2]
+        # 申告の下限そのものを断る機器がある（2026-10-13 実機: 送信 LO の申告 46875001Hz を書くと EINVAL、46875002Hz は
+        # 通る。受信 LO の申告 70000000Hz は通る）。範囲の端を選んだ利用者の設定が測るときに断られないよう、送信を止めて
+        # から両方の LO に下限を書いて確かめ、通る値を範囲の下限にする
+        self._silence_tx()
+        f = prof["freq"]
+        f["min_hz"] = self._writable_floor(self._rxlo, int(f["min_hz"]), int(f["max_hz"]))
+        src["tx_lo_hz"][0] = self._writable_floor(self._txlo, int(src["tx_lo_hz"][0]), int(src["tx_lo_hz"][1]))
+        self._tx_tuned_hz = None
         off = int(src["dds_offset_hz"])
         lo_min, lo_max = src["tx_lo_hz"]
         src["sg"] = {"min_hz": int(lo_min) + off, "max_hz": int(lo_max), "unit_hz": int(src["sg"]["unit_hz"])}
         src["tg_range_hz"] = [max(int(prof["freq"]["min_hz"]), int(lo_min)), min(int(prof["freq"]["max_hz"]), int(lo_max))]
-        a = parse_range(self._txc.attr("hardwaregain_available"))
-        if a:
-            src["tx_atten_db"]["min"], src["tx_atten_db"]["step"], src["tx_atten_db"]["max"] = a[0], a[1], a[2]
         # 受信の利得の帯ごとの範囲は LO をその帯に置いて読む（LO の帯で範囲が変わる）
         for b in prof["gain"]["bands"]:
             probe = int(b["probe_hz"])
@@ -416,6 +423,28 @@ class PlutoSdrDevice(Device):
             if g:
                 b["min_db"], b["max_db"] = int(round(g[0])), int(round(g[2]))
         self._tuned_hz = None
+
+    def _writable_floor(self, ch, lo: int, hi: int) -> int:
+        """LO の通路 ch に書ける最小の周波数（lo から上）。lo が通ればそのまま。hi も断られたら決められないので lo の
+        まま（書けない値は測るときに断られ、掃引を止めて知らせる: measure）。"""
+        def ok(hz: int) -> bool:
+            try:
+                ch.set_attr("frequency", int(hz))
+                return True
+            except IioError as e:
+                if self._is_value_error(e):
+                    return False
+                raise
+        if ok(lo) or not ok(hi):
+            return lo
+        bad, good = lo, hi
+        while good - bad > 1:
+            mid = (bad + good) // 2
+            if ok(mid):
+                good = mid
+            else:
+                bad = mid
+        return good
 
     # ---- 利得・送信の減衰（測っている間は次の measure の始めに効かせる）----
     def set_gain(self, gain_db: Optional[float]) -> None:
@@ -602,7 +631,12 @@ class PlutoSdrDevice(Device):
                 return self._measure_locked(sweep, mode, cancel)
             except IioError as e:
                 if self._is_value_error(e):
-                    raise DeviceError(str(e)) from e
+                    # 機器が設定の値を断った（繋がりは生きている）: 送信を止め、切らずに掃引を止めて知らせる
+                    try:
+                        self._tx_off()
+                    except IioError:
+                        pass
+                    raise InvalidSweep(f"PlutoSDR が設定を断った: {e}") from e
                 self._drop()
                 raise DeviceDisconnected(str(e)) from e
 
@@ -718,6 +752,11 @@ class PlutoSdrDevice(Device):
     def _dds_off(self) -> None:
         for ch in self._dds.values():
             ch.set_attr("scale", "0")
+
+    def _silence_tx(self) -> None:
+        """出力をいちばん小さくして送信の LO を止める（波形はそのまま）。"""
+        self._txc.set_attr("hardwaregain", self._atten_min_text())
+        self._txlo.set_attr("powerdown", 1)
 
     def _destroy_tx_buffer(self) -> None:
         b, self._tx_buf = self._tx_buf, None

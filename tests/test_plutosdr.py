@@ -110,7 +110,9 @@ class TestDevice(unittest.TestCase):
 
     def test_ranges_from_device(self):
         self.assertEqual(self.prof["freq"]["min_hz"], 70 * MHZ)
-        self.assertEqual(self.prof["source"]["sg"]["min_hz"], 46_875_001 + 1_000_000)
+        # 送信 LO の申告の下限 46875001Hz は書くと断られる（実機 2026-10-13）: 書いて通った値を下限にする
+        self.assertEqual(self.prof["source"]["tx_lo_hz"][0], 46_875_002)
+        self.assertEqual(self.prof["source"]["sg"]["min_hz"], 46_875_002 + 1_000_000)
         self.assertEqual(self.prof["gain"]["bands"][2]["max_db"], 62)
 
     def test_sa_level_is_dbfs_minus_gain_and_tx_untouched(self):
@@ -284,6 +286,25 @@ class TestInstrument(PlutoCase):
         self.assertTrue(res["plutosdr"]["agc"])
         self.assertEqual(self.single()["unit"], "dBFS")
 
+    def test_refused_setting_stops_without_disconnecting(self):
+        # 機器が設定の値を断った（EINVAL）ら、繋いだまま掃引を止めて知らせ、送信を止める（切れたと扱わない）
+        self.call("connect", backend="plutosdr", serial=FAKE_SERIAL)
+        self.call("set_mode", mode="sg", sg_hz=90_500_000)
+        pl = self.lib.pluto
+        pl.lo_floor["altvoltage1"] = 1_000 * MHZ  # 送信 LO 89.5MHz を断らせる
+        with self.cv:
+            self.events.clear()
+        self.call("run", mode="continuous")
+        self.wait_for(lambda k, p: k == "state" and p["run"]["state"] == "stopped"
+                      and p["run"]["last_stop_reason"] == "invalid_sweep")
+        self.wait_for(lambda k, p: k == "notice" and p["code"] == "invalid_sweep")
+        st = self.call("get_state")
+        self.assertEqual(st["connection"]["state"], "connected")
+        self.assertEqual(pl.attrs[("ad9361-phy", "altvoltage1", True, "powerdown")], "1")
+        self.assertEqual(float(pl.attrs[("ad9361-phy", "voltage0", True, "hardwaregain")].split()[0]), -89.75)
+        pl.lo_floor["altvoltage1"] = 46_875_002  # 書ける周波数なら繋ぎ直さずにそのまま測れる
+        self.single()
+
     def test_tg_reference_fine_only(self):
         self.call("connect", backend="plutosdr", serial=FAKE_SERIAL)
         self.call("set_mode", mode="tg")
@@ -388,6 +409,29 @@ class TestTxSafety(unittest.TestCase):
         tx_writes = [e for e in ph.log if e[0] in ("ad9361-phy/altvoltage1_out", "ad9361-phy/voltage0_out")]
         self.assertIn(("ad9361-phy/altvoltage1_out", "powerdown"), [e[:2] for e in tx_writes])
         self.assertEqual(float([e for e in tx_writes if e[:2] == ("ad9361-phy/voltage0_out", "hardwaregain")][0][2]), -89.75)
+
+    def test_lo_floor_is_probed_with_tx_silent(self):
+        # 下限を書いて確かめる間は送信を止めておく（出力をいちばん小さく・LO 停止のまま。LO を動作にしない）
+        lib = fake_lib()
+        lib.pluto.lo_floor["altvoltage1"] = 50 * MHZ
+        lib.pluto.lo_floor["altvoltage0"] = 80 * MHZ
+        dev = pd.PlutoSdrDevice(lib=lib)
+        dev.open(FAKE_URI)
+        try:
+            prof = dev.profile()
+            self.assertEqual(prof["source"]["tx_lo_hz"][0], 50 * MHZ)
+            self.assertEqual(prof["source"]["sg"]["min_hz"], 51 * MHZ)
+            self.assertEqual(prof["freq"]["min_hz"], 80 * MHZ)
+            self.assertEqual(prof["source"]["tg_range_hz"][0], 80 * MHZ)
+            log = [w for w in lib.pluto.log if w[0] in ("ad9361-phy/altvoltage1_out", "ad9361-phy/voltage0_out")]
+            names = [w[:2] for w in log]
+            i_lo = names.index(("ad9361-phy/altvoltage1_out", "frequency"))
+            self.assertEqual(float(log[0][2]), -89.75)
+            self.assertEqual(names[0], ("ad9361-phy/voltage0_out", "hardwaregain"))
+            self.assertIn(("ad9361-phy/altvoltage1_out", "powerdown", "1"), [(a, b, str(c)) for a, b, c in log[:i_lo]])
+            self.assertNotIn(("ad9361-phy/altvoltage1_out", "powerdown", "0"), [(a, b, str(c)) for a, b, c in log])
+        finally:
+            dev.close()
 
     def test_sg_start_order_from_power_up(self):
         self.dev.set_tx_atten(-80)

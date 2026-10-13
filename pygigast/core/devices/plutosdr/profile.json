@@ -84,7 +84,7 @@
     "band_edges_hz": [],
     "level_adjustable": true,
     "tx_atten_db": {"min": -89.75, "max": 0.0, "step": 0.25, "default": -40.0},
-    "tx_lo_hz": [46875001, 6000000000],
+    "tx_lo_hz": [46875002, 6000000000],
     "dds_offset_hz": 1000000,
     "dds_scale": 0.5,
     "dds_phase_i_mdeg": 90000,

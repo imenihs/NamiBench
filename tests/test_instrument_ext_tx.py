@@ -184,7 +184,7 @@ class TestRefuse(ExtCase):
         self.assertEqual((m["min"], m["max"]), (2_083_334, 4_096_000))
         self.refused("sample_rate_unsupported", rate=2_083_334)  # SA の RBW が1つも使えない速さ
         _, m = self.refused("lo_out_of_range", lo=10_000_000)
-        self.assertEqual(m["min"], 46_875_001)
+        self.assertEqual(m["min"], 46_875_002)  # 申告の下限 46875001Hz は機器が断る: 書いて通った値（実機 2026-10-13）
 
     def test_readback_differs_then_retry(self):
         self.pl.rate_readback[FS] = FS + 1
