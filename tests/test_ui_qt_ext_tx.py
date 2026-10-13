@@ -75,8 +75,9 @@ class TestExtTxQt(ExtUiBase):
         self.assertEqual(tx.ext_lo.text(), format_freq(LO))
         self.assertTrue(tx.ext_power.text().endswith("dBFS"))
         self.assertTrue(tx.ext_stop.isVisible())
-        self.assertEqual(tx.atten.edit.text(), "-89.75 dB")
-        tx._commit(-30.0)
+        self.assertEqual(tx.atten.edit.text(), "−89.75 dB")
+        # 一覧から選ぶと外部の送信の減衰へ（SG・TG の plutosdr_set ではない）
+        tx.atten.combo.activated.emit(tx.atten.combo.findText("−30 dB"))
         self.wait(lambda: self.state()["ext_tx"]["atten_db"] == -30.0, what="外部の減衰")
         self.assertNotEqual(self.state()["plutosdr"]["tx_atten_db"], -30.0)  # SG・TG の値は別
         # 状態バーの［送信を止める］

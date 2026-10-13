@@ -7,7 +7,8 @@
   受信の利得の補正の表（設計Q §7.6）が無いときは、利得の欄のそばに「利得の補正なし」の印（理由はツールチップ）。
   TG で基準を取り始めてから・S11 でオープンを測り始めてから、その基準を捨てるかそのモードを出るまで（設計Q §7.8・§7.9）・
   利得の補正を測っている間は、利得の欄と「利得を合わせる」を理由付きで使えなくする（U-08）
-- 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG・S11 の出力のレベル。TG・S11 は利得と同じ期間だけ使えない）と
+- 送信の欄（右のタブ「信号源」）: 送信の減衰（SG・TG・S11 の出力のレベル。打てるドロップダウンで、機器の範囲のどの値も
+  打てて、一覧は 10dB 刻みと最小の出力の端。TG・S11 は利得と同じ期間だけ使えない）と
   TG 高調波の平均除去（設計Q §7.7。選択肢の文字に、いまの条件での1回の掃引の見積もりを出す: イメージ除去の選択と同じ形。
   TG・S11 のときだけ選べる: S11 は機器から見れば TG と同じ掃引）
 - 欄は PlutoSDR に繋いでいるときだけ出す（設計J §4.5: 別の機種の欄は出さない）
@@ -23,6 +24,8 @@ from .texts_pluto import PLUTO_LABELS, TG_HARMONIC_CHOICES
 
 # 受信の利得の一覧に並べる刻み（dB）。打てばいまの範囲の 1dB 刻みのどの値でも
 GAIN_CHOICE_STEP_DB = 10
+# 送信の減衰の一覧に並べる刻み（dB）。打てば機器の範囲のどの値でも（0.25dB 刻みへの丸めはコア）
+TX_ATTEN_CHOICE_STEP_DB = 10
 # 利得・送信の減衰を変えさせない理由のコード（コアの instrument_pluto_cal）→ 欄のツールチップに出す理由
 LOCK_REASONS = {
     "plutosdr_tg_conditions_locked": "tg_locked",
@@ -60,6 +63,18 @@ def tg_harmonic_view(st: dict) -> dict:
 def tg_harmonic_width_samples() -> list[str]:
     """選択肢の一番長い文字の見本（秒を 999.9 にしたもの。秒の桁で欄を動かさない: イメージ除去の欄と同じ）。"""
     return [texts.choice_with_seconds(name, 999.9) for name in TG_HARMONIC_CHOICES.values()]
+
+
+def tx_atten_choices(lo: float, hi: float) -> list[float]:
+    """送信の減衰の一覧（大きい順: 0, −10, …）。機器の範囲の中の 10dB 刻みに、刻みに乗らない範囲の端を足す
+    （−90 は範囲 −89.75〜0dB の外なので、最小の出力は −89.75 の行で選ぶ）。Qt と Web が同じ一覧を出す。"""
+    step = TX_ATTEN_CHOICE_STEP_DB
+    out = [float(a) for a in range(int(math.floor(hi / step)) * step, int(math.ceil(lo / step)) * step - 1, -step)]
+    if not out or out[0] != hi:
+        out.insert(0, float(hi))
+    if out[-1] != lo:
+        out.append(float(lo))
+    return out
 
 
 def pluto_view(st: dict) -> dict:
@@ -115,6 +130,8 @@ def pluto_view(st: dict) -> dict:
         float(pl.get("tx_atten_db") if pl.get("tx_atten_db") is not None else -40.0),
         "tx_atten_ext": ext["shown"],
         "ext": ext,
+        # 送信の減衰の欄（打てるドロップダウン）: 一覧（tx_atten_choices）と打てる範囲（機器の範囲）
+        "tx_atten_choices": tx_atten_choices(float(rng["min"]), float(rng["max"])),
         "tx_atten_min": float(rng["min"]),
         "tx_atten_max": float(rng["max"]),
         "tx_atten_step": float(rng["step"]),

@@ -679,9 +679,11 @@
           <h3>{{ T('PLUTO_LABELS', 'tx_group') }}</h3>
           <div class="form">
             <label>{{ T('PLUTO_LABELS', 'tx_atten') }}</label>
-            <num-field data-field="tx_atten" :text="plutoAttenText" :note="notes.plutotx" @clear-note="clearNote('plutotx')" :disabled="!!plutoView.tx_atten_reason"
-                       :title="(plutoView.tx_atten_ext ? T('EXT_TX_LABELS', 'atten_tip') : T('PLUTO_LABELS', 'tx_atten_tip')) + (plutoView.tx_atten_reason ? ' — ' + plutoView.tx_atten_reason : '')"
-                       @commit="setTxAtten($event)" @step="(e, d) => stepTxAtten(e, d)"></num-field>
+            <!-- 受信の利得と同じ db-field（一覧・範囲は ui.pluto: Qt と同じ screen_pluto.tx_atten_choices）。0.25dB 刻みなので小数 2 桁 -->
+            <db-field data-field="tx_atten" :value="plutoView.tx_atten_db" unit="dB" :choices="plutoView.tx_atten_choices" :lo="plutoView.tx_atten_min" :hi="plutoView.tx_atten_max"
+                      :decimals="2" :field-note="notes.plutotx" @clear-note="clearNote('plutotx')" :disabled="!!plutoView.tx_atten_reason"
+                      :title="(plutoView.tx_atten_ext ? T('EXT_TX_LABELS', 'atten_tip') : T('PLUTO_LABELS', 'tx_atten_tip')) + (plutoView.tx_atten_reason ? ' — ' + plutoView.tx_atten_reason : '')"
+                      @commit="sendTxAtten($event)"></db-field>
             <!-- TG 高調波の平均除去（設計Q §7.7）: 選択肢の文字（名前と、いまの条件での1回の掃引の見積もり）と使えない理由は
                  サーバーが作る（ui.pluto.tg_harmonic: Qt と同じ screen_pluto.tg_harmonic_view）。幅は秒を 999.9 にした見本で
                  決めた固定の幅（app.js の fitColumns の --col-tgharm） -->

@@ -7,6 +7,7 @@ import unittest
 
 from pygigast.api.local import LocalApi, _PlutoSdrBackend, _SimulatorBackend
 from pygigast.core.devices.base import load_profile
+from pygigast.core.units import minus_sign
 from pygigast.core.devices.plutosdr import driver as pd
 from pygigast.core.devices.plutosdr.fake import FAKE_SERIAL, FAKE_URI, FakeIioLib
 from pygigast.core.instrument import GIGAST_PROFILE_PATH, Instrument
@@ -155,9 +156,47 @@ class TestPlutoPanels(PlutoUiBase):
         tx.atten.edit.setText("-12.3")
         tx.atten.edit.committed.emit("-12.3")
         self.wait(lambda: self.state()["plutosdr"]["tx_atten_db"] == -12.25, what="送信の減衰（0.25dB 刻み）")
-        self.wait(lambda: tx.atten.edit.text().startswith("-12.25"), what="欄の値")
+        self.wait(lambda: tx.atten.edit.text().startswith("−12.25"), what="欄の値")
         tx.atten.edit.committed.emit("5")
-        self.wait(lambda: tx.atten.edit.text().startswith("-12.25"), what="範囲外は変わらない")
+        self.wait(lambda: tx.atten.edit.text().startswith("−12.25"), what="範囲外は変わらない")
+
+    def test_tx_atten_choices_and_range(self):
+        # 送信の減衰は受信の利得と同じ打てるドロップダウン。一覧は 0〜−80dB の 10dB 刻みと最小の −89.75dB
+        # （−90 は機器の範囲の外）。中身は Web と同じ screen_pluto.pluto_view の tx_atten_choices
+        self.connect_pluto()
+        tx = self.win.source_tab.pluto_tx
+        self.assertIsInstance(tx.atten, DbChoiceField)
+        self.assertEqual(tx.atten.choices(), ["0 dB"] + [f"−{a} dB" for a in range(10, 81, 10)] + ["−89.75 dB"])
+        self.assertEqual((tx.atten.lo, tx.atten.hi, tx.atten.decimals), (-89.75, 0.0, 2))
+        self.assertEqual(tx.atten.edit.text(), "−40.00 dB")
+        sent = []
+        orig = self.win.call
+        self.win.call = lambda name, *a, **kw: (sent.append((name, kw.get("tx_atten_db"), kw.get("field"))),
+                                                orig(name, *a, **kw))
+        try:
+            # SG・TG: 一覧から選ぶと plutosdr_set の tx_atten_db（知らせは欄の下）
+            for mode, extra, pick, want in (("sg", {"sg_hz": 85 * MHZ}, "−30 dB", -30.0), ("tg", {}, "−89.75 dB", -89.75)):
+                self.cmd("set_mode", mode=mode, **extra)
+                self.pump(0.2)
+                sent.clear()
+                tx.atten.combo.activated.emit(tx.atten.combo.findText(pick))
+                self.assertEqual(sent, [("plutosdr_set", want, tx.atten)], mode)
+                self.wait(lambda: self.state()["plutosdr"]["tx_atten_db"] == want, what=f"{mode} の送信の減衰")
+                self.wait(lambda: tx.atten.edit.text() == minus_sign(f"{want:.2f} dB"), what="欄の値（小数2桁）")
+            # 範囲の外を打つと、欄の下に範囲を知らせて元に戻す（送らない）
+            sent.clear()
+            for typed in ("5", "-90"):
+                tx.atten.edit.setText(typed)
+                tx.atten.edit.committed.emit(typed)
+                self.assertEqual(sent, [], typed)
+                self.assertEqual(tx.atten.note.text(), range_note(-89.75, 0.0, "dB"))
+                self.assertEqual(tx.atten.edit.text(), "−89.75 dB")
+            # 範囲の中を打てば送る（0.25dB 刻みへの丸めはコア）
+            tx.atten.edit.committed.emit("−89.7")
+            self.assertEqual(sent, [("plutosdr_set", -89.7, tx.atten)])
+            self.wait(lambda: self.state()["plutosdr"]["tx_atten_db"] == -89.75, what="丸めはコア")
+        finally:
+            self.win.call = orig
 
     def test_settings_page_and_device_list(self):
         self.connect_pluto(single=False)
