@@ -431,6 +431,23 @@ class TestExtIqEvents(LogWait, ExtCase):
         rec = self.wait_line("recovered", self.index_of(lost))
         self.assertIs(rec["detail"]["rebooted"], False)  # 外部 IQ の LO を書いたまま戻った
 
+    def test_lost_after_the_push_failed_first(self):
+        """送信中に抜けると、ふつうは押すスレッドが先に気づく: 送信を止めた後に書く lost の行も、動作は外部 IQ 送信。"""
+        self.streaming()
+        end = time.monotonic() + 10
+        while self.inst._device.inner.last_tx_at is None:
+            self.assertLess(time.monotonic(), end, "送信が押されない")
+            time.sleep(0.05)
+        self.pl.push_fail = True
+        e = self.wait_line("ext_iq_stopped")
+        self.assertEqual(e["reason"], "device_lost")
+        self.pl.unplugged = True  # 機器ごと消えた（掃引へ戻すと受信も失敗する）
+        lost = self.wait_line("lost", self.index_of(e))
+        self.assertEqual(lost["detail"]["activity"], ["ext_iq"])
+        self.assertIsNotNone(lost["detail"]["ext_iq_stopped_before_s"])
+        self.pl.push_fail = self.pl.unplugged = False
+        self.wait_line("recovered", self.index_of(lost))
+
 
 if __name__ == "__main__":
     unittest.main()

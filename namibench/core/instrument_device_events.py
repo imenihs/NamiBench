@@ -22,6 +22,12 @@ from .devices.plutosdr import events as pluto_events
 from .instrument_step import RUN_STATE as STEP_RUN_STATE
 
 
+# 外部 IQ 送信が「機器が切れたため」で止まってから、切れた（lost）の行を書くまでの、同じ切断とみなす長さ。
+# 送信中は掃引を止めているので、先に失敗に気づくのは押すスレッドで、その後に掃引へ戻して初めて受信が失敗する
+# （libiio のコンテキストの時間切れ 3 秒と、掃引へ戻す時間を足しても数秒）
+EXT_LOST_WINDOW_S = 10.0
+
+
 def _round(v: Optional[float]) -> Optional[float]:
     return None if v is None else round(float(v), 3)
 
@@ -33,6 +39,8 @@ class DeviceEventsMixin:
         self._evt_log = DeviceEventLog(self._root / LOG_DIR / LOG_NAME)
         # 切れたとき（lost）の時刻と、戻ったときに比べる送信の LO（PlutoSDR が書いた値）
         self._evt_lost: Optional[dict] = None
+        # 外部 IQ 送信が「機器が切れたため」で止まった時点の動作（続く lost の行は、送信を止めた後に書かれるため）
+        self._evt_ext_lost: Optional[dict] = None
 
     def _evt(self, event: str, reason: Optional[str], detail: Optional[dict] = None) -> None:
         ident = self._identity or {}
@@ -75,6 +83,11 @@ class DeviceEventsMixin:
         """切れた（機器を外す前に呼ぶ）: 理由と、そのときの動作・時刻を書き、戻ったときに比べる値を覚える。"""
         detail = describe_error(exc) if exc is not None else {"message": message}
         detail.update(self._evt_activity())
+        ext, self._evt_ext_lost = self._evt_ext_lost, None
+        if ext is not None and time.monotonic() - ext["at"] <= EXT_LOST_WINDOW_S:
+            # 送信中に切れて、送信を先に止めた: そのときの動作は外部 IQ 送信（いまの掃引は、止めた後に戻したもの）
+            detail.update({"activity": ["ext_iq"], "ext_iq_state": ext["state"],
+                           "ext_iq_stopped_before_s": _round(time.monotonic() - ext["at"])})
         detail["connected_for_s"] = self._evt_connected_for()
         written: list[int] = []
         if self._is_plutosdr():
@@ -115,6 +128,8 @@ class DeviceEventsMixin:
     def _evt_ext_stopped(self, sess: dict, reason: str, detail: Optional[str]) -> None:
         if not sess.get("event_logged"):
             return  # 始める前に止まった（始めた行が無い）
+        if reason == "device_lost":
+            self._evt_ext_lost = {"at": time.monotonic(), "state": sess["state"]}
         st = sess.get("stream")
         self._evt("ext_iq_stopped", reason, {
             "detail": detail, "client": sess["client"],
