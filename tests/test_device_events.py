@@ -456,7 +456,8 @@ class TestExtIqEvents(LogWait, ExtCase):
 
 
 class TestExtLossHandOver(unittest.TestCase):
-    """外部 IQ 送信が「機器が切れたため」で止まったとき、続く lost の行へ動作を渡すかの決まり（閉じた入口は問わない）。"""
+    """外部 IQ 送信が「機器が切れたため」で止まったとき、続く lost の行へ動作を渡すかの決まり: 閉じた入口は問わず、
+    印は立てたときの接続の lost の行だけが使う。"""
 
     def make(self):
         from namibench.core.instrument_device_events import DeviceEventsMixin
@@ -466,35 +467,44 @@ class TestExtLossHandOver(unittest.TestCase):
 
         h = Host()
         h._evt_lines = []
-        h._evt = lambda event, reason, detail=None: h._evt_lines.append((event, reason))
+        h._evt = lambda event, reason, detail=None: h._evt_lines.append((event, detail))
         h._evt_ext_lost = None
-        h._evt_loss_written_at = None
+        h._evt_lost = None
+        h._connected_at = 1000.0
+        h._evt_activity = lambda: {"activity": ["sweep"]}
+        h._evt_connected_for = lambda: 1.0
+        h._is_plutosdr = lambda: False
         return h
 
-    def sess(self, started_at):
-        return {"event_logged": True, "client": "test", "state": "on", "started_at": started_at, "stream": None}
+    def stop(self, h, reason="device_lost"):
+        sess = {"event_logged": True, "client": "test", "state": "on", "started_at": time.time() - 5, "stream": None}
+        h._evt_ext_stopped(sess, reason, None)
 
-    def test_no_loss_line_yet_hands_over(self):
+    def lost_activity(self, h):
+        h._evt_on_lost(None, "抜けた")
+        return h._evt_lines[-1][1]["activity"]
+
+    def test_same_connection_hands_over(self):
         h = self.make()  # 押すスレッドの終わり・相手の停止・待ち受けの停止のどれで閉じても同じ
-        h._evt_ext_stopped(self.sess(time.time() - 5), "device_lost", None)
-        self.assertEqual(h._evt_ext_lost["state"], "on")
+        self.stop(h)
+        self.assertEqual(self.lost_activity(h), ["ext_iq"])
 
-    def test_loss_line_already_written_in_this_session_does_not(self):
-        h = self.make()  # 掃引の側が先に失敗して lost を書いた後に、機器を外して送信を止めた
-        h._evt_loss_written_at = time.time()
-        h._evt_ext_stopped(self.sess(time.time() - 5), "device_lost", None)
-        self.assertIsNone(h._evt_ext_lost)
+    def test_after_recovery_or_switch_does_not(self):
+        h = self.make()  # 掃引の側が先に lost を書いた後で機器を外して止めた、または利用者が別の機器に替えた
+        self.stop(h)
+        h._connected_at = 2000.0  # 戻った・替えた先の接続
+        self.assertEqual(self.lost_activity(h), ["sweep"])
 
-    def test_loss_before_this_session_still_hands_over(self):
-        h = self.make()  # 前の切断から戻った後に始めた送信が、また切れた
-        h._evt_loss_written_at = time.time() - 60
-        h._evt_ext_stopped(self.sess(time.time() - 5), "device_lost", None)
-        self.assertIsNotNone(h._evt_ext_lost)
+    def test_used_once(self):
+        h = self.make()
+        self.stop(h)
+        self.lost_activity(h)
+        self.assertEqual(self.lost_activity(h), ["sweep"])
 
     def test_other_reasons_do_not(self):
         h = self.make()
-        h._evt_ext_stopped(self.sess(time.time() - 5), "client", None)
-        self.assertIsNone(h._evt_ext_lost)
+        self.stop(h, "client")
+        self.assertEqual(self.lost_activity(h), ["sweep"])
 
 
 if __name__ == "__main__":

@@ -41,8 +41,6 @@ class DeviceEventsMixin:
         self._evt_lost: Optional[dict] = None
         # 外部 IQ 送信が「機器が切れたため」で止まった時点の動作（続く lost の行は、送信を止めた後に書かれるため）
         self._evt_ext_lost: Optional[dict] = None
-        # 最後に lost・dropped の行を書いた時刻（その送信の間に切断の行をもう書いたかを見る）
-        self._evt_loss_written_at: Optional[float] = None
 
     def _evt(self, event: str, reason: Optional[str], detail: Optional[dict] = None) -> None:
         ident = self._identity or {}
@@ -86,7 +84,7 @@ class DeviceEventsMixin:
         detail = describe_error(exc) if exc is not None else {"message": message}
         detail.update(self._evt_activity())
         ext, self._evt_ext_lost = self._evt_ext_lost, None
-        if ext is not None and time.monotonic() - ext["at"] <= EXT_LOST_WINDOW_S:
+        if ext is not None and ext["conn"] == self._connected_at and time.monotonic() - ext["at"] <= EXT_LOST_WINDOW_S:
             # 送信中に切れて、送信を先に止めた: そのときの動作は外部 IQ 送信（いまの掃引は、止めた後に戻したもの）
             detail.update({"activity": ["ext_iq"], "ext_iq_state": ext["state"],
                            "ext_iq_stopped_before_s": _round(time.monotonic() - ext["at"])})
@@ -98,7 +96,6 @@ class DeviceEventsMixin:
             detail.update(pd)
         if event == "lost":
             self._evt_lost = {"at": time.time(), "tx_lo_written_hz": written}
-        self._evt_loss_written_at = time.time()
         self._evt(event, reason, detail)
 
     def _evt_on_recovered(self) -> None:
@@ -131,12 +128,11 @@ class DeviceEventsMixin:
     def _evt_ext_stopped(self, sess: dict, reason: str, detail: Optional[str]) -> None:
         if not sess.get("event_logged"):
             return  # 始める前に止まった（始めた行が無い）
-        # 機器が切れたため止まり、この送信の間にまだ切断の行を書いていない（送信を先に止めた）ときだけ、続く lost の行へ
-        # 動作を渡す。閉じた入口（押すスレッドの終わり・相手の停止・待ち受けの停止）は問わない。切断の行を書いた後に
-        # 機器を外して止めたとき（掃引の側が先に失敗した）は渡さない（使われずに残り、次の切断を取り違えるため）
-        loss = self._evt_loss_written_at
-        if reason == "device_lost" and (loss is None or loss < sess["started_at"]):
-            self._evt_ext_lost = {"at": time.monotonic(), "state": sess["state"]}
+        # 機器が切れたため止まったら、続く lost の行へ動作を渡す印を残す（閉じた入口は問わない）。印は立てたときの接続
+        # （_connected_at）を持ち、同じ接続の lost の行だけが使う。切断の行を書いた後に機器を外して止めた・利用者が
+        # 別の機器に替えたときの印は、次の接続（戻った・替えた先）では使われない
+        if reason == "device_lost":
+            self._evt_ext_lost = {"at": time.monotonic(), "state": sess["state"], "conn": self._connected_at}
         st = sess.get("stream")
         self._evt("ext_iq_stopped", reason, {
             "detail": detail, "client": sess["client"],
