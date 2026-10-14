@@ -32,15 +32,22 @@ class IioNotFound(DeviceError):
 
 
 class IioError(DeviceError):
-    """libiio の関数が失敗を返した。code は負の errno（分からなければ 0）。"""
+    """libiio の関数が失敗を返した。code は負の errno（分からなければ 0）。
 
-    def __init__(self, func: str, code: int = 0, detail: str = "") -> None:
+    errno・strerror は切断の記録（設計B §7.7）に残すためのもの。NULL を返す関数（バッファを作る）は戻り値に errno が
+    無いので、呼んだ直後の errno を errno に入れ、code は 0 のままにする（code は「値を断られた／切れた」の判定に使う。
+    errno を読めるようにしても判定は変えない: 設計B §7.7）。"""
+
+    def __init__(self, func: str, code: int = 0, detail: str = "", errno: Optional[int] = None,
+                 strerror: Optional[str] = None) -> None:
         msg = f"iio_{func} が失敗した（{code}）"
         if detail:
             msg += f": {detail}"
         super().__init__(msg)
         self.func = func
         self.code = code
+        self.errno = errno if errno else (abs(int(code)) or None)
+        self.strerror = strerror
 
 
 def candidate_dirs(folder: Optional[Union[str, Path]] = None) -> list[Path]:
@@ -112,7 +119,7 @@ class IioLib:
         if sys.platform == "win32":
             self._dll_dir = os.add_dll_directory(str(self.path.parent))
         try:
-            self._lib = C.CDLL(str(self.path))
+            self._lib = C.CDLL(str(self.path), use_errno=True)  # NULL を返す関数の errno を読む（設計B §7.7）
         except OSError as e:
             raise IioNotFound(f"libiio の DLL を読み込めない: {e}") from e
         self._f = {}
@@ -205,7 +212,7 @@ class IioContext:
     def set_timeout(self, ms: int) -> None:
         r = self._f["context_set_timeout"](self._need(), int(ms))
         if r < 0:
-            raise IioError("context_set_timeout", r, self._lib.strerror(r))
+            raise IioError("context_set_timeout", r, self._lib.strerror(r), strerror=self._lib.strerror(r))
 
     def attr(self, name: str) -> Optional[str]:
         v = self._f["context_get_attr_value"](self._need(), name.encode())
@@ -236,18 +243,25 @@ class IioDevice:
         buf = C.create_string_buffer(1024)
         r = self._f["device_attr_read"](self._dev, name.encode(), buf, 1024)
         if r < 0:
-            raise IioError("device_attr_read", r, f"{self.name}/{name}: {self._lib.strerror(r)}")
+            e = self._lib.strerror(r)
+            raise IioError("device_attr_read", r, f"{self.name}/{name}: {e}", strerror=e)
         return buf.value.decode(errors="replace")
 
     def set_attr(self, name: str, value) -> None:
         r = self._f["device_attr_write"](self._dev, name.encode(), str(value).encode())
         if r < 0:
-            raise IioError("device_attr_write", r, f"{self.name}/{name}: {self._lib.strerror(r)}")
+            e = self._lib.strerror(r)
+            raise IioError("device_attr_write", r, f"{self.name}/{name}: {e}", strerror=e)
 
     def create_buffer(self, samples: int, cyclic: bool = False) -> "IioBuffer":
         b = self._f["device_create_buffer"](self._dev, int(samples), bool(cyclic))
         if not b:
-            raise IioError("device_create_buffer", 0, self.name)
+            # 戻り値は NULL だけなので、理由は呼んだ直後の errno（DLL を use_errno で読んだので ctypes が写しを持つ）。
+            # code は 0 のまま（切れたとみなす判定はいまのまま: 設計B §7.7）
+            en = C.get_errno()
+            s = self._lib.strerror(en) if en else None
+            raise IioError("device_create_buffer", 0, f"{self.name}: {s}" if s else self.name, errno=en or None,
+                           strerror=s)
         return IioBuffer(self, b, int(samples))
 
 
@@ -263,13 +277,15 @@ class IioChannel:
         buf = C.create_string_buffer(1024)
         r = self._f["channel_attr_read"](self._ch, name.encode(), buf, 1024)
         if r < 0:
-            raise IioError("channel_attr_read", r, f"{self.dev.name}/{self.name}/{name}: {self._lib.strerror(r)}")
+            e = self._lib.strerror(r)
+            raise IioError("channel_attr_read", r, f"{self.dev.name}/{self.name}/{name}: {e}", strerror=e)
         return buf.value.decode(errors="replace")
 
     def set_attr(self, name: str, value) -> None:
         r = self._f["channel_attr_write"](self._ch, name.encode(), str(value).encode())
         if r < 0:
-            raise IioError("channel_attr_write", r, f"{self.dev.name}/{self.name}/{name}: {self._lib.strerror(r)}")
+            e = self._lib.strerror(r)
+            raise IioError("channel_attr_write", r, f"{self.dev.name}/{self.name}/{name}: {e}", strerror=e)
 
     def enable(self) -> None:
         self._f["channel_enable"](self._ch)
@@ -303,7 +319,8 @@ class IioBuffer:
         b = self._need()
         r = self._f["buffer_refill"](b)
         if r < 0:
-            raise IioError("buffer_refill", r, self._lib.strerror(r))
+            e = self._lib.strerror(r)
+            raise IioError("buffer_refill", r, e, strerror=e)
         s, e = self._f["buffer_start"](b), self._f["buffer_end"](b)
         n = (int(e) - int(s)) // 2 if s and e else 0
         if n <= 0:
@@ -321,4 +338,5 @@ class IioBuffer:
         C.memmove(int(s), data.ctypes.data, n * 2)
         r = self._f["buffer_push"](b)
         if r < 0:
-            raise IioError("buffer_push", r, self._lib.strerror(r))
+            e = self._lib.strerror(r)
+            raise IioError("buffer_push", r, e, strerror=e)

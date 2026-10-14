@@ -27,6 +27,8 @@ kernel_buffers 個。いっぱいなら一番古いバッファが流れ終わ�
 push_fail を立てると push は push_hang_s 待ってから失敗する（抜けた・時間切れ）。fail_reads は受信の読みだけを失敗させる
 （属性の書き込みは通る）。sampling_frequency は rate_reject の値を断り（EINVAL）、rate_readback で読み戻す値を変えられる。
 LO の周波数は lo_floor より下を断る（EINVAL。実機と同じく送信 LO は申告の下限そのものを断る）。
+buffer_errno に errno を入れると、受信・送信のバッファを作るのが失敗する（実機の libiio は NULL を返して errno を立てる。
+切断の記録の試験用: 設計B §7.7）。
 
 基準の補正（設計Q §7.10 の試験用）: ad9361-phy の機器の属性 xo_correction（初期値 40000000）と xo_correction_available
 （実機の申告と同じ [39992000 1 40008000]）。xo_range の外を書くと EINVAL。xo_attr=False は属性を持たない機器。
@@ -99,6 +101,7 @@ class FakePluto:
         self.rng = np.random.default_rng(seed)
         self.unplugged = False
         self.fail_reads = False
+        self.buffer_errno: Optional[int] = None
         # 外部 IQ の送信（非循環の push）の偽物の決まり
         self.kernel_buffers = 4
         self.push_fail = False
@@ -386,8 +389,9 @@ class _Dev:
         self.ctx.dev.put(self.name, "", False, name, value)
 
     def create_buffer(self, samples: int, cyclic: bool = False) -> "_Buf":
-        if self.ctx.dev.unplugged:
-            raise IioError("device_create_buffer", 0, "unplugged")
+        pl = self.ctx.dev
+        if pl.unplugged or pl.buffer_errno is not None:
+            raise IioError("device_create_buffer", 0, "unplugged", errno=pl.buffer_errno)
         return _Buf(self, int(samples), bool(cyclic))
 
 

@@ -29,6 +29,7 @@ from typing import Callable, Optional
 from .devices.base import Device, load_profile
 from .instrument_cal import CalMixin
 from .instrument_common import CommandError, adjustments_to_list, adopted_to_dict, sweep_key
+from .instrument_device_events import DeviceEventsMixin
 from .instrument_devices import DevicesMixin
 from .instrument_diff import DiffMixin
 from .instrument_display import DisplayMixin
@@ -118,6 +119,7 @@ class _DeviceWorker(threading.Thread):
         self._cancel = threading.Event()
         self._closing = False
         self.busy_since: Optional[float] = None
+        self.last_ok_at: Optional[float] = None  # 最後に掃引が返った時刻（切断の記録: 設計B §7.7）
         # 1画面の進み具合を機器の口から受けて置く。制御スレッドが読みに来る（設計J §4.13）
         self.progress = ProgressReporter(post)
         device.progress_sink = self.progress
@@ -159,6 +161,7 @@ class _DeviceWorker(threading.Thread):
             self.progress.begin(gen, adopted)
             try:
                 raw = self.device.measure(adopted, cancel)
+                self.last_ok_at = time.time()
                 with self._cv:
                     if self._job is not None and self._job[0] == gen and self._remaining is not None:
                         self._remaining -= 1
@@ -168,7 +171,7 @@ class _DeviceWorker(threading.Thread):
             except SweepDiscarded as e:
                 self._post(("discarded", gen, e.reason, e.detail))
             except DeviceDisconnected as e:
-                self._post(("disconnected", str(e)))
+                self._post(("disconnected", str(e), e))  # 例外も渡す（切断の記録に理由を残す: 設計B §7.7）
                 break
             except InvalidSweep as e:
                 # 設計C で止まるはずのものが届いた（二重の防御）。送らずに止める
@@ -191,7 +194,7 @@ class _DeviceWorker(threading.Thread):
 
 class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, WaterfallMixin, PlaybackMixin,
                  BandplanMixin, RtlTcpMixin, RtlSdrMixin, PlutoSdrMixin, PlutoGainCalMixin, PlutoRefFitMixin, PlutoXoMixin, ListenMixin, DevicesMixin, ViewMixin, StepSweepMixin, NfMixin,
-                 SweepProgressMixin, ExtTxMixin):
+                 SweepProgressMixin, ExtTxMixin, DeviceEventsMixin):
     """計測器の本体。API 層（api/local.py）だけがこれを使う。"""
 
     def __init__(
@@ -277,6 +280,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._init_exttx()  # 外部 IQ 送信の口（設計S §1）
         self._init_listen()
         self._init_devices()
+        self._init_device_events()  # 機器の切断の記録（設計B §7.7）
         self._init_step(saved if isinstance(saved, dict) else None)  # SG のステップ掃引（設計L §1.3）
 
         self._thread = threading.Thread(target=self._loop, name="namibench-control", daemon=True)
@@ -430,7 +434,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         elif kind == "discarded":
             self._on_discarded(item[1], item[2], item[3])
         elif kind == "disconnected":
-            self._on_disconnected(item[1])
+            self._on_disconnected(item[1], item[2] if len(item) > 2 else None)
         elif kind == "invalid":
             self._notice("invalid_sweep", {"message": item[2]})
             if self._cal_job is not None:
@@ -442,6 +446,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             self._set_run("stopped", reason="invalid_sweep")
         elif kind == "worker_error":
             self._notice("device_error", {"message": item[1], "trace": item[2]})
+            self._evt_on_lost(None, item[1], event="dropped", reason="unexpected_error")
             self._drop_device()
             self._set_conn("disconnected")
         elif kind == "idle":
@@ -778,7 +783,8 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._device = None
         self._sweep_progress_hide()
 
-    def _on_disconnected(self, message: str) -> None:
+    def _on_disconnected(self, message: str, exc: Optional[BaseException] = None) -> None:
+        self._evt_on_lost(exc, message)  # 外す前に、そのときの動作と理由を記録に残す（設計B §7.7）
         self._drop_device()
         if self._ref_job is not None:
             self._abort_ref_job(CommandError("disconnected", None, {"message": message}))
@@ -807,6 +813,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
         self._notice("reconnected", {"serial": serial})
         # 直前の条件で掃引を再開する（T8: 待ち時間なしで正常に戻る）
         self._attach(device, self._backend_name)
+        self._evt_on_recovered()
 
     def _load_calibration(self, serial: str) -> None:
         if (self._profile.get("raw") or {}).get("encoding") == RTLSDR_ENCODING:
@@ -853,6 +860,7 @@ class Instrument(DisplayMixin, ZeroSpanMixin, DiffMixin, FilesMixin, CalMixin, W
             from .storage import Cancelled
 
             self._step_stop(Cancelled())
+        self._evt_on_user_drop("app_exit", "app_exit")  # 切断の記録（設計B §7.7）
         self._shutdown_exttx()  # 外部 IQ の送信を止めて閉じる（設計S §1 §5）
         self._shutdown_rtltcp()
         self._close_device_for_exit()

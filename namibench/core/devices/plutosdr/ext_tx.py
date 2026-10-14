@@ -313,6 +313,7 @@ class ExtTxStream:
 
     def _push(self, block: np.ndarray, real: int) -> None:
         self._buf.push(block)
+        self.dev.last_tx_at = time.time()  # 最後に送信が成り立った時刻（切断の記録: 設計B §7.7）
         n = self.spec.block_samples
         self.consumed += n
         if real < n:

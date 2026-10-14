@@ -219,8 +219,13 @@ class DevicesMixin:
 
     def _cmd_connect(self, backend: str = "gigast", serial: Optional[str] = None, port: Optional[str] = None) -> dict:
         """繋ぐ。初めての機器は確認の掃引で GigaSt と確かめてから覚える（設計B §7.3）。"""
+        return self._connect(backend, serial, port, "user")
+
+    def _connect(self, backend: str, serial: Optional[str], port: Optional[str], reason: str) -> dict:
+        """繋ぐ（reason は切断の記録の理由のコード: 設計B §7.7）。"""
         b = self._backend(backend)
         if self._device is not None or self._conn == "reconnecting":
+            self._evt_on_user_drop("switched_device", "user_picked_device")
             if self._ref_job is not None:
                 self._abort_ref_job(CommandError("disconnected"))
             old = self._worker
@@ -266,6 +271,7 @@ class DevicesMixin:
         if ident.serial:
             self._settings.remember_device(ident.serial, backend)
         self._attach(device, backend)
+        self._evt_connected(reason)
         self._devices_changed()
         return {"identity": self._identity, "name": self._current_device_name()}
 
@@ -291,12 +297,13 @@ class DevicesMixin:
                     continue  # RTL-SDR の DLL が無くても GigaSt は探す
                 # 同じシリアル番号が1本だけのときに限る（RTL-SDR は全製品共通のことがある: 設計Q §6.6）
                 if len([p for p in ports if p.get("serial") == s and p.get("available", True)]) == 1:
-                    res = self._cmd_connect(backend=name, serial=s)
+                    res = self._connect(name, s, None, "auto_connect")
                     self._notice("auto_connected", {"name": res.get("name"), "kind": name, "serial": s})
                     return res
         return {"identity": None}
 
     def _cmd_disconnect(self) -> dict:
+        self._evt_on_user_drop("user", "user_disconnect")  # 切断の記録（設計B §7.7）
         if self._ref_job is not None:
             self._abort_ref_job(CommandError("disconnected"))
         self._exttx_device_gone("user")  # 利用者が切った（外部 IQ の送信を止める: 設計S §1）

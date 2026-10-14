@@ -41,10 +41,11 @@ from ..base import Device, load_profile
 from ..rtlsdr import spectrum
 from ..rtlsdr.driver import FftParams, fft_params, make_plan
 from ..rtlsdr.levels import ENCODING
-from . import tones, xo
+from . import events, tones, xo
 from .discover import DEFAULT_URI, PlutoPortInfo, _SerialCache
 from .discover import discover as _discover
 from .iio import IioError, IioLib
+from .samples import iq_from_i16, overload_ratio_i16  # noqa: F401 — gain_cal・試験はここから使う
 from .xo import XoOutOfRange
 
 PROFILE_PATH = Path(__file__).with_name("profile.json")
@@ -204,6 +205,8 @@ class PlutoSdrDevice(Device):
         self.connected_at: Optional[float] = None
         self.fw_version: Optional[str] = None
         self._xo = xo.XoState()  # 基準の補正（設計Q §7.10）
+        # 切断の記録（設計B §7.7）: 最後に受信・送信が成り立った時刻・接続した直後の送信の LO・コンテキストを捨てた失敗
+        self.last_rx_at = self.last_tx_at = self.tx_lo_at_open = self.drop_error = self.drop_at = None
 
     # ---- 繋ぐ ----
     def _get_lib(self):
@@ -226,6 +229,8 @@ class PlutoSdrDevice(Device):
             raise DeviceDisconnected(f"{uri} に繋がらない: {e}") from e
         try:
             self._bind(ctx)
+            # 送信を静める前に送信の LO を読む（再起動していたかの見分け: 設計B §7.7。記録のためだけ）
+            self.tx_lo_at_open = events.read_tx_lo(self._txlo)
             serial = ctx.attr("hw_serial") or ""
             self.fw_version = ctx.attr("fw_version")
             # つないだら送信を止める（2026-10-11 ユーザー決定「電源入れたときは、送信止めて」）: 電源投入時は送信の LO が
@@ -272,7 +277,7 @@ class PlutoSdrDevice(Device):
         self._rx = phy.channel("voltage0", False)
         self._txc = phy.channel("voltage0", True)
         self._rxlo = phy.channel("altvoltage0", True)
-        self._txlo = phy.channel("altvoltage1", True)
+        self._txlo = events.LoWatch(phy.channel("altvoltage1", True))  # 書いた LO を覚える（設計B §7.7）
         self._adc = ctx.device(RX_DEV)
         for n in ("voltage0", "voltage1"):
             self._adc.channel(n, False).enable()
@@ -548,6 +553,8 @@ class PlutoSdrDevice(Device):
         """コンテキストを使えなくする。外部 IQ の押すスレッドが生きていれば止める印を付けてコンテキストを渡し、待たない
         （設計S §1 の P1: 機器スレッドが条件の錠を持ったまま来る道がある）。"""
         ctx, self._ctx = self._ctx, None
+        if ctx is not None:
+            events.note_drop(self)  # 捨てた理由の libiio の失敗を記録に残す（設計B §7.7）
         self._tuned_hz = None
         self._tx_buf = None
         if self._app_tx():
@@ -604,7 +611,9 @@ class PlutoSdrDevice(Device):
             self._tuned_hz = c
         buf = self._adc.create_buffer(n_samples)
         try:
-            return buf.refill()
+            a = buf.refill()
+            self.last_rx_at = time.time()
+            return a
         finally:
             buf.destroy()
 
@@ -819,6 +828,7 @@ class PlutoSdrDevice(Device):
             x = tones.multitone(p.n, p.grid, p.half, p.delta, float(src.get("tg_multitone_peak", 0.5)))
             buf = self._dac.create_buffer(p.n, cyclic=True)
             buf.push(tones.to_int16_iq(x, int(src.get("tx_full_scale", 32767))))
+            self.last_tx_at = time.time()
             self._tx_buf = buf
             self._txlo.set_attr("powerdown", 0)
         self._txc.set_attr("hardwaregain", self._atten_text())
@@ -1140,24 +1150,3 @@ class PlutoSdrDevice(Device):
             except Exception:  # noqa: BLE001
                 pass
 
-
-def iq_from_i16(a: np.ndarray, full_scale: float) -> np.ndarray:
-    """int16 の I・Q の交互を複素数へ（振り切れが 1.0）。"""
-    x = np.asarray(a, dtype=np.int16)
-    if x.size % 2:
-        x = x[:-1]
-    f = x.astype(np.float32) / np.float32(full_scale)
-    return f.view(np.complex64).astype(np.complex64)
-
-
-def overload_ratio_i16(a: np.ndarray, full_scale: int) -> float:
-    """I か Q が端（12 ビットの −2048・+2047）に当たった標本の割合。"""
-    x = np.asarray(a, dtype=np.int16)
-    n = x.size // 2
-    if n == 0:
-        return 0.0
-    i = x[0: 2 * n: 2]
-    q = x[1: 2 * n: 2]
-    top, bottom = full_scale - 1, -full_scale
-    hit = (i >= top) | (i <= bottom) | (q >= top) | (q <= bottom)
-    return float(np.count_nonzero(hit)) / n

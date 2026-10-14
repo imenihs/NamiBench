@@ -400,6 +400,7 @@ class ExtTxMixin:
         server.send(cid, {"type": "ready", "sample_rate_hz": int(res[1]), "tx_lo_hz": sess["lo"],
                           "credit": stream.credit_initial})
         self._notice("ext_tx_started", {"client": sess["client"], "sample_rate_hz": sess["rate"], "tx_lo_hz": sess["lo"]})
+        self._evt_ext_started(sess)  # 切断の記録（設計B §7.7）
         self._exttx_release_hold()
         self._changed()
 
@@ -548,6 +549,7 @@ class ExtTxMixin:
             else:
                 self._ext_hold = False
         st = sess.get("stream")
+        self._evt_ext_stopped(sess, reason, detail)  # 切断の記録（設計B §7.7）
         self._notice("ext_tx_stopped", {"reason": reason, "detail": detail, "client": sess["client"],
                                         "underrun": None if st is None else int(st.underrun)})
         self._changed()
