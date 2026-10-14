@@ -61,13 +61,24 @@ def asgi(app, method: str, path: str, headers: dict | None = None, body: bytes =
     msgs = [{"type": "http.request", "body": body, "more_body": False}]
     out: list[dict] = []
 
-    async def receive():
-        return msgs.pop(0) if msgs else {"type": "http.disconnect"}
+    async def run():
+        # 本物のサーバと同じく、切断は応答を送り終えてから返す（先に返すと FileResponse が本文の送信を打ち切る）
+        done = asyncio.Event()
 
-    async def send(m):
-        out.append(m)
+        async def receive():
+            if msgs:
+                return msgs.pop(0)
+            await done.wait()
+            return {"type": "http.disconnect"}
 
-    asyncio.run(app(scope, receive, send))
+        async def send(m):
+            out.append(m)
+            if m["type"] == "http.response.body" and not m.get("more_body", False):
+                done.set()
+
+        await app(scope, receive, send)
+
+    asyncio.run(run())
     start = out[0]
     hdrs: dict = {}
     for k, v in start.get("headers", []):
