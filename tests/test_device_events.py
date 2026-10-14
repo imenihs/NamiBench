@@ -430,6 +430,12 @@ class TestExtIqEvents(LogWait, ExtCase):
         self.pl.fail_reads = False
         rec = self.wait_line("recovered", self.index_of(lost))
         self.assertIs(rec["detail"]["rebooted"], False)  # 外部 IQ の LO を書いたまま戻った
+        # 戻ってすぐ（10 秒以内）にまた切れても、送信していないので動作に外部 IQ 送信は入らない
+        self.pl.fail_reads = True
+        again = self.wait_line("lost", self.index_of(rec))
+        self.pl.fail_reads = False
+        self.assertNotIn("ext_iq", again["detail"]["activity"])
+        self.assertNotIn("ext_iq_stopped_before_s", again["detail"])
 
     def test_lost_after_the_push_failed_first(self):
         """送信中に抜けると、ふつうは押すスレッドが先に気づく: 送信を止めた後に書く lost の行も、動作は外部 IQ 送信。"""

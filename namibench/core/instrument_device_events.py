@@ -128,7 +128,7 @@ class DeviceEventsMixin:
     def _evt_ext_stopped(self, sess: dict, reason: str, detail: Optional[str]) -> None:
         if not sess.get("event_logged"):
             return  # 始める前に止まった（始めた行が無い）
-        if reason == "device_lost":
+        if reason == "device_lost" and sess.get("push_ended_first"):
             self._evt_ext_lost = {"at": time.monotonic(), "state": sess["state"]}
         st = sess.get("stream")
         self._evt("ext_iq_stopped", reason, {
