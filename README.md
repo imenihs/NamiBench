@@ -41,6 +41,14 @@ Linux / macOS:
 - `virtualenv` が入っていればそれを、無ければ標準の `venv` を使います
 - 作った環境の Python は `venv\Scripts\python.exe`（Linux / macOS は `venv/bin/python`）です。有効化（activate）しなくても使えます
 
+## 起動
+
+Windows は `run.bat` をダブルクリックします（コマンドプロンプト・PowerShell からも。PowerShell では `.\run.bat`）。引数はそのまま渡します（例: `run.bat --web`）。
+
+```sh
+venv\Scripts\python.exe -m namibench      # run.bat と同じ。Linux / macOS は venv/bin/python -m namibench
+```
+
 ## データの置き場所
 
 - 設定・覚えた機器・校正・基準・プリセット・配色は、Windows は `%APPDATA%\NamiBench`、Linux / macOS は `~/.namibench` に置きます
