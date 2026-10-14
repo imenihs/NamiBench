@@ -523,9 +523,6 @@ class ExtTxMixin:
         elif kind == "stats":
             self._changed()
         elif kind == "end":
-            # 押すスレッドが先に止めた（機器はまだ外していない）: 続く lost の行が、そのときの動作を送信と書けるように
-            # 印を残す（設計B §7.7）。機器を外すときに送信を止める道（_exttx_device_gone）は lost の行の後なので残さない
-            sess["push_ended_first"] = True
             self._exttx_finish(detail.get("reason") or "device_lost", detail.get("detail"))
 
     def _exttx_finish(self, reason: str, detail: Optional[str], restore_device: bool = True) -> None:
