@@ -22,6 +22,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# スクリプトとして動かすと読み込み先は tools\ になるので、アプリのフォルダを足す（namibench を読むため）
+sys.path.insert(0, str(ROOT))
 MODULES = ("numpy", "h5py", "pyqtgraph", "serial", "fastapi", "uvicorn", "PySide6.QtWidgets", "namibench",
            "namibench.ui_qt.main_window", "namibench.api.web.service")
 
