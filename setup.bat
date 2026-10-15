@@ -77,11 +77,17 @@ if "%PY%"=="" goto :no_python
 :have_python
 echo Base Python: %PY%
 
-rem ---- venv: keep it only if it runs here
+rem ---- venv: keep it only if its base Python (home in pyvenv.cfg) is on this PC and it runs here
 if not exist "venv\Scripts\python.exe" goto :make_venv
+set "VHOME="
+if exist "venv\pyvenv.cfg" for /f "usebackq tokens=1,* delims==" %%a in ("venv\pyvenv.cfg") do if /i "%%a"=="home " set "VHOME=%%b"
+if defined VHOME for /f "tokens=*" %%c in ("%VHOME%") do set "VHOME=%%c"
+if not defined VHOME goto :rebuild_venv
+if not exist "%VHOME%\python.exe" goto :rebuild_venv
 "venv\Scripts\python.exe" -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 13) else 1)" >nul 2>nul
 if not errorlevel 1 goto :install
-echo The venv here does not run on this PC (copied from another PC?). Making it again...
+:rebuild_venv
+echo The venv here was made for another PC or does not run here. Making it again...
 rmdir /s /q venv
 if exist venv goto :venv_busy
 :make_venv
