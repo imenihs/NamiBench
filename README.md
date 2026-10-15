@@ -48,9 +48,14 @@
 
 ## インストール
 
-1. Python 3.13 を入れます。
+1. Python 3.13（64 ビット版）を入れます。
 2. このリポジトリを取ってきます。`git clone https://github.com/imenihs/NamiBench.git` か、GitHub の「Code → Download ZIP」で取って展開します。
-3. 取ってきたフォルダの `setup.bat` をダブルクリックします。フォルダの中に `venv` を作り、必要なパッケージを入れます。
+3. 取ってきたフォルダの `setup.bat` をダブルクリックします。次を全部行い、最後に「Done.」と出れば使えます。
+   - フォルダの中に `venv` を作り、必要なパッケージを入れる（ほかの PC から写した `venv` は作り直す）
+   - PlutoSDR に使う libiio（Analog Devices 公式の v0.26）を取ってきて `libiio` フォルダに置く
+   - 動くかを確かめる（設定は書き換えません）
+
+インターネットが要ります。PlutoSDR を使う PC には、PlutoSDR の USB ドライバ（Analog Devices の「PlutoSDR-M2k-USB-Drivers」）を一度入れます。
 
 Python が見つからないと言われたときは、Python の場所を付けて動かします（PowerShell では `.\setup.bat`）。
 
@@ -59,6 +64,12 @@ setup.bat C:\path\to\python.exe
 ```
 
 Linux / macOS では `./setup.sh`（Python を指定するときは `./setup.sh /path/to/python3`）を動かします。
+
+### 別の PC へ運ぶ
+
+1. この PC で `pack.bat` をダブルクリックします。`NamiBench_pack.zip`（git で管理しているファイルだけ。`venv` などは入りません）ができます。
+2. `NamiBench_pack.zip` と `setup.bat` を、別の PC の同じフォルダに置きます。
+3. その `setup.bat` をダブルクリックします。`NamiBench` フォルダに展開して、上の 3. と同じ準備をします。
 
 ## 起動と接続
 
