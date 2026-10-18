@@ -152,10 +152,10 @@ class InstrumentStartTest(unittest.TestCase):
                 n = got[0][0]
                 self.assertTrue(n["startup"])
                 self.assertEqual(texts.notice_text(n),
-                                 f"データの置き場所を {old} から {base / 'NamiBench'} へコピーしました（前の場所は残しています）")
+                                 f"データの保存場所を {old} から {base / 'NamiBench'} にコピーしました（元の場所のデータは保持）")
                 failed = {"code": "data_move_failed", "detail": {"from": "A", "to": "B", "reason": "disk full"}}
                 self.assertEqual(texts.notice_text(failed),
-                                 "データを B へコピーできなかったので、前の場所 A のまま使います（disk full）")
+                                 "データを B にコピーできませんでした。A のデータを引き続き使用します（disk full）")
             finally:
                 inst.shutdown()
 
@@ -212,7 +212,7 @@ class WebStartupNoticeTest(unittest.TestCase):
                                 if p["code"] == "data_moved":
                                     moved.append(p["view"]["text"])
                         self.assertEqual(len(moved), 1)
-                        self.assertIn(f"{base / 'NamiBench'} へコピーしました", moved[0])
+                        self.assertIn(f"{base / 'NamiBench'} にコピーしました", moved[0])
             finally:
                 srv.stop()
                 api.close()

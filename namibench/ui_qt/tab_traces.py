@@ -356,7 +356,6 @@ class TraceTab(QWidget):
         self.freq_offset = FreqField(texts.VIEW_TEXTS["freq_offset"],
                                      lambda hz: win.call("set_view", field=self.freq_offset, freq_offset_hz=int(hz)),
                                      big=False)
-        self.freq_offset.setToolTip(texts.VIEW_TEXTS["freq_offset_tip"])
         self.freq_offset.edit.setPlaceholderText(texts.VIEW_TEXTS["freq_offset_placeholder"])
         form.addRow(self.freq_offset.name, self.freq_offset)
         lay.addWidget(g_sweep)
@@ -450,7 +449,7 @@ class TraceTab(QWidget):
         self._reject_value = rv["value"]
         widget_sync.set_items(self.image_reject, [(it["text"], it["code"]) for it in rv["items"]])
         widget_sync.set_data(self.image_reject, rv["value"])
-        set_enabled(self.image_reject, rv["reason"], L["image_reject_short"])
+        set_enabled(self.image_reject, rv["reason"])
         notes = [w for w in (why["points"], why["zero_span"]) if w]
         self.sweep_note.setText("\n".join(notes))
         self.sweep_note.setVisible(bool(notes))

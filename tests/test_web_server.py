@@ -139,7 +139,7 @@ class WebServerTest(unittest.TestCase):
         self.assertEqual(st, 400)
         # A §4.3 の失敗の形に、画面の文（Qt と同じ texts.error_text）を text として足して返す
         self.assertEqual(body, {"error": {"code": "not_connected", "field": None, "detail": {},
-                                          "text": "機器に繋がっていません"}})
+                                          "text": "機器が未接続です"}})
         st, body = self.post("no_such_command")
         self.assertEqual((st, body["error"]["code"]), (404, "unknown_command"))
         # 内部の命令（先頭が _）は Web から呼べない
@@ -184,7 +184,7 @@ class WebServerTest(unittest.TestCase):
         rules = {a["field"]: a["rule"] for a in body["texts"]["adjustments"]}
         self.assertEqual(rules, {"start_hz": True, "stop_hz": False})
         self.assertEqual(body["alternative"]["rule"], "keep_typed")
-        self.assertEqual(body["texts"]["alternative_label"], "Span を 20 MHz に縮めて 12.08 GHz〜12.1 GHz にする")
+        self.assertEqual(body["texts"]["alternative_label"], "Span を 20 MHz に縮めて 12.08 GHz〜12.1 GHz に変更")
         # ボタン（その1回だけの命令）は固定 Span を変えない
         st, body = self.post("set_sweep", {"start_hz": body["alternative"]["start_hz"],
                                            "stop_hz": body["alternative"]["stop_hz"],

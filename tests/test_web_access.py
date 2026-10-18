@@ -301,7 +301,7 @@ class GuardTest(unittest.TestCase):
                            ("access_info", {}), ("marker_add", {"kind": "M"})):
             st, _, b = asgi(self.app, "POST", f"/api/v1/{name}", h, json.dumps(args).encode())
             self.assertEqual((st, code_of(b)), (403, "read_only"), name)
-            self.assertEqual(json.loads(b)["error"]["text"], "見るだけの接続です")
+            self.assertEqual(json.loads(b)["error"]["text"], "閲覧のみの接続です")
         st, _, b = asgi(self.app, "PUT", "/api/v1/uploads", {"cookie": cookie,
                                                                "content-type": "application/octet-stream"}, b"x")
         self.assertEqual((st, code_of(b)), (403, "read_only"))

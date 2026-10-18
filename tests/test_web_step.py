@@ -156,9 +156,9 @@ class WebStepServerTest(unittest.TestCase):
         time.sleep(0.5)
         code, r = self.post("mouse_reading", {"x": 1483 * MHZ, "y": -30.0, "px_hz": 1 * MHZ})
         self.assertEqual(code, 200)
-        self.assertIn("内部の漏れの可能性 1480 MHz", r["lines"])
+        self.assertIn("内部スプリアスの可能性 1480 MHz", r["lines"])
         code, r = self.post("mouse_reading", {"x": 1483 * MHZ, "y": -30.0})
-        self.assertNotIn("内部の漏れの可能性 1480 MHz", r["lines"])
+        self.assertNotIn("内部スプリアスの可能性 1480 MHz", r["lines"])
         code, r = self.post("mouse_reading", {"x": 1483 * MHZ, "y": -30.0, "px_hz": "x"})
         self.assertEqual(code, 400)
 
@@ -237,7 +237,7 @@ class WebStepPageTest(unittest.TestCase):
         page.ev(f"{stop_btn}.click(); 1")
         self.wait_idle()
         page.wait("!gsApp.st.step_sweep.running", "やめた")
-        page.wait("gsApp.status.includes('ステップ掃引をやめました')", "やめた知らせ")
+        page.wait("gsApp.status.includes('ステップ掃引を中断しました')", "やめた知らせ")
         self.assertEqual(self.app.call("get_state")["run"]["state"], "stopped")
         page.wait(f"{stop_btn}.disabled", "止まったら停止は使えない")
         # 小さい段の数で最後まで回して、段ごとの線を確かめる
@@ -245,7 +245,7 @@ class WebStepPageTest(unittest.TestCase):
         page.ev("document.querySelector('[data-field=step_run]').click(); 1")
         page.wait("!!(gsApp.$traces.get('2') && gsApp.$traces.get('2').steps && gsApp.$traces.get('2').steps.rows.length === 4"
                   " && !gsApp.st.step_sweep.running)", "段ごとの線")
-        page.wait("gsApp.status.includes('ステップ掃引が終わりました（4/4 段）')", "終わりの知らせ")
+        page.wait("gsApp.status.includes('ステップ掃引が完了しました（4/4 ステップ）')", "終わりの知らせ")
         self.assertEqual(page.ev("gsApp.graphTraces(gsApp.palette).filter((t) => t.steps).length"), 1)
         # 漏れの印と消すチェック。イメージ除去「スピード」（初期値）は b3 で動く 956MHz が消えるので2つ（1480・1980MHz）、
         # 「なし」（b3=1 だけ）は 946MHz にも付く（Qt と同じ）

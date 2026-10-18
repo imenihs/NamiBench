@@ -38,7 +38,7 @@ class StepUiTest(UiBase):
         self.assertIn(texts.ERRORS["step_sweep_needs_sg"], self.panel.run.toolTip())
         self.cmd("set_mode", mode="sg", sg_hz=500 * MHZ)
         self.wait(lambda: self.panel.run.isEnabled(), what="SG モードで押せる")
-        self.assertEqual(self.panel.estimate.text().split(" × ")[0], "41 段")
+        self.assertEqual(self.panel.estimate.text().split(" × ")[0], "41 ステップ")
 
     def test_fields_send_and_show_adjustments(self):
         self.panel.f_start.edit.setText("0.5")
@@ -68,7 +68,7 @@ class StepUiTest(UiBase):
         self.wait(lambda: self.state()["step_sweep"]["running"] or self.state()["traces"][1]["action"] == "fixed",
                   what="始まる")
         self.wait_idle()
-        self.wait(lambda: "ステップ掃引が終わりました（4/4 段）" in self.win.st_note.text(), what="終わりの知らせ")
+        self.wait(lambda: "ステップ掃引が完了しました（4/4 ステップ）" in self.win.st_note.text(), what="終わりの知らせ")
         self.assertTrue(self.win.source_tab.f_sg.isEnabled())
         p = self.win.traces.live_payload(2)
         self.assertIsNotNone(p)
@@ -76,7 +76,7 @@ class StepUiTest(UiBase):
         xs, ys = self.win.traces.live[2]["steps"].getData()
         self.assertEqual(int(np.isnan(ys).sum()), 4)  # 段ごとに値なしで区切った1本
         legends = [s for _c, s, _p in self.win.traces.legend_entries()]
-        self.assertTrue(any("ステップ掃引・全部重ねる 4/4 段" in s for s in legends), legends)
+        self.assertTrue(any("ステップ掃引・すべて重ねる 4/4 ステップ" in s for s in legends), legends)
         # PNG にも段ごとの線（画面と同じ中身）
         data = self.win.png_data()
         tr = next(t for t in data["traces"] if t.get("number") == 2)
@@ -101,7 +101,7 @@ class StepUiTest(UiBase):
         finally:
             self.cmd("cancel_task", task_id=r["task_id"])
         self.wait_idle()
-        self.wait(lambda: "ステップ掃引をやめました" in self.win.st_note.text(), what="やめた知らせ")
+        self.wait(lambda: "ステップ掃引を中断しました" in self.win.st_note.text(), what="やめた知らせ")
         self.assertTrue(self.win.trace_tab.image_reject.isEnabled())
 
     def test_top_stop_button_ends_step_sweep(self):
@@ -117,7 +117,7 @@ class StepUiTest(UiBase):
         self.wait(lambda: self.state()["traces"][1]["has_values"], timeout=20, what="1段目の結果")
         self.win.btn_stop.click()
         self.wait_idle()
-        self.wait(lambda: "ステップ掃引をやめました" in self.win.st_note.text(), what="やめた知らせ")
+        self.wait(lambda: "ステップ掃引を中断しました" in self.win.st_note.text(), what="やめた知らせ")
         st = self.state()
         self.assertEqual(st["run"]["state"], "stopped")
         self.assertEqual((st["traces"][1]["action"], st["traces"][1]["has_values"]), ("fixed", True))

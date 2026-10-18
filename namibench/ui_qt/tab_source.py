@@ -86,7 +86,6 @@ class SourceTab(QWidget):
         form.addRow(self.f_sg.name, self.f_sg)
         # SG の周波数を変えたときに最大・最小保持も消すか（設計F §8。コアの設定で Qt と Web が共有）
         self.sg_clear_holds = QCheckBox(L["sg_clear_holds"])
-        self.sg_clear_holds.setToolTip(L["sg_clear_holds_tip"])
         self.sg_clear_holds.setChecked(True)
         self.sg_clear_holds.toggled.connect(
             lambda on: win.call("set_trace_options", sg_clears_holds=bool(on)))

@@ -246,7 +246,7 @@ class TestFlow(ExtCase):
         self.assertTrue(item["stop"])
         reasons = screen_model.mode_reasons(st)
         for m in ("sg", "tg", "s11"):
-            self.assertEqual(reasons[m], "外部のアプリケーションが送信しています")
+            self.assertEqual(reasons[m], "外部のアプリケーションが送信中")
         self.assertIsNone(reasons["sa"])
         consumed = [m for m in c.msgs if m["type"] == "credit"]
         self.assertTrue(consumed)
@@ -277,7 +277,7 @@ class TestFlow(ExtCase):
         self.assertEqual((sw["rbw_hz"], sw["rbw_preference_hz"]), (12000, 48000))
         groups = screen_model.rbw_groups(st)
         hann = {ch["hz"]: ch["reason"] for g in groups if g["window"] == "hann" for ch in g["choices"]}
-        self.assertEqual(hann[48000], "外部 IQ のサンプリング周波数（2.6MS/s）では使えません")
+        self.assertEqual(hann[48000], "外部 IQ のサンプリング周波数（2.6MS/s）では使用できません")
         self.assertIsNone(hann[1500])
         notices = [p for k, p in self.events if k == "notice"]
         adj = [n for n in notices if n["code"] == "ext_tx_rate_adjusted"]

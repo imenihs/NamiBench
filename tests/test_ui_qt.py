@@ -72,7 +72,7 @@ class MainWindowInputTest(unittest.TestCase):
         before = self.win.f_center.edit.text()
         self.type_into(self.win.f_center, "abc")
         self.assertEqual(self.win.f_center.edit.text(), before)
-        self.assertIn("読めない値", self.win.f_center.note.text())
+        self.assertIn("値の形式が正しくありません", self.win.f_center.note.text())
 
     def test_escape_restores(self):
         before = self.win.f_span.edit.text()

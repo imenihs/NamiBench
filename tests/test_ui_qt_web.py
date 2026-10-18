@@ -59,7 +59,7 @@ class TestWebControl(UiBase):
         self.assertTrue(cw.isVisible())
         code = self.web.service.access.current_code()[0]
         self.assertEqual(cw.code.text().replace(" ", ""), code)
-        self.assertIn("あと", cw.left.text())
+        self.assertIn("残り", cw.left.text())
         self.assertTrue(self.menu_action("web_connect").isEnabled())
         self.assertEqual(self.win.status.web.text(), texts.tpl_web("status", n=0, a=0, b=0))
         self.assertTrue(self.win.status.web.isVisible())
@@ -79,7 +79,7 @@ class TestWebControl(UiBase):
         cl = self.web.clients_window
         self.assertEqual(cl.table.rowCount(), 1)
         self.assertEqual(cl.table.item(0, 1).text(), "192.168.1.77")
-        self.assertEqual(cl.table.item(0, 2).text(), "見るだけ")
+        self.assertEqual(cl.table.item(0, 2).text(), "閲覧のみ")
         cl.table.cellWidget(0, 3).click()
         self.pump(0.1)
         self.assertEqual(closed, [1])
@@ -147,7 +147,7 @@ class TestFitGainButton(RtlUiBase):
         self.assertTrue(p.fit_btn.isEnabled())
         p.fit_btn.click()
         self.wait(lambda: abs((self.state()["rtlsdr"]["gain_db"] or 0) - 29.7) < 1e-6, what="利得を合わせた")
-        self.wait(lambda: "利得を 29.7 dB に合わせました" in self.win.status.note.text(), what="知らせ")
+        self.wait(lambda: "利得を 29.7 dB に調整しました" in self.win.status.note.text(), what="知らせ")
         self.wait(lambda: p.gain.currentData() == 29.7, what="欄が映す")
         self.cmd("rtlsdr_set", agc=True)
         self.pump(0.2)

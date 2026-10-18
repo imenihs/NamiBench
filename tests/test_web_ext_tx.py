@@ -56,7 +56,7 @@ class WebExtTxTest(unittest.TestCase):
         st = self.state()
         ui = st["ui"]["ext_tx"]
         self.assertEqual(ui["settings"], json.loads(json.dumps(screen_exttx.settings_view(st))))
-        self.assertEqual(ui["status"]["text"], f"外部 IQ 待ち受け :{port}")
+        self.assertEqual(ui["status"]["text"], f"外部 IQ 待機中 :{port}")
         self.client = RawClient(port)
         self.client.wait_type("welcome")
         self.assertEqual(self.client.start()["type"], "ready")
@@ -70,7 +70,7 @@ class WebExtTxTest(unittest.TestCase):
         self.assertEqual(ui["pluto"]["tx_state"], "出力中: 外部 IQ（test）")
         item = next(i for i in ui["status"] if i["key"] == "exttx")
         self.assertTrue(item["stop"])
-        self.assertEqual(ui["mode_reasons"]["tg"], "外部のアプリケーションが送信しています")
+        self.assertEqual(ui["mode_reasons"]["tg"], "外部のアプリケーションが送信中")
         self.assertEqual(self.post("ext_tx_atten", {"atten_db": -20.0})[0], 200)
         self.assertEqual(self.state()["ext_tx"]["atten_db"], -20.0)
         self.assertNotEqual(self.post("set_mode", {"mode": "tg"})[0], 200)

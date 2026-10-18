@@ -124,7 +124,7 @@ class WebTgHarmonicBrowserTest(unittest.TestCase):
         st = a.call("get_state")
         want = [it["text"] for it in screen_pluto.tg_harmonic_view(st)["items"]]
         p.wait(f"JSON.stringify({texts_of}) === {json.dumps(json.dumps(want, ensure_ascii=False, separators=(",", ":")))}", "名前と見積もり")
-        self.assertEqual(p.ev(f"{sel}.title"), PLUTO_LABELS["tg_harmonic_tip"])
+        self.assertEqual(p.ev(f"{sel}.title"), "")  # 使えるときのツールチップは無い（設計T F）
         p.ev(f"(() => {{ const s = {sel}; s.value = '8'; s.dispatchEvent(new Event('change')); return 1; }})()")
         end = time.monotonic() + 15
         while self.pl()["tg_harmonic_avg"] != 8:

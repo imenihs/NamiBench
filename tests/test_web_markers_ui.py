@@ -3,7 +3,7 @@
 Qt の画面（tests/test_ui_qt_polarity.py）と同じ並び・同じ語・同じ動きであることを、ヘッドレスの Edge で開いた
 Web の画面で確かめる（道具は tests/test_web_layout.py の EdgePage・App・open_app）。
 
-- ボタンの並び: 山・谷・ピーク・◀ 次のピーク・次のピーク ▶・次に高い・マーカー追加、右端に全部消す・表をコピー
+- ボタンの並び: 山・谷・ピーク・◀ ネクストピーク・ネクストピーク ▶・次に高い・マーカー追加、右端に全部消す・表をコピー
   （Qt と同じ。別ウィンドウにするボタンは題の行: Qt のドックの題と同じ所）。谷で名前が変わり、メニューの項目の名前も
   変わる。選択はブラウザに残る
 - 次のピークはマーカーが無くても押せる（M を作ってから動かす: Qt と同じ）。全部消すは何本消えるかを聞く
@@ -91,7 +91,7 @@ class WebMarkerToolsTest(unittest.TestCase):
         self.ev("document.querySelector('.pol-btn[data-polarity=dip]').click(); 1")
         self.page.settle()
         self.assertEqual(self.tools()[2:7], [S["dip"][c] for c in peak_view.SEARCH_CODES])
-        self.assertEqual(self.tools()[2:7], ["ピーク", "◀ 次のピーク", "次のピーク ▶", "次に深い", "マーカー追加"])
+        self.assertEqual(self.tools()[2:7], ["ピーク", "◀ ネクストピーク", "ネクストピーク ▶", "ネクストピーク（レベル順・深い）", "マーカー追加"])
         self.assertEqual(self.ev("gsApp.menuItem('marker_peak').label"), texts.DIP_MENU_ITEMS["marker_peak"])
         self.assertEqual(self.ev("localStorage.getItem('pygigast.polarity')"), "dip")
         # メニューの「山／谷を切り替える」で戻る
@@ -115,7 +115,7 @@ class WebMarkerToolsTest(unittest.TestCase):
         self.ev("[...document.querySelectorAll('.marker-tools button')].find((e) => e.textContent.trim() === "
                 f"{json.dumps(L['clear_all'])}).click(); 1")
         self.page.wait("!!gsApp.confirmBox", "全部消すの確かめ")
-        self.assertIn("1 本", self.ev("gsApp.confirmBox.text"))
+        self.assertIn("すべてのマーカー（1）", self.ev("gsApp.confirmBox.text"))
         self.ev("gsApp.answerConfirm(false); 1")
         self.page.settle()
         self.assertEqual(len(self.app.call("get_state")["markers"]["markers"]), 1)
@@ -135,7 +135,7 @@ class WebMarkerToolsTest(unittest.TestCase):
                         " : [e.textContent.trim(), e.classList.contains('dis'), e.title])")
         self.assertEqual(items, [[L["row_center"], False, ""], [L["row_ref"], False, ""],
                                  [texts.MENU_ITEMS["marker_span"], True, texts.REASON_TEXTS["delta_ref"]], None,
-                                 ["M1 を消す", False, ""]])
+                                 ["M1 を削除", False, ""]])
         # 使えない項目を押すと理由を状態バーに出す（閉じる）
         self.ev("document.querySelectorAll('.ctxmenu button')[2].click(); 1")
         self.page.settle()
@@ -165,7 +165,7 @@ class WebMarkerToolsTest(unittest.TestCase):
         self.assertEqual((sw["start_hz"], sw["stop_hz"]), tuple(sorted((marks["M1"], marks["M2"]))))
         self.page.wait("!!gsApp.notes.span", "Span の欄の知らせ")
         self.assertEqual(self.ev("gsApp.notes.span.text"), L["span_lock_released"])
-        self.assertEqual(L["span_lock_released"], "Span 固定を外しました")
+        self.assertEqual(L["span_lock_released"], "Span 固定を解除しました")
         self.assertIsNone(self.ev("gsApp.notes.span.action"))
 
     def test_peak_list_sa_then_tg_dips(self):
@@ -182,7 +182,7 @@ class WebMarkerToolsTest(unittest.TestCase):
         self.assertEqual(self.ev("document.querySelectorAll('.mtable.peaks thead th')[2].textContent.trim()"),
                          L["col_height_db"])
         found = self.ev("gsApp.peakText().found")
-        self.assertRegex(found, r"^\d+ 個・ノイズフロア −\d+\.\d dBm$")
+        self.assertRegex(found, r"^検出数 \d+・ノイズフロア −\d+\.\d dBm$")
         # 谷: 電力では一覧の谷を探さない（理由付きで使えない）
         self.ev("gsApp.setPolarity('dip'); 1")
         self.page.settle()

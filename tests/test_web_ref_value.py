@@ -81,11 +81,11 @@ class StateViewTest(unittest.TestCase):
     def test_notice_and_error_texts(self):
         n = view.notice_view({"code": "reference_value_changed",
                               "detail": {"name": "ATT", "value_db": -40.0, "previous": 0.0}}, tg_state())
-        self.assertEqual(n["view"]["text"], "基準「ATT」の値を −40.0 dB にしました")
+        self.assertEqual(n["view"]["text"], "基準「ATT」の値を −40.0 dB に変更しました")
         n = view.notice_view({"code": "reference_value_changed", "detail": {"name": "ATT", "value_db": 0.0}}, None)
         self.assertEqual(n["view"]["text"], "基準「ATT」の値を 0.0 dB にしました")
         e = view.error_view({"error": {"code": "reference_value_range", "detail": {"lo": -100.0, "hi": 100.0}}})
-        self.assertEqual(e["error"]["text"], "−100〜+100 dB の値を入れてください")
+        self.assertEqual(e["error"]["text"], "−100〜+100 dB の値を入力してください")
         e = view.error_view({"error": {"code": "reference_value_s11", "detail": {}}})
         self.assertEqual(e["error"]["text"], qt_texts.ERRORS["reference_value_s11"])
 

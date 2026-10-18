@@ -66,7 +66,7 @@ class WebSavedPalettesTest(unittest.TestCase):
         self.assertEqual([b[1] for b in self.buttons()], [False] * 7)
         # 変えてから読み込む: 保存していない変更の数を言ってから聞く（Qt と同じ文）。断れば変えない
         a.call("palette_set", colors={"trace2": "#654321"})
-        self.page.wait("gsApp.paletteView.unsaved_n === 1", "保存していない変更")
+        self.page.wait("gsApp.paletteView.unsaved_n === 1", "未保存の変更")
         self.ev("gsApp.palLoad(); 1")
         self.page.wait("!!gsApp.confirmBox", "読み込みの確かめ")
         self.assertEqual(self.ev("gsApp.confirmBox.text"), S["palette_load_confirm"].replace("{n}", "1").replace(

@@ -454,7 +454,7 @@ class PlaybackTest(InstrumentCase):
 
     def test_marker_delta_to_span_in_playback_keeps_span_lock(self):
         """再生中の「デルタの2点を Start・Stop に」（設計C §5.13）: Span 固定が ON でも OFF でも表示の範囲を2点にし、
-        固定（ライブの掃引の条件）は変えず、「Span 固定を外しました」も出さない。"""
+        固定（ライブの掃引の条件）は変えず、「Span 固定を解除しました」も出さない。"""
         h5 = self.record(3)
         for lock in (True, False):
             self.call("set_sweep", span_lock=lock)

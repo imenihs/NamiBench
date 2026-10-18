@@ -219,7 +219,7 @@ class TestInstrument(InstrumentCase):
                              warnings=[], app_version="0", norm_reasons={})
         self.assertEqual(data["conditions"]["image_reject"], "accurate")
         text = " ".join(" ".join(items) for _color, items in rl.band_rows(data))
-        self.assertIn("イメージ除去 正確", text)
+        self.assertIn("イメージ除去 精度優先", text)
         self.assertNotIn("イメージキャンセル", text)
         self.call("set_mode", mode="nf")
         data = rl.build_data(self.call("get_state"), ref_level=0.0, db_per_div=10.0, unit="dBm", mode_name="NF",

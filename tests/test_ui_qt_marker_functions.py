@@ -103,14 +103,14 @@ class DbFieldsTest(FunctionBase):
         self.wait(lambda: [b["n_db"] for b in self.marker()["bandwidth"]] == [20.0], what="↑ で 10 の位")
         # 範囲の外（0.1〜200 dB）は欄の下に知らせて戻す。コアへは送らない
         self.type_into(f, "500")
-        self.assertEqual(f.note.text(), "0.1〜200 dB の値を入れてください")
+        self.assertEqual(f.note.text(), "0.1〜200 dB の値を入力してください")
         self.assertTrue(f._popup.isVisible())
         self.assertEqual(f.edit.text(), "20.0 dB")
         self.type_into(f, "0")
         self.assertEqual(f.edit.text(), "20.0 dB")
         # 読めない値も戻す
         self.type_into(f, "abc")
-        self.assertEqual(f.note.text(), "読めない値です")
+        self.assertEqual(f.note.text(), "値の形式が正しくありません")
         self.assertEqual(f.edit.text(), "20.0 dB")
         self.pump(0.3)
         self.assertEqual([b["n_db"] for b in self.marker()["bandwidth"]], [20.0])
@@ -158,7 +158,7 @@ class DbFieldsTest(FunctionBase):
         self.type_into(f, "−47.5")
         self.wait(lambda: self.marker()["threshold"]["level"] == -47.5, what="打った −47.5")
         self.type_into(f, "-400")
-        self.assertEqual(f.note.text(), "−300〜300 dBm の値を入れてください")
+        self.assertEqual(f.note.text(), "−300〜300 dBm の値を入力してください")
         self.assertEqual(f.edit.text(), "−47.5 dBm")
 
     def test_floor_margin_used_by_find(self):
@@ -167,7 +167,7 @@ class DbFieldsTest(FunctionBase):
         f.combo.activated.emit(f.choices().index("20 dB"))
         self.assertEqual((f.value(), f.edit.text()), (20.0, "20.0 dB"))
         self.type_into(f, "101")
-        self.assertEqual(f.note.text(), "0〜100 dB の値を入れてください")
+        self.assertEqual(f.note.text(), "0〜100 dB の値を入力してください")
         self.assertEqual(f.value(), 20.0)
         sent = []
         orig = self.win.call

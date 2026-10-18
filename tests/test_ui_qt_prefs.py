@@ -109,7 +109,7 @@ class LanAtStartTest(UiBase):
             self.assertFalse(win.web.lan)
             boxes = [w for w in win.findChildren(QMessageBox) if w.isVisible()]
             self.assertEqual(len(boxes), 1)
-            self.assertIn("起動したときは切っています", boxes[0].text())
+            self.assertIn("起動時は無効です", boxes[0].text())
             self.assertFalse(ini_prefs(path).get("web_lan"))  # 知らせるのは1回だけ
         finally:
             win.close()

@@ -103,7 +103,7 @@ class ScreenModelTest(unittest.TestCase):
         v = screen_model.marks_view(self.state())
         self.assertEqual([m["label"] for m in v], [texts.DISPLAY_MARKS["negative_mirror"], texts.DISPLAY_MARKS["lo_leak"]])
         self.assertEqual(v[1]["color"], "warn")
-        self.assertIn("局発の漏れ（入力の信号ではありません）", v[1]["tip"])
+        self.assertIn("局部発振器の漏れ（入力の信号ではありません）", v[1]["tip"])
         self.assertIn("5", v[1]["tip"])
         w = screen_model.png_warnings(self.state())
         self.assertIn(v[0]["tip"], w)

@@ -33,8 +33,8 @@ class TestTgHarmonicSelector(PlutoUiBase):
         c = self.combo()
         # SA: 選べず、理由はツールチップ。選択肢は名前だけ（見積もりは TG のときだけ）
         self.wait(lambda: not c.isEnabled(), what="TG でないので使えない")
-        self.assertIn(PLUTO_LABELS["tg_harmonic_not_tg"], c.toolTip())
-        self.assertIn(PLUTO_LABELS["tg_harmonic_tip"], c.toolTip())
+        # ツールチップは使えない理由だけ（中の動きの説明は取扱説明書: 設計T F）
+        self.assertEqual(c.toolTip(), PLUTO_LABELS["tg_harmonic_not_tg"])
         self.assertEqual(self.items(), [(n, int(k)) for k, n in TG_HARMONIC_CHOICES.items()])
         self.assertEqual(c.currentText(), "なし")
         self.cmd("set_mode", mode="sg", sg_hz=85 * MHZ)
@@ -53,7 +53,7 @@ class TestTgHarmonicSelector(PlutoUiBase):
                 for k, n in TG_HARMONIC_CHOICES.items()]
         self.wait(lambda: self.items() == want, what="名前と見積もり")
         self.assertEqual(c.currentData(), 1)
-        self.assertEqual(c.toolTip(), PLUTO_LABELS["tg_harmonic_tip"])
+        self.assertEqual(c.toolTip(), "")
         # 選ぶ（利用者の操作だけが命令を出す: activated）
         i = c.findData(8)
         c.setCurrentIndex(i)

@@ -159,6 +159,6 @@ class PlutoTxPanel(QGroupBox):
         self._tg_value = tg["value"]
         widget_sync.set_items(self.tg_harmonic, [(it["text"], it["code"]) for it in tg["items"]])
         widget_sync.set_data(self.tg_harmonic, tg["value"])
-        set_enabled(self.tg_harmonic, tg["reason"], L["tg_harmonic_tip"])
+        set_enabled(self.tg_harmonic, tg["reason"])
         self.state.setText(v["tx_state"])
         self.state.setVisible(bool(v["tx_state"]))

@@ -81,13 +81,13 @@ class LeakViewTest(unittest.TestCase):
     def test_marks_and_toggle(self):
         marks = source_view.leak_marks_view(self.state())
         self.assertEqual([m["freq_hz"] for m in marks], [946 * MHZ, 1480 * MHZ, 1980 * MHZ])
-        self.assertEqual(marks[1]["tip"], "内部の漏れの可能性 1480 MHz")
-        self.assertEqual(marks[2]["tip"], "内部の漏れの可能性 1980 MHz（SG + 1480 MHz）")
+        self.assertEqual(marks[1]["tip"], "内部スプリアスの可能性 1480 MHz")
+        self.assertEqual(marks[2]["tip"], "内部スプリアスの可能性 1980 MHz（SG + 1480 MHz）")
         self.assertEqual(marks[0]["near_hz"], 1_180_000)
         self.assertEqual(source_view.leak_marks_view(self.state(leak_marks=False)), [])
         # 周波数オフセット（設計O）: 説明は横軸と同じ換算後の周波数。印の位置は測った周波数のまま
         marks = source_view.leak_marks_view(self.state(freq_offset_hz=10 * MHZ))
-        self.assertEqual((marks[1]["freq_hz"], marks[1]["tip"]), (1480 * MHZ, "内部の漏れの可能性 1490 MHz"))
+        self.assertEqual((marks[1]["freq_hz"], marks[1]["tip"]), (1480 * MHZ, "内部スプリアスの可能性 1490 MHz"))
         self.assertIn("leaks", screen_model.ui_view(self.state()))
 
     def test_mouse_reading_near_a_mark(self):
@@ -95,9 +95,9 @@ class LeakViewTest(unittest.TestCase):
         x = 1480 * MHZ + 3 * MHZ
         # 印の幅（1.18MHz）の外でも、1画素が 1MHz なら 5 画素（5MHz）の内なので拾う
         r = screen_model.mouse_reading([], x, -50.0, leaks=marks, px_hz=1 * MHZ)
-        self.assertEqual(r["lines"][-1], "内部の漏れの可能性 1480 MHz")
+        self.assertEqual(r["lines"][-1], "内部スプリアスの可能性 1480 MHz")
         r = screen_model.mouse_reading([], x, -50.0, leaks=marks, px_hz=0.1 * MHZ)
-        self.assertNotIn("内部の漏れの可能性 1480 MHz", r["lines"])
+        self.assertNotIn("内部スプリアスの可能性 1480 MHz", r["lines"])
         r = screen_model.mouse_reading([], x, -50.0, zero_span=True, leaks=marks, px_hz=1 * MHZ)
         self.assertEqual(len(r["lines"]), 1)  # ゼロスパンは横軸が周波数ではない
 
@@ -108,7 +108,7 @@ class LeakViewTest(unittest.TestCase):
                        {"freq_hz": 500 * MHZ, "level": -16.0, "diff_db": 60.0, "leak": None}]}
         rows = peak_view.result_view(r)["rows"]
         self.assertEqual((rows[0]["leak"], rows[0]["leak_tip"]),
-                         (texts.LABELS["peak_leak"], "内部の漏れの可能性 1980 MHz（SG + 1480 MHz）"))
+                         (texts.LABELS["peak_leak"], "内部スプリアスの可能性 1980 MHz（SG + 1480 MHz）"))
         self.assertEqual((rows[1]["leak"], rows[1]["leak_tip"]), ("", ""))
 
 
@@ -222,7 +222,7 @@ class MovingSpurTest(InstrumentCase):
         by = self.peaks()
         self.assertIn(946, by)
         self.assertEqual(by[946]["leak"]["freq_hz"], 946 * MHZ)
-        self.assertEqual(source_view.leak_marks_view(st)[0]["tip"], "内部の漏れの可能性 946 MHz")
+        self.assertEqual(source_view.leak_marks_view(st)[0]["tip"], "内部スプリアスの可能性 946 MHz")
 
     def test_image_reject_both_has_no_moving_spur(self):
         for choice in ("fast", "accurate"):

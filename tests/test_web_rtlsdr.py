@@ -116,7 +116,7 @@ class WebRtlTest(unittest.TestCase):
             self.assertEqual(header["value_count"], len(values))
             self.assertGreater(len(values), 0)
             s = self.recv_until(ws, lambda k, p: k == "state" and p["listen"]["active"])
-            self.assertTrue(any(i["key"] == "listen" and "FM放送" in i["text"] for i in s["ui"]["status"]))
+            self.assertTrue(any(i["key"] == "listen" and "FM 放送" in i["text"] for i in s["ui"]["status"]))
             self.assertIn("M1", s["ui"]["listen"]["now_text"])
             self.post("listen_stop")
             n = self.recv_until(ws, lambda k, p: k == "notice" and p["code"] == "listen_stopped")
@@ -156,7 +156,7 @@ class TextsJsTest(unittest.TestCase):
 
     def test_fmt_same_as_python(self):
         kw = {"value": "1.2 MHz", "reason": "上限", "n": 3, "port": 1234, "clients": 0, "freq": "84.7 MHz",
-              "mode": "FM放送", "s": "1.5", "text": "x", "cause": "c", "center": "84.4 MHz"}
+              "mode": "FM 放送", "s": "1.5", "text": "x", "cause": "c", "center": "84.4 MHz"}
         data = json.loads(web.dumps(web.texts_json()))
         script = (
             "const X = require(process.argv[1]); X.load(JSON.parse(require('fs').readFileSync(0, 'utf8')));"

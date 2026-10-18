@@ -82,7 +82,7 @@
                  @commit="commitFreq('span', 'span_hz', $event)" @step="(e, d) => stepFreq('span', 'span_hz', e, d)">
         <template #head>
           <!-- Span 固定（設計C §5.11 の 2）。状態を欄の上で文字と鍵の印で見せる -->
-          <button class="lock" :class="{on: sw && sw.span_lock_hz != null}" @click="toggleSpanLock" :disabled="!sw || !!sweepReasons.span_lock" :title="W('span_lock_tip') + (sweepReasons.span_lock ? ' — ' + sweepReasons.span_lock : '')">
+          <button class="lock" :class="{on: sw && sw.span_lock_hz != null}" @click="toggleSpanLock" :disabled="!sw || !!sweepReasons.span_lock" :title="sweepReasons.span_lock || ''">
             <svg class="lock-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path v-if="sw && sw.span_lock_hz != null" d="M4.5 7.5V5a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
               <path v-else d="M7.5 7.5V4a3.5 3.5 0 0 1 7 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/>
@@ -142,9 +142,9 @@
         <!-- 連続・単発は未接続・再生中は使えない（理由をツールチップに: U-08・設計P §9.4。Qt と同じ screen_model.run_reason） -->
         <div class="runbtns">
           <button class="run-btn" :class="{running: run.state === 'continuous'}" :disabled="!!runReason"
-                  :title="W('run_cont_tip') + keyHint('run_cont') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_cont')">{{ T('MENU_ITEMS', 'run_cont') }}</button>
+                  :title="W('run_cont_tip') + keyHint('run_cont') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_cont')">{{ W('run_cont_button') }}</button>
           <button class="run-btn" :class="{running: run.state === 'single'}" :disabled="!!runReason"
-                  :title="W('run_single_tip') + keyHint('run_single') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_single')">{{ T('MENU_ITEMS', 'run_single') }}</button>
+                  :title="W('run_single_tip') + keyHint('run_single') + (runReason ? ' — ' + runReason : '')" @click="trigger('run_single')">{{ W('run_single_button') }}</button>
           <button class="run-btn" :disabled="!ui.can_stop"
                   :title="W('stop_tip') + keyHint('stop')" @click="trigger('stop')">{{ T('MENU_ITEMS', 'stop') }}</button>
         </div>
@@ -299,19 +299,19 @@
             <label>Step</label><div>{{ fmtFreq(sw.step_hz) }}{{ sw.step_hz === 0 ? W('zero_span_mark') : '' }}</div>
             <!-- 見積もりは小数1桁（イメージ除去の選択肢の秒と同じ桁: Qt と同じ） -->
             <label>{{ W('estimate') }}</label><div>{{ W('estimate_value', {s: sw.estimated_sweep_s.toFixed(1)}) }}</div>
-            <!-- イメージ除去（設計F §7.4）: 正確・スピード・切る。選択肢の文字（名前と、いまの条件での1画面の見積もり）と
+            <!-- イメージ除去（設計F §7.4）: 精度優先・速度優先・なし。選択肢の文字（名前と、いまの条件での1画面の見積もり）と
                  使えない理由はサーバーが作る（ui.image_reject: Qt と同じ screen_model.image_reject_view）。幅は出しうる一番長い
                  選択肢（秒の桁が変わっても欄を動かさない: S-02。app.js の fitColumns） -->
             <label>{{ W('image_reject') }}</label>
             <select class="w-reject" data-field="image_reject" :value="rejectView.value" :disabled="!!rejectView.reason"
-                    :title="W('image_reject_short') + (rejectView.reason ? ' — ' + rejectView.reason : '')"
+                    :title="rejectView.reason || ''"
                     @change="setImageReject($event.target.value)">
               <option v-for="it in rejectView.items" :key="it.code" :value="it.code">{{ it.text }}</option>
             </select>
             <div class="fnote warn span" v-if="icNote">{{ W('image_reject_short') }}</div>
             <!-- 周波数オフセット（設計O・変換器の観測用）。表示だけを換算し、機器へ送る周波数は変えない -->
             <label>{{ V('freq_offset') }}</label>
-            <input class="w-value" data-field="freq_offset" v-steady="freqOffText" :placeholder="V('freq_offset_placeholder')" :title="V('freq_offset_tip')" @change="commitOffset($event.target.value)">
+            <input class="w-value" data-field="freq_offset" v-steady="freqOffText" :placeholder="V('freq_offset_placeholder')" @change="commitOffset($event.target.value)">
             <template v-if="notes.offset"><label></label><div class="fnote">{{ notes.offset.text }}</div></template>
           </div>
           <div class="dim" v-for="r in [sweepReasons.points, sweepReasons.zero_span].filter((x) => x)" :key="r">{{ r }}</div>
@@ -671,7 +671,7 @@
                        @commit="commitFreq('sg', 'sg_hz', $event)" @step="(e, d) => stepFreq('sg', 'sg_hz', e, d)"></num-field>
           </div>
           <!-- SG の周波数を変えたら最大・最小保持も消すか（設計F §8。コアの設定で Qt と共有） -->
-          <label class="inline" :title="W('sg_clear_holds_tip')"><input type="checkbox" data-field="sg_clears_holds" :checked="traceOpts.sg_clears_holds !== false" @change="setTraceOptions({sg_clears_holds: $event.target.checked})">{{ W('sg_clear_holds') }}</label>
+          <label class="inline"><input type="checkbox" data-field="sg_clears_holds" :checked="traceOpts.sg_clears_holds !== false" @change="setTraceOptions({sg_clears_holds: $event.target.checked})">{{ W('sg_clear_holds') }}</label>
           <!-- 出していないときは原因（未接続・モード・止めている）を言う（Qt と同じ文: ui.sg_state） -->
           <div class="dim" data-field="sg_state">{{ ui.sg_state }}</div>
         </section>
@@ -690,7 +690,7 @@
                  決めた固定の幅（app.js の fitColumns の --col-tgharm） -->
             <label>{{ T('PLUTO_LABELS', 'tg_harmonic') }}</label>
             <select class="w-tgharm" data-field="tg_harmonic" :value="tgHarmView.value" :disabled="!!tgHarmView.reason"
-                    :title="T('PLUTO_LABELS', 'tg_harmonic_tip') + (tgHarmView.reason ? ' — ' + tgHarmView.reason : '')"
+                    :title="tgHarmView.reason || ''"
                     @change="setTgHarmonic($event.target.value)">
               <option v-for="it in tgHarmView.items" :key="it.code" :value="it.code">{{ it.text }}</option>
             </select>
@@ -803,7 +803,7 @@
     <div class="task" v-for="t in tasks" :key="t.task_id">
       <span>{{ t.label }}</span>
       <progress v-if="t.total" :max="t.total" :value="t.done"></progress><progress v-else></progress>
-      <button :disabled="t.cancelling" @click="cmd('cancel_task', {task_id: t.task_id})">{{ W('cancel') }}</button>
+      <button :disabled="t.cancelling" @click="cmd('cancel_task', {task_id: t.task_id})">{{ W('abort') }}</button>
     </div>
   </div>
 

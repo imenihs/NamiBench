@@ -31,7 +31,7 @@ class _Row(QWidget):
         self.bar = QProgressBar()
         # 進み具合の帯は横に伸ばしすぎない（行の文字を押し出さない）
         self.bar.setMaximumWidth(BAR_MAX_W)
-        self.cancel = QPushButton(texts.LABELS["cancel"])
+        self.cancel = QPushButton(texts.LABELS["abort"])
         self.cancel.clicked.connect(lambda: panel.win.call("cancel_task", task_id=task_id, quiet_codes=("unknown_task",)))
         lay.addWidget(self.label, 1)
         lay.addWidget(self.bar)

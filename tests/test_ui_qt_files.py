@@ -97,7 +97,7 @@ class SaveOpenTest(UiBase):
         bad = self.root / "bad.h5"
         bad.write_bytes(b"not hdf5")
         self.win.files.open_files([str(bad)])
-        self.wait(lambda: "開けなかったもの" in self.win.st_note.text(), what="開けなかった知らせ")
+        self.wait(lambda: "開けなかったファイル" in self.win.st_note.text(), what="開けなかった知らせ")
         self.assertIn("bad.h5", self.win.st_note.text())
 
 
@@ -237,7 +237,7 @@ class RecordingTest(UiBase):
         self.wait(lambda: self.state()["recording"].get("sweeps", 0) >= 2, what="2回記録")
         self.save_path = str(self.root / "rec.h5")
         a["record_finish"].trigger()
-        self.wait(lambda: "記録をまとめました: rec.h5" in self.win.st_note.text(), timeout=15, what="まとめた")
+        self.wait(lambda: "記録を保存しました: rec.h5" in self.win.st_note.text(), timeout=15, what="まとめた")
         self.assertTrue(Path(self.save_path).exists())
         self.wait(lambda: not self.win.st_rec.isVisible(), what="記録の表示が消える")
 
@@ -272,7 +272,7 @@ class UnfinishedTest(UiBase):
         self.assertEqual(len(dlg.row_widgets), 1)
         self.assertIn("回の掃引", dlg.row_widgets[0].findChildren(QLabel)[0].text())
         buttons = {b.text(): b for b in dlg.row_widgets[0].findChildren(QPushButton)}
-        buttons["捨てる…"].click()
+        buttons["破棄…"].click()
         self.assertIn("失われ", self.confirm_asked[-1])
         self.wait(lambda: self.api.call("list_unfinished").result(5)["recordings"] == [], what="捨てた")
 

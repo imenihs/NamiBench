@@ -153,7 +153,7 @@ class UnitViewTest(unittest.TestCase):
             self.assertEqual([(c["code"], c["enabled"]) for c in u["choices"]],
                              [("dBm", True), ("dBuV", True), ("dBmV", True), ("nf", False), ("ratio", False)])
             self.assertEqual(u["choices"][-1]["tip"], texts.VIEW_TEXTS["level_unit_ratio_item_tip"])
-            self.assertEqual(u["tip"], texts.VIEW_TEXTS["level_unit_tip"])
+            self.assertEqual(u["tip"], "")  # 内部の説明のツールチップは出さない（設計T F）
 
     def test_ratio_shows_ratio_and_disables_power_units(self):
         u = screen_model.unit_view(self.st("ratio"))
@@ -169,7 +169,7 @@ class UnitViewTest(unittest.TestCase):
 
     def test_notice_views(self):
         v = texts.notice_view({"code": "level_unit_changed", "detail": {"unit": "dBmV", "previous": "dBm"}})
-        self.assertEqual((v["text"], v["field"], v["modal"]), ("単位を dBmV にしました", "unit", None))
+        self.assertEqual((v["text"], v["field"], v["modal"]), ("単位を dBmV に変更しました", "unit", None))
         v = texts.notice_view({"code": "ratio_display", "detail": {"name": "直結 12:24", "unit": "dBuV"}})
         self.assertIsNone(v["field"])
         m = v["modal"]
@@ -191,7 +191,7 @@ class UnitViewTest(unittest.TestCase):
         self.assertIn(texts.VIEW_TEXTS["power_hint"], pm["text"])
         self.assertIn(texts.NORM_REASONS["image_reject_mismatch"], pv["text"])
         pv = texts.notice_view({"code": "power_display", "detail": {"reason": "mode", "mode": "sa", "unit": "dBm"}})
-        self.assertIn("SA モードでは基準との比を使いません", pv["modal"]["text"])
+        self.assertIn("SA モードでは基準との比を使用しません", pv["modal"]["text"])
         self.assertNotIn(texts.VIEW_TEXTS["power_hint"], pv["modal"]["text"])
 
 

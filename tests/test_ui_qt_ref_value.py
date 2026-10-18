@@ -2,7 +2,7 @@
 
 - 信号源のタブの「基準の値」の欄（打てるドロップダウン・既定 0.0 dB・範囲の外は欄の下に知らせて戻す）。取るときに送る
 - 上段の「基準を取る」も同じ欄の値を使う。上段・信号源のタブ・状態バーの基準の文に値が出る（0 dB では出さない）
-- 一覧の行に値が出て、「基準の値…」で測り直さずに直せる（読めない値は知らせる）
+- 一覧の行に値が出て、「基準の値…」で測り直さずに直せる（値の形式が正しくありませんは知らせる）
 - S11 では欄を理由付きで使えなくし、S11 の基準の行では「基準の値…」を理由付きで使えなくする
 """
 from __future__ import annotations
@@ -86,7 +86,7 @@ class RefValueUiTest(UiBase):
         # 範囲の外はコアが断り、範囲を言う
         self.text_answer = "200"
         src.btn_value.click()
-        self.wait(lambda: "100 dB の値を入れてください" in self.win.status.note.text(), what="範囲の外")
+        self.wait(lambda: "100 dB の値を入力してください" in self.win.status.note.text(), what="範囲の外")
         self.assertEqual(self.selected().get("value_db"), 6.0)
 
     def test_s11_disables_field_and_row_button(self):
