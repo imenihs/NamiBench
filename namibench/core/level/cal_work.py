@@ -154,10 +154,10 @@ def item_cell(item: str) -> tuple[int, int]:
     if side == SIDE_LOWER:
         b, k = point_cell(f)
         if k != 0 or b == 0:
-            raise ValueError(f"境目でない周波数: {item}")
+            raise ValueError(f"境目の周波数ではありません: {item}")
         return b - 1, POINTS_PER_BAND - 1
     if side not in (None, SIDE_UPPER):
-        raise ValueError(f"知らない項目: {item}")
+        raise ValueError(f"不明な項目です: {item}")
     return point_cell(f)
 
 
@@ -203,7 +203,7 @@ def rbw_offsets(peaks_dbm: dict[int, float]) -> dict[int, float]:
 def nf_amp_raw(diff_db: float) -> float:
     """6dB のアッテネータの有無の HOT−COLD の差（倍率なし）から、差が 6.0dB になる amp_raw（倍率 10^(値/200)）。"""
     if not (diff_db > 0.0):
-        raise ValueError("差は正であること")
+        raise ValueError("差は正の値である必要があります")
     return 200.0 * math.log10(NF_ATT_DB / float(diff_db))
 
 
@@ -284,7 +284,7 @@ def item_value(cal: Optional[Calibration], item: str) -> Optional[float]:
         return None if cal.nf is None else float(cal.nf.amp_raw)
     if item == "nf_enr":
         return None if cal.nf is None or cal.nf.enr_db is None else float(cal.nf.enr_db)
-    raise ValueError(f"知らない項目: {item}")
+    raise ValueError(f"不明な項目です: {item}")
 
 
 def item_kind(item: str) -> str:
@@ -360,7 +360,7 @@ class CalSession:
     def __init__(self, kind: str, model: Optional[str], serial: Optional[str], base: Optional[Calibration],
                  base_file: Optional[str], measured: Optional[dict[str, float]] = None) -> None:
         if kind not in KINDS:
-            raise ValueError(f"知らない種類: {kind}")
+            raise ValueError(f"不明な種類です: {kind}")
         self.kind = kind
         self.sg_level_dbm = SG_LEVEL_DEFAULT_DBM
         self.cable_loss_db = CABLE_LOSS_DEFAULT_DB
@@ -413,7 +413,7 @@ class CalSession:
 
     def set_kind(self, kind: str) -> None:
         if kind not in KINDS:
-            raise ValueError(f"知らない種類: {kind}")
+            raise ValueError(f"不明な種類です: {kind}")
         self.kind = kind
         self.saved = None
         self.clear()
@@ -449,7 +449,7 @@ class CalSession:
 
     def select(self, index: int) -> None:
         if not (0 <= index < len(self.points)):
-            raise ValueError("点の番号が範囲の外")
+            raise ValueError("点の番号が範囲外です")
         self.current = index
         self.message = None
 
@@ -486,7 +486,7 @@ class CalSession:
     def confirm(self, accept: bool) -> None:
         pend = self.pending
         if pend is None:
-            raise ValueError("確かめ待ちの点が無い")
+            raise ValueError("確認待ちの点がありません")
         self.pending = None
         if accept:
             self._commit(pend["index"], pend["total_db"], pend["peak_dbm"], pend["at"], pend["cond"])
@@ -515,7 +515,7 @@ class CalSession:
 
     def set_nf(self, state: str, y_db: float) -> None:
         if state not in NF_STATES:
-            raise ValueError(f"知らない状態: {state}")
+            raise ValueError(f"不明な状態です: {state}")
         self.nf_y[state] = float(y_db)
         self.message = None
 

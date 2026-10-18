@@ -62,16 +62,18 @@ class QtRbwFieldWarningTest(UiBase):
 
 
 class QtCountFieldsTest(UiBase):
-    """単位付きの整数の欄（QSpinBox の suffix）は 3 つ。Web の int-field と同じ字（欄の中に「3 個」）。"""
+    """単位付きの整数の欄（QSpinBox の suffix）は 2 つ（回数）。Web の int-field と同じ字。上位 N は数だけ（助数詞を
+    付けない: 設計T B-3「{n} 個 → 数だけ」）。"""
 
     def test_suffix_fields(self):
         from PySide6.QtWidgets import QAbstractSpinBox
 
         spins = [s for s in self.win.findChildren(QAbstractSpinBox) if s.suffix()]
         names = {s.suffix() for s in spins}
-        self.assertEqual(len(spins), 3, [s.objectName() or type(s).__name__ for s in spins])
-        self.assertEqual(names, {texts.LABELS["times_suffix"], texts.LABELS["count_suffix"]})
-        self.assertEqual(self.win.marker_tab.top_n.text(), "3" + texts.LABELS["count_suffix"])
+        self.assertEqual(len(spins), 2, [s.objectName() or type(s).__name__ for s in spins])
+        self.assertEqual(names, {texts.LABELS["times_suffix"]})
+        self.assertEqual(texts.LABELS["count_suffix"], "")
+        self.assertEqual(self.win.marker_tab.top_n.text(), "3")
         self.assertEqual(self.win.source_tab.take_avg.text(), "1" + texts.LABELS["times_suffix"])
         self.assertEqual(self.win.source_tab.step.per_step.suffix(), texts.LABELS["times_suffix"])
 

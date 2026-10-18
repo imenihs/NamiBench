@@ -59,7 +59,7 @@ class TraceDrawTest(UiBase):
         self.assertEqual(c2.opts["pen"].color().name(), self.win.pal["trace2"])
         leg = legend_texts(self.win)
         self.assertTrue(any(s.startswith("1 平均 パワー ") and s.endswith("/4") for s in leg), leg)
-        self.assertTrue(any(s.startswith("2 最大保持 ") and s.endswith("/5") for s in leg), leg)
+        self.assertTrue(any(s.startswith("2 マックスホールド ") and s.endswith("/5") for s in leg), leg)
         # 表示をやめると線を消す（処理は続く: F §5.1）
         self.win.trace_tab.rows[2].visible.setChecked(False)
         self.pump()
@@ -209,14 +209,14 @@ class StatusTest(UiBase):
         self.wait(lambda: not self.win.st_src.isVisible(), what="止めたら消える")
 
     def test_tg_normalization_status_and_reference(self):
-        """TG で基準なし → 受けた電力と理由。細かく取る → 基準の名前と dB の縦軸・0dB の線（E §6.2〜§6.6）。"""
+        """TG で基準なし → 受信電力と理由。細かく取る → 基準の名前と dB の縦軸・0dB の線（E §6.2〜§6.6）。"""
         self.cmd("connect", backend="simulator", serial="SIM00001")
         self.cmd("set_mode", mode="tg")
         self.cmd("set_sweep", start_hz=100_000_000, stop_hz=300_000_000)
         self.cmd("run", mode="single")
         self.wait(lambda: "基準なし" in self.win.st_norm.text(), what="基準なしの表示")
-        self.assertIn("基準を選んでいません", self.win.st_norm.text())
-        self.assertIn("受けた電力", self.win.plot.getPlotItem().getAxis("left").labelText)
+        self.assertIn("基準が未選択です", self.win.st_norm.text())
+        self.assertIn("受信電力", self.win.plot.getPlotItem().getAxis("left").labelText)
         src = self.win.source_tab
         self.assertTrue(src.take_fine.isEnabled())
         src.take_name.setText("直結")
@@ -226,7 +226,7 @@ class StatusTest(UiBase):
         show = self.win.status.show_note
         self.win.status.show_note = lambda text, folder=None: (notes.append(text), show(text, folder))
         src.take_fine.click()
-        self.wait(lambda: any("基準を取りました" in n for n in notes), timeout=15, what="基準を取った知らせ")
+        self.wait(lambda: any("基準を取得しました" in n for n in notes), timeout=15, what="基準を取った知らせ")
         self.wait(lambda: self.win.st_norm.text().startswith("基準: 直結"), what="基準の名前")
         self.wait(lambda: self.win.display_unit() == "dB", what="比の単位")
         self.assertTrue(self.win.traces.zero_line.isVisible())
@@ -253,7 +253,7 @@ class TaskPanelTest(UiBase):
         p.apply_tasks([t2])
         self.assertTrue(p.isVisible())
         row = p._rows["abc"]
-        self.assertIn("書き出しています", row.label.text())
+        self.assertIn("書き出し中", row.label.text())
         self.assertIn("10/100", row.label.text())
         self.assertEqual(row.bar.maximum(), 100)
         row.cancel.click()     # もう無い処理なら何も出さない
@@ -284,8 +284,8 @@ class ImageRejectChoiceTest(UiBase):
         tab = self.win.trace_tab
         self.cmd("set_sweep", start_hz=0, stop_hz=1_000_000_000)
         self.pump()
-        # 設計F §7.4 の例と同じ: 0〜1GHz で 正確 約 3.8 秒・スピード 約 1.9 秒・なし 約 1.0 秒
-        self.assertEqual(self.items(), [("accurate", "正確（約 3.8 秒）"), ("fast", "スピード（約 1.9 秒）"),
+        # 設計F §7.4 の例と同じ: 0〜1GHz で 精度優先 約 3.8 秒・速度優先 約 1.9 秒・なし 約 1.0 秒（名前は設計T）
+        self.assertEqual(self.items(), [("accurate", "精度優先（約 3.8 秒）"), ("fast", "速度優先（約 1.9 秒）"),
                                         ("off", "なし（約 1.0 秒）")])
         self.assertEqual(tab.image_reject.currentData(), self.state()["sweep"]["image_reject"])
         form = tab.image_reject.parentWidget().layout()
@@ -301,11 +301,13 @@ class ImageRejectChoiceTest(UiBase):
         self.assertEqual(tab.image_reject.width(), width)
 
     def test_note_once_when_accurate_or_fast_chosen(self):
-        """正確・スピードを選んだときだけ、短い信号が消えることを一度出す（ずっとは出さない）。ツールチップにも置く。"""
+        """精度優先・速度優先を選んだときだけ、短い信号が表示されないことを一度出す（ずっとは出さない）。
+        ツールチップには置かない（中の動きの説明は取扱説明書: 設計T F）。"""
         tab = self.win.trace_tab
         c = tab.image_reject
-        self.assertIn("短い時間だけ出る信号は消えます", c.toolTip())
-        self.assertIn("『なし』と最大保持", c.toolTip())
+        self.assertEqual(c.toolTip(), "")
+        self.assertIn("短時間だけ現れる信号は表示されません", texts.LABELS["image_reject_short"])
+        self.assertIn("「なし」とマックスホールド", texts.LABELS["image_reject_short"])
         self.choose("off")
         self.assertEqual(self.state()["sweep"]["image_reject"], "off")
         self.assertTrue(tab.ic_note.isHidden())

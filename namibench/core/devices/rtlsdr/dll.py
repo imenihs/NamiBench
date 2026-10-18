@@ -44,14 +44,14 @@ class RtlSdrError(DeviceError):
     """DLL の関数が失敗を返した（切れたのではないもの）。"""
 
     def __init__(self, func: str, code: int) -> None:
-        super().__init__(f"rtlsdr_{func} が {code} を返した")
+        super().__init__(f"rtlsdr_{func} が {code} を返しました")
         self.func = func
         self.code = code
 
 
 def _raise_for(func: str, code: int) -> None:
     if code in _LIBUSB_DISCONNECT:
-        raise DeviceDisconnected(f"rtlsdr_{func} が {code}（{_LIBUSB_DISCONNECT[code]}）を返した")
+        raise DeviceDisconnected(f"rtlsdr_{func} が {code}（{_LIBUSB_DISCONNECT[code]}）を返しました")
     raise RtlSdrError(func, code)
 
 
@@ -207,7 +207,7 @@ class RtlSdrHandle:
 
     def _call(self, name: str, *args) -> int:
         if self._dev is None:
-            raise DeviceDisconnected("閉じている")
+            raise DeviceDisconnected("機器が未接続です")
         return int(self._f[name](self._dev, *args))
 
     def _ok(self, name: str, *args) -> int:
@@ -275,7 +275,7 @@ class RtlSdrHandle:
     def read(self, nbytes: int) -> np.ndarray:
         """同期読み。nbytes は READ_BLOCK の倍数。読めたバイト（uint8）を返す（短いことがある）。"""
         if nbytes <= 0 or nbytes % READ_BLOCK:
-            raise ValueError(f"読みの大きさは {READ_BLOCK} の倍数（{nbytes}）")
+            raise ValueError(f"読み込みのサイズは {READ_BLOCK} の倍数である必要があります（{nbytes}）")
         buf = np.empty(nbytes, dtype=np.uint8)
         n = C.c_int(0)
         r = self._call("read_sync", buf.ctypes.data_as(C.c_void_p), nbytes, C.byref(n))

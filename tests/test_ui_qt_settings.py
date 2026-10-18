@@ -111,7 +111,7 @@ class SettingsDialogTest(UiBase):
         self.confirm_answer = False
         dlg.palette_page.light.click()
         self.pump(0.2)
-        self.assertIn("変えた色 2 個", self.confirm_asked[-1])
+        self.assertIn("変更した色（2）", self.confirm_asked[-1])
         self.assertEqual(self.state()["palette"]["base"], "dark")
         self.confirm_answer = True
         dlg.palette_page.light.click()
@@ -127,7 +127,7 @@ class SettingsDialogTest(UiBase):
         self.assertEqual(len(self.confirm_asked), n)
 
     def test_saved_palettes(self):
-        """独自の配色の保存と読み込み（J §4.4.1）: 名前を付けて保存・読み込み（保存していない変更があるときだけ聞く・
+        """独自の配色の保存と読み込み（J §4.4.1）: 名前を付けて保存・読み込み（未保存の変更があるときだけ聞く・
         元に戻す）・名前・上書き・消す・ファイルへの書き出しと取り込み（読みにくい組はその行と知らせに出す）。"""
         dlg = self.open_settings("display")
         sp = dlg.palette_page.saved
@@ -149,13 +149,13 @@ class SettingsDialogTest(UiBase):
         n = len(self.confirm_asked)
         sp.btn_load.click()
         self.pump(0.2)
-        self.assertEqual(self.confirm_asked[n:], ["保存していない変更 1 個が消えます。「夜の観測」を読み込みますか？"])
+        self.assertEqual(self.confirm_asked[n:], ["未保存の変更（1）は失われます。「夜の観測」を適用しますか？"])
         self.assertEqual(self.state()["palette"]["colors"]["trace2"], "#654321")
         self.confirm_answer = True
         sp.btn_load.click()
         self.wait(lambda: self.win.pal["trace2"] == BASES["dark"]["trace2"], what="読み込み")
         self.assertEqual(self.win.pal["trace1"], "#123456")
-        self.wait(lambda: "読み込みました" in self.win.st_note.text(), what="読み込みの知らせ")
+        self.wait(lambda: "適用しました" in self.win.st_note.text(), what="適用の知らせ")
         # 保存していない変更が無ければ聞かずに読み込む
         n = len(self.confirm_asked)
         sp.btn_load.click()
@@ -187,7 +187,7 @@ class SettingsDialogTest(UiBase):
         (self.root / "bad.json").write_text("{", encoding="utf-8")
         self.open_paths = [str(self.root / "bad.json")]
         sp.btn_import.click()
-        self.wait(lambda: "配色のファイルを読めません" in self.win.st_note.text(), what="読めないファイル")
+        self.wait(lambda: "配色のファイルを読み込めません" in self.win.st_note.text(), what="読めないファイル")
         # 名前・上書き・消す
         self.text_answer = "取り込んだ配色"
         sp.btn_rename.click()
@@ -195,7 +195,7 @@ class SettingsDialogTest(UiBase):
         self.assertEqual(sp.current()["name"], "取り込んだ配色")
         sp.btn_overwrite.click()
         self.wait(lambda: not {r["name"]: r for r in sp.rows}["取り込んだ配色"]["warn"], what="上書き")
-        self.assertIn("「取り込んだ配色」の色を、いまの配色で置き換えます。", self.confirm_asked[-1])
+        self.assertIn("「取り込んだ配色」の色を、現在の配色で置き換えます。", self.confirm_asked[-1])
         sp.btn_delete.click()
         self.wait(lambda: [r["name"] for r in sp.rows] == ["夜の観測"], what="消す")
         self.assertIn("取り込んだ配色", self.confirm_asked[-1])
@@ -206,7 +206,7 @@ class SettingsDialogTest(UiBase):
         # ぶつかるキーは聞く。断れば変えない
         self.confirm_answer = False
         self.assertFalse(kp.set_key("run_single", "F5"))
-        self.assertIn("「連続」", self.confirm_asked[-1])
+        self.assertIn("「連続掃引」", self.confirm_asked[-1])
         self.assertEqual(self.win.actions["run_single"].shortcut().toString(), "F6")
         # 付け替える: 連続のキーは外れる。メニューの項目とボタンのツールチップも変わる
         self.confirm_answer = True
@@ -224,7 +224,7 @@ class SettingsDialogTest(UiBase):
         self.assertEqual([s.toString() for s in self.win.actions["marker_left"].shortcuts()], ["J", "Shift+J"])
         # 全部を初期値に戻す: 変えた数を言ってから聞く
         kp.reset_all()
-        self.assertIn("3 個", self.confirm_asked[-1])
+        self.assertIn("変更した割り当て（3）", self.confirm_asked[-1])
         self.assertEqual(self.win.actions["run_cont"].shortcut().toString(), "F5")
         self.assertEqual(self.win.prefs.get("keys"), "{}")
 

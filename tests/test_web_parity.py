@@ -124,8 +124,9 @@ class WebRbwAndParityTest(unittest.TestCase):
                 # 単位を欄の外に並べない（Qt と同じ: 欄の中だけ）
                 after = self.page.ev(f"({self.field(name)}.nextElementSibling || {{}}).textContent || ''")
                 self.assertNotIn(L["times_suffix"].strip(), after)
-                self.assertNotIn(L["count_suffix"].strip(), after)
-        # 上位 N 個: 打った値（単位なし）を確定すると欄は「5 個」。範囲の外（1〜8）・数でない文字は送らずに戻す
+        # 上位 N は数だけ（助数詞を付けない: 設計T B-3）。欄の外にも単位を置かない
+        self.assertEqual(L["count_suffix"], "")
+        # 上位 N: 打った値を確定すると欄は「5」。範囲の外（1〜8）・数でない文字は送らずに戻す
         self.page.ev("gsApp.tab = 'marker'; 1")
         self.page.settle()
         self.type_in("top_n", "5")

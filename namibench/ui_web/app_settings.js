@@ -89,7 +89,7 @@
         const u = this.ui.level;
         if (u) return u;
         const code = this.viewOpts.level_unit || "dBm";
-        return { ratio: false, current: code, choices: Object.entries(this.levelUnits).map(([c, t]) => ({ code: c, text: t, enabled: true, tip: "" })), tip: V("level_unit_tip") };
+        return { ratio: false, current: code, choices: Object.entries(this.levelUnits).map(([c, t]) => ({ code: c, text: t, enabled: true, tip: "" })), tip: "" };
       },
       // 比の表示に変わったら窓で知らせるか（初期値: 知らせる）
       notifyRatio() { return this.notifyPrefs.ratio_display !== false; },

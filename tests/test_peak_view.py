@@ -23,7 +23,7 @@ class PeakViewTest(unittest.TestCase):
         for p in peak_view.POLARITIES:
             self.assertEqual(list(texts.SEARCH_BUTTONS[p]), list(peak_view.SEARCH_CODES))
             self.assertEqual(list(texts.SEARCH_TIPS[p]), list(peak_view.SEARCH_CODES))
-        self.assertEqual(peak_view.menu_label("marker_peak_lower", "dip"), "次に深い −ピーク")
+        self.assertEqual(peak_view.menu_label("marker_peak_lower", "dip"), "ネクストピーク（レベル順・深い）")
         self.assertEqual(peak_view.menu_label("marker_peak_lower", "peak"), texts.MENU_ITEMS["marker_peak_lower"])
         self.assertEqual(peak_view.menu_label("marker_clear", "dip"), texts.MENU_ITEMS["marker_clear"])
 
@@ -52,7 +52,7 @@ class PeakViewTest(unittest.TestCase):
              "peaks": [{"freq_hz": 120_000_000, "level": -30.43, "diff_db": -30.03},
                        {"freq_hz": 170_300_000, "level": -20.0, "diff_db": -19.6}]}
         v = peak_view.result_view(r)
-        self.assertEqual(v["found"], "2 個・最大 −0.4 dB")
+        self.assertEqual(v["found"], "検出数 2・最大 −0.4 dB")
         self.assertEqual(v["diff_header"], L["col_below_max_db"])
         # 内部の漏れの印（設計L §1.4）は漏れでない行では空
         self.assertEqual(v["rows"][0], {"freq_hz": 120_000_000, "freq": "120", "level": "-30.43 dB", "diff": "-30.0",
@@ -65,9 +65,9 @@ class PeakViewTest(unittest.TestCase):
                                                                                      "diff_db": 55.24}]}
         v = peak_view.result_view(sa)
         self.assertEqual((v["found"], v["diff_header"], v["rows"][0]["diff"]),
-                         ("1 個・ノイズフロア −95.2 dBm", L["col_height_db"], "55.2"))
+                         ("検出数 1・ノイズフロア −95.2 dBm", L["col_height_db"], "55.2"))
         self.assertEqual(peak_view.result_view({"unit": "dB", "base": "max", "base_level": None, "peaks": []})["found"],
-                         "0 個")
+                         "検出数 0")
         # 0 の差は「-0.0」にしない
         v = peak_view.result_view({**r, "peaks": [{"freq_hz": 1, "level": -0.4, "diff_db": -0.01}]})
         self.assertEqual(v["rows"][0]["diff"], "0.0")
@@ -91,7 +91,7 @@ class RowOpsTest(unittest.TestCase):
         rows = {r["id"]: r for r in marker_rows.rows_from_snapshot(snap)}
         ops = marker_rows.row_ops(rows["M1"], snap)
         self.assertEqual([None if o is None else o["text"] for o in ops],
-                         [L["row_center"], L["row_ref"], texts.MENU_ITEMS["marker_span"], None, "M1 を消す"])
+                         [L["row_center"], L["row_ref"], texts.MENU_ITEMS["marker_span"], None, "M1 を削除"])
         self.assertEqual(ops[0]["cmd"], "marker_to")
         self.assertEqual(ops[0]["args"], {"id": "M1", "target": "center"})
         self.assertEqual(ops[2]["why"], texts.REASON_TEXTS["delta_ref"])  # デルタの基準が無い
@@ -99,7 +99,7 @@ class RowOpsTest(unittest.TestCase):
         self.assertEqual(ops[4]["cmd"], "marker_remove")
         # 子の行・XY カーソル: その行だけを消す（remove_command と同じ命令）
         for rid, text in (("M1.f1+", L["row_remove_cursor"]), ("M1.th", L["row_remove_function"]),
-                          ("X1", "X1 を外す")):
+                          ("X1", "X1 を解除")):
             ops = marker_rows.row_ops(rows[rid], snap)
             rm = marker_rows.remove_command(rows[rid], snap)
             self.assertEqual([(o["text"], o["cmd"], o["args"]) for o in ops], [(text, rm[0], rm[1])], rid)
@@ -122,7 +122,7 @@ class RowOpsTest(unittest.TestCase):
         self.assertEqual(st["ui"]["peaks"]["dip"]["label"], L["from_max"])
         r = view.result_view("peak_list", {}, {"trace": 1, "unit": "dB", "base": "max", "base_level": 0.0,
                                                "polarity": "dip", "peaks": []})
-        self.assertEqual(r["texts"]["peak_list"]["found"], "0 個・最大 0.0 dB")
+        self.assertEqual(r["texts"]["peak_list"]["found"], "検出数 0・最大 0.0 dB")
 
 
 if __name__ == "__main__":

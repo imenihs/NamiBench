@@ -108,7 +108,7 @@ class FitGainTest(RtlSdrCase):
         self.assertTrue(res["overload"])
         from namibench.ui_qt import texts
 
-        self.assertIn("いちばん小さい段でも振り切れています", texts.notice_view(n)["text"])
+        self.assertIn("最小の利得でも過大入力です", texts.notice_view(n)["text"])
 
     def test_refused_under_agc_and_without_rtlsdr(self):
         from namibench.core.instrument_common import CommandError

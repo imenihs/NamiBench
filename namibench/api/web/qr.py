@@ -317,7 +317,7 @@ def choose_version(n_bytes: int, ecl: str) -> int:
         need = 4 + (8 if v <= 9 else 16) + 8 * n_bytes
         if need <= data_codewords(v, ecl) * 8:
             return v
-    raise QrTooLong(f"{n_bytes} バイトは版 {MAX_VERSION} に入らない")
+    raise QrTooLong(f"{n_bytes} バイトは版 {MAX_VERSION} に収まりません")
 
 
 def encode(text: str, ecl: str = "M", mask: Optional[int] = None) -> list[list[bool]]:

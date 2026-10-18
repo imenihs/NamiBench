@@ -39,7 +39,7 @@ class LevelConverter:
     def __init__(self, profile: dict, cal: Optional[Calibration]) -> None:
         raw = profile["raw"]
         if raw.get("encoding") != _ENCODING_GIGAST_AD_U16:
-            raise NotImplementedError(f"換算できない生の値の形: {raw.get('encoding')!r}")
+            raise NotImplementedError(f"換算できない生の値の形です: {raw.get('encoding')!r}")
         self._counts_per_80db = float(raw["ad_counts_per_80db"])
         self._cal = cal
         if cal is not None:
@@ -67,7 +67,7 @@ class LevelConverter:
         """
         f = np.asarray(freqs_hz)
         if f.dtype.kind not in "iu":
-            raise TypeError("周波数は整数（Hz）の配列で渡す")
+            raise TypeError("周波数は整数（Hz）の配列である必要があります")
         f = f.astype(np.int64)
         out = np.zeros(f.shape, dtype=np.float64)
         flag = np.zeros(f.shape, dtype=bool)
@@ -100,10 +100,10 @@ class LevelConverter:
         """1回分の生の値を dBm にする。raw は adopted.axis の点と同じ数。"""
         raw = np.asarray(raw)
         if raw.shape != (adopted.axis.points,):
-            raise ValueError(f"raw の点数 {raw.shape} が軸の点数 {adopted.axis.points} と違う")
+            raise ValueError(f"raw の点数 {raw.shape} が軸の点数 {adopted.axis.points} と一致しません")
         mode = Mode(adopted.mode)
         if mode == Mode.NF:
-            raise NotImplementedError("NF は HOT と COLD の組から level/nf.py が出す（設計M）")
+            raise NotImplementedError("NF は HOT と COLD の組から level/nf.py で換算します（設計M）")
 
         base = self.ad_to_db(raw)
         cal = self._cal

@@ -249,7 +249,7 @@ class CalDialog(QDialog):
         bar.setMaximumWidth(BAR_MAX_W)
         bar.setTextVisible(False)
         label = QLabel("")
-        cancel = QPushButton(texts.LABELS["cancel"])
+        cancel = QPushButton(texts.LABELS["abort"])
         cancel.clicked.connect(self._cancel_task)
         h.addWidget(bar)
         h.addWidget(label)

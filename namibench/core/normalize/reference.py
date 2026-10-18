@@ -81,7 +81,7 @@ class ReferenceSegment:
             raise TypeError("rbw_hz は int（Hz）で持つ")
         p = np.asarray(self.power_w, dtype=np.float64)
         if p.shape != (self.axis.points,):
-            raise ValueError("power_w の点数が軸と合わない")
+            raise ValueError("power_w の点数が軸と一致しません")
         object.__setattr__(self, "power_w", p)
 
     def freqs(self) -> np.ndarray:
@@ -164,7 +164,7 @@ def _cut_outside(seg: ReferenceSegment, lo: int, hi: int) -> list[ReferenceSegme
 def _frame_conditions(frame: Frame) -> tuple[Mode, str, int]:
     """(モード, 実際に使ったイメージ除去, RBW)。イメージ除去はゼロスパンでは選択によらず "off"（設計F §7.1）。"""
     if frame.adopted is None:
-        raise ReferenceBuildError("フレームに掃引条件が無い（モード・イメージ除去・RBW が分からない）")
+        raise ReferenceBuildError("フレームに掃引条件がありません（モード・イメージ除去・RBW が不明です）")
     a = frame.adopted
     return a.mode, a.image_reject_used, a.rbw_hz
 
@@ -179,7 +179,7 @@ def frames_gain_table(frames: Sequence[Frame]) -> Optional[str]:
     """フレームの並びの補正の表の識別。違う表のフレームが混ざれば作れない（平均すると値の意味が混ざる）。"""
     tables = {frame_gain_table(fr) for fr in frames}
     if len(tables) > 1:
-        raise ReferenceBuildError("フレームの受信の利得の補正の表がそろわない")
+        raise ReferenceBuildError("フレームの受信の利得の補正の表が一致しません")
     return next(iter(tables)) if tables else None
 
 
@@ -189,17 +189,17 @@ def average_power(frames: Sequence[Frame]) -> np.ndarray:
     前置き不足（flags["transient"]）の点は平均に入れない。全フレームで使えない点は NaN。
     """
     if not frames:
-        raise ReferenceBuildError("フレームが無い")
+        raise ReferenceBuildError("フレームがありません")
     first = frames[0]
     cond = _frame_conditions(first)
     stack = []
     for fr in frames:
         if fr.quantity != Quantity.POWER:
-            raise ReferenceBuildError("基準は受けた電力のフレームから取る")
+            raise ReferenceBuildError("基準は受信電力のフレームから取得します")
         if fr.axis != first.axis:
-            raise ReferenceBuildError("フレームの周波数軸がそろわない")
+            raise ReferenceBuildError("フレームの周波数軸が一致しません")
         if _frame_conditions(fr) != cond:
-            raise ReferenceBuildError("フレームの条件（モード・イメージ除去・RBW）がそろわない")
+            raise ReferenceBuildError("フレームの条件（モード・イメージ除去・RBW）が一致しません")
         v = np.array(np.real(fr.values), dtype=np.float64)
         tr = fr.flags.get("transient")
         if tr is not None:
@@ -229,7 +229,7 @@ def segment_from_frames(
     power = average_power(frames)
     mode, image_reject, rbw_hz = _frame_conditions(frames[0])
     if mode != expected_mode:
-        raise ReferenceBuildError(f"モードが {expected_mode.value} でない（{mode.value}）")
+        raise ReferenceBuildError(f"モードが {expected_mode.value} ではありません（{mode.value}）")
     return ReferenceSegment(
         axis=frames[0].axis,
         power_w=power,

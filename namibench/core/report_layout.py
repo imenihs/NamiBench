@@ -47,7 +47,7 @@ from .units import format_freq, level_text, minus_sign, time_axis_unit
 META_KEY = "pygigast"  # 保存した PNG の印（tEXt のキー）。前に書いた画像を読めるよう、アプリの名前を変えてもこの文字のまま
 
 # 条件の行のイメージ除去（設計F §7.3。画像にだけ焼き込む語: 画面の選択肢と同じ名前）
-IMAGE_REJECT_WORDS = {"accurate": "正確", "fast": "スピード", "off": "なし"}
+IMAGE_REJECT_WORDS = {"accurate": "精度優先", "fast": "速度優先", "off": "なし"}  # 画面の選択肢と同じ語（設計T）
 # 条件の行の TG 高調波の平均除去（設計Q §7.7。画面の選択肢と同じ名前: 1 回は「なし」）
 TG_HARMONIC_NAME = "TG 高調波の平均除去"
 
@@ -178,7 +178,7 @@ X_AXIS_TITLE = "周波数 (MHz)"
 # ゼロスパンの横軸（設計N §1。機器は時刻を返さないので推定）とマーカー表の位置の列
 X_AXIS_TITLE_TIME = "時間（推定） ({unit})"
 MARKER_COLUMNS_TIME = ("番号", "トレース", "時間 (ms)", "値", "基準", "Δ時間 (ms)", "Δ値 (dB)", "")
-X_AXIS_TITLE_OFFSET = "周波数 (MHz)・換算後（測った周波数に {off} を足した値）"
+X_AXIS_TITLE_OFFSET = "周波数 (MHz)・換算後（測定周波数に {off} を加算した値）"
 
 
 # ---------------------------------------------------------------- 配色
@@ -212,7 +212,7 @@ def resolve_palette(palette: Union[str, dict, None]) -> dict[str, str]:
         out = dict(LIGHT_DEFAULT)
         out.update({k: v for k, v in palette.items() if isinstance(v, str)})
         return out
-    raise ValueError(f"palette は 'light'・'dark'・dict のどれか: {palette!r}")
+    raise ValueError(f"palette は 'light'・'dark'・dict のいずれかである必要があります: {palette!r}")
 
 
 # ---------------------------------------------------------------- 大きさ
@@ -229,7 +229,7 @@ def line_px(px: float) -> float:
 
 def check_size(width: int, height: int) -> None:
     if width < MIN_SIZE[0] or height < MIN_SIZE[1]:
-        raise ValueError(f"画像が小さすぎる: {width}x{height}")
+        raise ValueError(f"画像が小さすぎます: {width}x{height}")
 
 
 # ---------------------------------------------------------------- 帯の文字
@@ -280,7 +280,7 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
         cond += [f"Start {_hz(start)}", f"Stop {_hz(stop)}",
                  f"Center {_hz((start + stop) / 2)}", f"Span {_hz(stop - start)}"]
     if off:
-        cond.append(f"周波数オフセット {'+' if off > 0 else '−'}{_hz(abs(off))}（周波数は測った周波数に足した値）")
+        cond.append(f"周波数オフセット {'+' if off > 0 else '−'}{_hz(abs(off))}（周波数は測定周波数に加算した値）")
     if c.get("rbw_hz") is not None:
         cond.append(f"RBW {_hz(c['rbw_hz'])}")
     if c.get("points") is not None:
@@ -329,9 +329,9 @@ def band_rows(data: dict, note: str = "", app_version: str = "") -> list[tuple[s
             # 基準の値（設計E §6.7: 表示 = 基準との比 + 基準の値）。0 dB のときは出さない（外部補正と同じ）
             s += f" 基準の値 {minus_sign(format(float(nz['value_db']), '+.1f'))} dB"
         if nz.get("before_power_cycle"):
-            s += " 電源の入れ直し前の基準"
+            s += " 電源再投入前の基準"
         if nz.get("applied") is False:
-            s += " 当てていない"
+            s += " 未適用"
             if nz.get("reason"):
                 s += f": {nz['reason']}"
         corr.append(s)

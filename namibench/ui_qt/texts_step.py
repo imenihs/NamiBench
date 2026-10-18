@@ -1,4 +1,4 @@
-"""信号源のタブの SG のステップ掃引（設計L §1.3）と、内部の漏れの印（設計L §1.4）の語。
+"""信号源のタブの SG のステップ掃引（設計L §1.3）と、内部スプリアスの印（設計L §1.4）の語。
 
 Qt（step_panel.py・tab_display.py・tab_markers.py）と Web（app_step.js・index.html）が同じ表を使う（J §5）。
 LABELS・REASON_TEXTS・TEMPLATES へ足すので、Web へも同じ表で配る（GET /api/v1/texts）。命令が断った理由の語
@@ -17,56 +17,56 @@ from .texts_ui import REASON_TEXTS, TEMPLATES
 __all__ = ["STEP_COMBINES", "STEP_ERRORS", "STEP_REASONS", "STEP_FIELDS", "step_adjust_text", "step_seconds_text",
            "step_task_label", "step_end_text", "step_legend", "leak_tip"]
 
-# 重ね方（並びは 最大保持 → 平均 → 全部重ねる。コードは core/step_sweep.COMBINES）
-STEP_COMBINES = {ss.MAX: "最大保持", ss.AVERAGE: "平均", ss.ALL: "全部重ねる"}
+# 合成方法（並びは マックスホールド → 平均 → すべて重ねる。コードは core/step_sweep.COMBINES）
+STEP_COMBINES = {ss.MAX: "マックスホールド", ss.AVERAGE: "平均", ss.ALL: "すべて重ねる"}
 
 LABELS.update({
     # ---- ステップ掃引（信号源のタブ。SG の欄の下）
     "step_group": "ステップ掃引",
-    "step_start": "SG 開始",
-    "step_stop": "SG 終了",
-    "step_step": "刻み",
-    "step_per_step": "1段の回数",
-    "step_combine": "重ね方",
+    "step_start": "SG Start",
+    "step_stop": "SG Stop",
+    "step_step": "Step",
+    "step_per_step": "1 ステップの掃引回数",
+    "step_combine": "合成方法",
     "step_trace": "結果のトレース",
-    "step_run": "ステップ掃引を始める",
-    "step_run_tip": "SG の周波数を1段ずつ動かして、いまの掃引条件で掃引し、重ねた結果を選んだトレースに固定で残す",
+    "step_run": "ステップ掃引を開始",
+    "step_run_tip": "SG の周波数を 1 ステップずつ変更して現在の掃引条件で掃引し、合成した結果を選択したトレースにビューで残します。",
     # 見積もり（時間を約束しない: U-20。段の数・1回の掃引の時間・1段の回数を並べる）
-    "step_estimate": "{n} 段 × 約 {s} 秒 × {m} 回",
-    "step_estimate_none": "{n} 段 × {m} 回",
-    # ---- 内部の漏れの印（表示のタブの「描き方」・ピークの一覧の列）
-    "leak_marks": "内部の漏れの印",
-    "leak_marks_tip": "SG・TG のとき、機器の内部の漏れが信号として見える周波数に、グラフの上端で ▼ を付ける",
-    "peak_leak": "内部の漏れ",
+    "step_estimate": "{n} ステップ × 約 {s} 秒 × {m} 回",
+    "step_estimate_none": "{n} ステップ × {m} 回",
+    # ---- 内部スプリアスの印（表示のタブの「描画方法」・ピークの一覧の列）
+    "leak_marks": "内部スプリアスの印",
+    "leak_marks_tip": "SG・TG のとき、機器の内部スプリアスが信号として表示される周波数に、グラフの上端で ▼ を付けます。",
+    "peak_leak": "内部スプリアス",
 })
 
 REASON_TEXTS.update({
     # イメージ除去を選べないとき（設計L §1.3。旧アプリも SG-SWEEP 中は使わない）
-    "image_reject_step": "ステップ掃引の間はイメージ除去を使いません",
-    "step_running": "ステップ掃引をしています",
+    "image_reject_step": "ステップ掃引中はイメージ除去を使用できません",
+    "step_running": "ステップ掃引中",
 })
 
 TEMPLATES.update({
-    "step_task_progress": "  {step}/{total} 段",
-    "step_done": "ステップ掃引が終わりました（{done}/{total} 段）。結果はトレース {n}（固定）",
-    "step_cancelled": "ステップ掃引をやめました（{done}/{total} 段）。そこまでの結果はトレース {n}（固定）",
-    "step_cancelled_empty": "ステップ掃引をやめました。結果はありません",
-    "step_failed": "ステップ掃引が止まりました（{error}・{done}/{total} 段）。そこまでの結果はトレース {n}（固定）",
-    "step_failed_empty": "ステップ掃引が止まりました（{error}）。結果はありません",
-    "legend_step": "ステップ掃引・{combine} {done}/{total} 段",
-    "leak_tip": "内部の漏れの可能性 {freq}",
-    "leak_tip_sg": "内部の漏れの可能性 {freq}（SG + {off}）",
+    "step_task_progress": "  {step}/{total} ステップ",
+    "step_done": "ステップ掃引が完了しました（{done}/{total} ステップ）。結果はトレース {n}（ビュー）",
+    "step_cancelled": "ステップ掃引を中断しました（{done}/{total} ステップ）。中断までの結果はトレース {n}（ビュー）",
+    "step_cancelled_empty": "ステップ掃引を中断しました。結果はありません",
+    "step_failed": "ステップ掃引を中止しました（{error}・{done}/{total} ステップ）。中止までの結果はトレース {n}（ビュー）",
+    "step_failed_empty": "ステップ掃引を中止しました（{error}）。結果はありません",
+    "legend_step": "ステップ掃引・{combine} {done}/{total} ステップ",
+    "leak_tip": "内部スプリアスの可能性 {freq}",
+    "leak_tip_sg": "内部スプリアスの可能性 {freq}（SG + {off}）",
     "per_step_value": "{n} 回",
 })
 
 # 命令が断った理由（texts.py が ERRORS へ足す。すでにある語は変えない）
 STEP_ERRORS = {
-    "step_sweep_in_progress": "ステップ掃引の間はできません",
-    "step_sweep_no_sg": "この機器は SG を持ちません",
-    "step_sweep_needs_sg": "SG モードで使います",
-    "too_many_steps": f"段の数は {ss.STEPS_MAX} 段までです（刻みを広げてください）",
-    "too_many_steps_all": f"全部重ねるのは {ss.ALL_STEPS_MAX} 段までです（刻みを広げてください）",
-    "step_sweep_trace": "ステップ掃引の結果を入れているトレースです（終わってから変えられます）",
+    "step_sweep_in_progress": "ステップ掃引中は実行できません",
+    "step_sweep_no_sg": "この機器は SG に対応していません",
+    "step_sweep_needs_sg": "SG モードで使用します",
+    "too_many_steps": f"ステップ数の上限は {ss.STEPS_MAX} です。Step を広げてください",
+    "too_many_steps_all": f"すべて重ねる場合のステップ数の上限は {ss.ALL_STEPS_MAX} です。Step を広げてください",
+    "step_sweep_trace": "ステップ掃引の結果を格納するトレースです。ステップ掃引の終了後に変更できます",
 }
 
 # 設定を直した理由（欄のそばに一度出す: M-02）
@@ -128,7 +128,7 @@ def step_end_text(code: str, d: dict, error_text: str = "") -> str:
 
 
 def step_legend(info: Optional[dict]) -> str:
-    """凡例に添える「ステップ掃引・最大保持 12/40 段」。"""
+    """凡例に添える「ステップ掃引・マックスホールド 12/40 ステップ」。"""
     if not info:
         return ""
     return _tpl("legend_step", combine=STEP_COMBINES.get(info.get("combine"), info.get("combine") or ""),
@@ -136,7 +136,7 @@ def step_legend(info: Optional[dict]) -> str:
 
 
 def leak_tip(leak: dict, freq_offset_hz: int = 0) -> str:
-    """内部の漏れ1つの説明「内部の漏れの可能性 1480MHz（SG + 1480MHz）」。周波数は横軸と同じ換算後の周波数（設計O）。"""
+    """内部スプリアス1つの説明「内部スプリアスの可能性 1480MHz（SG + 1480MHz）」。周波数は横軸と同じ換算後の周波数（設計O）。"""
     freq = format_freq(int(leak["freq_hz"]) + int(freq_offset_hz or 0))
     if leak.get("kind") == "sg_offset" and leak.get("offset_hz") is not None:
         return _tpl("leak_tip_sg", freq=freq, off=format_freq(int(leak["offset_hz"])))

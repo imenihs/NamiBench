@@ -185,7 +185,7 @@ class TestAutoConnect(DevicesCase):
         with self.cv:
             n = [p for k, p in self.events if k == "notice" and p["code"] == "auto_connected"]
         self.assertEqual(n[0]["detail"]["name"], "RTL-SDR (R820T) 0001")
-        self.assertEqual(texts.notice_text(n[0]), "前回の RTL-SDR (R820T) 0001 に繋ぎました")
+        self.assertEqual(texts.notice_text(n[0]), "前回の RTL-SDR (R820T) 0001 に接続しました")
 
     def test_simulator_is_never_auto_connected(self):
         self.call("connect", backend="simulator", serial="SIM00001")
@@ -208,7 +208,7 @@ class TestTexts(unittest.TestCase):
     def test_status_when_disconnected_and_row_views(self):
         st = {"connection": {"state": "disconnected"}, "run": {}}
         conn = next(i for i in texts.status_items(st) if i["key"] == "conn")
-        self.assertEqual(conn["text"], "● 未接続（機器 → 機器に接続… で選べます）")
+        self.assertEqual(conn["text"], "● 未接続")
         v = texts.devices_view([{"id": "simulator:simulator", "kind": "simulator", "serial": "SIM00001",
                                  "state": "available", "name": None, "default_name": None}])
         self.assertTrue(v["empty"])
@@ -219,7 +219,7 @@ class TestTexts(unittest.TestCase):
         v = texts.devices_view([row])
         self.assertFalse(v["empty"])
         rv = v["rows"][0]["view"]
-        self.assertEqual(rv["state_text"], "ほかのアプリケーションが使っています")
+        self.assertEqual(rv["state_text"], "ほかのアプリケーションが使用中")
         self.assertIn("ポート COM7", rv["details"])
         self.assertIn("USB ID 0403:6001", rv["details"])
 
@@ -270,7 +270,7 @@ class TestDirectZeroDb(InstrumentCase):
         q = screen_model.ref_quick_view(st)
         self.assertEqual(q["text"], idle["text"])
         self.assertEqual(q["label"], idle["label"])
-        self.assertEqual(q["reason"], "基準を取っています")
+        self.assertEqual(q["reason"], "基準を取得中")
         for key in ("taking", "task_id", "cancelling", "progress_text"):
             self.assertNotIn(key, q)
 

@@ -209,7 +209,7 @@ class WriterThread:
 
     def submit(self, fn: Callable, *args: Any, **kwargs: Any) -> concurrent.futures.Future:
         if self._closed:
-            raise RuntimeError("書き込みスレッドは閉じた")
+            raise RuntimeError("書き込みスレッドは終了済みです")
         fut: concurrent.futures.Future = concurrent.futures.Future()
         self._q.put((fut, fn, args, kwargs))
         return fut

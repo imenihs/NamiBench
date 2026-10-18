@@ -12,7 +12,7 @@ from tests.exttx_helpers import LO, RawClient, free_port
 from tests.test_ui_qt_plutosdr import PlutoUiBase
 
 MHZ = 1_000_000
-REASON = "外部のアプリケーションが送信しています"
+REASON = "外部のアプリケーションが送信中"
 
 
 class ExtUiBase(PlutoUiBase):
@@ -47,11 +47,11 @@ class TestExtTxQt(ExtUiBase):
         sb = self.win.status
         self.cmd("ext_tx_set", enabled=True, port=self.port)
         self.pump(0.3)
-        self.assertEqual(sb.labels["exttx"].text(), f"外部 IQ 待ち受け :{self.port}")
+        self.assertEqual(sb.labels["exttx"].text(), f"外部 IQ 待機中 :{self.port}")
         self.assertFalse(sb.exttx_stop.isVisible())
         self.start_streaming()
         self.assertEqual(sb.labels["exttx"].text(), "外部 IQ 出力中 " + format_freq(LO))
-        self.assertIn("途切れ", sb.labels["exttx"].toolTip())
+        self.assertIn("アンダーラン", sb.labels["exttx"].toolTip())
         self.assertTrue(sb.exttx_stop.isVisible())
         self.assertEqual(sb.exttx_stop.text(), EXT_TX_LABELS["stop"])
         # SG・TG・S11 は理由付きで無効（SA は使える）
@@ -115,12 +115,12 @@ class TestExtTxQt(ExtUiBase):
         self.pump(0.2)
         self.assertFalse(dlg.ext_enable.isChecked())
         self.assertEqual(dlg.ext_port.value(), 1235)
-        self.assertEqual(dlg.ext_state.text(), "止まっています")
+        self.assertEqual(dlg.ext_state.text(), "停止中")
         dlg.ext_port.setValue(self.port)
         dlg.ext_enable.setChecked(True)
         self.wait(lambda: self.state()["ext_tx"]["listening"], what="待ち受け")
         self.pump(0.2)
-        self.assertEqual(dlg.ext_state.text(), f"待ち受け中: ポート {self.port}（この PC だけ）")
+        self.assertEqual(dlg.ext_state.text(), f"待機中: ポート {self.port}（この PC のみ）")
         dlg.ext_enable.setChecked(False)
         self.wait(lambda: not self.state()["ext_tx"]["listening"], what="止める")
         dlg.close()

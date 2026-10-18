@@ -78,7 +78,7 @@ class DeviceSweep:
 
 def _rbw_khz(rbw_hz: int) -> int:
     if rbw_hz not in RBW_CODES:
-        raise InvalidSweep(f"定義されていない RBW: {rbw_hz} Hz")
+        raise InvalidSweep(f"未定義の RBW です: {rbw_hz} Hz")
     return rbw_hz // 1000
 
 
@@ -93,7 +93,7 @@ def sample_for(step_hz: int, rbw_hz: int) -> int:
     Python の round は偶数丸めで、旧アプリの VB の Math.Round と同じ結果になる。
     """
     if step_hz < 0:
-        raise InvalidSweep(f"Step が負: {step_hz} Hz")
+        raise InvalidSweep(f"Step が負の値です: {step_hz} Hz")
     return round((step_hz // UNIT_HZ) / sample_inc_units(rbw_hz))
 
 
@@ -142,9 +142,9 @@ def limits(profile: dict, step_hz: int, rbw_hz: int, device_points: int, passes:
 
 def _mode_bits(mode: Mode, b3: int, b2: int) -> int:
     if b3 not in (0, 1) or b2 not in (0, 1):
-        raise InvalidSweep(f"b3・b2 は 0 か 1: b3={b3} b2={b2}")
+        raise InvalidSweep(f"b3・b2 は 0 か 1 である必要があります: b3={b3} b2={b2}")
     if b2 and mode != Mode.NF:
-        raise InvalidSweep("b2（NF の HOT）は NF モードのときだけ立てる")
+        raise InvalidSweep("b2（NF の HOT）は NF モードでのみ使用できます")
     return _MODE_BASE[Mode(mode)] | (MODE_B2 if b2 else 0) | (MODE_B3 if b3 else 0)
 
 
@@ -161,12 +161,12 @@ def device_sweep(adopted: AdoptedSweep, profile: dict, b3: int, b2: int = 0,
     else:
         p0, n, pre = segment.point0, segment.points, segment.preroll_points
         if p0 < 0 or n < 1 or p0 + n > adopted.axis.points:
-            raise InvalidSweep(f"区間が軸の外: {p0}〜{p0 + n} / {adopted.axis.points}")
+            raise InvalidSweep(f"区間が軸の範囲外です: {p0}〜{p0 + n} / {adopted.axis.points}")
     if pre < 0:
-        raise InvalidSweep(f"前置きの点数が負: {pre}")
+        raise InvalidSweep(f"前置きの点数が負の値です: {pre}")
     _check_rbw_rule(adopted, profile)
     if adopted.mode == Mode.SG and adopted.sg_hz is None:
-        raise InvalidSweep("SG モードなのに SG の周波数が無い")
+        raise InvalidSweep("SG モードには SG の周波数が必要です")
     return make_device_sweep(
         profile,
         start_hz=adopted.axis.start_hz + (p0 - pre) * step,
@@ -184,9 +184,9 @@ def _check_rbw_rule(adopted: AdoptedSweep, profile: dict) -> None:
     if adopted.rbw_hz == r["fixed_hz"]:
         return
     if adopted.mode.value not in r["selectable_modes"]:
-        raise InvalidSweep(f"{adopted.mode.value} モードの RBW は {r['fixed_hz']} Hz 固定")
+        raise InvalidSweep(f"{adopted.mode.value} モードの RBW は {r['fixed_hz']} Hz 固定です")
     if adopted.span_hz > r["selectable_span_max_hz"]:
-        raise InvalidSweep(f"Span {adopted.span_hz} Hz では RBW は {r['fixed_hz']} Hz 固定")
+        raise InvalidSweep(f"Span {adopted.span_hz} Hz では RBW は {r['fixed_hz']} Hz 固定です")
 
 
 def make_device_sweep(profile: dict, start_hz: int, step_hz: int, points: int, rbw_hz: int,
@@ -198,34 +198,34 @@ def make_device_sweep(profile: dict, start_hz: int, step_hz: int, points: int, r
     f = profile["freq"]
     for name, v in (("start", start_hz), ("step", step_hz)):
         if not isinstance(v, int) or isinstance(v, bool):
-            raise InvalidSweep(f"{name} は int（Hz）で渡す: {v!r}")
+            raise InvalidSweep(f"{name} は int（Hz）である必要があります: {v!r}")
         if v % UNIT_HZ:
-            raise InvalidSweep(f"{name} が {UNIT_HZ} Hz の倍数でない: {v}")
+            raise InvalidSweep(f"{name} が {UNIT_HZ} Hz の倍数ではありません: {v}")
     if step_hz < 0 or step_hz // UNIT_HZ > STEP_UNITS_MAX:
-        raise InvalidSweep(f"Step が範囲外: {step_hz} Hz")
+        raise InvalidSweep(f"Step が範囲外です: {step_hz} Hz")
     if not (1 <= points <= min(f["points_device_max"], PLOT_MAX_PROTOCOL)):
-        raise InvalidSweep(f"機器へ送る点数が範囲外: {points}")
+        raise InvalidSweep(f"機器へ送る点数が範囲外です: {points}")
     if not (f["min_hz"] <= start_hz <= f["max_hz"]):
-        raise InvalidSweep(f"Start が範囲外: {start_hz} Hz")
+        raise InvalidSweep(f"Start が範囲外です: {start_hz} Hz")
     last = start_hz + step_hz * (points - 1)
     if last > f["max_hz"]:
-        raise InvalidSweep(f"最後の点が上限を超える: {last} Hz")
+        raise InvalidSweep(f"最後の点が上限を超えます: {last} Hz")
     if mode_bits & ~(MODE_TG | MODE_SG | MODE_B2 | MODE_B3):
-        raise InvalidSweep(f"定義されていない MODE ビット: 0x{mode_bits:02X}")
+        raise InvalidSweep(f"未定義の MODE ビットです: 0x{mode_bits:02X}")
     if (mode_bits & MODE_TG) and (mode_bits & MODE_SG):
-        raise InvalidSweep("TG と SG は同時に立てない")
+        raise InvalidSweep("TG と SG は同時に使用できません")
     if sg_hz is None:
         sg_hz = 0  # SG を出さないときの SG の欄（機器は SG ビットが無ければ使わない）
     else:
         sg = profile["source"]["sg"]
         if not isinstance(sg_hz, int) or isinstance(sg_hz, bool):
-            raise InvalidSweep(f"SG は int（Hz）で渡す: {sg_hz!r}")
+            raise InvalidSweep(f"SG は int（Hz）である必要があります: {sg_hz!r}")
         if not (sg["min_hz"] <= sg_hz <= sg["max_hz"]):
-            raise InvalidSweep(f"SG が範囲外: {sg_hz} Hz")
+            raise InvalidSweep(f"SG が範囲外です: {sg_hz} Hz")
         if sg_hz % sg["unit_hz"]:
-            raise InvalidSweep(f"SG が {sg['unit_hz']} Hz の倍数でない: {sg_hz}")
+            raise InvalidSweep(f"SG が {sg['unit_hz']} Hz の倍数ではありません: {sg_hz}")
     if (mode_bits & MODE_SG) and sg_hz == 0:
-        raise InvalidSweep("SG ビットを立てるときは SG の周波数が要る")
+        raise InvalidSweep("SG ビットを立てるときは SG の周波数が必要です")
     return DeviceSweep(
         start_hz=start_hz,
         step_hz=step_hz,

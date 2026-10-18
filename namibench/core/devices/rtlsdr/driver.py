@@ -124,10 +124,10 @@ def fft_params(profile: dict, rbw_hz: int) -> FftParams:
             win = str(c["window"])
             break
     else:
-        raise InvalidSweep(f"RBW {rbw_hz}Hz は選択肢に無い")
+        raise InvalidSweep(f"RBW {rbw_hz}Hz は選択肢にありません")
     n = fft_n_at_rate(fft, base_n)
     if n is None:
-        raise InvalidSweep(f"RBW {rbw_hz}Hz はサンプリング周波数 {fs}Hz で使えない")
+        raise InvalidSweep(f"RBW {rbw_hz}Hz はサンプリング周波数 {fs}Hz では使用できません")
     grid = fs // n
     dc = fft["dc_exclusion"]
     return FftParams(
@@ -142,7 +142,7 @@ def make_plan(profile: dict, axis: FreqAxis, rbw_hz: int,
               fixed_center_hz: Optional[int] = None) -> tuple[FftParams, spectrum.Plan]:
     p = fft_params(profile, rbw_hz)
     if axis.step_hz != p.grid:
-        raise InvalidSweep(f"Step {axis.step_hz}Hz が FFT の格子 {p.grid}Hz と違う")
+        raise InvalidSweep(f"Step {axis.step_hz}Hz が FFT の格子 {p.grid}Hz と一致しません")
     f = profile["freq"]
     pl = spectrum.plan(axis.start_hz, axis.last_hz, p.grid, p.half, p.delta,
                        int(f["min_hz"]), int(f["max_hz"]), fixed_center_hz)
@@ -295,7 +295,7 @@ class RtlSdrDevice(Device):
 
     def _nearest_gain(self, gain_db: float) -> int:
         if not self._gains:
-            raise DeviceError("利得の段を読めていない")
+            raise DeviceError("利得の段を読み込めませんでした")
         want = round(float(gain_db) * 10)
         return min(self._gains, key=lambda g: (abs(g - want), g))
 
@@ -361,7 +361,7 @@ class RtlSdrDevice(Device):
 
     def identity(self) -> DeviceIdentity:
         if self._identity is None:
-            raise DeviceDisconnected("開いていない")
+            raise DeviceDisconnected("機器が未接続です")
         return self._identity
 
     @property
@@ -476,10 +476,10 @@ class RtlSdrDevice(Device):
         測っている間は機器の口を握るので、掃引はその間待つ。
         """
         if Mode(sweep.mode) != Mode.SA:
-            raise InvalidSweep(f"RTL-SDR はスペアナだけ（{sweep.mode}）")
+            raise InvalidSweep(f"RTL-SDR ではスペアナ以外は使用できません（{sweep.mode}）")
         with self._lock:
             if self._h is None:
-                raise DeviceDisconnected("開いていない")
+                raise DeviceDisconnected("機器が未接続です")
             self._apply_pending()
             try:
                 return self._fit_gain_locked(sweep, cancel, progress)
@@ -492,7 +492,7 @@ class RtlSdrDevice(Device):
         centers = list(pl.centers)
         steps = sorted(self._gains, reverse=True)
         if not steps:
-            raise DeviceError("利得の段を読めていない")
+            raise DeviceError("利得の段を読み込めませんでした")
         before = self._gain_tenth
         hot = 0
         chosen: Optional[int] = None

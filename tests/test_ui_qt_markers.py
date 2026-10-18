@@ -57,7 +57,7 @@ class MarkerButtonsTest(MarkerBase):
         self.win.marker_panel.btn_clear.click()
         self.pump()
         self.assertEqual(len(self.markers()), 2)
-        self.assertIn("2 本", self.confirm_asked[-1])
+        self.assertIn("すべてのマーカー（2）", self.confirm_asked[-1])
         self.confirm_answer = True
         self.win.marker_panel.btn_clear.click()
         self.wait(lambda: not self.markers(), what="全消去")
@@ -123,7 +123,7 @@ class MarkerKeysTest(MarkerBase):
 
     def test_arrow_without_selection_says_so(self):
         self.win._marker_step(+1)
-        self.assertIn("マーカーを選んで", self.win.st_note.text())
+        self.assertIn("マーカーが未選択", self.win.st_note.text())
 
 
 class MarkerGraphTest(MarkerBase):
@@ -217,7 +217,7 @@ class MarkerTabTest(MarkerBase):
 
     def test_functions_and_track_reason(self):
         self.assertFalse(self.tab.track.isEnabled())
-        self.assertIn("P（ピーク）", self.tab.track.toolTip())
+        self.assertIn("P のマーカーでのみ", self.tab.track.toolTip())
         self.tab.bw1.setChecked(True)
         self.wait(lambda: self.marker("M1")["bandwidth"], what="3dB 帯域幅")
         self.pump()
@@ -230,7 +230,7 @@ class MarkerTabTest(MarkerBase):
         QTest.keyClick(self.tab.freq.edit, Qt.Key.Key_Return)
         self.wait(lambda: self.marker("M1")["freq_hz"] == 1_235_000_000, what="近い点へ")
         # 命令の結果（知らせ）はマーカーの更新の後に届く。届くのを待つ
-        self.wait(lambda: "の点に置きました" in self.tab.freq.note.text(), what="点に置いた知らせ")
+        self.wait(lambda: "に配置しました" in self.tab.freq.note.text(), what="点に置いた知らせ")
 
     def test_xy_cursors(self):
         self.tab.xy_checks["x1_hz"].setChecked(True)

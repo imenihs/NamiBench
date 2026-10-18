@@ -16,11 +16,11 @@ DEVICE_KINDS = {"gigast": "GigaSt", "rtlsdr": "RTL-SDR", "plutosdr": "PlutoSDR",
 
 # 状態のコード → 利用者の言葉（J §4.7 の 3）
 DEVICE_STATES = {
-    "available": "使えます",
+    "available": "使用可能",
     "in_use_here": "使用中",
-    "known": "前に使った機器",
-    "busy_other_app": "ほかのアプリケーションが使っています",
-    "first_time_needs_probe": "初めての機器",
+    "known": "接続履歴あり",
+    "busy_other_app": "ほかのアプリケーションが使用中",
+    "first_time_needs_probe": "未登録",
     "dll_not_found": "DLL が見つかりません",
 }
 
@@ -29,42 +29,42 @@ DEVICE_STATE_CLS = {"busy_other_app": "warn", "dll_not_found": "warn", "in_use_h
 
 DEVICE_LABELS = {
     "title": "機器に接続",
-    "empty": "GigaSt・RTL-SDR・PlutoSDR を USB に挿すと、ここに出ます",
-    "try_sim": "シミュレータで試す",
+    "empty": "GigaSt・RTL-SDR・PlutoSDR を USB に接続すると、ここに表示されます",
+    "try_sim": "シミュレータに接続",
     "connect": "接続",
-    "rename": "名前…",
+    "rename": "名前の変更…",
     "rename_title": "機器の名前",
     "rename_label": "名前",
     "rename_placeholder": "既定の名前",
     "details": "詳細",
-    "choose_dll": "DLL のフォルダを選ぶ…",
+    "choose_dll": "DLL のフォルダを選択…",
     "close": "閉じる",
-    "in_use_reason": "いま使っている機器です",
+    "in_use_reason": "使用中の機器です",
     "dll_folder_title": "RTL-SDR の DLL（rtlsdr.dll）のあるフォルダ",
     "dll_folder_title_plutosdr": "PlutoSDR の DLL（libiio.dll）のあるフォルダ",
 }
 
-# 繋げなかったときの次の手（J §4.7 の 5。理由の文は ERRORS）
+# 接続できなかったときの次の手（J §4.7 の 5。理由の文は ERRORS）
 CONNECT_NEXT_STEPS = {
-    "probe_failed": "GigaSt なら、USB を挿し直してからもう一度［接続］を押してください",
-    "open_failed": "USB を挿し直してからもう一度［接続］を押してください",
-    "device_not_found": "一覧から選び直してください",
-    "device_ambiguous": "一覧の行（番号付きのポート）から選んでください",
-    "rtlsdr_dll_not_found": "［DLL のフォルダを選ぶ］で rtlsdr.dll のあるフォルダを選んでください",
-    "plutosdr_dll_not_found": "［DLL のフォルダを選ぶ］で libiio.dll（64 ビット版）のあるフォルダを選んでください",
+    "probe_failed": "GigaSt の場合は、USB を挿し直してから再度［接続］を押してください",
+    "open_failed": "USB を挿し直してから再度［接続］を押してください",
+    "device_not_found": "一覧から選択し直してください",
+    "device_ambiguous": "一覧の行（番号付きのポート）から選択してください",
+    "rtlsdr_dll_not_found": "［DLL のフォルダを選択］で rtlsdr.dll のあるフォルダを選択してください",
+    "plutosdr_dll_not_found": "［DLL のフォルダを選択］で libiio.dll（64 ビット版）のあるフォルダを選択してください",
 }
 
 TEMPLATES.update({
     "device_detail_port": "ポート {port}",
     "device_detail_usb": "USB ID {usb}",
     "device_detail_serial": "シリアル番号 {serial}",
-    "device_detail_dll": "探したフォルダ: {folder}",
-    "device_detail_dll_default": "探したフォルダ: 自動で探す場所",
-    "device_connecting": "繋いでいます…（{name}）",
-    "device_connect_failed": "{name} に繋げませんでした: {reason}",
+    "device_detail_dll": "検索したフォルダ: {folder}",
+    "device_detail_dll_default": "検索したフォルダ: 既定の場所",
+    "device_connecting": "接続中…（{name}）",
+    "device_connect_failed": "{name} に接続できませんでした: {reason}",
     "device_next": "{reason}。{next}",
-    "auto_connected": "前回の {name} に繋ぎました",
-    "status_conn_none": "● 未接続（機器 → 機器に接続… で選べます）",
+    "auto_connected": "前回の {name} に接続しました",
+    "status_conn_none": "● 未接続",
     "status_conn_who": " {name}（{port}）",
     "status_conn_who_name": " {name}",
     # 上段の「基準を取る」（4-3b）。名前の既定はモードと時刻（S11 の「S11 HH:MM」と同じ形）。基準は直結に限らない
@@ -73,16 +73,16 @@ TEMPLATES.update({
     "ref_quick_now": "基準: {name}（{time}）",
     "ref_quick_name": "基準: {name}",
     "ref_quick_none": "基準なし（dBm で表示）",
-    "ref_quick_power_cycled": "⚠ 電源の入れ直し前",
-    "ref_zero_shown": "（0dB が見えるよう REF レベルを {ref} dB にしました）",
+    "ref_quick_power_cycled": "⚠ 電源再投入前",
+    "ref_zero_shown": "（0dB を表示するため REF レベルを {ref} dB に変更しました）",
 })
 
 REF_QUICK_LABELS = {
-    "button": "基準を取る",
-    "tip": "TG の範囲を 1MHz 刻みで1回測り、0dB の基準にする",
-    # PlutoSDR（FFT の機器はいまの条件で取る。受信の利得を合わせてから取る: 設計Q §7.9）
-    "tip_pluto": "受信の利得を合わせてから、いまの条件で1回測り、0dB の基準にする",
-    "taking_reason": "基準を取っています",
+    "button": "基準を取得",
+    "tip": "TG の範囲を 1MHz ステップで 1 回測定し、0dB の基準にします。",
+    # PlutoSDR（FFT の機器は現在の条件で取得する。受信の利得を調整してから取得する: 設計Q §7.9）
+    "tip_pluto": "受信の利得を調整してから、現在の条件で 1 回測定し、0dB の基準にします。",
+    "taking_reason": "基準を取得中",
 }
 
 

@@ -74,7 +74,7 @@ FIELD_NAMES = {
     "stop_hz": "Stop",
     "center_hz": "Center",
     "span_hz": "Span",
-    "points": "点数",
+    "points": "トレースポイント数",
     "rbw_hz": "RBW",
     "sg_hz": "SG 周波数",
     "step_hz": "Step",
@@ -119,27 +119,27 @@ REASONS = {
     "upper_limit": "上限",
     "lower_limit": "下限",
     "freq_unit": "機器の周波数の単位",
-    "min_span": "この点数で作れる最小の Span",
-    "step_max": "Step は 1MHz まで",
-    "points_max": "点数の上限",
-    "points_min": "点数の下限",
+    "min_span": "このトレースポイント数で設定できる最小の Span",
+    "step_max": "Step の上限 1MHz",
+    "points_max": "トレースポイント数の上限",
+    "points_min": "トレースポイント数の下限",
     "sg_range": "SG の範囲",
-    "rbw_fixed": "TG・S11・NF と Span 50MHz 超では RBW は 180kHz だけ",
-    "rbw_restored": "条件から出たので、選んでいた RBW に戻しました",
-    "keep_center": "Center を保つため、範囲に収まる最大の Span",
-    "keep_span": "Span 固定のため、Span を保って Center を移動",
+    "rbw_fixed": "TG・S11・NF と Span 50MHz 超では RBW 180kHz 固定",
+    "rbw_restored": "制限の条件の対象外になったため、選択していた RBW に戻しました",
+    "keep_center": "Center を維持するため、範囲に収まる最大の Span",
+    "keep_span": "Span 固定のため、Span を維持して Center を移動",
     "span_lock": "Span 固定のため",
-    "zero_span_unsupported": "この機器はゼロスパンを持ちません",
-    "points_by_rbw": "この機器の点数は RBW と Span で決まります",
-    "rbw_points_max": "点数の上限を超えるため RBW を広げました",
-    "mode_unsupported": "この機器はこのモードで測れません",
-    "image_reject_unsupported": "この機器はイメージ除去を持ちません",
-    "device_default_range": "機器の範囲の外なので、その機器の既定の範囲",
-    "device_changed": "機器が変わったため既定",
+    "zero_span_unsupported": "この機器はゼロスパンに対応していません",
+    "points_by_rbw": "この機器のトレースポイント数は RBW と Span で決まります",
+    "rbw_points_max": "トレースポイント数の上限を超えるため RBW を広げました",
+    "mode_unsupported": "この機器はこのモードに対応していません",
+    "image_reject_unsupported": "この機器はイメージ除去に対応していません",
+    "device_default_range": "機器の範囲外のため、その機器の既定の範囲",
+    "device_changed": "機器を変更したため既定",
     # 外部 IQ の送信でサンプリング周波数が変わった（設計S §1 §3.2）
-    "rbw_sample_rate": "外部 IQ のサンプリング周波数では選んでいた RBW を使えません",
-    "span_sample_rate": "外部 IQ のサンプリング周波数で測れる幅",
-    "span_sample_rate_restored": "外部 IQ の送信が終わったので、求めていた範囲に戻しました",
+    "rbw_sample_rate": "外部 IQ のサンプリング周波数では、選択していた RBW は使用できません",
+    "span_sample_rate": "外部 IQ のサンプリング周波数で測定できる幅",
+    "span_sample_rate_restored": "外部 IQ の送信が終了したため、指定していた範囲に戻しました",
 }
 
 # 値ではなく状態が変わった調整の文（「◯◯ に合わせました」の形にしない）。欄は調整の field で決まる
@@ -166,11 +166,11 @@ def alternative_done_text(center_hz: int, span_hz: int) -> str:
 
 
 WARNINGS = {
-    "rbw180k_narrow_span": "RBW 180kHz で Span 0.3MHz 未満: 平らな上面しか見えません（レベルは正しい）",
-    "rbw30k_fine_step": "RBW 30kHz で Step 2kHz 未満: 形が狭く出ます（レベルは正しい）",
-    "rbw15k_unstable": "RBW 15kHz は1回の掃引ではレベルと形が揺れます。平均を使ってください",
+    "rbw180k_narrow_span": "RBW 180kHz・Span 0.3MHz 未満では、信号の頂部が平らに表示されます（レベルは正確です）。",
+    "rbw30k_fine_step": "RBW 30kHz・Step 2kHz 未満では、信号の幅が狭く表示されます（レベルは正確です）。",
+    "rbw15k_unstable": "RBW 15kHz では、1 回の掃引でレベルと形状が変動します。平均を使用してください。",
     # ゼロスパンで RBW 15kHz（設計N §1・C §5.3。D4: 15〜30dB の落ち込みが散発する）
-    "rbw15k_zero_span": "RBW 15kHz のゼロスパンは 15〜30dB の落ち込みが散発します（RBW 180kHz なら安定）",
+    "rbw15k_zero_span": "RBW 15kHz のゼロスパンでは、15〜30dB の落ち込みが散発します（RBW 180kHz では安定します）。",
 }
 
 
@@ -187,9 +187,9 @@ def freq_offset_of(st: Optional[dict]) -> int:
 
 # いまの条件で選べない RBW の理由（設計C §5.14。RBW の一覧で無効にした行と欄のツールチップに出す）。{rbw} は選べる1つの RBW
 RBW_LIMITS = {
-    "mode_fixed": "TG・S11・NF では RBW は {rbw} だけです",
-    "span_wide": "Span が 50MHz を超えると RBW は {rbw} だけです（Span を 50MHz 以下にすると選べます）",
-    "points_max": "この Span では点数が上限を超えるので選べません（Span を狭くすると選べます）",
+    "mode_fixed": "TG・S11・NF では RBW は {rbw} 固定です。",
+    "span_wide": "Span が 50MHz を超えると RBW は {rbw} 固定です。Span を 50MHz 以下にすると選択できます。",
+    "points_max": "この Span ではトレースポイント数が上限を超えるため選択できません。Span を狭くしてください。",
 }
 
 
@@ -229,88 +229,88 @@ def condition_lines(st: dict, with_rbw: bool = False) -> list[str]:
 
 
 NOTICES = {
-    "sweep_discarded": "掃引を1回捨てました",
-    "disconnected": "機器が切れました。同じ機器が戻るのを待っています",
-    "reconnected": "機器が戻りました。掃引を再開します",
+    "sweep_discarded": "掃引を 1 回破棄しました",
+    "disconnected": "機器との接続が切れました。再接続待ちです",
+    "reconnected": "機器が再接続されました。掃引を再開します",
     "no_calibration": "校正データがありません（補正なしの値）",
-    "calibration_unreadable": "校正データが読めません（補正なしの値）",
-    "invalid_sweep": "機器が受け付けない条件のため送りませんでした",
-    "device_error": "機器との通信で想定外の失敗がありました",
-    "internal_error": "内部の失敗がありました",
-    "record_error": "記録の書き込みで失敗がありました",
-    "reference_unreadable": "前回使っていた基準が読めません（選び直してください）",
-    "settings_reset": "設定ファイルが読めないため初期値で起動しました",
+    "calibration_unreadable": "校正データを読み込めません（補正なしの値）",
+    "invalid_sweep": "機器が受け付けない条件のため、送信しませんでした",
+    "device_error": "機器との通信で予期しないエラーが発生しました",
+    "internal_error": "内部エラーが発生しました",
+    "record_error": "記録の書き込みでエラーが発生しました",
+    "reference_unreadable": "前回使用していた基準を読み込めません。基準を選択し直してください",
+    "settings_reset": "設定ファイルを読み込めないため、初期値で起動しました",
     # 名前を変える前のデータの場所からのコピー（core/paths.py）。{from}・{to}・{reason} は notice_text が埋める
-    "data_moved": "データの置き場所を {from} から {to} へコピーしました（前の場所は残しています）",
-    "data_move_failed": "データを {to} へコピーできなかったので、前の場所 {from} のまま使います（{reason}）",
-    "settings_unwritable": "設定ファイルに書けません",
-    "device_profile_changed": "機器が変わったので、掃引条件をその機器に合わせました",
-    "rtlsdr_overload": "入力が振り切れています。利得を下げてください（振り切れた間の値は正しくありません）",
-    "rtlsdr_setting_failed": "RTL-SDR に利得・ppm を入れられませんでした（測定は続けます）",
-    "rtlsdr_shared_serial": "同じシリアル番号の RTL-SDR が複数つながっています。校正はシリアル番号ごとなので共有になります",
-    "rtlsdr_span_limited": "チューナーの中心を動かせない間は、表示の範囲を使える幅に限りました",
-    "rtlsdr_span_limit_failed": "表示の範囲をチューナーの使える幅に合わせられませんでした",
-    "rtltcp_freq_from_client": "rtl_tcp から周波数が変わりました",
-    "rtltcp_gain_from_client": "rtl_tcp から利得が変わりました",
-    "rtltcp_port_in_use": "rtl_tcp: そのポートは使われています。別のポートを選んでください",
-    "rtltcp_start_failed": "rtl_tcp の送出を始められませんでした",
-    "rtltcp_sample_rate_unsupported": "rtl_tcp から来たサンプリング速度は使えないので、使える速さで送ります",
-    "rtltcp_started": "rtl_tcp の送出を始めました",
-    "rtltcp_stopped": "rtl_tcp の送出を止めました",
-    "listen_stopped": "聞くのをやめました",
-    "auto_connected": "前回の機器に繋ぎました",
+    "data_moved": "データの保存場所を {from} から {to} にコピーしました（元の場所のデータは保持）",
+    "data_move_failed": "データを {to} にコピーできませんでした。{from} のデータを引き続き使用します（{reason}）",
+    "settings_unwritable": "設定ファイルに書き込めません",
+    "device_profile_changed": "機器を変更したため、掃引条件をその機器に合わせました",
+    "rtlsdr_overload": "過大入力です。利得を下げてください（過大入力の間の値は正確ではありません）",
+    "rtlsdr_setting_failed": "RTL-SDR に利得・ppm を設定できませんでした（測定は継続します）",
+    "rtlsdr_shared_serial": "同じシリアル番号の RTL-SDR が複数接続中です。校正はシリアル番号ごとのため共有されます",
+    "rtlsdr_span_limited": "チューナーの中心周波数の固定中は、表示範囲を使用可能な幅に制限しました",
+    "rtlsdr_span_limit_failed": "表示範囲をチューナーの使用可能な幅に合わせられませんでした",
+    "rtltcp_freq_from_client": "rtl_tcp のクライアントが周波数を変更しました",
+    "rtltcp_gain_from_client": "rtl_tcp のクライアントが利得を変更しました",
+    "rtltcp_port_in_use": "rtl_tcp: そのポートは使用中です。別のポートを指定してください",
+    "rtltcp_start_failed": "rtl_tcp の送出を開始できませんでした",
+    "rtltcp_sample_rate_unsupported": "rtl_tcp のクライアントが要求したサンプリング周波数は使用できないため、使用可能なサンプリング周波数で送出します",
+    "rtltcp_started": "rtl_tcp の送出を開始しました",
+    "rtltcp_stopped": "rtl_tcp の送出を停止しました",
+    "listen_stopped": "音声モニタを停止しました",
+    "auto_connected": "前回の機器に接続しました",
     **S11_NOTICES,
     **REF_VALUE_NOTICES,
 }
 
 DISCARD_REASONS = {
-    "byte_count": "応答の長さが違う",
-    "first_byte_timeout": "応答が始まらない",
-    "silence_timeout": "応答が途切れた",
-    "total_timeout": "掃引が長すぎる",
+    "byte_count": "応答の長さの不一致",
+    "first_byte_timeout": "応答なし",
+    "silence_timeout": "応答の途切れ",
+    "total_timeout": "掃引時間の超過",
 }
 
 ERRORS = {
-    "not_connected": "機器に繋がっていません",
-    "device_not_selected": "機器を選んでください",
+    "not_connected": "機器が未接続です",
+    "device_not_selected": "機器を選択してください",
     "device_not_found": "その機器が見つかりません",
-    "device_ambiguous": "同じシリアル番号の機器が複数あります。一覧から番号付きのポートを選んでください",
-    "probe_failed": "GigaSt の応答が返りませんでした（別の機器かもしれません）",
+    "device_ambiguous": "同じシリアル番号の機器が複数あります。一覧から番号付きのポートを選択してください",
+    "probe_failed": "GigaSt から応答がありません。別の機器の可能性があります",
     "open_failed": "ポートを開けませんでした",
-    "port_in_use": "ポートを開けません。GS5.exe など別のアプリケーションが使っていないか確かめてください",
-    "legacy_unreadable": "旧校正ファイルが読めません",
-    "legacy_calibration_not_for_device": "この機器には旧校正ファイルを使えません",
-    "file_unreadable": "ファイルが読めません",
-    "not_integer": "数値が正しくありません",
-    "unknown_backend": "その種類の機器は使えません",
+    "port_in_use": "ポートを開けません。GS5.exe など別のアプリケーションが使用中でないか確認してください",
+    "legacy_unreadable": "旧校正ファイルを読み込めません",
+    "legacy_calibration_not_for_device": "この機器には旧校正ファイルを使用できません",
+    "file_unreadable": "ファイルを読み込めません",
+    "not_integer": "数値の形式が正しくありません",
+    "unknown_backend": "その種類の機器は使用できません",
     "unknown_mode": "そのモードはありません",
     "bad_arguments": "操作の値が正しくありません",
-    "server_unreachable": "NamiBench の PC に繋がりません",
+    "server_unreachable": "NamiBench の PC に接続できません",
     "rtlsdr_dll_not_found": "RTL-SDR の DLL（rtlsdr.dll）が見つかりません",
-    "rtlsdr_not_connected": "RTL-SDR に繋がっていません",
-    "rtlsdr_level_needs_manual_gain": "レベルの校正は利得を手動にしてから行います（AGC の間は利得が分からないため）",
-    "rtlsdr_stitching_blocked": "チューナーの中心を動かせない間（聞いている・rtl_tcp の相手がつながっている）は、使える幅より広い Span にできません",
-    "listen_needs_iq_device": "聞く機能は RTL-SDR に繋いでいるときだけ使えます",
-    "listen_rtltcp_active": "rtl_tcp の相手がつながっている間は、マーカーの位置へチューナーを動かせません",
+    "rtlsdr_not_connected": "RTL-SDR が未接続です",
+    "rtlsdr_level_needs_manual_gain": "AGC の間はレベルを校正できません。利得を手動に設定してください",
+    "rtlsdr_stitching_blocked": "音声モニタ中と rtl_tcp のクライアントの接続中は、使用可能な幅より広い Span に設定できません",
+    "listen_needs_iq_device": "音声モニタは RTL-SDR の接続中のみ使用できます",
+    "listen_rtltcp_active": "rtl_tcp のクライアントの接続中は、チューナーをマーカーの周波数に移動できません",
     "marker_no_value": "マーカーの点に値がありません",
-    "marker_not_on_rtlsdr_trace": "RTL-SDR で測ったトレースに載ったマーカーを選んでください",
+    "marker_not_on_rtlsdr_trace": "RTL-SDR で測定したトレース上のマーカーを選択してください",
     "calibration_unwritable": "校正を保存できません",
 }
 
 CONN_STATES = {
     "disconnected": "未接続",
-    "connected": "接続",
+    "connected": "接続済み",
     "reconnecting": "切断・再接続待ち",
 }
 
 RUN_STATES = {
-    "stopped": "停止",
+    "stopped": "停止中",
     "continuous": "連続",
-    "single": "単発",
-    "stopping": "停止中（掃引の終わりを待っています）",
-    "reference": "基準を取っています",
-    "calibration": "校正で測っています",
-    "step_sweep": "ステップ掃引",
+    "single": "シングル",
+    "stopping": "停止処理中（掃引の終了待ち）",
+    "reference": "基準取得中",
+    "calibration": "校正測定中",
+    "step_sweep": "ステップ掃引中",
 }
 
 
@@ -420,10 +420,10 @@ def error_text(e) -> str:
 
 TRACE_ACTIONS = {
     "update": "更新",
-    "max_hold": "最大保持",
-    "min_hold": "最小保持",
+    "max_hold": "マックスホールド",
+    "min_hold": "ミニマムホールド",
     "average": "平均",
-    "fixed": "固定",
+    "fixed": "ビュー",
 }
 
 AVERAGE_TYPES = {
@@ -434,13 +434,13 @@ AVERAGE_TYPES = {
 }
 
 AVERAGE_AFTER = {
-    "exponential": "続ける（指数平均）",
-    "restart": "N 回ごとにやり直す",
+    "exponential": "指数平均",
+    "restart": "N 回ごとにリセット",
 }
 
 HOLD_AFTER = {
-    "continue": "保持し続ける",
-    "stop": "N 回で止める",
+    "continue": "継続",
+    "stop": "N 回で停止",
 }
 
 # トレースの線（設計F §9。並びは細線 → 実線 → 太線 → 破線 → 点線。コードは core の TraceLine）
@@ -452,10 +452,10 @@ TRACE_LINES = {
     "dot": "点線",
 }
 
-# イメージ除去の3つ（設計F §7.4。並びは正確 → スピード → なし）
+# イメージ除去の3つ（設計F §7.4・設計T。並びは精度優先 → 速度優先 → なし）
 IMAGE_REJECT_CHOICES = {
-    "accurate": "正確",
-    "fast": "スピード",
+    "accurate": "精度優先",
+    "fast": "速度優先",
     "off": "なし",
 }
 
@@ -497,9 +497,9 @@ RESET_CAUSES = {
 
 TRACE_NOTICES = {
     "reset_by_condition": "条件変更でリセット",
-    "reset_by_frame_mismatch": "軸の違う掃引が来たのでリセット",
-    "average_type_reset": "この値では選べない平均の種類なので既定に戻しました",
-    "log_average_reads_low": "対数平均: ノイズの電力は約 2.5dB 低く読めます",
+    "reset_by_frame_mismatch": "周波数軸の異なる掃引を受信したためリセット",
+    "average_type_reset": "この値では選択できない平均の種類のため、既定に戻しました",
+    "log_average_reads_low": "対数平均: ノイズの電力は約 2.5dB 低く表示されます",
 }
 
 
@@ -565,30 +565,30 @@ MARKER_STATUS = {
     "ok": "",
     "out_of_range": "範囲外",
     "no_value": "値なし",
-    "no_trace": "トレースに値がない",
-    "parent_unavailable": "元のマーカーが読めない",
-    "no_ref": "基準がない",
-    "ref_unavailable": "基準が読めない",
-    "unit_mismatch": "dBm と dB の差は出さない",
+    "no_trace": "トレースの値なし",
+    "parent_unavailable": "元のマーカーの値なし",
+    "no_ref": "基準マーカーなし",
+    "ref_unavailable": "基準マーカーの値なし",
+    "unit_mismatch": "dBm と dB の差は表示不可",
 }
 
 # 読み値に添える注意（G §3.3）。点の印と、掃引条件の信用できない条件
 MARKER_NOTES = {
-    "transient": "掃引の始めの不安定な点",
+    "transient": "掃引開始直後の不安定な点",
     "out_of_cal_range": "校正の範囲外",
     "no_reference": "基準の範囲外",
-    "no_reference_band_edge": "基準の帯の境目",
+    "no_reference_band_edge": "基準の帯域の境界",
     "ref_coarse": "基準が粗い（±0.5dB 程度）",
-    "ref_power_cycled": "電源の入れ直し前の基準",
+    "ref_power_cycled": "電源再投入前の基準",
     "reference_coarse": "基準が粗い（±0.5dB 程度）",
-    "reference_power_cycled": "電源の入れ直し前の基準",
+    "reference_power_cycled": "電源再投入前の基準",
     "rbw15k_unstable": "RBW 15kHz の1回の掃引",
     "rbw15k_zero_span": "RBW 15kHz のゼロスパン（落ち込みが散発）",
     "rbw180k_narrow_span": "RBW 180kHz で狭い Span",
     "rbw30k_fine_step": "RBW 30kHz で細かい Step",
     "no_value": "値なし",
     # FFT の機器を Hann 窓で測った値（設計Q §6.4）。格子の間の信号は低く読めることがある
-    "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く読めることがある",
+    "hann_scalloping": "Hann 窓: 最大約 1.4dB 低く表示される場合あり",
     # SWR の上限に当てた点（設計R §3。値は上限の SWR）
     "swr_limit": SWR_LIMIT_NOTE,
     # 機器の範囲の外・意味の無い点（設計J §4.8）。グラフの帯と同じ文
@@ -603,13 +603,13 @@ MARKER_NOTES_SILENT = {"ref_fine", "ic_noise_floor"}
 
 BAND_STATUS = {
     "ok": "",
-    "edge": "表示範囲の端まで交点がない",
-    "no_value_region": "基準の無い区間に達したため求められません",
-    "no_marker_value": "マーカーの点に値がない",
-    "not_in_region": "マーカーがしきい値の指定の側にない",
+    "edge": "表示範囲内に交点なし",
+    "no_value_region": "基準なしの区間に達したため算出できません",
+    "no_marker_value": "マーカー位置の値なし",
+    "not_in_region": "マーカーがしきい値の指定側にありません",
     "out_of_range": "範囲外",
     "no_value": "値なし",
-    "no_trace": "トレースに値がない",
+    "no_trace": "トレースの値なし",
 }
 
 THRESHOLD_SIDES = {"above": "以上", "below": "以下"}
@@ -617,15 +617,15 @@ THRESHOLD_SIDES = {"above": "以上", "below": "以下"}
 # ---------------------------------------------------------------- ノーマライズ（設計E）
 
 NORM_REASONS = {
-    "no_reference_selected": "基準を選んでいません",
+    "no_reference_selected": "基準が未選択です",
     "reference_empty": "基準に区間がありません",
-    "not_power": "測った値が電力ではありません",
-    "unknown_conditions": "掃引条件が分かりません",
-    "serial_mismatch": "別の機器で取った基準です",
+    "not_power": "測定値が電力ではありません",
+    "unknown_conditions": "掃引条件が不明です",
+    "serial_mismatch": "別の機器で取得した基準です",
     "mode_mismatch": "別のモードの基準です",
-    "image_reject_mismatch": "基準とイメージ除去が違います",
-    "rbw_mismatch": "基準と RBW が違います",
-    "gain_correction_mismatch": "基準と PlutoSDR の利得の補正の表が違います（取り直してください）",
+    "image_reject_mismatch": "基準とイメージ除去の設定が異なります",
+    "rbw_mismatch": "基準と RBW が異なります",
+    "gain_correction_mismatch": "基準と PlutoSDR の利得の補正表が異なります。基準を取得し直してください",
     "out_of_range": "表示範囲に基準がありません",
     **DISPLAY_NORM_REASONS,
 }
@@ -682,13 +682,13 @@ def normalization_text(n: dict) -> str:
 # ---------------------------------------------------------------- 長い処理（設計H §4.1）
 
 TASK_NAMES = {
-    "save": "保存しています",
-    "open": "読み込んでいます",
-    "export_csv": "書き出しています",
-    "record_finish": "記録をまとめています",
-    "finish_unfinished": "記録をまとめています",
-    "rtlsdr_fit_gain": "利得を合わせています",
-    "reference_take": "基準を取っています",
+    "save": "保存中",
+    "open": "読み込み中",
+    "export_csv": "書き出し中",
+    "record_finish": "記録を保存中",
+    "finish_unfinished": "記録を保存中",
+    "rtlsdr_fit_gain": "利得を調整中",
+    "reference_take": "基準を取得中",
     "step_sweep": "ステップ掃引",
 }
 
@@ -696,50 +696,50 @@ TASK_DONE = {
     "save": "保存しました",
     "open": "開きました",
     "export_csv": "書き出しました",
-    "record_finish": "記録をまとめました",
-    "finish_unfinished": "記録をまとめました",
-    "rtlsdr_fit_gain": "利得を合わせました",
-    "reference_take": "基準を取りました",
+    "record_finish": "記録を保存しました",
+    "finish_unfinished": "記録を保存しました",
+    "rtlsdr_fit_gain": "利得を調整しました",
+    "reference_take": "基準を取得しました",
 }
 
 TASK_FAILED = {
     "save": "保存できませんでした",
     "open": "開けませんでした",
     "export_csv": "書き出せませんでした",
-    "record_finish": "記録をまとめられませんでした",
-    "finish_unfinished": "記録をまとめられませんでした",
-    "rtlsdr_fit_gain": "利得を合わせられませんでした",
-    "reference_take": "基準を取れませんでした",
+    "record_finish": "記録を保存できませんでした",
+    "finish_unfinished": "記録を保存できませんでした",
+    "rtlsdr_fit_gain": "利得を調整できませんでした",
+    "reference_take": "基準を取得できませんでした",
 }
 
-# やめたときに何が残るか（U-19: やめたら何が残るか言う）
+# 中断したときに何が残るか（U-19: 中断したら何が残るか言う）
 TASK_CANCELLED = {
-    "save": "保存をやめました（ファイルは作っていません）",
-    "open": "読み込みをやめました",
-    "export_csv": "書き出しをやめました（書きかけのファイルは消しました）",
-    "record_finish": "まとめるのをやめました。記録の作業ファイルは残っていて、あとでまとめられます",
-    "finish_unfinished": "まとめるのをやめました。作業ファイルは残っています",
-    "rtlsdr_fit_gain": "利得を合わせるのをやめました（利得は押す前の段に戻しました）",
-    "reference_take": "基準を取るのをやめました（基準は変わりません）",
-    # 閉じる確認に出す（やめたときの知らせは texts_step.step_end_text: 済んだ段の数と残したトレース）
-    "step_sweep": "重ねた結果は保存していなければ残りません",
+    "save": "保存を中断しました（ファイルは未作成）",
+    "open": "読み込みを中断しました",
+    "export_csv": "書き出しを中断しました（作成途中のファイルは削除しました）",
+    "record_finish": "記録の保存を中断しました。記録の作業ファイルは保持されるため、後で保存できます",
+    "finish_unfinished": "記録の保存を中断しました。作業ファイルは保持されます",
+    "rtlsdr_fit_gain": "利得の調整を中断しました（利得は元の段に戻しました）",
+    "reference_take": "基準の取得を中断しました（基準は変更なし）",
+    # 閉じる確認に出す（中断したときの知らせは texts_step.step_end_text: 済んだ段の数と残したトレース）
+    "step_sweep": "未保存の重ね合わせの結果は失われます",
 }
 
 STORAGE_ERRORS = {
     "cannot_open": "ファイルを開けません",
     "not_namibench_file": "NamiBench の保存ファイルではありません",
-    "unsupported_version": "知らない版のファイルなので開きません",
-    "axis_mismatch": "周波数の点が違うトレースは同じ表に並べられません",
+    "unsupported_version": "未対応のバージョンのファイルのため、開けません",
+    "axis_mismatch": "周波数の点が異なるトレースは同じ表に書き出せません",
     "unit_mismatch": "電力と比のトレースは同じ単位で書き出せません",
     "range_empty": "その範囲に点がありません",
     "no_data": "書き出すトレースがありません",
-    "os_error": "ファイルに書けません",
-    "reference_build_failed": "基準を作れませんでした",
-    "reference_unreadable": "基準のファイルが読めません",
-    "corrupt_sweep": "記録の掃引が壊れています",
+    "os_error": "ファイルに書き込めません",
+    "reference_build_failed": "基準を作成できませんでした",
+    "reference_unreadable": "基準のファイルを読み込めません",
+    "corrupt_sweep": "記録の掃引データが破損しているため、読み込めません",
 }
 
-EXPORT_WARNINGS = {"exceeds_spreadsheet_rows": "表計算ソフトの行数の上限を超えています"}
+EXPORT_WARNINGS = {"exceeds_spreadsheet_rows": "行数が表計算ソフトの上限を超えます"}
 
 
 def storage_error_text(err: dict) -> str:
@@ -779,39 +779,39 @@ def task_label(t: dict) -> str:
 
 ERRORS.update(ZERO_SPAN_ERRORS)
 ERRORS.update({
-    "no_trace_data": "そのトレースにまだ値がありません",
-    "table_full": "マーカーはそれぞれ 8 本までです",
+    "no_trace_data": "そのトレースには値がありません",
+    "table_full": "マーカーは P・M それぞれ最大 8 です",
     "no_peak": "ピークが見つかりません",
     # 谷を探したとき（G §3.8）。コアは no_peak に探した向きを添えて返す（error_text が言い換える）
-    "no_dip": "谷が見つかりません",
-    "bad_polarity": "探すもの（山・谷）の指定が正しくありません",
-    "dips_on_power": "電力のスペクトルでは谷を探しません",
-    "same_frequency": "デルタの2点が同じ周波数です",
-    "unknown_marker": "そのマーカーはもうありません",
-    "bad_marker_setting": "そのマーカーでは使えない設定です",
-    "bad_offset": "オフセットは正の値で入れてください",
+    "no_dip": "−ピークが見つかりません",
+    "bad_polarity": "＋ピーク／−ピークの指定が正しくありません",
+    "dips_on_power": "電力のスペクトルでは −ピークを検索できません",
+    "same_frequency": "デルタマーカーの 2 点が同じ周波数です",
+    "unknown_marker": "そのマーカーは削除済みです",
+    "bad_marker_setting": "そのマーカーでは使用できない設定です",
+    "bad_offset": "オフセットは正の値で入力してください",
     "bad_marker_function": "マーカーの機能の値が正しくありません",
     "out_of_range": "マーカーが表示範囲の外です",
     "no_value": "マーカーの点に値がありません",
-    "no_ref": "デルタの基準を選んでください",
-    "ref_unavailable": "デルタの基準が読めません",
-    "reference_in_progress": "基準を取っている間はできません",
-    "mode_not_normalizable": "基準は TG・S11 モードで取ります",
-    "s11_open_missing": "先にオープンを測ってください",
-    "already_recording": "もう記録しています",
-    "not_recording": "記録していません",
-    "no_data": "保存する値がありません（掃引してください）",
+    "no_ref": "基準マーカーを選択してください",
+    "ref_unavailable": "基準マーカーの値がありません",
+    "reference_in_progress": "基準の取得中は実行できません",
+    "mode_not_normalizable": "基準は TG・S11 モードで取得します",
+    "s11_open_missing": "先にオープンを測定してください",
+    "already_recording": "既に記録中です",
+    "not_recording": "記録中ではありません",
+    "no_data": "保存する値がありません。掃引してください",
     "bad_value": "値が正しくありません",
-    "bad_trace_setting": "そのトレースでは使えない設定です",
-    "bad_name": "名前を入れてください",
+    "bad_trace_setting": "そのトレースでは使用できない設定です",
+    "bad_name": "名前を入力してください",
     "not_a_work_file": "記録の作業ファイルではありません",
-    "unknown_task": "その処理はもう終わっています",
-    "rtlsdr_fit_needs_manual_gain": "AGC の間は利得を合わせられません（利得を手動の段にしてから押します）",
-    "rtlsdr_fit_running": "いま利得を合わせています",
+    "unknown_task": "その処理は終了済みです",
+    "rtlsdr_fit_needs_manual_gain": "AGC の間は利得を調整できません。利得を手動に設定してください",
+    "rtlsdr_fit_running": "利得の調整中です",
     **WEB_ERRORS,
     **SETTINGS_ERRORS,
     **S11_ERRORS,
-    "unknown_file": "そのファイルはもう外しています",
+    "unknown_file": "そのファイルが見つかりません",
     **DISPLAY_ERRORS,
 })
 NOTICES.update(DISPLAY_NOTICES)
@@ -832,7 +832,7 @@ SETTINGS_LABELS.update(PLUTO_SETTINGS)
 TASK_NAMES["plutosdr_fit_gain"] = TASK_NAMES["rtlsdr_fit_gain"]
 TASK_DONE["plutosdr_fit_gain"] = TASK_DONE["rtlsdr_fit_gain"]
 TASK_FAILED["plutosdr_fit_gain"] = TASK_FAILED["rtlsdr_fit_gain"]
-TASK_CANCELLED["plutosdr_fit_gain"] = "利得を合わせるのをやめました（利得は押す前の値に戻しました）"
+TASK_CANCELLED["plutosdr_fit_gain"] = "利得の調整を中断しました（利得は元の値に戻しました）"
 
 
 # ---------------------------------------------------------------- 状態バー（J §2・M-04）。Qt と Web で同じ項目・同じ語

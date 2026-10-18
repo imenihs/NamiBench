@@ -15,8 +15,8 @@ from .texts_ui import MENU_LAYOUT as _MENU_LAYOUT
 
 DISPLAY_TEXTS = {
     # ---- 表示のタブ
-    "wf_group": "ウォーターフォール・密度",
-    "waterfall": "ウォーターフォール",
+    "wf_group": "スペクトログラム・密度",
+    "waterfall": "スペクトログラム",
     "density": "密度",
     "wf_trace": "トレース",
     "wf_color": "色の範囲",
@@ -26,15 +26,15 @@ DISPLAY_TEXTS = {
     "colormap": "カラーマップ",
     "wf_rows": "保持する行数",
     "rows_item": "{n} 行",
-    "density_half": "半分になる回数",
+    "density_half": "半減回数",
     "times_item": "{n} 回",
     "bandplan_group": "バンドプラン・ブックマーク",
     "show_bookmarks": "ブックマークを表示",
-    "bandplan_load": "読み込む…",
+    "bandplan_load": "取り込む…",
     "bandplan_save": "書き出す…",
-    "bandplan_load_title": "バンドプランを読み込む",
-    "bandplan_save_title": "バンドプランを書き出す",
-    "bands_count": "帯 {n} 個",
+    "bandplan_load_title": "バンドプランの取り込み",
+    "bandplan_save_title": "バンドプランの書き出し",
+    "bands_count": "帯域 {n}",
     "bandplan_file": "{name}",
     "bookmark_name": "名前",
     "to_center": "Center に",
@@ -42,18 +42,18 @@ DISPLAY_TEXTS = {
     "filter_json": "バンドプラン (*.json);;すべて (*)",
     # ---- グラフの右クリック
     "ctx_bookmark": "ここをブックマークに…",
-    "bookmark_add_title": "ブックマークを追加",
+    "bookmark_add_title": "ブックマークの追加",
     # ---- ウォーターフォールの上の行・再生の帯
-    "latest": "最新へ",
+    "latest": "最新に戻る",
     "whole": "全体",
     "play": "再生",
     "pause": "一時停止",
-    "speed": "速さ",
+    "speed": "再生速度",
     "back_to_live": "ライブに戻る",
-    "extract": "記録を切り出す…",
+    "extract": "記録を抽出…",
     "export_record": "記録を CSV に書き出す…",
-    "extract_title": "記録を切り出す",
-    "export_record_title": "記録を CSV に書き出す",
+    "extract_title": "記録の抽出",
+    "export_record_title": "記録の CSV への書き出し",
     "resolution": "保存時の分解能 {step}",
     "position": "{time}　{i} / {n}",
     # ---- 読み値・境目・密度の秒
@@ -81,50 +81,50 @@ PLAYBACK_SPEED_NAMES = {"1": "等倍", "2": "2 倍", "5": "5 倍", "10": "10 倍
 
 # 使えない理由（U-08）
 REASON_TEXTS.update({
-    "layout_waterfall": "表示の組み合わせで「＋ウォーターフォール」を選ぶと使えます",
-    "layout_density": "表示の組み合わせで「＋密度」を選ぶと使えます",
-    "wf_following": "最新の掃引を出しています",
-    "wf_whole": "記録の全体を出しています",
-    "wf_auto_on": "色の範囲を自動で追っています",
-    "playback_active": "再生中です（ライブに戻ると使えます）",
+    "layout_waterfall": "表示の組み合わせで「＋スペクトログラム」を選択すると使用できます",
+    "layout_density": "表示の組み合わせで「＋密度」を選択すると使用できます",
+    "wf_following": "最新の掃引を表示中",
+    "wf_whole": "記録全体を表示中",
+    "wf_auto_on": "色の範囲を自動調整中",
+    "playback_active": "再生中です（ライブに戻ると使用できます）",
     # ゼロスパン（横軸が時間: 設計N §1）の間は、周波数の横軸のウォーターフォール・密度を出さない
-    "layout_zero_span": "ゼロスパン（横軸が時間）では使えません",
+    "layout_zero_span": "ゼロスパン（横軸が時間）では使用できません",
     # |Γ|・SWR の行（設計R §3）は縦軸と同じ範囲で色を付ける（自動・下限・上限は dB の行のもの）
     "wf_linear_axis": "|Γ|・SWR は縦軸と同じ範囲で色を付けます",
 })
 
 # 失敗の文（texts.ERRORS へ足す）
 DISPLAY_ERRORS = {
-    "playback_active": "再生中です（ライブに戻ると使えます）",
-    "not_playing": "再生していません",
+    "playback_active": "再生中です（ライブに戻ると使用できます）",
+    "not_playing": "再生中ではありません",
     "playback_empty": "記録に掃引がありません",
     "playback_one_at_a_time": "記録の再生は1つずつです",
     "no_waterfall_row": "その時刻の行がありません",
     "wf_range_order": "下限は上限より 1 dB 以上低くしてください",
     "bandplan_not_format": "バンドプランのファイルではありません",
-    "bandplan_not_json": "バンドプランのファイルを JSON として読めません",
-    "bandplan_unreadable": "バンドプランのファイルを読めません",
-    "bandplan_unsupported_version": "このバンドプランの版は読めません",
-    "bandplan_bad_name": "名前が無いか長すぎます",
+    "bandplan_not_json": "バンドプランのファイルを JSON として読み込めません",
+    "bandplan_unreadable": "バンドプランのファイルを読み込めません",
+    "bandplan_unsupported_version": "このバンドプランのバージョンには対応していません",
+    "bandplan_bad_name": "名前が空か、長すぎます",
     "bandplan_bad_freq": "周波数は Hz の整数で書いてください",
     "bandplan_band_order": "帯の開始は終了より低くしてください",
     "bandplan_bad_color": "帯の色は #rrggbb の形で書いてください",
     "bandplan_too_many": "帯とブックマークが多すぎます",
-    "unknown_bookmark": "そのブックマークはもうありません",
-    "playback_not_saved_file": "記録中の作業ファイルからは切り出せません（まとめた保存ファイルを開いてください）",
+    "unknown_bookmark": "そのブックマークは削除済みです",
+    "playback_not_saved_file": "記録中の作業ファイルからは抽出できません。保存した記録のファイルを開いてください",
     "playback_zero_span": "ゼロスパンの区間がある記録は再生できません",
     "playback_nf": "NF の区間がある記録は再生できません",
-    "playback_listening": "音を聞いている間は記録を再生できません（聞くのをやめてから開いてください）",
-    "playback_zero_span_live": "ゼロスパンの間は記録を再生できません（Span を 0 より大きくしてから開いてください）",
+    "playback_listening": "音声モニタ中は記録を再生できません。音声モニタを停止してから開いてください",
+    "playback_zero_span_live": "ゼロスパンの間は記録を再生できません。Span を 0 より大きくしてから開いてください",
 }
 
-# 長い処理（texts の TASK_* へ足す）: 再生している記録の切り出し（H §3.1）・CSV への書き出し（H §5）
+# 長い処理（texts の TASK_* へ足す）: 再生している記録の抽出（H §3.1）・CSV への書き出し（H §5）
 DISPLAY_TASKS = {
-    "names": {"playback_extract": "切り出しています", "playback_export_csv": "記録を書き出しています"},
-    "done": {"playback_extract": "切り出しました", "playback_export_csv": "記録を書き出しました"},
-    "failed": {"playback_extract": "切り出せませんでした", "playback_export_csv": "記録を書き出せませんでした"},
-    "cancelled": {"playback_extract": "切り出しをやめました（書きかけのファイルは消しました）",
-                  "playback_export_csv": "書き出しをやめました（書きかけのファイルは消しました）"},
+    "names": {"playback_extract": "抽出中", "playback_export_csv": "記録を書き出し中"},
+    "done": {"playback_extract": "抽出しました", "playback_export_csv": "記録を書き出しました"},
+    "failed": {"playback_extract": "抽出できませんでした", "playback_export_csv": "記録を書き出せませんでした"},
+    "cancelled": {"playback_extract": "抽出を中断しました（作成途中のファイルは削除しました）",
+                  "playback_export_csv": "書き出しを中断しました（作成途中のファイルは削除しました）"},
 }
 
 # ノーマライズの理由（texts.NORM_REASONS へ足す）
@@ -137,14 +137,14 @@ DISPLAY_NOTICES = {
     "playback_started": "記録を再生します",
     "playback_closed": "ライブに戻りました",
     "playback_end": "記録の終わりまで再生しました",
-    "playback_read_failed": "記録を読めませんでした",
-    "bandplan_unreadable": "バンドプランのファイルを読めないので、空で始めました",
+    "playback_read_failed": "記録を読み込めませんでした",
+    "bandplan_unreadable": "バンドプランのファイルを読み込めないため、空のバンドプランで開始しました",
 }
 _STARTED_PARTS = {
     "name": "「{name}」・{n} 回の掃引",
-    "live_stopped": "ライブの掃引を止めました",
-    "layout_changed": "ウォーターフォールを出しました",
-    "reference_missing": "記録した基準「{name}」が見つからないので、受けた電力で出します",
+    "live_stopped": "ライブの掃引を停止しました",
+    "layout_changed": "スペクトログラムを表示しました",
+    "reference_missing": "記録した基準「{name}」が見つからないため、受信電力で表示します",
     "segment_unreadable": "換算できない区間があります",
 }
 
@@ -153,11 +153,11 @@ DISPLAY_RESET_CAUSES = {"playback": "再生"}
 
 # 部分の名前（別ウィンドウ: J §4.3.2）と、ウォーターフォールの縦軸（隠れた操作を作らない: U-12。軸のツールチップ）
 LABELS.update({
-    "part_waterfall": "ウォーターフォール",
+    "part_waterfall": "スペクトログラム",
     "part_density": "密度表示",
     "axis_time": "時刻",
-    "axis_time_tip": "ドラッグ: その時間の範囲を出す\nホイール: 前後へずらす",
-    "waterfall_tip": "クリック: その時刻の掃引をスペクトルに出す\nShift を押しながら横にドラッグ: その範囲を Start/Stop に",
+    "axis_time_tip": "ドラッグ: その時間の範囲を表示\nホイール: 前後に移動",
+    "waterfall_tip": "クリック: その時刻の掃引をスペクトルに表示\nShift を押しながら横にドラッグ: その範囲を Start/Stop に",
 })
 
 # 別ウィンドウで開ける部分にウォーターフォールと密度表示を足す（グラフの後ろ。J §4.3.2: 設計P を作るときに足す）
@@ -179,9 +179,9 @@ def _with_playback_items(layout):
 
 
 MENU_LAYOUT = _with_playback_items(_MENU_LAYOUT)
-REASON_TEXTS["not_playing"] = "記録を再生していません（記録のファイルを開くと使えます）"
+REASON_TEXTS["not_playing"] = "記録の再生中ではありません。記録のファイルを開くと使用できます"
 
-# 作った機能を「まだ使えません」の表から外す（U-08 の理由は作るまでのもの）
+# 作った機能を「未対応です」の表から外す（U-08 の理由は作るまでのもの）
 for _k in ("waterfall", "density", "bandplan", "view"):
     NOT_YET.pop(_k, None)
 for _k in ("view_waterfall", "view_density"):

@@ -48,11 +48,11 @@ class FreqAxis:
 
     def __post_init__(self) -> None:
         if not isinstance(self.start_hz, int) or not isinstance(self.step_hz, int):
-            raise TypeError("周波数は int（Hz）で持つ")
+            raise TypeError("周波数は int（Hz）である必要があります")
         if self.points < 1:
-            raise ValueError("points は 1 以上")
+            raise ValueError("points は 1 以上である必要があります")
         if self.step_hz < 0:
-            raise ValueError("step_hz は 0 以上")
+            raise ValueError("step_hz は 0 以上である必要があります")
 
     def freqs(self) -> np.ndarray:
         """各点の周波数（int64 の配列）。"""

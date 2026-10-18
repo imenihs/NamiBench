@@ -53,10 +53,10 @@ class DevUiBase(UiBase):
 class TestEmptyAndSimulator(DevUiBase):
     def test_empty_state_then_try_simulator(self):
         self.wait(lambda: self.dw.empty.isVisible(), what="空のときの案内")
-        self.assertEqual(self.dw.empty_label.text(), "GigaSt・RTL-SDR・PlutoSDR を USB に挿すと、ここに出ます")
+        self.assertEqual(self.dw.empty_label.text(), "GigaSt・RTL-SDR・PlutoSDR を USB に接続すると、ここに表示されます")
         self.assertEqual(self.dw.row_widgets(), [])
         # 未接続の状態バーは選び方を出す（J §4.7 の 7）
-        self.assertEqual(self.win.st_conn.text(), "● 未接続（機器 → 機器に接続… で選べます）")
+        self.assertEqual(self.win.st_conn.text(), "● 未接続")
         self.dw.try_sim.click()
         self.wait(lambda: self.state()["connection"]["state"] == "connected", what="シミュレータに繋がる")
         self.wait(lambda: not self.dw.isVisible(), what="繋いだら一覧を閉じる")
@@ -70,7 +70,7 @@ class TestEmptyAndSimulator(DevUiBase):
         self.assertFalse(self.dw.empty.isVisible())
         name, state = self.row_texts()[0]
         self.assertEqual(name, "GigaSt v5 AB12")
-        self.assertEqual(state, "初めての機器")  # 名前に説明を付けない（J §4.12・U-24）
+        self.assertEqual(state, "未登録")  # 名前に説明を付けない（J §4.12・U-24）
         # 詳細（COM 番号・USB ID）はたたんである
         row = self.dw.row_widgets()[0]
         self.assertFalse(row.details.isVisible())
@@ -90,7 +90,7 @@ class TestConnectFromList(DevUiBase):
         self.giga.gate = threading.Event()
         self.dw.row_widgets()[0].action.click()
         self.wait(lambda: self.dw.status.isVisible(), what="繋いでいます")
-        self.assertEqual(self.dw.status.text(), "繋いでいます…（GigaSt v5 AB12）")
+        self.assertEqual(self.dw.status.text(), "接続中…（GigaSt v5 AB12）")
         self.assertFalse(self.dw.row_widgets()[0].action.isEnabled())
         self.giga.gate.set()
         self.wait(lambda: not self.dw.isVisible(), what="繋いだら閉じる")
@@ -106,9 +106,9 @@ class TestConnectFromList(DevUiBase):
         self.giga.busy.add("COM7")
         self.dw.row_widgets()[0].action.click()
         self.wait(lambda: self.dw.status.objectName() == "warn", what="失敗の理由")
-        self.assertIn("GigaSt v5 AB12 に繋げませんでした", self.dw.status.text())
-        self.assertIn("GS5.exe など別のアプリケーションが使っていないか", self.dw.status.text())
-        self.wait(lambda: self.row_texts()[0][1] == "ほかのアプリケーションが使っています", what="行の状態")
+        self.assertIn("GigaSt v5 AB12 に接続できませんでした", self.dw.status.text())
+        self.assertIn("GS5.exe など別のアプリケーションが使用中でないか", self.dw.status.text())
+        self.wait(lambda: self.row_texts()[0][1] == "ほかのアプリケーションが使用中", what="行の状態")
         self.assertTrue(self.dw.isVisible())
 
     def test_probe_failed_next_step(self):
@@ -116,7 +116,7 @@ class TestConnectFromList(DevUiBase):
         self.giga.probe_result = False
         self.dw.row_widgets()[0].action.click()
         self.wait(lambda: self.dw.status.objectName() == "warn", what="失敗の理由")
-        self.assertIn("GigaSt の応答が返りませんでした", self.dw.status.text())
+        self.assertIn("GigaSt から応答がありません", self.dw.status.text())
         self.assertIn("USB を挿し直してから", self.dw.status.text())
 
     def test_rename(self):
@@ -168,7 +168,7 @@ class TestAutoConnectNotice(DevUiBase):
         pass
 
     def test_notice_and_no_list(self):
-        self.wait(lambda: "前回の GigaSt v5 AB12 に繋ぎました" in self.win.st_note.text(), what="自動接続の知らせ")
+        self.wait(lambda: "前回の GigaSt v5 AB12 に接続しました" in self.win.st_note.text(), what="自動接続の知らせ")
         self.assertIsNone(self.win.device_window)
 
 
@@ -188,7 +188,7 @@ class TestDllMissing(DevUiBase):
         self.wait(lambda: any(r.d["state"] == "dll_not_found" for r in self.dw.row_widgets()), what="DLL の行")
         row = next(r for r in self.dw.row_widgets() if r.d["state"] == "dll_not_found")
         self.assertEqual(row.state.text(), "DLL が見つかりません")
-        self.assertEqual(row.action.text(), "DLL のフォルダを選ぶ…")
+        self.assertEqual(row.action.text(), "DLL のフォルダを選択…")
         # 挿した機器が無いので空の案内も出す（DLL の行と一緒に）
         self.assertTrue(self.dw.empty.isVisible())
         folder = str(self.root / "rtl")

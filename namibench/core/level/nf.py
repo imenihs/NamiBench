@@ -98,9 +98,9 @@ class EnrTable:
 
     def __post_init__(self) -> None:
         if not self.freqs_hz or len(self.freqs_hz) != len(self.enr_db):
-            raise ValueError("表の行が無いか、周波数と ENR の数が違う")
+            raise ValueError("表の行がないか、周波数と ENR の数が一致しません")
         if any(b <= a for a, b in zip(self.freqs_hz, self.freqs_hz[1:])):
-            raise ValueError("周波数は昇順で、同じ周波数を持たない")
+            raise ValueError("周波数は重複のない昇順である必要があります")
 
     @property
     def start_hz(self) -> int:
@@ -114,7 +114,7 @@ class EnrTable:
         """各点の ENR（dB）と「表の範囲外」の印。表の外は近い端の値（延ばさない）。"""
         f = np.asarray(freqs_hz)
         if f.dtype.kind not in "iu":
-            raise TypeError("周波数は整数（Hz）の配列で渡す")
+            raise TypeError("周波数は整数（Hz）の配列である必要があります")
         f = f.astype(np.int64)
         lo, hi = self.start_hz, self.stop_hz
         outside = (f < lo) | (f > hi)

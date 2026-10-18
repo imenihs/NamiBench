@@ -82,7 +82,7 @@
             <button :disabled="!!v.skip_reason" :title="v.skip_reason || ''" @click="a.calSkip()">{{ C('skip') }}</button>
           </div>
           <div class="row nowrap cal-progress" v-if="v.measuring"><progress :max="prog.total || 1" :value="prog.done"></progress><span>{{ prog.text }}</span>
-            <button @click="a.calCancel()">{{ a.W('cancel') }}</button></div>
+            <button @click="a.calCancel()">{{ a.W('abort') }}</button></div>
           <div class="warn" v-if="v.message">{{ v.message }}</div>
         </div>
       </div>
@@ -91,7 +91,7 @@
         <label class="inline"><input type="checkbox" :checked="v.inputs.rbw_extra" :disabled="v.measuring" @change="a.calSet({rbw_extra: $event.target.checked})">{{ C('rbw_extra') }}</label>
         <button :disabled="!!v.measure_reason" :title="v.measure_reason || ''" @click="a.calMeasure()">{{ C('start') }}</button>
         <div class="row nowrap cal-progress" v-if="v.measuring"><progress :max="prog.total || 1" :value="prog.done"></progress><span>{{ prog.text }}</span>
-          <button @click="a.calCancel()">{{ a.W('cancel') }}</button></div>
+          <button @click="a.calCancel()">{{ a.W('abort') }}</button></div>
         <div class="warn" v-if="v.message">{{ v.message }}</div>
         <div class="cal-scroll"><table class="mtable cal-rbw">
           <thead><tr><th class="r" v-for="(hd, i) in v.rbw_headers" :key="i">{{ hd }}</th></tr></thead>
@@ -115,7 +115,7 @@
         </div>
         <div v-if="v.nf_result">{{ v.nf_result }}</div>
         <div class="row nowrap cal-progress" v-if="v.measuring"><progress :max="prog.total || 1" :value="prog.done"></progress><span>{{ prog.text }}</span>
-          <button @click="a.calCancel()">{{ a.W('cancel') }}</button></div>
+          <button @click="a.calCancel()">{{ a.W('abort') }}</button></div>
         <div class="warn" v-if="v.message">{{ v.message }}</div>
       </div>
 
@@ -141,7 +141,7 @@
             <button :disabled="!!v.measure_reason" :title="v.measure_reason || ''" @click="a.calMeasure()">{{ C('start') }}</button>
           </div>
           <div class="row nowrap cal-progress" v-if="v.measuring"><progress :max="prog.total || 1" :value="prog.done"></progress><span>{{ prog.text }}</span>
-            <button @click="a.calCancel()">{{ a.W('cancel') }}</button></div>
+            <button @click="a.calCancel()">{{ a.W('abort') }}</button></div>
           <div class="warn" v-if="v.message">{{ v.message }}</div>
         </div>
       </div>

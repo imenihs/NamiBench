@@ -7,7 +7,7 @@ FTDI 0403:6001 のポートを探し、確認の掃引（設計B §7.3）で Gig
 次の掃引を回して、受け取ったバイト数・所要時間と見積もり・捨てた回数を出す。
 - SA 0〜1000MHz（点数は自動）
 - TG 100〜3000MHz
-- SA イメージ除去 正確（帯の中の4回）
+- SA イメージ除去 精度優先（帯の中の4回）
 - 12000 点の掃引
 送るのは設計の範囲内の32バイトの要求だけ（範囲外の値は送らない）。
 掃引条件（AdoptedSweep）は掃引条件モデルを使わず、設計C §5.3・§5.6 の決まりで手で作る。
@@ -112,7 +112,7 @@ def main() -> int:
     try:
         results.append(run(dev, "SA 0-1000MHz 自動", make_sweep(0, 1_000_000_000, Mode.SA), 3))
         results.append(run(dev, "TG 100-3000MHz", make_sweep(100_000_000, 3_000_000_000, Mode.TG), 3))
-        results.append(run(dev, "SA 900-1000MHz イメージ除去 正確",
+        results.append(run(dev, "SA 900-1000MHz イメージ除去 精度優先",
                            make_sweep(900_000_000, 1_000_000_000, Mode.SA, image_reject="accurate"), 3))
         results.append(run(dev, "SA 0-11999MHz 12000点", make_sweep(0, 11_999_000_000, Mode.SA), 2))
     except DeviceDisconnected as e:

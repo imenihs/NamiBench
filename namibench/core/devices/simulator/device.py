@@ -449,7 +449,7 @@ class SimulatorDevice(SweepRunner, Device):
     def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str],
                   on_received: Optional[Callable[[int], None]] = None) -> Exchange:
         if self._transport is None:
-            raise DeviceDisconnected("切断中")
+            raise DeviceDisconnected("機器が未接続です")
         try:
             return self._transport.exchange(request, expected, lim, note, on_received)
         except DeviceDisconnected:

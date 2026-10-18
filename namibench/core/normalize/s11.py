@@ -34,15 +34,15 @@ def s11_segment_from_frames(
     それぞれ W のまま平均してから、振幅の平均の2乗にする。どちらかが使えない点は NaN。
     """
     if not open_frames or not short_frames:
-        raise ReferenceBuildError("オープンとショートの両方が要る")
+        raise ReferenceBuildError("オープンとショートの両方が必要です")
     if open_frames[0].axis != short_frames[0].axis:
-        raise ReferenceBuildError("オープンとショートの周波数軸がそろわない")
+        raise ReferenceBuildError("オープンとショートの周波数軸が一致しません")
     cond = _frame_conditions(open_frames[0])
     if _frame_conditions(short_frames[0]) != cond:
-        raise ReferenceBuildError("オープンとショートの条件（モード・イメージ除去・RBW）がそろわない")
+        raise ReferenceBuildError("オープンとショートの条件（モード・イメージ除去・RBW）が一致しません")
     mode, image_reject, rbw_hz = cond
     if mode != Mode.S11:
-        raise ReferenceBuildError(f"モードが s11 でない（{mode.value}）")
+        raise ReferenceBuildError(f"モードが s11 ではありません（{mode.value}）")
     gain_table = frames_gain_table(list(open_frames) + list(short_frames))
     p_open = average_power(open_frames)
     p_short = average_power(short_frames)

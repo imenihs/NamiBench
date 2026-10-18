@@ -243,7 +243,7 @@ def unit_view(st: dict) -> dict:
     choices.append({"code": RATIO_UNIT, "text": V["level_unit_ratio_item"], "enabled": False,
                     "tip": V["level_unit_ratio_item_tip"]})
     return {"ratio": ratio, "current": RATIO_UNIT if ratio else NF_UNIT if nf else code, "unit": code, "label": label,
-            "choices": choices, "tip": "\n".join(t for t in (V["level_unit_tip"], reason) if t)}
+            "choices": choices, "tip": reason or ""}
 
 
 # ---------------------------------------------------------------- 受信（RTL-SDR: 設計Q §6.5・§6.6）

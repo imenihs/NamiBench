@@ -187,7 +187,7 @@ class TestListen(RtlUiBase):
         self.win.listen.mode.setCurrentIndex(i)
         a.trigger()
         self.wait(lambda: self.state()["listen"]["active"], what="聞いている")
-        self.wait(lambda: self.win.st_listen.isVisible() and "FM放送" in self.win.st_listen.text(), what="状態バー")
+        self.wait(lambda: self.win.st_listen.isVisible() and "FM 放送" in self.win.st_listen.text(), what="状態バー")
         self.assertTrue(self.win.status.listen_stop.isVisible())
         self.assertIn("M1", self.win.listen.now.text())
         self.wait(lambda: played, what="音が鳴らす部品へ届く")
@@ -200,7 +200,7 @@ class TestListen(RtlUiBase):
         self.win.status.listen_stop.click()
         self.wait(lambda: not self.state()["listen"]["active"], what="やめた")
         self.wait(lambda: not self.win.st_listen.isVisible(), what="状態バーから消える")
-        self.wait(lambda: "聞くのをやめました" in self.win.st_note.text(), what="やめた知らせ")
+        self.wait(lambda: "音声モニタを停止しました" in self.win.st_note.text(), what="やめた知らせ")
 
     def test_listen_reason_on_gigast(self):
         self.connect_and_sweep()

@@ -276,7 +276,7 @@ class InstrumentStepSweepTest(InstrumentCase):
         self.assertEqual((st["traces"][1]["action"], st["traces"][1]["has_values"]), ("fixed", True))
         self.assertEqual(st["sweep"]["sg_hz"], self.SG0)
         self.assertEqual(st["run"]["state"], "stopped")
-        self.assertIn("そこまでの結果はトレース 2", texts.task_end_text("task_cancelled", d)[0])
+        self.assertIn("中断までの結果はトレース 2", texts.task_end_text("task_cancelled", d)[0])
 
     def test_top_stop_ends_like_cancel_and_stops_sweeping(self):
         """上段の「停止」（命令 stop）でもステップ掃引をやめる（2026-10-09 ユーザー決定）。終わり方は「やめる」と同じ
@@ -299,7 +299,7 @@ class InstrumentStepSweepTest(InstrumentCase):
         self.assertEqual(st["sweep"]["sg_hz"], self.SG0)
         self.assertEqual((st["run"]["state"], st["run"]["last_stop_reason"]), ("stopped", "user"))
         self.assertEqual(st["tasks"], [])
-        self.assertIn("そこまでの結果はトレース 2", texts.task_end_text("task_cancelled", d)[0])
+        self.assertIn("中断までの結果はトレース 2", texts.task_end_text("task_cancelled", d)[0])
         # 連続に戻らない（機器スレッドへ次の掃引を渡していない）
         self.assertIsNone(self.on_control(lambda: self.inst._worker._job))
 
@@ -389,36 +389,36 @@ class StepTextsTest(unittest.TestCase):
 
     def test_view(self):
         v = source_view.step_view(self.state())
-        self.assertEqual(v["estimate"], "41 段 × 約 0.61 秒 × 1 回")
-        self.assertEqual([c["text"] for c in v["combines"]], ["最大保持", "平均", "全部重ねる"])
+        self.assertEqual(v["estimate"], "41 ステップ × 約 0.61 秒 × 1 回")
+        self.assertEqual([c["text"] for c in v["combines"]], ["マックスホールド", "平均", "すべて重ねる"])
         self.assertEqual([t["value"] for t in v["traces"]], [1, 2, 3, 4])
         self.assertIsNone(v["reason"])
         v = source_view.step_view(self.state(sweep_s=12.34, per_step=4, reason="step_sweep_needs_sg"))
-        self.assertEqual((v["estimate"], v["reason"]), ("41 段 × 約 12.3 秒 × 4 回", "SG モードで使います"))
+        self.assertEqual((v["estimate"], v["reason"]), ("41 ステップ × 約 12.3 秒 × 4 回", "SG モードで使用します"))
         v = source_view.step_view(self.state(running=True, reason="step_sweep_in_progress"))
         self.assertEqual((v["field_reason"], v["reason"]), (texts.REASON_TEXTS["step_running"],
                                                             texts.ERRORS["step_sweep_in_progress"]))
-        self.assertEqual(source_view.step_view(self.state(sweep_s=None))["estimate"], "41 段 × 1 回")
+        self.assertEqual(source_view.step_view(self.state(sweep_s=None))["estimate"], "41 ステップ × 1 回")
         self.assertIn(str(ss.ALL_STEPS_MAX), texts.ERRORS["too_many_steps_all"])
         self.assertIn(str(ss.STEPS_MAX), texts.ERRORS["too_many_steps"])
 
     def test_progress_end_and_legend(self):
         t = {"task": "step_sweep", "done": 2, "total": 40, "elapsed_s": 12.7}
-        self.assertEqual(texts.task_label(t), "ステップ掃引  3/40 段  経過 12 秒")
-        self.assertEqual(texts.task_label({**t, "done": 40}), "ステップ掃引  40/40 段  経過 12 秒")
+        self.assertEqual(texts.task_label(t), "ステップ掃引  3/40 ステップ  経過時間 12 秒")
+        self.assertEqual(texts.task_label({**t, "done": 40}), "ステップ掃引  40/40 ステップ  経過時間 12 秒")
         done = {"task": "step_sweep", "result": {"steps_done": 40, "steps": 40, "trace": 2, "kept": True}}
         self.assertEqual(texts.task_end_text("task_done", done),
-                         ("ステップ掃引が終わりました（40/40 段）。結果はトレース 2（固定）", None))
+                         ("ステップ掃引が完了しました（40/40 ステップ）。結果はトレース 2（ビュー）", None))
         failed = {"task": "step_sweep", "error": {"code": "disconnected"}, "steps_done": 3, "steps": 40, "trace": 2,
                   "kept": True}
-        self.assertIn("3/40 段", texts.task_end_text("task_failed", failed)[0])
+        self.assertIn("3/40 ステップ", texts.task_end_text("task_failed", failed)[0])
         self.assertIn("結果はありません", texts.task_end_text("task_failed", {**failed, "kept": False})[0])
         info = {"combine": "all", "steps_done": 12, "steps": 40}
         parts = texts.legend_parts({"trace": 2, "action": "fixed", "step_sweep": info})
-        self.assertEqual(parts["label"], "ステップ掃引・全部重ねる 12/40 段")
+        self.assertEqual(parts["label"], "ステップ掃引・すべて重ねる 12/40 ステップ")
         parts = texts.legend_parts({"trace": 2, "action": "fixed", "step_sweep": info, "axis_differs": True})
-        self.assertEqual(parts["label"], "ステップ掃引・全部重ねる 12/40 段 " + texts.TEMPLATES["axis_differs"])
-        self.assertEqual(texts.RUN_STATES["step_sweep"], "ステップ掃引")
+        self.assertEqual(parts["label"], "ステップ掃引・すべて重ねる 12/40 ステップ " + texts.TEMPLATES["axis_differs"])
+        self.assertEqual(texts.RUN_STATES["step_sweep"], "ステップ掃引中")
 
     def test_adjusted_notes(self):
         r = {"adjusted": [{"field": "start_hz", "requested": 500, "adopted": 1_000_000, "reason": "sg_range"},

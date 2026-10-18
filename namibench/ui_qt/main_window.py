@@ -284,7 +284,6 @@ class MainWindow(QMainWindow):
         self.f_stop = FreqField("Stop", lambda hz: self._set_sweep(stop_hz=hz, field=self.f_stop))
         # Span 固定の切り替え（設計C §5.11 の 2）。Span の欄に付けて、状態を欄の上で見せる
         self.span_lock = SpanLockButton(self.pal["accent"], self.pal["text_dim"])
-        self.span_lock.setToolTip(texts.LABELS["span_lock_tip"])
         sizes.set_tier(self.span_lock, "S")
         self.span_lock.clicked.connect(lambda on: self._set_sweep(span_lock=bool(on), field=self.f_span))
         self.f_span.add_header_widget(self.span_lock)
@@ -325,8 +324,8 @@ class MainWindow(QMainWindow):
         top.addStretch(1)
         # 連続・単発・停止は真上の行に掃引の進み具合を持つ並びに入れる（設計J §4.13）
         self.run_box = RunButtons()
-        self.btn_cont = QPushButton(texts.MENU_ITEMS["run_cont"])
-        self.btn_single = QPushButton(texts.MENU_ITEMS["run_single"])
+        self.btn_cont = QPushButton(texts.LABELS["run_cont_button"])
+        self.btn_single = QPushButton(texts.LABELS["run_single_button"])
         self.btn_stop = QPushButton(texts.MENU_ITEMS["stop"])
         for b in (self.btn_cont, self.btn_single, self.btn_stop):
             b.setProperty("run", True)  # 上段で最も大きいボタン（字と最小幅: J §4.3・§4.11）
@@ -1078,7 +1077,7 @@ class MainWindow(QMainWindow):
         # Span 固定はライブの条件（再生中は理由付きで使えない: 設計P §5）
         lock = screen_model.sweep_reasons(st)["span_lock"]
         self.span_lock.setEnabled(lock is None)
-        self.span_lock.setToolTip(texts.LABELS["span_lock_tip"] + (f" — {lock}" if lock else ""))
+        self.span_lock.setToolTip(lock or "")
         if self._amp_pending == 0:
             self._take_amplitude(st.get("amplitude") or {})
         self._update_x_axis()

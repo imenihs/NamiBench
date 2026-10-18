@@ -60,7 +60,7 @@ def _requests(sweep: AdoptedSweep) -> list[tuple[str, Optional[int], int, int]]:
     if sweep.mode == Mode.NF:
         return [("hot", None, 1, 1), ("cold", None, 1, 0)]
     if not sweep.segments:
-        raise InvalidSweep("送る区間が無い（掃引条件モデルを通していない条件）")
+        raise InvalidSweep("送る区間がありません（掃引条件モデルを経由しない条件です）")
     out: list[tuple[str, Optional[int], int, int]] = []
     for k, seg in enumerate(sweep.segments):
         seen: dict[int, int] = {}
@@ -231,7 +231,7 @@ class GigaStDevice(SweepRunner, Device):
 
     def identity(self) -> DeviceIdentity:
         if self._identity is None:
-            raise DeviceDisconnected("開いていない")
+            raise DeviceDisconnected("機器が未接続です")
         return self._identity
 
     @property
@@ -246,7 +246,7 @@ class GigaStDevice(SweepRunner, Device):
     def _exchange(self, request: bytes, expected: int, lim: Limits, note: Optional[str],
                   on_received: Optional[Callable[[int], None]] = None) -> Exchange:
         if self._transport is None:
-            raise DeviceDisconnected("開いていない")
+            raise DeviceDisconnected("機器が未接続です")
         try:
             return self._transport.exchange(request, expected, lim, note, on_received)
         except DeviceDisconnected:

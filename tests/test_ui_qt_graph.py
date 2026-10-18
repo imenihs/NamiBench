@@ -228,7 +228,7 @@ class GraphOperationTest(_Base):
 
     def test_ref_auto_disabled_without_trace(self):
         self.assertFalse(self.win.btn_ref_auto.isEnabled())
-        self.assertIn("波形がまだありません", self.win.btn_ref_auto.toolTip())
+        self.assertIn("波形がありません", self.win.btn_ref_auto.toolTip())
 
     def test_context_menu_items(self):
         self.set_sweep(start_hz=0, stop_hz=2_000_000_000)
@@ -256,7 +256,7 @@ class SpanLockTest(_Base):
         note, btn = self.win.f_span.note, self.win.f_span.note_action
         self.assertIn("400 MHz に合わせました", note.text())
         self.assertTrue(btn.isVisible())
-        self.assertEqual(btn.text(), "Span 1000 MHz を保って Center を 11.6 GHz にする")
+        self.assertEqual(btn.text(), "Span 1000 MHz を維持して Center を 11.6 GHz に変更")
         btn.click()
         self.pump()
         sw = self.sweep()
@@ -287,7 +287,7 @@ class SpanLockTest(_Base):
         self.assertEqual((sw["start_hz"], sw["stop_hz"]), (11_100_000_000, 12_100_000_000))
         btn = self.win.f_center.note_action
         self.assertTrue(btn.isVisible())
-        self.assertEqual(btn.text(), "Center 11.9 GHz を保って Span を 400 MHz にする")
+        self.assertEqual(btn.text(), "Center 11.9 GHz を維持して Span を 400 MHz に変更")
         btn.click()
         self.pump()
         sw = self.sweep()
@@ -316,7 +316,7 @@ class SpanLockTest(_Base):
         self.pump()
         self.assertEqual(self.sweep(), sw0)
         self.assertEqual(self.win.f_span.note.text(), texts.LABELS["span_lock_wheel"])
-        self.assertEqual(texts.LABELS["span_lock_wheel"], "Span 固定中です（幅は Span の欄で変えます）")
+        self.assertEqual(texts.LABELS["span_lock_wheel"], "Span 固定中です。Span は Span の欄で変更してください")
 
     def test_drag_with_lock_keeps_span(self):
         """固定 ON: ドラッグは選んだ範囲の真ん中を Center にし、幅は固定 Span のまま（C §5.12）。"""
@@ -350,7 +350,7 @@ class SpanLockTest(_Base):
         self.assertEqual((sw["start_hz"], sw["stop_hz"]), tuple(sorted((marks["M1"], marks["M2"]))))
         self.assertIsNone(sw["span_lock_hz"])
         self.assertEqual(self.win.span_lock.text(), "Span 固定")
-        self.assertEqual(self.win.f_span.note.text(), "Span 固定を外しました")
+        self.assertEqual(self.win.f_span.note.text(), "Span 固定を解除しました")
         self.assertFalse(self.win.f_span.note_action.isVisible())
 
     def test_start_with_lock_and_keep_typed_button(self):
@@ -365,7 +365,7 @@ class SpanLockTest(_Base):
         self.assertEqual((sw["start_hz"], sw["stop_hz"]), (12_100_000_000 - 44_571_000, 12_100_000_000))
         btn = self.win.f_start.note_action
         self.assertTrue(btn.isVisible())
-        self.assertEqual(btn.text(), "Span を 20 MHz に縮めて 12.08 GHz〜12.1 GHz にする")
+        self.assertEqual(btn.text(), "Span を 20 MHz に縮めて 12.08 GHz〜12.1 GHz に変更")
         btn.click()
         self.pump()
         sw = self.sweep()

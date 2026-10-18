@@ -87,7 +87,7 @@ def _chunk(kind: bytes, body: bytes) -> bytes:
 def iter_png_chunks(png: bytes):
     """(種類, 中身) を順に返す。署名と CRC を確かめる。"""
     if png[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError("PNG ではない")
+        raise ValueError("PNG ではありません")
     pos = 8
     while pos < len(png):
         (n,) = struct.unpack(">I", png[pos:pos + 4])
@@ -95,7 +95,7 @@ def iter_png_chunks(png: bytes):
         body = png[pos + 8:pos + 8 + n]
         (crc,) = struct.unpack(">I", png[pos + 8 + n:pos + 12 + n])
         if zlib.crc32(kind + body) & 0xFFFFFFFF != crc:
-            raise ValueError(f"CRC が合わない: {kind!r}")
+            raise ValueError(f"CRC が一致しません: {kind!r}")
         yield kind, body
         pos += 12 + n
 
@@ -105,7 +105,7 @@ def add_text_chunk(png: bytes, key: str, text: str) -> bytes:
     body = key.encode("latin-1") + b"\x00" + text.encode("latin-1")
     iend = png.rfind(b"IEND") - 4
     if iend < 8:
-        raise ValueError("IEND が無い")
+        raise ValueError("IEND がありません")
     return png[:iend] + _chunk(b"tEXt", body) + png[iend:]
 
 
@@ -587,7 +587,7 @@ def render_png(data: dict, size: tuple[int, int] = (1600, 1000),
     _ensure_app()
     w, h = int(size[0]), int(size[1])
     if w < 320 or h < 240:
-        raise ValueError(f"画像が小さすぎる: {w}x{h}")
+        raise ValueError(f"画像が小さすぎます: {w}x{h}")
     pal = resolve_palette(palette)
     img = QImage(w, h, QImage.Format.Format_RGB32)
     img.fill(QColor(pal["graph_bg"]))
@@ -597,7 +597,7 @@ def render_png(data: dict, size: tuple[int, int] = (1600, 1000),
     dev = QBuffer(buf)
     dev.open(QIODevice.OpenModeFlag.WriteOnly)
     if not img.save(dev, "PNG"):
-        raise RuntimeError("PNG に書けなかった")
+        raise RuntimeError("PNG に書き込めませんでした")
     dev.close()
     meta = json.dumps(png_metadata(data, note), ensure_ascii=True, default=_json_default)
     return add_text_chunk(bytes(buf.data()), META_KEY, meta)
@@ -637,7 +637,7 @@ def copy_png_to_clipboard(png_bytes: bytes) -> None:
     _ensure_app()
     img = QImage.fromData(png_bytes, "PNG")
     if img.isNull():
-        raise ValueError("PNG を読めない")
+        raise ValueError("PNG を読み込めません")
     mime = QMimeData()
     mime.setImageData(img)
     mime.setData("image/png", QByteArray(png_bytes))

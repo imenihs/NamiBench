@@ -478,5 +478,7 @@ class WaterfallView(QWidget):
 
     def set_follow_button(self, label: str, reason: Optional[str]) -> None:
         self.follow_btn.setText(label)
+        # 文字を後から変えるボタンは、変えた後で最小幅を測り直す（前の文字の幅のまま伸びて残らない: S-03）
+        sizes.fit_button(self.follow_btn)
         self.follow_btn.setEnabled(reason is None)
         self.follow_btn.setToolTip(reason or "")

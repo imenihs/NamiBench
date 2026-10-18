@@ -97,11 +97,11 @@ class TraceView:
         """
         for name, v in (("display_start_hz", display_start_hz), ("display_stop_hz", display_stop_hz)):
             if isinstance(v, bool) or not isinstance(v, int):
-                raise TypeError(f"{name} は int（Hz）で渡す")
+                raise TypeError(f"{name} は int（Hz）である必要があります")
         freqs = axis.freqs()
         vals = np.asarray(values)
         if vals.shape != (axis.points,):
-            raise ValueError("values の点数が軸と合わない")
+            raise ValueError("values の点数が軸と一致しません")
         mag = np.abs(vals).astype(np.float64)
         with np.errstate(divide="ignore", invalid="ignore"):
             if quantity == Quantity.POWER:
@@ -243,7 +243,7 @@ def highest_index(view: TraceView) -> Optional[int]:
 
 def check_polarity(polarity: str) -> str:
     if polarity not in POLARITIES:
-        raise ValueError(f"polarity が不明: {polarity}")
+        raise ValueError(f"polarity が不明です: {polarity}")
     return polarity
 
 
@@ -301,7 +301,7 @@ def find_peaks(
     0Hz の局発の漏れの帯の点（PEAK_SKIP_FLAGS: 設計J §4.8）は比べる相手には使うが、ピークとしては返さない。
     """
     if excursion_db <= 0:
-        raise ValueError("excursion_db は正の値")
+        raise ValueError("excursion_db は正の値である必要があります")
     level = np.where(view.searchable, view.level_db, np.nan)[view.lo:view.hi]
     found: list[int] = []
     n = len(level)
@@ -397,7 +397,7 @@ def next_peak_index(
             return None
         # 最も高いもの。同じ高さなら低い周波数
         return max(cand, key=lambda p: (view.level_db[p], -p))
-    raise ValueError(f"direction が不明: {direction}")
+    raise ValueError(f"direction が不明です: {direction}")
 
 
 # ピークの一覧の基準（設計P §9.7）: 電力はノイズフロア、基準との比は表示範囲の最大
@@ -577,7 +577,7 @@ def n_db_bandwidth(view: TraceView, idx: int, n_db: float, polarity: str = PEAK)
     値の上下を返したトレースで同じ探し方をする（交点の周波数は返しても同じ）。
     """
     if n_db <= 0:
-        raise ValueError("n_db は正の値")
+        raise ValueError("n_db は正の値である必要があります")
     view = oriented(view, polarity)
     base = view.level_at(idx)
     if base is None:
@@ -599,7 +599,7 @@ def threshold_band(view: TraceView, idx: int, level: float, side: str) -> Band:
     elif side == SIDE_ABOVE:
         inside = lambda v: v >= level
     else:
-        raise ValueError(f"side が不明: {side}")
+        raise ValueError(f"side が不明です: {side}")
     base = view.level_at(idx)
     if base is None:
         return Band(NO_MARKER_VALUE, Edge(NO_MARKER_VALUE), Edge(NO_MARKER_VALUE))

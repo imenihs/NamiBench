@@ -1,6 +1,6 @@
 """Qt の画面: 探すもの「山／谷」（設計G §3.8）とピークの一覧の基準（設計P §9.7）・行の「操作」（G §3.4）。
 
-- マーカー表の上のボタンの並び: 頭に山／谷の切り替え、ピーク・◀ 次のピーク・次のピーク ▶・次に高い・マーカー追加、
+- マーカー表の上のボタンの並び: 頭に山／谷の切り替え、ピーク・◀ ネクストピーク・ネクストピーク ▶・次に高い・マーカー追加、
   右端に全部消す・表をコピー。谷にするとボタンの場所は同じで名前が変わる。メニューの項目の名前も変わる。
   メニューの「山／谷を切り替える」で切り替わる。選択は画面の覚え書きに残る
 - 谷で探すとマーカーは谷の向きになり、ピークの一覧も同じ選択を使う（SA では谷の一覧は理由付きで探せない）
@@ -58,14 +58,14 @@ class ToolbarTest(PolarityUiBase):
         peak = [texts.POLARITIES["peak"], texts.POLARITIES["dip"]] + [S["peak"][c] for c in peak_view.SEARCH_CODES] \
             + [L["clear_all"], L["copy_table"]]
         self.assertEqual(self.bar_texts(), peak)
-        self.assertEqual(peak[2:7], ["ピーク", "◀ 次のピーク", "次のピーク ▶", "次に高い", "マーカー追加"])
+        self.assertEqual(peak[2:7], ["ピーク", "◀ ネクストピーク", "ネクストピーク ▶", "ネクストピーク（レベル順・高い）", "マーカー追加"])
         self.assertTrue(self.panel.pol_buttons["peak"].isChecked())
         self.panel.pol_buttons["dip"].click()
         self.pump(0.1)
         self.assertTrue(self.panel.pol_buttons["dip"].isChecked())
         self.assertFalse(self.panel.pol_buttons["peak"].isChecked())
         # 場所は変えず名前が変わる
-        self.assertEqual(self.bar_texts()[2:7], ["ピーク", "◀ 次のピーク", "次のピーク ▶", "次に深い", "マーカー追加"])
+        self.assertEqual(self.bar_texts()[2:7], ["ピーク", "◀ ネクストピーク", "ネクストピーク ▶", "ネクストピーク（レベル順・深い）", "マーカー追加"])
         self.assertIn(texts.SEARCH_TIPS["dip"]["marker_peak_lower"], self.panel.btn_lower.toolTip())
         # メニューの項目の名前も変わる（G §3.8）
         a = self.win.actions
@@ -115,7 +115,7 @@ class PeakListTest(PolarityUiBase):
         self.tab.pk_find.click()
         self.wait(lambda: self.tab.pk_table.rowCount() >= 1, what="ピークの一覧")
         self.assertEqual(self.tab.pk_table.horizontalHeaderItem(2).text(), L["col_height_db"])
-        self.assertTrue(self.tab.pk_note.text().startswith(f"{self.tab.pk_table.rowCount()} 個・ノイズフロア "))
+        self.assertTrue(self.tab.pk_note.text().startswith(f"検出数 {self.tab.pk_table.rowCount()}・ノイズフロア "))
         self.assertTrue(self.tab.pk_note.text().endswith(" dBm"))
         # 谷にすると、電力のスペクトルでは一覧の谷を探せない（理由付きで無効）
         self.panel.pol_buttons["dip"].click()
@@ -136,7 +136,7 @@ class PeakListTest(PolarityUiBase):
         self.tab.pk_find.click()
         self.wait(lambda: self.tab.pk_table.rowCount() == 2, what="谷の一覧（ノッチ 2 つ）")
         self.assertEqual(self.tab.pk_table.horizontalHeaderItem(2).text(), L["col_below_max_db"])
-        self.assertTrue(self.tab.pk_note.text().startswith("2 個・最大 "), self.tab.pk_note.text())
+        self.assertTrue(self.tab.pk_note.text().startswith("検出数 2・最大 "), self.tab.pk_note.text())
         self.assertTrue(self.tab.pk_note.text().endswith(" dB"))
         diffs = [float(self.tab.pk_table.item(i, 2).text()) for i in range(2)]
         self.assertEqual(diffs, sorted(diffs))  # 深い順（−30dB のノッチが先）
@@ -165,7 +165,7 @@ class RowOpsTest(PolarityUiBase):
         self.assertEqual([a.text() if not a.isSeparator() else None for a in acts],
                          [None if it is None else it["text"] for it in want])
         self.assertEqual([it["text"] for it in want if it],
-                         [L["row_center"], L["row_ref"], texts.MENU_ITEMS["marker_span"], "M1 を消す"])
+                         [L["row_center"], L["row_ref"], texts.MENU_ITEMS["marker_span"], "M1 を削除"])
         span = next(a for a in acts if a.objectName() == "row_span")
         self.assertFalse(span.isEnabled())
         self.assertEqual(span.toolTip(), texts.REASON_TEXTS["delta_ref"])

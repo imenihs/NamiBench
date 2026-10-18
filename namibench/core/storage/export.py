@@ -225,7 +225,7 @@ def export_record_csv(
         raise ValueError(f"layout は {LAYOUT_WIDE!r} か {LAYOUT_LONG!r}")
     freqs = np.asarray(freqs_hz)
     if freqs.dtype.kind not in "iu":
-        raise TypeError("周波数は整数（Hz）の配列で渡す")
+        raise TypeError("周波数は整数（Hz）の配列である必要があります")
     freqs = freqs.astype(np.int64)
     tz = tz or datetime.now().astimezone().tzinfo
     prog = Progress(total_sweeps, progress, cancel)
@@ -246,7 +246,7 @@ def export_record_csv(
             t = np.asarray(t, dtype=np.float64)
             v = convert_unit(vals, q, unit)
             if v.shape != (len(t), len(freqs)):
-                raise ValueError(f"値の形 {v.shape} が (掃引 {len(t)}, 点 {len(freqs)}) と違う")
+                raise ValueError(f"値の形 {v.shape} が (掃引 {len(t)}, 点 {len(freqs)}) と一致しません")
             for j in range(len(t)):
                 tu = f"{t[j]:.6f}"
                 if layout == LAYOUT_WIDE:

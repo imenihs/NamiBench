@@ -40,7 +40,7 @@ class IioError(DeviceError):
 
     def __init__(self, func: str, code: int = 0, detail: str = "", errno: Optional[int] = None,
                  strerror: Optional[str] = None) -> None:
-        msg = f"iio_{func} が失敗した（{code}）"
+        msg = f"iio_{func} が失敗しました（{code}）"
         if detail:
             msg += f": {detail}"
         super().__init__(msg)
@@ -201,7 +201,7 @@ class IioContext:
 
     def _need(self):
         if self._ctx is None:
-            raise IioError("context", 0, "閉じている")
+            raise IioError("context", 0, "クローズ済み")
         return self._ctx
 
     def close(self) -> None:
@@ -311,7 +311,7 @@ class IioBuffer:
 
     def _need(self):
         if self._buf is None:
-            raise IioError("buffer", 0, "壊してある")
+            raise IioError("buffer", 0, "破棄済み")
         return self._buf
 
     def refill(self) -> np.ndarray:

@@ -257,7 +257,7 @@ class TraceData:
         if self.freqs_hz is not None:
             return np.asarray(self.freqs_hz, dtype=np.int64)
         if self.axis is None:
-            raise ValueError("axis か freqs_hz のどちらかが要る")
+            raise ValueError("axis か freqs_hz のどちらかが必要です")
         return self.axis.freqs()
 
     def cut(self) -> "TraceData":
@@ -338,13 +338,13 @@ def _raw_values(a: np.ndarray, n: int, enc: RawEncoding) -> np.ndarray:
     if enc.dtype == np.uint16:
         # AD 値は整数のまま持つ（float から丸めて入れない）
         if arr.dtype != np.uint16:
-            raise TypeError(f"生の値は uint16 で渡す（{arr.dtype} が来た）")
+            raise TypeError(f"生の値は uint16 である必要があります（{arr.dtype} を受け取りました）")
     elif arr.dtype.kind != "f":
-        raise TypeError(f"生の値は浮動小数で渡す（{arr.dtype} が来た）")
+        raise TypeError(f"生の値は浮動小数である必要があります（{arr.dtype} を受け取りました）")
     else:
         arr = arr.astype(enc.dtype)
     if arr.shape[0] < n:
-        raise ValueError(f"生の値の点数 {arr.shape[0]} が保存する点数 {n} より少ない")
+        raise ValueError(f"生の値の点数 {arr.shape[0]} が保存する点数 {n} に対して不足しています")
     return arr[:n]
 
 
@@ -355,12 +355,12 @@ def split_raw(raw: RawSweep) -> tuple[np.ndarray, Optional[np.ndarray]]:
     enc = encoding_info(raw.encoding)
     if lay == LAYOUT_NF:
         if raw.raw_hot is None or raw.raw_cold is None:
-            raise ValueError("NF は raw_hot と raw_cold の両方が要る")
+            raise ValueError("NF は raw_hot と raw_cold の両方が必要です")
         return _raw_values(raw.raw_hot, n, enc), _raw_values(raw.raw_cold, n, enc)
     if lay == LAYOUT_IMAGE_REJECT:
         for s in raw.raw_segments:
             if enc.dtype == np.uint16 and np.asarray(s.values).dtype != np.uint16:
-                raise TypeError(f"生の値は uint16 で渡す（{np.asarray(s.values).dtype} が来た）")
+                raise TypeError(f"生の値は uint16 である必要があります（{np.asarray(s.values).dtype} を受け取りました）")
         regions = rs.regions_of(raw.raw_segments, n)
         rs.check(regions, n)
         # raw は表示した採用する値（区間ごとの合わせ方は機種のプロファイルの雑音の床と帯による: 設計F §7.1）
@@ -368,16 +368,16 @@ def split_raw(raw: RawSweep) -> tuple[np.ndarray, Optional[np.ndarray]]:
     if lay == LAYOUT_IMAGE_CANCEL_4:
         passes = np.asarray(raw.raw_passes)
         if passes.ndim != 2 or passes.shape[0] != _PASSES[lay]:
-            raise ValueError(f"イメージキャンセルの生の値は [{_PASSES[lay]}, 点]: {passes.shape}")
+            raise ValueError(f"イメージキャンセルの生の値は [{_PASSES[lay]}, 点] である必要があります: {passes.shape}")
         if enc.dtype == np.uint16 and passes.dtype != np.uint16:
-            raise TypeError(f"生の値は uint16 で渡す（{passes.dtype} が来た）")
+            raise TypeError(f"生の値は uint16 である必要があります（{passes.dtype} を受け取りました）")
         if passes.shape[1] < n:
-            raise ValueError(f"生の値の点数 {passes.shape[1]} が保存する点数 {n} より少ない")
+            raise ValueError(f"生の値の点数 {passes.shape[1]} が保存する点数 {n} に対して不足しています")
         # raw は表示した採用する値（4回の合わせ方は機種のプロファイルの雑音の床による: 設計F §6）
         return _raw_values(raw.raw, n, enc), passes[:, :n].astype(enc.dtype)
     if lay == LAYOUT_IMAGE_CANCEL:
         if raw.raw_b3_1 is None:
-            raise ValueError("イメージキャンセルは raw_b3_0 と raw_b3_1 の両方が要る")
+            raise ValueError("イメージキャンセルは raw_b3_0 と raw_b3_1 の両方が必要です")
         # raw は b3=1 の回（イメージキャンセルなしのときと同じ回）。採用した値（min）は読むときに作り直せる
         return _raw_values(raw.raw_b3_1, n, enc), _raw_values(raw.raw_b3_0, n, enc)
     return _raw_values(raw.raw, n, enc), None
@@ -537,18 +537,18 @@ def _write_segment(g: h5py.Group, src: SegmentSource, prog: Progress, done: int)
         prog.check()
         rows = len(t)
         if raw.shape != (rows, p):
-            raise ValueError(f"区間の点数が合わない: {raw.shape} / ({rows}, {p})")
+            raise ValueError(f"区間の点数が一致しません: {raw.shape} / ({rows}, {p})")
         d1[row : row + rows] = raw
         if seg_ds:
             if raw2 is None:
-                raise ValueError("区間ごとの生の値が無い")
+                raise ValueError("区間ごとの生の値がありません")
             for d, part in zip(seg_ds, rs.split(raw2, m.raw_segments)):
                 d[row : row + rows] = part
         if d2 is not None:
             if raw2 is None:
-                raise ValueError("2回目の生の値が無い")
+                raise ValueError("2回目の生の値がありません")
             if raw2.shape != (rows,) + d2.shape[1:]:
-                raise ValueError(f"残りの回の生の値の形が合わない: {raw2.shape} / {d2.shape}")
+                raise ValueError(f"残りの回の生の値の形が一致しません: {raw2.shape} / {d2.shape}")
             d2[row : row + rows] = raw2
         t_ds[row : row + rows] = t
         # 概観: ブロックの始まりは BLOCK_ROWS の倍数なので、どの k でも区切りがそろう
@@ -567,7 +567,7 @@ def _write_segment(g: h5py.Group, src: SegmentSource, prog: Progress, done: int)
         done += rows
         prog.report(done)
     if row != n:
-        raise ValueError(f"区間の掃引の数が合わない: {row} / {n}")
+        raise ValueError(f"区間の掃引の数が一致しません: {row} / {n}")
     return done
 
 
@@ -937,7 +937,7 @@ class H5Record:
             vals = self.read(seg, None, (i0, i1)).adopted()
             return OverviewBlock(seg, 1, i0, t, s.freqs(i0, i1), vals)
         if k not in OVERVIEW_LEVELS:
-            raise ValueError(f"概観の段は {OVERVIEW_LEVELS} のどれか")
+            raise ValueError(f"概観の段は {OVERVIEW_LEVELS} のいずれかである必要があります")
         vals = self._group(seg)["overview"][f"max_{k}"][:, i0:i1]
         return OverviewBlock(seg, k, i0, t[::k], s.freqs(i0, i1), vals)
 
