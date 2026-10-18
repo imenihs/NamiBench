@@ -86,19 +86,19 @@ class Calibration:
 
     def __post_init__(self) -> None:
         if not isinstance(self.freq_step_hz, int) or self.freq_step_hz <= 0:
-            raise ValueError("freq_step_hz は正の int（Hz）")
+            raise ValueError("freq_step_hz は正の int（Hz）である必要があります")
         band_span = self.freq_step_hz * (POINTS_PER_BAND - 1)
         for i, b in enumerate(self.bands):
             if not isinstance(b.start_hz, int):
-                raise TypeError("周波数は int（Hz）で持つ")
+                raise TypeError("周波数は int（Hz）である必要があります")
             # 換算は band の番号を f // band 幅で決めるので、band は 0Hz から隙間なく並ぶ前提
             if b.start_hz != i * band_span:
-                raise ValueError(f"bands[{i}].start_hz は {i * band_span} であること")
+                raise ValueError(f"bands[{i}].start_hz は {i * band_span} である必要があります")
             if len(b.values) != POINTS_PER_BAND:
-                raise ValueError(f"bands[{i}].values は {POINTS_PER_BAND} 点であること")
+                raise ValueError(f"bands[{i}].values は {POINTS_PER_BAND} 点である必要があります")
         for k in self.rbw_offset_db:
             if not isinstance(k, int):
-                raise TypeError("rbw_offset_db のキーは int（Hz）")
+                raise TypeError("rbw_offset_db のキーは int（Hz）である必要があります")
 
     @property
     def band_span_hz(self) -> int:
@@ -180,7 +180,7 @@ class Calibration:
         """
         if isinstance(created_at, datetime):
             if created_at.tzinfo is None:
-                raise ValueError("created_at は時差付きで渡す")
+                raise ValueError("created_at は時差付きである必要があります")
             created_at = created_at.isoformat(timespec="seconds")
         band_span = FREQ_STEP_HZ * (POINTS_PER_BAND - 1)
         return cls(
@@ -208,12 +208,12 @@ def _plus_zero(x: float) -> float:
 def _as_int_hz(v) -> int:
     """JSON の周波数を int にする。小数部のある値は受け付けない（周波数は float で持たない）。"""
     if isinstance(v, bool):
-        raise TypeError("周波数は int（Hz）")
+        raise TypeError("周波数は int（Hz）である必要があります")
     if isinstance(v, int):
         return v
     if isinstance(v, float) and v.is_integer():
         return int(v)
-    raise TypeError(f"周波数は int（Hz）: {v!r}")
+    raise TypeError(f"周波数は int（Hz）である必要があります: {v!r}")
 
 
 # ---- 置き場所 ----

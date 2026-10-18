@@ -199,7 +199,7 @@ Views = Mapping[int, TraceView]
 def _check_hz(name: str, value: object) -> None:
     # 周波数は int で受ける（設計A §2.1）
     if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} は int（Hz）で渡す（{type(value).__name__} が来た）")
+        raise TypeError(f"{name} は int（Hz）である必要があります（{type(value).__name__} を受け取りました）")
 
 
 def pick_trace(views: Views, freq_hz: int, level: float) -> Optional[int]:
@@ -302,7 +302,7 @@ class MarkerTable:
     def set_trace(self, marker_id: str, trace: int) -> None:
         """載るトレースを替える。置いた周波数はそのまま（読むときに新しいトレースの最も近い点へ載る）。"""
         if isinstance(trace, bool) or not isinstance(trace, int):
-            raise TypeError("trace は int")
+            raise TypeError("trace は int である必要があります")
         self._markers[marker_id].trace = trace
 
     # ---- 置き方の書き出し・読み戻し（状態の保存・保存ファイル: 設計O §1.2・設計H §7.1） ----
@@ -756,7 +756,7 @@ class MarkerTable:
         """y1・y2 を置いたときの縦軸の単位の種類（Y_KINDS か None）。y が無ければ None。ref は TG の基準との比（"tg"）の
         ときだけ持つ、その基準の id（設計E §6.7）。"""
         if k not in ("y1", "y2") or (kind is not None and kind not in Y_KINDS):
-            raise ValueError(f"{k} の単位の種類が不明: {kind}")
+            raise ValueError(f"{k} の単位の種類が不明です: {kind}")
         has = getattr(self.xy, k) is not None
         setattr(self.xy, k + "_kind", kind if has else None)
         setattr(self.xy, k + "_ref", ref if has and kind == Y_KIND_TG else None)

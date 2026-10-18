@@ -497,7 +497,7 @@ class RecordingReader:
     def overview_range(self, seg: int, k: int, b0: int, b1: int) -> np.ndarray:
         """概観の段 k の塊 [b0, b1) の値 [塊, 点]（揃った塊だけ。再生のウォーターフォール: 設計P §5）。"""
         if k not in OVERVIEW_LEVELS:
-            raise ValueError(f"概観の段は {OVERVIEW_LEVELS} のどれか")
+            raise ValueError(f"概観の段は {OVERVIEW_LEVELS} のいずれかである必要があります")
         s = self.segments[seg]
         rows = self._conn.execute(
             f"SELECT raw FROM overview_{k} WHERE segment = ? AND block >= ? AND block < ? ORDER BY block",
@@ -510,7 +510,7 @@ class RecordingReader:
     def overview(self, seg: int, k: int, points: Optional[tuple[int, int]] = None) -> OverviewBlock:
         """概観の段 k の、k 掃引が揃った塊だけ（最後の揃っていない塊は含まない。要るなら read で読む）。"""
         if k not in OVERVIEW_LEVELS:
-            raise ValueError(f"概観の段は {OVERVIEW_LEVELS} のどれか")
+            raise ValueError(f"概観の段は {OVERVIEW_LEVELS} のいずれかである必要があります")
         s = self.segments[seg]
         i0, i1 = points if points is not None else (0, s.points)
         rows = self._conn.execute(

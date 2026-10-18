@@ -115,7 +115,7 @@ class SweepModel:
         """timing は sweep_kind が "stepped" なら TimingFn、"fft" なら FftTimingFn。"""
         self._kind = profile.get("sweep_kind", SWEEP_STEPPED)
         if self._kind not in (SWEEP_STEPPED, SWEEP_FFT):
-            raise ValueError(f"知らない sweep_kind: {self._kind}")
+            raise ValueError(f"不明な sweep_kind です: {self._kind}")
         # イメージ除去の初期値・帯・帯の中の回数（機種のプロファイル。GigaSt はスピード: 設計F §7.1・§7.3）
         self._reject = ir.RejectProfile(profile)
         f = profile["freq"]
@@ -127,7 +127,7 @@ class SweepModel:
         self._default_start = int(f.get("default_start_hz", self._min))
         self._default_stop = int(f.get("default_stop_hz", self._max))
         if not (self._min <= self._default_start < self._default_stop <= self._max):
-            raise ValueError("freq.default_start_hz / default_stop_hz は機種の範囲の中で start < stop")
+            raise ValueError("freq.default_start_hz / default_stop_hz は機種の範囲の中で start < stop である必要があります")
         self._points_max = int(f["points_max"])
         sg = (profile.get("source") or {}).get("sg")
         self._sg = (int(sg["min_hz"]), int(sg["max_hz"]), int(sg["unit_hz"])) if sg else None
@@ -156,7 +156,7 @@ class SweepModel:
         for key, value in profile.get("unreliable", {}).items():
             m = _UNRELIABLE_KEY.fullmatch(key)
             if m is None:
-                raise ValueError(f"unreliable に知らないキー: {key}")
+                raise ValueError(f"unreliable に不明なキーがあります: {key}")
             self._unreliable.append((int(m.group(1)) * 1000, m.group(2), value))
 
         self._transient_s = float(profile.get("sweep_quirks", {}).get("transient_s", 0.0))
@@ -176,7 +176,7 @@ class SweepModel:
             n = int(c["fft_n"])
             if grid_rate % n:
                 # 格子 fs/N を Hz の整数にする（周波数軸は整数の格子: 設計Q §6.4・設計A §2.1）
-                raise ValueError(f"fs/N が整数でない: N={n}")
+                raise ValueError(f"fs/N が整数ではありません: N={n}")
             grid = grid_rate // n
             rbw = int(c["rbw_hz"])
             self._fft_grid[rbw] = grid
@@ -187,10 +187,10 @@ class SweepModel:
                 self._fft_table[rbw] = (str(c["window"]), self._fs // grid)
         self._rbw_choices = tuple(sorted(self._fft_table))
         if len(self._rate_unusable) == len(self._rbw_choices):
-            raise ValueError(f"サンプリング周波数 {self._fs}Hz で使える RBW が無い")
+            raise ValueError(f"サンプリング周波数 {self._fs}Hz で使用できる RBW がありません")
         self._rbw_default = int(r["default_hz"])
         if self._rbw_default not in self._fft_table:
-            raise ValueError("rbw.default_hz が選択肢に無い")
+            raise ValueError("rbw.default_hz が選択肢にありません")
         self._min_span_fft = int(profile["freq"]["min_span_hz"])
         self._measurements = tuple(Mode(m) for m in profile["measurements"])
         self._unreliable = []
@@ -745,16 +745,16 @@ class SweepModel:
     def _check_device(self, axis: FreqAxis, segments: tuple[SweepSegment, ...]) -> None:
         """機器へ送る条件がプロファイルの制約に収まっているか（ここで外れたらモデルの誤り）。"""
         if sum(s.points for s in segments) != axis.points:
-            raise AssertionError(f"区間の点数の和が軸と合わない: {[s.points for s in segments]} / {axis.points}")
+            raise AssertionError(f"区間の点数の和が軸と一致しません: {[s.points for s in segments]} / {axis.points}")
         for s in segments:
             dev_start = axis.start_hz + (s.point0 - s.preroll_points) * axis.step_hz
             last = axis.start_hz + (s.point0 + s.points - 1) * axis.step_hz
             if not (self._min <= dev_start and last <= self._max):
-                raise AssertionError(f"機器へ送る範囲が外れた: {dev_start}〜{last}")
+                raise AssertionError(f"機器へ送る範囲が制約を超えました: {dev_start}〜{last}")
             if not (1 <= s.points + s.preroll_points <= self._points_device_max):
-                raise AssertionError(f"機器へ送る点数が外れた: {s.points + s.preroll_points}")
+                raise AssertionError(f"機器へ送る点数が制約を超えました: {s.points + s.preroll_points}")
         if axis.step_hz > self._step_max or axis.step_hz % self._unit or axis.start_hz % self._unit:
-            raise AssertionError(f"Step・Start が制約の外: {axis.step_hz}, {axis.start_hz}")
+            raise AssertionError(f"Step・Start が制約の範囲外です: {axis.step_hz}, {axis.start_hz}")
 
     # ------------------------------------------------------------------ sweep_kind "fft"（設計Q §6.4）
 
@@ -795,7 +795,7 @@ class SweepModel:
             rbw = r
             step, points = self._fft_points(span, rbw)
         if points > self._points_max:
-            raise AssertionError(f"いちばん広い RBW でも点数が上限を超える: {points}")
+            raise AssertionError(f"最も広い RBW でも点数が上限を超えます: {points}")
         if rbw != rbw_pref and (rbw_requested or prev_rbw != rbw):
             adj.add("rbw_hz", rbw_pref, rbw, "rbw_sample_rate" if rbw == base != rbw_pref else "rbw_points_max")
         elif rbw == rbw_pref and prev_rbw is not None and prev_rbw != rbw and not rbw_requested:
@@ -808,7 +808,7 @@ class SweepModel:
             tail_gap = True
         axis = FreqAxis(start_hz=start, step_hz=step, points=points)
         if not (self._min <= axis.start_hz and axis.last_hz <= self._max):
-            raise AssertionError(f"測る範囲が外れた: {axis.start_hz}〜{axis.last_hz}")
+            raise AssertionError(f"測定範囲が制約を超えました: {axis.start_hz}〜{axis.last_hz}")
         est = float(self._timing(axis, rbw, mode))
         # 点数が上限に収まる RBW だけが選べる（設計C §5.14）。いまの標本化の速さで使えない RBW も選べない（理由は別に
         # 持つ: 設計S §1 §3.2）。rbw_limit は速さでは使えるのに点数で使えないものがあるときだけ

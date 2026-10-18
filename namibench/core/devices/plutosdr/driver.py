@@ -542,7 +542,7 @@ class PlutoSdrDevice(Device):
 
     def identity(self) -> DeviceIdentity:
         if self._identity is None:
-            raise DeviceDisconnected("開いていない")
+            raise DeviceDisconnected("機器が未接続です")
         return self._identity
 
     @property
@@ -584,12 +584,12 @@ class PlutoSdrDevice(Device):
     def measure(self, sweep: AdoptedSweep, cancel: Optional[threading.Event] = None) -> RawSweep:
         mode = Mode(sweep.mode)
         if mode not in _MODES:
-            raise InvalidSweep(f"PlutoSDR はスペアナ・SG・TG・S11 だけ（{sweep.mode}）")
+            raise InvalidSweep(f"PlutoSDR ではスペアナ・SG・TG・S11 以外は使用できません（{sweep.mode}）")
         if _cancelled(cancel):
             raise SweepDiscarded("cancelled", {"sent": 0})
         with self._lock:
             if self._ctx is None:
-                raise DeviceDisconnected("開いていない")
+                raise DeviceDisconnected("機器が未接続です")
             try:
                 self._apply_pending()
                 return self._measure_locked(sweep, mode, cancel)
@@ -600,7 +600,7 @@ class PlutoSdrDevice(Device):
                         self._tx_off()
                     except IioError:
                         pass
-                    raise InvalidSweep(f"PlutoSDR が設定を断った: {e}") from e
+                    raise InvalidSweep(f"PlutoSDR が設定を受け付けませんでした: {e}") from e
                 self._drop()
                 raise DeviceDisconnected(str(e)) from e
 
@@ -781,10 +781,10 @@ class PlutoSdrDevice(Device):
 
     def _check_tx_allowed(self) -> None:
         if self._tx_forbidden:
-            raise DeviceDisconnected("閉じている途中（送信は出さない）")
+            raise DeviceDisconnected("機器を閉じる処理中のため送信できません")
         if self._ext is not None:
             # 外部 IQ の送信の間は SG・TG を出さない（本体が断る: 設計S §1 §6.2。ここは二重の防御）
-            raise InvalidSweep("外部 IQ の送信の間は SG・TG を出さない")
+            raise InvalidSweep("外部 IQ の送信中は SG・TG を使用できません")
 
     def _tx_tone(self, sg_hz: int) -> None:
         """SG: 送信の LO を SG の周波数 − DDS のずらし に合わせ、DDS で1本のトーンを出す。"""
@@ -892,10 +892,10 @@ class PlutoSdrDevice(Device):
                  progress: Optional[Callable[[int, int], None]] = None) -> dict:
         mode = Mode(sweep.mode)
         if mode not in _MODES:
-            raise InvalidSweep(f"PlutoSDR はスペアナ・SG・TG・S11 だけ（{sweep.mode}）")
+            raise InvalidSweep(f"PlutoSDR ではスペアナ・SG・TG・S11 以外は使用できません（{sweep.mode}）")
         with self._lock:
             if self._ctx is None:
-                raise DeviceDisconnected("開いていない")
+                raise DeviceDisconnected("機器が未接続です")
             # SG・TG は測るときと同じ送信を出して合わせる（2026-10-12 ユーザー決定）。押す前に送信が出ていなかった
             # （掃引を止めていた）なら、終わったら止める。出ていた（連続で測っている）なら出したまま次の掃引へ渡す
             was_on = self._tx_state is not None

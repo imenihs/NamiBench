@@ -34,7 +34,7 @@ def to_db(values: np.ndarray, quantity: Quantity) -> np.ndarray:
 def _as_freqs(freqs: np.ndarray) -> np.ndarray:
     f = np.asarray(freqs)
     if not np.issubdtype(f.dtype, np.integer):
-        raise TypeError("周波数は int（Hz）の配列で持つ")
+        raise TypeError("周波数は int（Hz）の配列である必要があります")
     return f.astype(np.int64)
 
 

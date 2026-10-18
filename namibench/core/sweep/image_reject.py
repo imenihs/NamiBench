@@ -65,7 +65,7 @@ def b3_order(passes: int) -> tuple[int, ...]:
         return ONE_PASS_B3
     if passes in (2, 4):
         return B3_ORDER[:passes]
-    raise ValueError(f"回数は 1・2・4 のどれか: {passes}")
+    raise ValueError(f"回数は 1・2・4 のいずれかである必要があります: {passes}")
 
 
 class RejectProfile:
@@ -78,7 +78,7 @@ class RejectProfile:
         for lo, hi in r.get("burst_bands_hz", []):
             lo, hi = int(lo), int(hi)
             if not lo < hi:
-                raise ValueError(f"image_reject.burst_bands_hz の帯は 下限 < 上限: {lo}, {hi}")
+                raise ValueError(f"image_reject.burst_bands_hz の帯は 下限 < 上限 である必要があります: {lo}, {hi}")
             bands.append((lo, hi))
         self.bands: tuple[tuple[int, int], ...] = tuple(sorted(bands))
         self.in_band_passes = int(r.get("accurate_in_band_passes", 4))

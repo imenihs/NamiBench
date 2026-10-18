@@ -47,7 +47,7 @@ def split(flat: np.ndarray, regions: Sequence[dict]) -> list[np.ndarray]:
     a = np.asarray(flat)
     lead = a.shape[:-1]
     if a.shape[-1] != width(regions):
-        raise ValueError(f"区間の生の値の数 {a.shape[-1]} が区間の並び {width(regions)} と合わない")
+        raise ValueError(f"区間の生の値の数 {a.shape[-1]} が区間の並び {width(regions)} と一致しません")
     out, pos = [], 0
     for r in regions:
         k, n = int(r["passes"]), int(r["points"])
@@ -59,7 +59,7 @@ def split(flat: np.ndarray, regions: Sequence[dict]) -> list[np.ndarray]:
 def join(parts: Sequence[np.ndarray]) -> np.ndarray:
     """split の逆: 区間ごとの [掃引, 回数, 点数] を [掃引, width] に続ける。"""
     if not parts:
-        raise ValueError("区間が無い")
+        raise ValueError("区間がありません")
     rows = parts[0].shape[0]
     return np.concatenate([np.asarray(p).reshape(rows, -1) for p in parts], axis=1)
 
@@ -99,11 +99,11 @@ def to_segments(flat_row: np.ndarray, regions: Sequence[dict]) -> tuple[RawSegme
 def check(regions: Optional[Sequence[dict]], points: int) -> None:
     """区間の並びが点 [0, points) を順に重ならずに覆うか（保存・読み戻しの検査）。"""
     if not regions:
-        raise ValueError("区間が無い")
+        raise ValueError("区間がありません")
     pos = 0
     for r in regions:
         if int(r["point0"]) != pos or int(r["points"]) < 1 or int(r["passes"]) != len(r["b3"]):
-            raise ValueError(f"区間の並びが点を順に覆わない: {list(regions)}")
+            raise ValueError(f"区間の並びが点を順に覆いません: {list(regions)}")
         pos += int(r["points"])
     if pos != points:
-        raise ValueError(f"区間の点数の和 {pos} が点数 {points} と合わない")
+        raise ValueError(f"区間の点数の和 {pos} が点数 {points} と一致しません")

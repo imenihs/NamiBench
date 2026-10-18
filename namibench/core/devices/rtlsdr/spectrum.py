@@ -41,7 +41,7 @@ def window(name: str, n: int) -> np.ndarray:
     if name == "flattop":
         a = _FLATTOP
         return a[0] - a[1] * np.cos(x) + a[2] * np.cos(2 * x) - a[3] * np.cos(3 * x) + a[4] * np.cos(4 * x)
-    raise ValueError(f"知らない窓: {name}")
+    raise ValueError(f"不明な窓です: {name}")
 
 
 def enbw_bins(name: str, n: int) -> float:
@@ -83,7 +83,7 @@ def averaged_power(iq: np.ndarray, n: int, win: str, k: int) -> np.ndarray:
     """
     iq = np.asarray(iq)
     if iq.size < n * k:
-        raise ValueError(f"サンプルが足りない（{iq.size} < {n}×{k}）")
+        raise ValueError(f"サンプルが不足しています（{iq.size} < {n}×{k}）")
     w = window(win, n)
     seg = iq[: n * k].reshape(k, n) * w
     x = np.fft.fft(seg, axis=1)
@@ -132,7 +132,7 @@ def plan(start_hz: int, last_hz: int, grid: int, half: int, delta: int,
     """
     if fixed_center_hz is not None:
         if (fixed_center_hz - start_hz) % grid:
-            raise ValueError("中心は出力の格子に乗せる")
+            raise ValueError("中心は出力の格子に乗せる必要があります")
         return Plan((int(fixed_center_hz),), True, grid, half, delta)
     extent = last_hz - start_hz
     if extent <= half - delta:
@@ -140,7 +140,7 @@ def plan(start_hz: int, last_hz: int, grid: int, half: int, delta: int,
         if c < fmin:
             c = last_hz + delta
         if c < fmin or c > fmax:
-            raise ValueError(f"リアルタイムの中心を範囲に置けない: {c}")
+            raise ValueError(f"リアルタイムの中心を範囲内に置けません: {c}")
         return Plan((c,), True, grid, half, delta)
     n = -(-extent // (half - grid)) + 1
     centers = tuple(start_hz + _round_to_grid(i * extent / (n - 1), grid) for i in range(n))
@@ -162,9 +162,9 @@ class Passband:
         u = np.asarray(upper_db, dtype=np.float64)
         lo = np.asarray(lower_db, dtype=np.float64)
         if o.ndim != 1 or o.size < 2 or u.shape != o.shape or lo.shape != o.shape:
-            raise ValueError("通過帯域の表は同じ長さの offset_hz・upper_db・lower_db（2点以上）")
+            raise ValueError("通過帯域の表は同じ長さの offset_hz・upper_db・lower_db（2点以上）である必要があります")
         if o[0] != 0 or np.any(np.diff(o) <= 0):
-            raise ValueError("通過帯域の offset_hz は 0 から始めて増やす")
+            raise ValueError("通過帯域の offset_hz は 0 から始まり増加する必要があります")
         self._o, self._u, self._l = o, u, lo
         self._cache: dict[tuple[int, int], np.ndarray] = {}
 
@@ -220,7 +220,7 @@ class Assembler:
             power = power / self.passband.gain_for_bins(n, self.grid)
         off = center_hz - self.start_hz
         if off % self.grid:
-            raise ValueError("中心が出力の格子に乗っていない")
+            raise ValueError("中心が出力の格子上にありません")
         k = np.arange(-(n // 2), n - n // 2, dtype=np.int64)
         idx = off // self.grid + k
         d = np.abs(k) * self.grid

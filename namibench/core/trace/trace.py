@@ -167,7 +167,7 @@ class Trace:
         line: TraceLine = TraceLine.SOLID,
     ) -> None:
         if not isinstance(number, int) or not 1 <= number <= TRACE_COUNT:
-            raise ValueError(f"トレースの番号は 1〜{TRACE_COUNT}")
+            raise ValueError(f"トレースの番号は 1〜{TRACE_COUNT} である必要があります")
         self.number = number
         self.action = TraceAction(action)
         self.visible = bool(visible)
@@ -375,7 +375,7 @@ class Trace:
     def apply(self, frame: Frame) -> TraceUpdate:
         """1回の掃引を動作に従って取り込む（設計F §5.2）。"""
         if frame.values.shape != (frame.axis.points,):
-            raise ValueError("values の長さが軸の点数と違う")
+            raise ValueError("values の長さが軸の点数と一致しません")
         if self.action == TraceAction.FIXED:
             return self._result(changed=False)
         self.steps = self.step_info = None

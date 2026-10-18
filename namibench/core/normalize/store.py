@@ -161,7 +161,7 @@ def _reject_of(s: dict) -> str:
 
 def _check_id(ref_id: str) -> None:
     if not _ID_RE.match(ref_id):
-        raise ReferenceFileError(f"基準の id に使えない文字がある: {ref_id!r}")
+        raise ReferenceFileError(f"基準の id に使用できない文字があります: {ref_id!r}")
 
 
 def path_for(directory: Path | str, ref: Reference) -> Path:
