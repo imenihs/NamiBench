@@ -83,7 +83,7 @@ class StateViewTest(unittest.TestCase):
                               "detail": {"name": "ATT", "value_db": -40.0, "previous": 0.0}}, tg_state())
         self.assertEqual(n["view"]["text"], "基準「ATT」の値を −40.0 dB に変更しました")
         n = view.notice_view({"code": "reference_value_changed", "detail": {"name": "ATT", "value_db": 0.0}}, None)
-        self.assertEqual(n["view"]["text"], "基準「ATT」の値を 0.0 dB にしました")
+        self.assertEqual(n["view"]["text"], "基準「ATT」の値を 0.0 dB に変更しました")
         e = view.error_view({"error": {"code": "reference_value_range", "detail": {"lo": -100.0, "hi": 100.0}}})
         self.assertEqual(e["error"]["text"], "−100〜+100 dB の値を入力してください")
         e = view.error_view({"error": {"code": "reference_value_s11", "detail": {}}})

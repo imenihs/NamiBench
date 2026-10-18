@@ -219,7 +219,7 @@ class WebMarkerToolsTest(unittest.TestCase):
         self.assertLess(float(rows[0][2]), float(rows[1][2]))  # 深い順
         self.assertEqual(self.ev("document.querySelectorAll('.mtable.peaks thead th')[2].textContent.trim()"),
                          L["col_below_max_db"])
-        self.assertTrue(self.ev("gsApp.peakText().found").startswith("2 個・最大 "))
+        self.assertTrue(self.ev("gsApp.peakText().found").startswith("検出数 2・最大 "))
         # 「P に登録」は谷の P
         self.ev("document.querySelector('.mtable.peaks tbody tr button').click(); 1")
         end = time.monotonic() + 10

@@ -195,7 +195,7 @@ class SettingsDialogTest(UiBase):
         self.assertEqual(sp.current()["name"], "取り込んだ配色")
         sp.btn_overwrite.click()
         self.wait(lambda: not {r["name"]: r for r in sp.rows}["取り込んだ配色"]["warn"], what="上書き")
-        self.assertIn("「取り込んだ配色」の色を、いまの配色で置き換えます。", self.confirm_asked[-1])
+        self.assertIn("「取り込んだ配色」の色を、現在の配色で置き換えます。", self.confirm_asked[-1])
         sp.btn_delete.click()
         self.wait(lambda: [r["name"] for r in sp.rows] == ["夜の観測"], what="消す")
         self.assertIn("取り込んだ配色", self.confirm_asked[-1])
